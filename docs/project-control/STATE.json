@@ -1,14 +1,14 @@
 {
     "schema_version":  "0.1.0",
-    "updated_at":  "2026-08-19T21:35:00+03:00",
+    "updated_at":  "2026-08-19T22:16:03+03:00",
     "project":  {
                     "name":  "AOS",
                     "expanded_name":  "Agent Operating System",
                     "working_name_status":  "PROVISIONAL",
                     "purpose":  "Reusable AI-plus-deterministic development orchestration and governance platform"
                 },
-    "status":  "FOUNDATION_DOCUMENTED_IMPLEMENTATION_NOT_STARTED",
-    "current_gate":  "AOS-0",
+    "status":  "AOS_0_CLOSED_PROVEN_AOS_1_READY",
+    "current_gate":  "AOS-1",
     "delivery_train":  [
                            "AOS-0 Foundation \u0026 Charter",
                            "AOS-1 Canonical Memory \u0026 Schemas",
@@ -68,6 +68,18 @@
                                "evidence_waiver",
                                "retry_ceiling_exceeded"
                            ],
-    "next_action":  "Create the AOS repository/control-plane skeleton and implement AOS-1 schemas/validators without modifying the LARI product baseline.",
-    "implementation_started":  false
+    "next_action":  "Implement AOS-1 Canonical Memory \u0026 Schemas: define versioned schemas and deterministic validators on an isolated feature branch without modifying the LARI product baseline.",
+    "implementation_started":  false,
+    "accepted_gates":  [
+                           {
+                               "gate":  "AOS-0",
+                               "name":  "Foundation \u0026 Charter",
+                               "status":  "CLOSED_PROVEN",
+                               "evidence_level":  "E1_REMOTE_SOURCE_PROVEN",
+                               "foundation_baseline_sha":  "e29e48e23b27528b3143cfde14e35a1b794fb132",
+                               "verified_sha":  "8e2a3768b8506cf86d3649d43a11cc6419768481",
+                               "closed_at":  "2026-08-19T22:16:03+03:00",
+                               "reopen_condition":  "Authoritative contradiction in the foundation charter, repository integrity, or accepted governance baseline"
+                           }
+                       ]
 }

@@ -52,9 +52,8 @@ AOS is developed parallel to LARİ. LARİ's accepted master delivery train is no
 - AOS is declared reusable, not LARİ-specific.
 - Human-required events are enumerated.
 
-### Initial status
-`CLOSED_DOCUMENTED_PENDING_REPO_COMMIT`
-
+### Status
+`CLOSED_PROVEN` (`E1_REMOTE_SOURCE_PROVEN`, verified SHA `8e2a3768b8506cf86d3649d43a11cc6419768481`)
 ---
 
 ## AOS-1 — Canonical Memory & Schemas

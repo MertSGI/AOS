@@ -18,9 +18,11 @@ Recommended reading order:
 
 ## Current Status
 
-AOS foundation is being established and verified.
+AOS-0 Foundation & Charter is `CLOSED_PROVEN` at `E1_REMOTE_SOURCE_PROVEN`.
 
-Implementation has not started yet.
+Current gate: **AOS-1 — Canonical Memory & Schemas**.
+
+AOS implementation has not started yet.
 
 LARİ is the first controlled pilot project, but AOS is designed as a reusable multi-project platform.
 
