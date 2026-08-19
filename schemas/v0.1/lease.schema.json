@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/lease.schema.json",
+  "title": "AOS Worker Lease Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "task_id",
+    "worker_id",
+    "lease_id",
+    "acquired_at",
+    "expires_at",
+    "heartbeat"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]+$"
+    },
+    "lease_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "acquired_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "EXPIRED",
+        "RELEASED",
+        "REVOKED",
+        "RECLAIMED"
+      ],
+      "default": "ACTIVE"
+    },
+    "heartbeat": {
+      "type": "object",
+      "required": [
+        "interval_seconds",
+        "last_heartbeat_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_heartbeat_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "missed_heartbeat_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recovery_strategy": {
+          "type": "string",
+          "enum": [
+            "RECLAIM_ON_EXPIRY",
+            "MANUAL_HOLD",
+            "AUTO_ABANDON"
+          ]
+        }
+      }
+    },
+    "worktree_path": {
+      "type": "string"
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

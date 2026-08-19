@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aos"
+version = "0.1.0"
+description = "Agent Operating System deterministic controller, schema validation and orchestration utilities"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Mert Ozcelikbas", email = "mert.ozcelikbass@gmail.com" }
+]
+dependencies = [
+    "jsonschema[format-nongpl]>=4.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+aos-validate = "aos.validate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

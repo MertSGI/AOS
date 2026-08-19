@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "evidence_id": "AOS-EV-0002",
+  "timestamp": "2026-08-19T22:16:03+03:00",
+  "project": "AOS",
+  "gate": "AOS-0",
+  "type": "REMOTE_FOUNDATION_VERIFICATION",
+  "claim": "Claiming E1 remote source proven without supplying revision or revisions object.",
+  "evidence_level": "E1_REMOTE_SOURCE_PROVEN",
+  "result": "PASS",
+  "limitations": ["AOS-0 test limitation"]
+}

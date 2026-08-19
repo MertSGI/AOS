@@ -115,3 +115,38 @@ Full autonomy is not the starting state.
 ## AOS-DEC-017 — Working name AOS is provisional
 **Status:** PROVISIONAL
 **Decision:** Use “AOS — Agent Operating System” as the project codename until branding/naming is intentionally reviewed. Naming is not on the critical path.
+
+---
+
+## AOS-DEC-018 — Python 3.12 Initial Runtime Baseline
+**Status:** ACCEPTED
+**Decision:** Python 3.12 is the initial implementation baseline for the AOS deterministic controller, schema validator and orchestration utilities.
+
+**Rationale:**
+* cross-platform support,
+* strong process/subprocess orchestration,
+* mature JSON/schema tooling,
+* suitable OpenAI/API integrations,
+* suitable future Postgres/Supabase coordination integration,
+* low bootstrap complexity.
+
+This does not prohibit future worker adapters or components from using other languages.
+
+---
+
+## AOS-DEC-019 — Agent-First Execution and Human Transport Elimination
+**Status:** ACCEPTED
+**Decision:** AOS exists to remove the human product owner from routine transport and execution mechanics between reasoning agents and execution workers.
+
+If an operation can be safely performed by the AOS controller or an authorized execution worker, the human must not be asked merely to:
+
+* run terminal commands,
+* create or edit routine implementation files,
+* start tests,
+* perform routine Git add/commit/push operations,
+* move artifacts between tools,
+* relay routine planner/executor/verifier messages.
+
+Human participation remains required for configured human gates, critical product decisions, authentication that genuinely requires human interaction, production-sensitive authority, and unresolved HOLD conditions.
+
+Manual transport during AOS bootstrap is transitional behavior, not the target operating model.

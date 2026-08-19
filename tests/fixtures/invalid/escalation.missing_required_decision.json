@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "escalation_id": "ESC-20260819-001",
+  "timestamp": "2026-08-19T22:45:00+03:00",
+  "project_id": "aos",
+  "gate": "AOS-1",
+  "trigger": "BASE_SHA_MISMATCH",
+  "status": "HOLD",
+  "reason": "Local HEAD does not match required base SHA for task.",
+  "observed_state": {},
+  "expected_state": {}
+}

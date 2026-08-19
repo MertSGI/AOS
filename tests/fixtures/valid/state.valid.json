@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "updated_at": "2026-08-19T22:16:03+03:00",
+  "project": {
+    "name": "AOS",
+    "expanded_name": "Agent Operating System",
+    "working_name_status": "PROVISIONAL",
+    "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
+  },
+  "status": "AOS_0_CLOSED_PROVEN_AOS_1_READY",
+  "current_gate": "AOS-1",
+  "delivery_train": [
+    "AOS-0 Foundation & Charter",
+    "AOS-1 Canonical Memory & Schemas",
+    "AOS-2 Shadow Orchestrator"
+  ],
+  "principles": {
+    "fail_closed": true,
+    "evidence_over_claims": true,
+    "exact_revision_required": true,
+    "planner_executor_verifier_separation": true,
+    "human_critical_authority": true,
+    "portable_multi_project": true,
+    "multi_pc_required": true,
+    "canonical_truth_in_version_control": true
+  },
+  "next_action": "Implement AOS-1",
+  "accepted_gates": [
+    {
+      "gate": "AOS-0",
+      "name": "Foundation & Charter",
+      "status": "CLOSED_PROVEN",
+      "evidence_level": "E1_REMOTE_SOURCE_PROVEN",
+      "foundation_baseline_sha": "e29e48e23b27528b3143cfde14e35a1b794fb132",
+      "verified_sha": "8e2a3768b8506cf86d3649d43a11cc6419768481",
+      "closed_at": "2026-08-19T22:16:03+03:00"
+    }
+  ]
+}

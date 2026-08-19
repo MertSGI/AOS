@@ -83,6 +83,9 @@ E2-equivalent:
 - unknown fields/version drift handled intentionally,
 - exact revision references required where applicable.
 
+### Status
+`CLOSED_PROVEN` (`E2_EXECUTABLE_EXACT_REVISION_PROVEN`, verified SHA `dba163276a141688685c23ecca884d4a17893e3a`)
+
 ---
 
 ## AOS-2 — Shadow Orchestrator

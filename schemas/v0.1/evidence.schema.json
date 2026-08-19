@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
+  "title": "AOS Evidence Record Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "timestamp",
+    "project",
+    "gate",
+    "type",
+    "claim",
+    "evidence_level",
+    "result",
+    "limitations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_level": {
+      "type": "string",
+      "enum": [
+        "E0_CLAIM",
+        "E1_LOCAL_SOURCE",
+        "E1_REMOTE_SOURCE_PROVEN",
+        "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+        "E3_ISOLATED_RUNTIME_PROVEN",
+        "E4_SHARED_STAGING_PROVEN",
+        "E5_PRODUCTION_OBSERVATION"
+      ]
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "revisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "foundation_baseline_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "verified_remote_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "starting_baseline_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "implementation_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remediation_1_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remediation_2_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "governance_completion_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "python_version": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local_remote_sha_match": {
+          "type": "boolean"
+        },
+        "github_remote_commit_verified": {
+          "type": "boolean"
+        },
+        "canonical_readme_verified": {
+          "type": "boolean"
+        },
+        "gitkeep_zero_content_verified": {
+          "type": "boolean"
+        },
+        "verifier": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "ci_workflow_run_id": {
+          "type": "integer"
+        },
+        "ci_conclusion": {
+          "type": "string"
+        },
+        "pytest_result": {
+          "type": "string"
+        }
+      }
+    },
+    "result": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "verifier": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evidence_level": {
+            "enum": [
+              "E1_REMOTE_SOURCE_PROVEN",
+              "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+              "E3_ISOLATED_RUNTIME_PROVEN",
+              "E4_SHARED_STAGING_PROVEN",
+              "E5_PRODUCTION_OBSERVATION"
+            ]
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "revision"
+            ]
+          },
+          {
+            "required": [
+              "revisions"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

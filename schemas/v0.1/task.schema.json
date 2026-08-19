@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/task.schema.json",
+  "title": "AOS Task Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "task_id",
+    "gate",
+    "risk_class",
+    "base_sha",
+    "allowed_scope",
+    "worker_requirements",
+    "evidence_requirements",
+    "retry_policy"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4"
+      ]
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "branch_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowed_scope": {
+      "type": "object",
+      "required": [
+        "paths"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "forbidden_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "worker_requirements": {
+      "type": "object",
+      "required": [
+        "adapter"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "isolated_worktree": {
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "evidence_requirements": {
+      "type": "object",
+      "required": [
+        "minimum_level"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "minimum_level": {
+          "type": "string",
+          "enum": [
+            "E0_CLAIM",
+            "E1_LOCAL_SOURCE",
+            "E1_REMOTE_SOURCE_PROVEN",
+            "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+            "E3_ISOLATED_RUNTIME_PROVEN",
+            "E4_SHARED_STAGING_PROVEN",
+            "E5_PRODUCTION_OBSERVATION"
+          ]
+        },
+        "required_checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "retry_policy": {
+      "type": "object",
+      "required": [
+        "max_retries"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "auto_retry_on_semantic_failure": {
+          "type": "boolean"
+        },
+        "on_exhausted": {
+          "type": "string",
+          "enum": [
+            "HOLD",
+            "FAIL",
+            "RETRY_MANUAL"
+          ]
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

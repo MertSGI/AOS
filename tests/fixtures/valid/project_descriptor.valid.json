@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "lari",
+  "repository": "MertSGI/Randapp-main",
+  "description": "LARİ Clinic & Health Tourism Platform",
+  "control": {
+    "state": "docs/project-control/STATE.json",
+    "decisions": "docs/project-control/DECISIONS.md",
+    "evidence": "docs/project-control/EVIDENCE.jsonl",
+    "roadmap": "docs/project-control/ROADMAP_12W.md"
+  },
+  "authority": {
+    "production_mutation": "human_required",
+    "roadmap_change": "human_required",
+    "destructive_data": "human_required",
+    "security_boundary_change": "human_required",
+    "payment_activation": "human_required"
+  },
+  "workers": {
+    "branch_prefix": "aos/",
+    "isolated_worktree_required": true,
+    "max_concurrent_workers": 2
+  }
+}

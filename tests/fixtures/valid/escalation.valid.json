@@ -1,0 +1,30 @@
+{
+  "schema_version": "0.1.0",
+  "escalation_id": "ESC-20260819-001",
+  "timestamp": "2026-08-19T22:45:00+03:00",
+  "project_id": "aos",
+  "task_id": "AOS-TASK-001",
+  "gate": "AOS-1",
+  "trigger": "BASE_SHA_MISMATCH",
+  "status": "HOLD",
+  "reason": "Local HEAD does not match required base SHA for task.",
+  "observed_state": {
+    "local_sha": "8e2a3768b8506cf86d3649d43a11cc6419768481"
+  },
+  "expected_state": {
+    "required_base_sha": "c22b50fd103dcc1a4962713381314413464020df"
+  },
+  "required_decision": "Rebase task branch or re-acquire task with updated base SHA.",
+  "options": [
+    {
+      "option_id": "OPT-1",
+      "description": "Rebase feature branch onto origin/main c22b50fd103dcc1a4962713381314413464020df",
+      "impact": "Low risk, preserves local modifications"
+    },
+    {
+      "option_id": "OPT-2",
+      "description": "Abort task and release lease",
+      "impact": "Worker abandons worktree"
+    }
+  ]
+}
