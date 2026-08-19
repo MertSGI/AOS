@@ -139,9 +139,9 @@ class TestExtensionsAccepted:
 
 
 class TestSchemaMetaValidation:
-    """All seven AOS schemas must themselves be valid Draft 2020-12 JSON Schemas."""
+    """All seven AOS schemas must satisfy AOS schema metadata requirements and Draft 2020-12 meta-validation."""
 
-    @pytest.mark.parametrize("schema_file", [
+    ALL_SCHEMAS = [
         "state.schema.json",
         "project_descriptor.schema.json",
         "task.schema.json",
@@ -149,7 +149,9 @@ class TestSchemaMetaValidation:
         "evidence.schema.json",
         "decision_event.schema.json",
         "escalation.schema.json",
-    ])
+    ]
+
+    @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
     def test_schema_is_valid_draft_2020_12(self, schema_file: str):
         import json
         from jsonschema import Draft202012Validator
@@ -157,3 +159,36 @@ class TestSchemaMetaValidation:
         schema_path = SCHEMA_DIR / schema_file
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
+
+    @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
+    def test_schema_metadata_identity(self, schema_file: str):
+        import json
+        from aos.validate import SCHEMA_DIR
+        schema_path = SCHEMA_DIR / schema_file
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        # 1. $schema exists
+        assert "$schema" in schema, f"$schema missing in {schema_file}"
+        # 2. $schema equals exact draft 2020-12 URL
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema", f"Incorrect $schema in {schema_file}"
+
+        # 3. $id exists
+        assert "$id" in schema, f"$id missing in {schema_file}"
+        # 4. $id equals exact expected URI
+        expected_id = f"https://schemas.mertsgi.org/aos/v0.1/{schema_file}"
+        assert schema["$id"] == expected_id, f"Incorrect $id in {schema_file}, expected {expected_id}"
+
+        # 6. No empty-string top-level property key
+        assert "" not in schema, f"Empty-string top-level property key found in {schema_file}"
+
+    def test_schema_ids_unique(self):
+        import json
+        from aos.validate import SCHEMA_DIR
+        ids = set()
+        for schema_file in self.ALL_SCHEMAS:
+            schema_path = SCHEMA_DIR / schema_file
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            schema_id = schema.get("$id")
+            assert schema_id not in ids, f"Duplicate $id '{schema_id}' found in {schema_file}"
+            ids.add(schema_id)
+        assert len(ids) == len(self.ALL_SCHEMAS)

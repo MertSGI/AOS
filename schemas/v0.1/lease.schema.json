@@ -45,20 +45,42 @@
     },
     "status": {
       "type": "string",
-      "enum": ["ACTIVE", "EXPIRED", "RELEASED", "REVOKED", "RECLAIMED"],
+      "enum": [
+        "ACTIVE",
+        "EXPIRED",
+        "RELEASED",
+        "REVOKED",
+        "RECLAIMED"
+      ],
       "default": "ACTIVE"
     },
     "heartbeat": {
       "type": "object",
-      "required": ["interval_seconds", "last_heartbeat_at"],
+      "required": [
+        "interval_seconds",
+        "last_heartbeat_at"
+      ],
       "additionalProperties": false,
       "properties": {
-        "interval_seconds": { "type": "integer", "minimum": 1 },
-        "last_heartbeat_at": { "type": "string", "format": "date-time" },
-        "missed_heartbeat_threshold": { "type": "integer", "minimum": 1 },
+        "interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_heartbeat_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "missed_heartbeat_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
         "recovery_strategy": {
           "type": "string",
-          "enum": ["RECLAIM_ON_EXPIRY", "MANUAL_HOLD", "AUTO_ABANDON"]
+          "enum": [
+            "RECLAIM_ON_EXPIRY",
+            "MANUAL_HOLD",
+            "AUTO_ABANDON"
+          ]
         }
       }
     },

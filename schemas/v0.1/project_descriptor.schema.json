@@ -29,36 +29,103 @@
     },
     "control": {
       "type": "object",
-      "required": ["state", "decisions", "evidence", "roadmap"],
+      "required": [
+        "state",
+        "decisions",
+        "evidence",
+        "roadmap"
+      ],
       "additionalProperties": false,
       "properties": {
-        "state": { "type": "string", "minLength": 1 },
-        "decisions": { "type": "string", "minLength": 1 },
-        "evidence": { "type": "string", "minLength": 1 },
-        "roadmap": { "type": "string", "minLength": 1 },
-        "charter": { "type": "string" },
-        "autonomy_policy": { "type": "string" }
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decisions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "roadmap": {
+          "type": "string",
+          "minLength": 1
+        },
+        "charter": {
+          "type": "string"
+        },
+        "autonomy_policy": {
+          "type": "string"
+        }
       }
     },
     "authority": {
       "type": "object",
-      "required": ["production_mutation", "roadmap_change", "destructive_data"],
+      "required": [
+        "production_mutation",
+        "roadmap_change",
+        "destructive_data"
+      ],
       "additionalProperties": false,
       "properties": {
-        "production_mutation": { "type": "string", "enum": ["human_required", "autonomous_allowed", "forbidden"] },
-        "roadmap_change": { "type": "string", "enum": ["human_required", "autonomous_allowed", "forbidden"] },
-        "destructive_data": { "type": "string", "enum": ["human_required", "autonomous_allowed", "forbidden"] },
-        "security_boundary_change": { "type": "string", "enum": ["human_required", "autonomous_allowed", "forbidden"] },
-        "payment_activation": { "type": "string", "enum": ["human_required", "autonomous_allowed", "forbidden"] }
+        "production_mutation": {
+          "type": "string",
+          "enum": [
+            "human_required",
+            "autonomous_allowed",
+            "forbidden"
+          ]
+        },
+        "roadmap_change": {
+          "type": "string",
+          "enum": [
+            "human_required",
+            "autonomous_allowed",
+            "forbidden"
+          ]
+        },
+        "destructive_data": {
+          "type": "string",
+          "enum": [
+            "human_required",
+            "autonomous_allowed",
+            "forbidden"
+          ]
+        },
+        "security_boundary_change": {
+          "type": "string",
+          "enum": [
+            "human_required",
+            "autonomous_allowed",
+            "forbidden"
+          ]
+        },
+        "payment_activation": {
+          "type": "string",
+          "enum": [
+            "human_required",
+            "autonomous_allowed",
+            "forbidden"
+          ]
+        }
       }
     },
     "workers": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "branch_prefix": { "type": "string" },
-        "isolated_worktree_required": { "type": "boolean" },
-        "max_concurrent_workers": { "type": "integer", "minimum": 1 }
+        "branch_prefix": {
+          "type": "string"
+        },
+        "isolated_worktree_required": {
+          "type": "boolean"
+        },
+        "max_concurrent_workers": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "extensions": {

@@ -1,5 +1,6 @@
 {
-  "": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
   "title": "AOS Evidence Record Schema",
   "type": "object",
   "required": [

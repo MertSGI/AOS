@@ -63,7 +63,11 @@
     },
     "status": {
       "type": "string",
-      "enum": ["HOLD", "RESOLVED", "REJECTED"],
+      "enum": [
+        "HOLD",
+        "RESOLVED",
+        "REJECTED"
+      ],
       "default": "HOLD"
     },
     "reason": {
@@ -86,12 +90,23 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["option_id", "description"],
+        "required": [
+          "option_id",
+          "description"
+        ],
         "additionalProperties": false,
         "properties": {
-          "option_id": { "type": "string", "minLength": 1 },
-          "description": { "type": "string", "minLength": 1 },
-          "impact": { "type": "string" }
+          "option_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "impact": {
+            "type": "string"
+          }
         }
       }
     },
