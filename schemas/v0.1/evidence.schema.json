@@ -112,6 +112,26 @@
         "extensions": {
           "type": "object",
           "additionalProperties": true
+        },
+        "starting_baseline_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "implementation_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remediation_1_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remediation_2_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "governance_completion_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
         }
       }
     },
@@ -162,6 +182,15 @@
         "extensions": {
           "type": "object",
           "additionalProperties": true
+        },
+        "ci_workflow_run_id": {
+          "type": "integer"
+        },
+        "ci_conclusion": {
+          "type": "string"
+        },
+        "pytest_result": {
+          "type": "string"
         }
       }
     },

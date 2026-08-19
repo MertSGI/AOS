@@ -19,10 +19,9 @@ Recommended reading order:
 ## Current Status
 
 AOS-0 Foundation & Charter is `CLOSED_PROVEN` at `E1_REMOTE_SOURCE_PROVEN`.
+AOS-1 Canonical Memory & Schemas is `CLOSED_PROVEN` at `E2_EXECUTABLE_EXACT_REVISION_PROVEN`.
 
-Current gate: **AOS-1 — Canonical Memory & Schemas**.
-
-AOS implementation has not started yet.
+Current gate: **AOS-2 — Shadow Orchestrator**.
 
 LARİ is the first controlled pilot project, but AOS is designed as a reusable multi-project platform.
 
