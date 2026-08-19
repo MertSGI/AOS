@@ -1,12 +1,39 @@
-# AOS V0 Project Control Pack
+# AOS — Agent Operating System
 
-This directory is the initial human-readable + machine-readable foundation for the reusable Agent Operating System discussed on 2026-08-19.
+Reusable, evidence-driven AI development orchestration and governance platform.
+
+AOS coordinates AI reasoning, deterministic policy enforcement, execution workers, independent verification, evidence, and human approval gates.
+
+## Canonical Project Control
 
 Recommended reading order:
-1. AOS_MASTER_CHARTER.md
-2. AOS_ROADMAP.md
-3. AOS_DECISIONS.md
-4. AOS_AUTONOMY_POLICY.md
-5. AOS_STATE.json
 
-Status: documentation foundation only. No AOS implementation or LARİ product mutation is represented by these files.
+1. `docs/project-control/CHARTER.md`
+2. `docs/project-control/ROADMAP.md`
+3. `docs/project-control/DECISIONS.md`
+4. `docs/project-control/AUTONOMY_POLICY.md`
+5. `docs/project-control/UPDATE_PROTOCOL.md`
+6. `docs/project-control/EVIDENCE.jsonl`
+7. `docs/project-control/STATE.json`
+
+## Current Status
+
+AOS foundation is being established and verified.
+
+Implementation has not started yet.
+
+LARİ is the first controlled pilot project, but AOS is designed as a reusable multi-project platform.
+
+## Repository Safety
+
+This repository must never contain:
+
+- API keys
+- access tokens
+- passwords
+- private keys
+- customer secrets
+- sensitive production data
+
+Canonical project decisions and evidence belong in version control.
+Operational secrets and temporary worker state do not.
