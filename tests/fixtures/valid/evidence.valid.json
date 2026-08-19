@@ -1,0 +1,25 @@
+{
+  "schema_version": "0.1.0",
+  "evidence_id": "AOS-EV-0002",
+  "timestamp": "2026-08-19T22:16:03+03:00",
+  "project": "AOS",
+  "gate": "AOS-0",
+  "task_id": "AOS-TASK-000",
+  "type": "REMOTE_FOUNDATION_VERIFICATION",
+  "claim": "AOS foundation baseline and hygiene correction are present on origin/main.",
+  "evidence_level": "E1_REMOTE_SOURCE_PROVEN",
+  "revisions": {
+    "foundation_baseline_sha": "e29e48e23b27528b3143cfde14e35a1b794fb132",
+    "verified_remote_sha": "8e2a3768b8506cf86d3649d43a11cc6419768481",
+    "branch": "main"
+  },
+  "verification": {
+    "local_remote_sha_match": true,
+    "github_remote_commit_verified": true,
+    "verifier": "GPT-5.6 Sol"
+  },
+  "result": "PASS",
+  "limitations": [
+    "AOS-0 is a documentation/foundation gate."
+  ]
+}

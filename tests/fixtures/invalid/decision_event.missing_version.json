@@ -1,0 +1,13 @@
+{
+  "decision_id": "AOS-DEC-018",
+  "timestamp": "2026-08-19T22:30:00+03:00",
+  "project": "AOS",
+  "title": "Python 3.12 Baseline",
+  "status": "ACCEPTED",
+  "decision": "Python 3.12 is the runtime baseline.",
+  "rationale": "Cross-platform support.",
+  "authority": {
+    "type": "HUMAN_PRODUCT_OWNER",
+    "actor": "Mert"
+  }
+}

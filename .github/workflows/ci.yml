@@ -1,0 +1,33 @@
+name: AOS CI
+
+on:
+  push:
+    branches: [ main, 'feature/**', 'aos/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run pytest schema validation tests
+        run: |
+          pytest -v
+
+      - name: Validate canonical state and evidence files
+        run: |
+          python -m aos.validate state docs/project-control/STATE.json
+          python -m aos.validate evidence docs/project-control/EVIDENCE.jsonl

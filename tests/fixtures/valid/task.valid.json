@@ -1,0 +1,32 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS-TASK-001",
+  "gate": "AOS-1",
+  "title": "Define Canonical Schemas",
+  "description": "Establish JSON schemas for state, task, lease, and evidence",
+  "risk_class": "R1",
+  "base_sha": "c22b50fd103dcc1a4962713381314413464020df",
+  "branch_name": "feature/aos-1-canonical-memory-schemas",
+  "allowed_scope": {
+    "paths": ["schemas/", "src/aos/", "tests/"],
+    "forbidden_paths": ["docs/project-control/CHARTER.md"]
+  },
+  "worker_requirements": {
+    "adapter": "antigravity",
+    "environment": "windows-x64",
+    "capabilities": ["python3.12", "git"],
+    "isolated_worktree": true,
+    "timeout_seconds": 3600
+  },
+  "evidence_requirements": {
+    "minimum_level": "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+    "required_checks": ["pytest", "schema_validation"]
+  },
+  "retry_policy": {
+    "max_retries": 2,
+    "retry_count": 0,
+    "auto_retry_on_semantic_failure": false,
+    "on_exhausted": "HOLD"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS-TASK-001",
+  "gate": "AOS-1",
+  "risk_class": "R1",
+  "base_sha": "not-a-real-sha-too-short",
+  "allowed_scope": {
+    "paths": ["schemas/"]
+  },
+  "worker_requirements": {
+    "adapter": "antigravity"
+  },
+  "evidence_requirements": {
+    "minimum_level": "E2_EXECUTABLE_EXACT_REVISION_PROVEN"
+  },
+  "retry_policy": {
+    "max_retries": 2
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS-TASK-001",
+  "worker_id": "mert-main-pc",
+  "lease_id": "LEASE-20260819-001",
+  "acquired_at": "2026-08-19T22:30:00+03:00",
+  "status": "ACTIVE",
+  "heartbeat": {
+    "interval_seconds": 60,
+    "last_heartbeat_at": "2026-08-19T22:35:00+03:00"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "repository": "MertSGI/Randapp-main",
+  "control": {
+    "state": "docs/project-control/STATE.json",
+    "decisions": "docs/project-control/DECISIONS.md",
+    "evidence": "docs/project-control/EVIDENCE.jsonl",
+    "roadmap": "docs/project-control/ROADMAP_12W.md"
+  },
+  "authority": {
+    "production_mutation": "human_required",
+    "roadmap_change": "human_required",
+    "destructive_data": "human_required"
+  }
+}

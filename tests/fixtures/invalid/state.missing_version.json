@@ -1,0 +1,21 @@
+{
+  "updated_at": "2026-08-19T22:16:03+03:00",
+  "project": {
+    "name": "AOS",
+    "purpose": "Reusable AI-plus-deterministic development orchestration"
+  },
+  "status": "AOS_0_CLOSED_PROVEN_AOS_1_READY",
+  "current_gate": "AOS-1",
+  "delivery_train": ["AOS-0", "AOS-1"],
+  "principles": {
+    "fail_closed": true,
+    "evidence_over_claims": true,
+    "exact_revision_required": true,
+    "planner_executor_verifier_separation": true,
+    "human_critical_authority": true,
+    "portable_multi_project": true,
+    "multi_pc_required": true,
+    "canonical_truth_in_version_control": true
+  },
+  "next_action": "Implement AOS-1"
+}

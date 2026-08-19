@@ -115,3 +115,19 @@ Full autonomy is not the starting state.
 ## AOS-DEC-017 — Working name AOS is provisional
 **Status:** PROVISIONAL
 **Decision:** Use “AOS — Agent Operating System” as the project codename until branding/naming is intentionally reviewed. Naming is not on the critical path.
+
+---
+
+## AOS-DEC-018 — Python 3.12 Initial Runtime Baseline
+**Status:** ACCEPTED
+**Decision:** Python 3.12 is the initial implementation baseline for the AOS deterministic controller, schema validator and orchestration utilities.
+
+**Rationale:**
+* cross-platform support,
+* strong process/subprocess orchestration,
+* mature JSON/schema tooling,
+* suitable OpenAI/API integrations,
+* suitable future Postgres/Supabase coordination integration,
+* low bootstrap complexity.
+
+This does not prohibit future worker adapters or components from using other languages.

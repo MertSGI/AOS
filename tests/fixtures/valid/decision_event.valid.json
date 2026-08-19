@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "decision_id": "AOS-DEC-018",
+  "timestamp": "2026-08-19T22:30:00+03:00",
+  "project": "AOS",
+  "gate": "AOS-1",
+  "title": "Python 3.12 Initial Runtime Baseline",
+  "status": "ACCEPTED",
+  "decision": "Python 3.12 is the initial implementation baseline for AOS deterministic controller and schema validator.",
+  "rationale": "Cross-platform support, strong subprocess orchestration, mature JSON schema tooling.",
+  "authority": {
+    "type": "HUMAN_PRODUCT_OWNER",
+    "actor": "Mert Özçelikbaş"
+  },
+  "constraints": [
+    "Does not prohibit future worker adapters in other languages."
+  ]
+}

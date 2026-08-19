@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
+  "title": "AOS Evidence Record Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "timestamp",
+    "project",
+    "gate",
+    "type",
+    "claim",
+    "evidence_level",
+    "result",
+    "limitations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_level": {
+      "type": "string",
+      "enum": [
+        "E0_CLAIM",
+        "E1_LOCAL_SOURCE",
+        "E1_REMOTE_SOURCE_PROVEN",
+        "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+        "E3_ISOLATED_RUNTIME_PROVEN",
+        "E4_SHARED_STAGING_PROVEN",
+        "E5_PRODUCTION_OBSERVATION"
+      ]
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "commit_sha": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "revisions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "result": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "producer": {
+      "type": "string"
+    },
+    "verifier": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evidence_level": {
+            "enum": [
+              "E1_REMOTE_SOURCE_PROVEN",
+              "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+              "E3_ISOLATED_RUNTIME_PROVEN",
+              "E4_SHARED_STAGING_PROVEN",
+              "E5_PRODUCTION_OBSERVATION"
+            ]
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          { "required": ["revision"] },
+          { "required": ["revisions"] }
+        ]
+      }
+    }
+  ]
+}
