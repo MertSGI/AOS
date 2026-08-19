@@ -1,6 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
+  "": "https://schemas.mertsgi.org/aos/v0.1/evidence.schema.json",
   "title": "AOS Evidence Record Schema",
   "type": "object",
   "required": [
@@ -62,10 +61,13 @@
     },
     "revision": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "commit_sha": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[0-9a-f]{40}$"
         },
         "base_sha": {
@@ -82,15 +84,85 @@
     },
     "revisions": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {
+        "foundation_baseline_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "verified_remote_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
     "environment": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "python_version": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
     "verification": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {
+        "local_remote_sha_match": {
+          "type": "boolean"
+        },
+        "github_remote_commit_verified": {
+          "type": "boolean"
+        },
+        "canonical_readme_verified": {
+          "type": "boolean"
+        },
+        "gitkeep_zero_content_verified": {
+          "type": "boolean"
+        },
+        "verifier": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
     "result": {
       "type": "string",
@@ -98,7 +170,10 @@
     },
     "artifacts": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "producer": {
       "type": "string"
@@ -108,7 +183,10 @@
     },
     "limitations": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "minItems": 1
     },
     "extensions": {
@@ -133,8 +211,16 @@
       },
       "then": {
         "anyOf": [
-          { "required": ["revision"] },
-          { "required": ["revisions"] }
+          {
+            "required": [
+              "revision"
+            ]
+          },
+          {
+            "required": [
+              "revisions"
+            ]
+          }
         ]
       }
     }

@@ -69,3 +69,91 @@ class TestCanonicalProjectControlData:
         evidence_file = CANONICAL_DIR / "EVIDENCE.jsonl"
         res, code = validate_file("evidence", evidence_file)
         assert code == 0, f"EVIDENCE.jsonl failed validation: {[e.message for e in res.errors]}"
+
+
+class TestUnknownFieldRejection:
+    """Core contract objects must reject unknown top-level and nested fields."""
+
+    @pytest.mark.parametrize("doc_type,valid_fixture", [
+        ("state", "state.valid.json"),
+        ("task", "task.valid.json"),
+        ("lease", "lease.valid.json"),
+        ("evidence", "evidence.valid.json"),
+        ("decision_event", "decision_event.valid.json"),
+        ("escalation", "escalation.valid.json"),
+        ("project_descriptor", "project_descriptor.valid.json"),
+    ])
+    def test_unknown_top_level_field_rejected(self, doc_type: str, valid_fixture: str):
+        import json
+        path = VALID_DIR / valid_fixture
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["_unknown_bogus_field"] = "should be rejected"
+        res = validate_document(doc_type, data)
+        assert res.is_valid is False, f"{doc_type} should reject unknown top-level field"
+        assert any("_unknown_bogus_field" in e.message for e in res.errors)
+
+    def test_unknown_nested_field_in_task_scope_rejected(self):
+        import json
+        path = VALID_DIR / "task.valid.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["allowed_scope"]["_bogus_nested"] = True
+        res = validate_document("task", data)
+        assert res.is_valid is False, "task.allowed_scope should reject unknown nested field"
+
+    def test_unknown_nested_field_in_state_principles_rejected(self):
+        import json
+        path = VALID_DIR / "state.valid.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["principles"]["_bogus_principle"] = True
+        res = validate_document("state", data)
+        assert res.is_valid is False, "state.principles should reject unknown nested field"
+
+    def test_unknown_nested_field_in_lease_heartbeat_rejected(self):
+        import json
+        path = VALID_DIR / "lease.valid.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["heartbeat"]["_bogus_heartbeat_field"] = 999
+        res = validate_document("lease", data)
+        assert res.is_valid is False, "lease.heartbeat should reject unknown nested field"
+
+
+class TestExtensionsAccepted:
+    """Extensions object must accept arbitrary fields where explicitly supported."""
+
+    @pytest.mark.parametrize("doc_type,valid_fixture", [
+        ("task", "task.valid.json"),
+        ("lease", "lease.valid.json"),
+        ("evidence", "evidence.valid.json"),
+        ("decision_event", "decision_event.valid.json"),
+        ("escalation", "escalation.valid.json"),
+        ("project_descriptor", "project_descriptor.valid.json"),
+        ("state", "state.valid.json"),
+    ])
+    def test_extensions_object_accepted(self, doc_type: str, valid_fixture: str):
+        import json
+        path = VALID_DIR / valid_fixture
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["extensions"] = {"custom_field": "allowed", "nested": {"deep": True}}
+        res = validate_document(doc_type, data)
+        assert res.is_valid is True, f"{doc_type} should accept extensions: {[e.message for e in res.errors]}"
+
+
+class TestSchemaMetaValidation:
+    """All seven AOS schemas must themselves be valid Draft 2020-12 JSON Schemas."""
+
+    @pytest.mark.parametrize("schema_file", [
+        "state.schema.json",
+        "project_descriptor.schema.json",
+        "task.schema.json",
+        "lease.schema.json",
+        "evidence.schema.json",
+        "decision_event.schema.json",
+        "escalation.schema.json",
+    ])
+    def test_schema_is_valid_draft_2020_12(self, schema_file: str):
+        import json
+        from jsonschema import Draft202012Validator
+        from aos.validate import SCHEMA_DIR
+        schema_path = SCHEMA_DIR / schema_file
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
