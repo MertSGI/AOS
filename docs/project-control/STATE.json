@@ -1,0 +1,73 @@
+{
+    "schema_version":  "0.1.0",
+    "updated_at":  "2026-08-19T21:35:00+03:00",
+    "project":  {
+                    "name":  "AOS",
+                    "expanded_name":  "Agent Operating System",
+                    "working_name_status":  "PROVISIONAL",
+                    "purpose":  "Reusable AI-plus-deterministic development orchestration and governance platform"
+                },
+    "status":  "FOUNDATION_DOCUMENTED_IMPLEMENTATION_NOT_STARTED",
+    "current_gate":  "AOS-0",
+    "delivery_train":  [
+                           "AOS-0 Foundation \u0026 Charter",
+                           "AOS-1 Canonical Memory \u0026 Schemas",
+                           "AOS-2 Shadow Orchestrator",
+                           "AOS-3 Controlled Single-Worker Execution",
+                           "AOS-4 Independent Verification \u0026 HOLD",
+                           "AOS-5 Distributed Multi-PC Coordination",
+                           "AOS-6 LARI Controlled Pilot",
+                           "AOS-7 Portable Bootstrap \u0026 Second Project",
+                           "AOS-8 V1 Hardening"
+                       ],
+    "principles":  {
+                       "fail_closed":  true,
+                       "evidence_over_claims":  true,
+                       "exact_revision_required":  true,
+                       "planner_executor_verifier_separation":  true,
+                       "human_critical_authority":  true,
+                       "portable_multi_project":  true,
+                       "multi_pc_required":  true,
+                       "canonical_truth_in_version_control":  true
+                   },
+    "initial_integrations":  {
+                                 "reasoning":  {
+                                                   "provider":  "OpenAI",
+                                                   "baseline_model":  "gpt-5.6-sol",
+                                                   "api":  "Responses API",
+                                                   "role":  "critical_planning_and_semantic_review"
+                                               },
+                                 "executor":  {
+                                                  "provider":  "Google Antigravity",
+                                                  "role":  "initial_worker_adapter"
+                                              },
+                                 "canonical_store":  "Git/GitHub",
+                                 "coordination_store":  {
+                                                            "single_machine":  "SQLite",
+                                                            "distributed_recommendation":  "Postgres/Supabase",
+                                                            "canonical":  false
+                                                        }
+                             },
+    "lari_pilot":  {
+                       "integration_mode":  "PARALLEL_NON_BLOCKING",
+                       "verified_current_product_status":  "CORE_SOFTWARE_RC_CLOSED_PROVEN",
+                       "verified_current_milestone":  "Package/Customer Customization",
+                       "core_rc4_sha":  "e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a",
+                       "ui_v2":  "DEFERRED_PARALLEL_NON_BLOCKING",
+                       "roadmap_reset_allowed":  false
+                   },
+    "human_gate_default":  [
+                               "roadmap_change",
+                               "material_scope_change",
+                               "production_mutation",
+                               "destructive_data",
+                               "security_or_auth_boundary_change",
+                               "payment_or_billing_activation",
+                               "secret_or_trust_model_change",
+                               "evidence_contradiction",
+                               "evidence_waiver",
+                               "retry_ceiling_exceeded"
+                           ],
+    "next_action":  "Create the AOS repository/control-plane skeleton and implement AOS-1 schemas/validators without modifying the LARI product baseline.",
+    "implementation_started":  false
+}
