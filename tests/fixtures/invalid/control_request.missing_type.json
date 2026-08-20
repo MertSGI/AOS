@@ -1,0 +1,10 @@
+{
+  "schema_version": "0.1.0",
+  "request_id": "CR-BAD-002",
+  "project_id": "lari",
+  "actor_type": "human_owner",
+  "base_control_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+  "requested_change": "Something",
+  "reason": "Testing",
+  "requested_at": "2026-08-20T19:00:00Z"
+}

@@ -21,6 +21,7 @@ class TestValidFixtures:
             ("evidence", "evidence.valid.json"),
             ("decision_event", "decision_event.valid.json"),
             ("escalation", "escalation.valid.json"),
+            ("control_request", "control_request.valid.json"),
         ],
     )
     def test_valid_fixtures_pass(self, doc_type: str, fixture_file: str):
@@ -46,6 +47,8 @@ class TestInvalidFixtures:
             ("project_descriptor", "project_descriptor.missing_control_ref.json", "'control_ref' is a required property"),
             ("decision_event", "decision_event.missing_version.json", "'schema_version' is a required property"),
             ("escalation", "escalation.missing_required_decision.json", "'required_decision' is a required property"),
+            ("control_request", "control_request.force_pass.json", "is not one of"),
+            ("control_request", "control_request.missing_type.json", "'request_type' is a required property"),
         ],
     )
     def test_invalid_fixtures_rejected(

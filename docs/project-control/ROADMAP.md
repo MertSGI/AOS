@@ -93,14 +93,14 @@ E2-equivalent:
 
 ### Work
 - Read canonical project state.
-- Call GPT-5.6 Sol planner with bounded structured output.
-- Validate planner output against policy.
-- Compare suggested next action against known LARİ control-plane next action.
-- Store decision trace without changing LARİ state.
+- Call a bounded PlannerProvider with deterministic structured output.
+- Use deterministic provider routing: GPT-5.6 Sol high-consequence reference baseline; qualified free/lower-cost providers allowed for R0 shadow evaluation after benchmarking.
+- Validate planner output against the same deterministic planner decision schema regardless of provider.
+- Compare suggested next action against the independently pinned exact canonical control revision.
+- Store decision trace without changing product state.
 
 ### LARİ proof case
-Expected current focus:
-`Package/Customer Customization` against frozen Core RC baseline.
+The LARI proof case is evaluated against an independently pinned exact canonical control revision and shadow expectation. Project progress must not require editing AOS core roadmap text.
 
 ### Exit criteria
 - repeated shadow decisions remain within accepted roadmap,
@@ -121,7 +121,10 @@ Expected current focus:
 - worker adapter,
 - command timeout,
 - structured output capture,
-- max retry policy.
+- max retry policy,
+- Human Control Ingress consumption,
+- task control-generation / control-epoch pinning,
+- stale-control task invalidation.
 
 ### First eligible task class
 R1 isolated implementation only.
@@ -136,7 +139,8 @@ R1 isolated implementation only.
 ### Exit criteria
 - worker cannot legitimately mutate outside task scope,
 - exact base revision is recorded,
-- abandoned work is recoverable.
+- abandoned work is recoverable,
+- tasks fail closed when operating against stale control authority.
 
 ---
 

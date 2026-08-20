@@ -26,6 +26,8 @@ TYPE_TO_SCHEMA = {
     "shadow_trace": "shadow_trace.schema.json",
     "canonical_project_snapshot": "canonical_project_snapshot.schema.json",
     "shadow_expectation": "shadow_expectation.schema.json",
+    "planner_routing_policy": "planner_routing_policy.schema.json",
+    "control_request": "control_request.schema.json",
 }
 
 

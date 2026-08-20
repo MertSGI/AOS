@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Begin AOS-2 Shadow Orchestrator according to the existing ROADMAP.",
+    "next_action": "Complete AOS-2 provider-agnostic free-first shadow benchmark preparation and independent expectation refresh.",
     "implementation_started": true,
     "accepted_gates": [
         {

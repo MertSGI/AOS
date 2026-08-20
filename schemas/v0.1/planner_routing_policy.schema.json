@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/planner_routing_policy.schema.json",
+  "title": "AOS Planner Routing Policy Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "routing_mode",
+    "allow_paid_fallback",
+    "allow_provider_fallback",
+    "data_classification",
+    "risk_routes",
+    "providers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "routing_mode": {
+      "type": "string",
+      "enum": ["DETERMINISTIC", "BENCHMARK"]
+    },
+    "allow_paid_fallback": {
+      "type": "boolean"
+    },
+    "allow_provider_fallback": {
+      "type": "boolean"
+    },
+    "data_classification": {
+      "type": "string",
+      "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII_SENSITIVE"]
+    },
+    "risk_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^R[0-9]+$": {
+          "type": "object",
+          "required": ["preferred_providers"],
+          "additionalProperties": false,
+          "properties": {
+            "preferred_providers": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            }
+          }
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z0-9_-]+$": {
+          "type": "object",
+          "required": [
+            "provider_id",
+            "model_id",
+            "billing_class",
+            "structured_output",
+            "cloud_local",
+            "enabled",
+            "allowed_data_classifications"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "provider_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "credential_env_var": {
+              "type": ["string", "null"]
+            },
+            "billing_class": {
+              "type": "string",
+              "enum": ["FREE_TIER", "PAID", "LOCAL", "UNKNOWN"]
+            },
+            "structured_output": {
+              "type": "boolean"
+            },
+            "cloud_local": {
+              "type": "string",
+              "enum": ["CLOUD", "LOCAL"]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowed_data_classifications": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII_SENSITIVE"]
+              },
+              "minItems": 1
+            }
+          }
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

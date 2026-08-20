@@ -104,6 +104,24 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "provider_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "billing_class": {
+      "type": "string",
+      "enum": ["FREE_TIER", "PAID", "LOCAL", "UNKNOWN"]
+    },
+    "data_classification": {
+      "type": "string",
+      "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII_SENSITIVE"]
+    },
+    "selection_reason": {
+      "type": "string"
+    },
+    "fallback_used": {
+      "type": "boolean"
+    },
     "extensions": {
       "type": "object",
       "additionalProperties": true
