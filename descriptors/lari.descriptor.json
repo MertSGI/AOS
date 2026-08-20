@@ -12,6 +12,14 @@
     "ai_handoff": "docs/project-control/AI_HANDOFF.md",
     "update_protocol": "docs/project-control/UPDATE_PROTOCOL.md"
   },
+  "projection": {
+    "current_status_pointer": "/current_status",
+    "current_milestone_pointer": "/current_milestone",
+    "canonical_next_action_pointer": "/next_action",
+    "target_base_sha_pointer": "/canonical_refs/package_customization_baseline/sha",
+    "target_base_sha_required": true,
+    "require_target_base_in_next_action": true
+  },
   "authority": {
     "production_mutation": "human_required",
     "roadmap_change": "human_required",

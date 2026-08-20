@@ -9,9 +9,11 @@
     "source_sha",
     "selected_milestone",
     "selected_next_action",
+    "target_base_sha",
     "risk_class",
     "mutation_intent",
     "ambiguity_detected",
+    "ambiguity_reasons",
     "human_gate_required",
     "rationale",
     "disposition"
@@ -39,8 +41,7 @@
       "minLength": 1
     },
     "target_base_sha": {
-      "type": ["string", "null"],
-      "pattern": "^[0-9a-f]{40}$"
+      "type": ["string", "null"]
     },
     "risk_class": {
       "type": "string",
@@ -67,10 +68,6 @@
     "disposition": {
       "type": "string",
       "enum": ["SHADOW_ACCEPT", "HOLD"]
-    },
-    "extensions": {
-      "type": "object",
-      "additionalProperties": true
     }
   }
 }

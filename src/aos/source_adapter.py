@@ -5,7 +5,32 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.request
-from typing import Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
+
+def resolve_json_pointer(doc: Any, pointer: str) -> Any:
+    """Resolve standard JSON Pointer (RFC 6901) against parsed JSON data."""
+    if not pointer or pointer == "/":
+        return doc
+    if not pointer.startswith("/"):
+        raise ValueError(f"Invalid JSON Pointer '{pointer}': must start with '/'")
+
+    parts = pointer[1:].split("/")
+    curr = doc
+    for part in parts:
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(curr, dict):
+            if part not in curr:
+                return None
+            curr = curr[part]
+        elif isinstance(curr, list):
+            try:
+                idx = int(part)
+                curr = curr[idx]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return curr
 
 class ProjectSourceAdapter:
     """Read-only GitHub canonical project source adapter."""
@@ -57,9 +82,10 @@ class ProjectSourceAdapter:
         project_id: str,
         exact_sha: str,
         raw_contents: Dict[str, str],
-        file_hashes: Dict[str, str]
+        file_hashes: Dict[str, str],
+        projection_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Extract and normalize external canonical control state into a canonical project snapshot."""
+        """Declaratively extract and normalize external control state using JSON Pointers."""
         state_raw = raw_contents.get("state")
         if not state_raw:
             raise ValueError("Canonical state file missing from fetched context")
@@ -69,25 +95,41 @@ class ProjectSourceAdapter:
         except Exception as e:
             raise ValueError(f"Failed to parse canonical STATE.json: {e}") from e
 
-        current_milestone = state_data.get("current_milestone")
-        canonical_next_action = state_data.get("next_action")
+        # Default pointers if no projection config provided in descriptor
+        p_config = projection_config or {
+            "current_status_pointer": "/current_status",
+            "current_milestone_pointer": "/current_milestone",
+            "canonical_next_action_pointer": "/next_action",
+            "target_base_sha_pointer": None,
+            "target_base_sha_required": False
+        }
+
+        status_ptr = p_config.get("current_status_pointer", "/current_status")
+        milestone_ptr = p_config.get("current_milestone_pointer", "/current_milestone")
+        next_action_ptr = p_config.get("canonical_next_action_pointer", "/next_action")
+        target_sha_ptr = p_config.get("target_base_sha_pointer")
+        target_sha_required = p_config.get("target_base_sha_required", False)
+
+        current_status = resolve_json_pointer(state_data, status_ptr) or resolve_json_pointer(state_data, "/status")
+        current_milestone = resolve_json_pointer(state_data, milestone_ptr)
+        canonical_next_action = resolve_json_pointer(state_data, next_action_ptr)
+
+        target_base_sha = None
+        if target_sha_ptr:
+            target_base_sha = resolve_json_pointer(state_data, target_sha_ptr)
 
         ambiguity_reasons = []
         if not current_milestone:
-            ambiguity_reasons.append("Missing required 'current_milestone' in canonical state")
+            ambiguity_reasons.append(f"Missing required milestone at pointer '{milestone_ptr}'")
         if not canonical_next_action:
-            ambiguity_reasons.append("Missing required 'next_action' in canonical state")
+            ambiguity_reasons.append(f"Missing required next action at pointer '{next_action_ptr}'")
+        if target_sha_required and not target_base_sha:
+            ambiguity_reasons.append(f"Missing required target base SHA at pointer '{target_sha_ptr}'")
 
-        # Extract target_base_sha if present (e.g., LARI core_rc4)
-        target_base_sha = None
-        if "canonical_refs" in state_data and isinstance(state_data["canonical_refs"], dict):
-            core_rc4 = state_data["canonical_refs"].get("core_rc4")
-            if isinstance(core_rc4, dict) and "sha" in core_rc4:
-                target_base_sha = core_rc4["sha"]
-
-        # Fallback to lari_pilot core_rc4_sha if present
-        if not target_base_sha and "lari_pilot" in state_data and isinstance(state_data["lari_pilot"], dict):
-            target_base_sha = state_data["lari_pilot"].get("core_rc4_sha")
+        # Check target base in next action requirement if configured
+        if p_config.get("require_target_base_in_next_action") and target_base_sha and canonical_next_action:
+            if target_base_sha not in str(canonical_next_action):
+                ambiguity_reasons.append(f"Canonical next action does not contain target base SHA '{target_base_sha}'")
 
         snapshot = {
             "schema_version": "0.1.0",
@@ -95,10 +137,10 @@ class ProjectSourceAdapter:
             "repository": self.repository,
             "source_ref": self.control_ref,
             "source_sha": exact_sha,
-            "current_status": state_data.get("current_status") or state_data.get("status"),
-            "current_milestone": current_milestone or "UNKNOWN_MILESTONE",
-            "canonical_next_action": canonical_next_action or "UNKNOWN_NEXT_ACTION",
-            "target_base_sha": target_base_sha,
+            "current_status": str(current_status) if current_status else None,
+            "current_milestone": str(current_milestone) if current_milestone else "UNKNOWN_MILESTONE",
+            "canonical_next_action": str(canonical_next_action) if canonical_next_action else "UNKNOWN_NEXT_ACTION",
+            "target_base_sha": str(target_base_sha) if target_base_sha else None,
             "has_ambiguity": len(ambiguity_reasons) > 0,
             "ambiguity_reasons": ambiguity_reasons,
             "input_file_hashes": file_hashes

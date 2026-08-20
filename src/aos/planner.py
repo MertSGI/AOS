@@ -32,21 +32,38 @@ class OpenAIPlannerProvider:
             "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
         )
 
-        response = client.responses.create(
-            model=self.model,
-            instructions=instructions,
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "planner_decision",
-                    "strict": True,
-                    "schema": schema
+        try:
+            response = client.responses.create(
+                model=self.model,
+                instructions=instructions,
+                input=prompt,
+                store=False,
+                reasoning={"effort": "medium"},
+                max_output_tokens=1000,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "planner_decision",
+                        "strict": True,
+                        "schema": schema
+                    }
                 }
-            }
-        )
+            )
+        except Exception as e:
+            # Taxonomy mapping for OpenAI exceptions
+            err_name = e.__class__.__name__
+            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError)):
+                raise ConnectionError(f"OpenAI transient error ({err_name}): {e}") from e
+            elif isinstance(e, openai.RateLimitError):
+                raise ConnectionError(f"OpenAI rate limit ({err_name}): {e}") from e
+            elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
+                raise PermissionError(f"OpenAI auth/permission failure ({err_name}): {e}") from e
+            elif isinstance(e, openai.BadRequestError):
+                raise ValueError(f"OpenAI invalid request/schema ({err_name}): {e}") from e
+            else:
+                raise RuntimeError(f"OpenAI provider failure ({err_name}): {e}") from e
 
-        # Extract output text content
+        # Extract output text content and check refusal
         content_str = None
         if hasattr(response, "output_text") and response.output_text:
             content_str = response.output_text
@@ -54,6 +71,8 @@ class OpenAIPlannerProvider:
             for item in response.output:
                 if getattr(item, "type", None) == "message" and hasattr(item, "content"):
                     for part in item.content:
+                        if getattr(part, "type", None) == "refusal":
+                            raise ValueError(f"OpenAI model refused response: {getattr(part, 'refusal', '')}")
                         if getattr(part, "type", None) == "text":
                             content_str = getattr(part, "text", None)
                             if content_str:
@@ -62,15 +81,25 @@ class OpenAIPlannerProvider:
         if not content_str:
             raise ValueError("OpenAI Responses API returned empty content")
 
-        parsed_decision = json.loads(content_str)
+        try:
+            parsed_decision = json.loads(content_str)
+        except Exception as e:
+            raise ValueError(f"OpenAI model output is not valid JSON: {e}") from e
+
         response_id = getattr(response, "id", None)
 
         usage_data = None
         if hasattr(response, "usage") and response.usage:
             u = response.usage
+            cached_tokens = 0
+            if hasattr(u, "input_tokens_details") and u.input_tokens_details:
+                cached_tokens = getattr(u.input_tokens_details, "cached_tokens", 0)
+            elif hasattr(u, "prompt_tokens_details") and u.prompt_tokens_details:
+                cached_tokens = getattr(u.prompt_tokens_details, "cached_tokens", 0)
+
             usage_data = {
                 "input_tokens": getattr(u, "input_tokens", getattr(u, "prompt_tokens", 0)),
-                "cached_input_tokens": getattr(u, "cached_input_tokens", 0),
+                "cached_input_tokens": cached_tokens,
                 "output_tokens": getattr(u, "output_tokens", getattr(u, "completion_tokens", 0)),
                 "total_tokens": getattr(u, "total_tokens", 0)
             }
@@ -81,14 +110,19 @@ class FakePlannerProvider:
     def __init__(
         self,
         decision_override: Dict[str, Any] | None = None,
-        transient_failures_count: int = 0
+        transient_failures_count: int = 0,
+        exception_to_raise: Exception | None = None
     ):
         self.decision_override = decision_override
         self.transient_failures_count = transient_failures_count
+        self.exception_to_raise = exception_to_raise
         self.attempts = 0
 
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
         self.attempts += 1
+        if self.exception_to_raise:
+            raise self.exception_to_raise
+
         if self.attempts <= self.transient_failures_count:
             raise ConnectionError(f"Transient network error on attempt {self.attempts}")
 
@@ -100,10 +134,10 @@ class FakePlannerProvider:
                 "total_tokens": 195
             }
 
-        source_sha = "262f7ed87d71419ec469234d4b611c2556069f2d"
-        milestone = "Package/Customer Customization"
-        next_act = "Audit Core extension points and define package/customer customization contract against frozen Core RC baseline (e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a)"
-        target_base = "e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a"
+        source_sha = "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
+        milestone = "LARİ Clinic"
+        next_act = "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601."
+        target_base = "65a53427f52c21e60aa8f92e02a17d693a201601"
 
         for line in prompt.splitlines():
             if line.startswith("RESOLVED SOURCE SHA:"):
@@ -113,7 +147,8 @@ class FakePlannerProvider:
             elif line.startswith("CANONICAL NEXT ACTION:"):
                 next_act = line.split(":", 1)[1].strip()
             elif line.startswith("TARGET BASE SHA:"):
-                target_base = line.split(":", 1)[1].strip()
+                raw_tb = line.split(":", 1)[1].strip()
+                target_base = None if raw_tb == "NONE" else raw_tb
 
         decision = {
             "schema_version": "0.1.0",

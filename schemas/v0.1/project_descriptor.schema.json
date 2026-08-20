@@ -47,6 +47,23 @@
         "update_protocol": { "type": "string" }
       }
     },
+    "projection": {
+      "type": "object",
+      "required": [
+        "current_status_pointer",
+        "current_milestone_pointer",
+        "canonical_next_action_pointer"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "current_status_pointer": { "type": "string", "minLength": 1 },
+        "current_milestone_pointer": { "type": "string", "minLength": 1 },
+        "canonical_next_action_pointer": { "type": "string", "minLength": 1 },
+        "target_base_sha_pointer": { "type": "string" },
+        "target_base_sha_required": { "type": "boolean" },
+        "require_target_base_in_next_action": { "type": "boolean" }
+      }
+    },
     "authority": {
       "type": "object",
       "required": ["production_mutation", "roadmap_change", "destructive_data"],

@@ -20,12 +20,14 @@ RUNTIME_TRACE_DIR = Path(__file__).resolve().parent.parent.parent / ".aos-runtim
 
 def run_shadow_orchestration(
     descriptor_path: str,
+    expectation_path: Optional[str] = None,
     repeat: int = 1,
     provider_override: Optional[PlannerProvider] = None,
     trace_dir_override: Optional[Path] = None,
-    max_network_retries: int = 1
+    max_network_retries: int = 1,
+    adapter_override: Optional[ProjectSourceAdapter] = None
 ) -> Tuple[str, List[Dict[str, Any]], int]:
-    """Execute shadow orchestration loop with provider retry, fail-closed trace and snapshot validation."""
+    """Execute shadow orchestration loop with expectation contract check, provider retry, fail-closed trace and snapshot validation."""
     # 1. Validate descriptor
     res, code = validate_file("project_descriptor", descriptor_path)
     if not res.is_valid:
@@ -41,7 +43,7 @@ def run_shadow_orchestration(
     repository = desc["repository"]
     control_ref = desc["control_ref"]
 
-    adapter = ProjectSourceAdapter(repository=repository, control_ref=control_ref)
+    adapter = adapter_override or ProjectSourceAdapter(repository=repository, control_ref=control_ref)
 
     # 2. Pin source SHA
     try:
@@ -59,8 +61,9 @@ def run_shadow_orchestration(
         return "PROVIDER_UNAVAILABLE", [], 4
 
     # 4. Build normalized canonical project snapshot and validate
+    projection_cfg = desc.get("projection")
     try:
-        snapshot = adapter.build_normalized_snapshot(project_id, pinned_sha, raw_contents, file_hashes)
+        snapshot = adapter.build_normalized_snapshot(project_id, pinned_sha, raw_contents, file_hashes, projection_cfg)
     except Exception as e:
         print(f"INVALID_CANONICAL_STATE: Failed to build normalized project snapshot: {e}", file=sys.stderr)
         return "INVALID_CANONICAL_STATE", [], 5
@@ -72,7 +75,41 @@ def run_shadow_orchestration(
             print(f"  - {e}", file=sys.stderr)
         return "INVALID_CANONICAL_STATE", [], 5
 
-    # 5. Instantiate planner provider
+    # 5. Optional Shadow Expectation Contract Check
+    expectation_data = None
+    if expectation_path:
+        exp_res, exp_code = validate_file("shadow_expectation", expectation_path)
+        if not exp_res.is_valid:
+            print(f"INVALID_CANONICAL_STATE: Shadow expectation file '{expectation_path}' invalid:", file=sys.stderr)
+            for e in exp_res.errors:
+                print(f"  - {e}", file=sys.stderr)
+            return "INVALID_CANONICAL_STATE", [], 5
+
+        with open(expectation_path, "r", encoding="utf-8") as ef:
+            expectation_data = json.load(ef)
+
+        # Check expectation against snapshot
+        mismatches = []
+        if expectation_data["project_id"] != snapshot["project_id"]:
+            mismatches.append(f"project_id '{expectation_data['project_id']}' != '{snapshot['project_id']}'")
+        if expectation_data["expected_source_ref"] != snapshot["source_ref"]:
+            mismatches.append(f"source_ref '{expectation_data['expected_source_ref']}' != '{snapshot['source_ref']}'")
+        if expectation_data["expected_source_sha"] != snapshot["source_sha"]:
+            mismatches.append(f"source_sha '{expectation_data['expected_source_sha']}' != '{snapshot['source_sha']}'")
+        if expectation_data["expected_milestone"] != snapshot["current_milestone"]:
+            mismatches.append(f"milestone '{expectation_data['expected_milestone']}' != '{snapshot['current_milestone']}'")
+        if expectation_data["expected_canonical_next_action"] != snapshot["canonical_next_action"]:
+            mismatches.append(f"next_action '{expectation_data['expected_canonical_next_action']}' != '{snapshot['canonical_next_action']}'")
+        if expectation_data.get("expected_target_base_sha") != snapshot.get("target_base_sha"):
+            mismatches.append(f"target_base_sha '{expectation_data.get('expected_target_base_sha')}' != '{snapshot.get('target_base_sha')}'")
+
+        if mismatches:
+            print(f"STALE_EXPECTATION: Live canonical snapshot drifted from expectation:", file=sys.stderr)
+            for m in mismatches:
+                print(f"  - {m}", file=sys.stderr)
+            return "STALE_EXPECTATION", [], 1
+
+    # 6. Instantiate planner provider
     if provider_override is not None:
         provider = provider_override
         provider_name = provider.__class__.__name__
@@ -125,7 +162,6 @@ def run_shadow_orchestration(
                 return "PROVIDER_CREDENTIAL_REQUIRED", traces, 3
             except Exception as e:
                 last_exception = e
-                # Transient network retry check (e.g. ConnectionError, TimeoutError, OSError)
                 if isinstance(e, (ConnectionError, TimeoutError, OSError)) and attempt < max_network_retries:
                     continue
                 else:
@@ -197,10 +233,11 @@ def run_shadow_orchestration(
 def main(args: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="AOS Shadow Orchestrator CLI")
     parser.add_argument("--project", required=True, help="Path to project descriptor JSON file")
+    parser.add_argument("--expectation", help="Optional path to shadow expectation JSON file")
     parser.add_argument("--repeat", type=int, default=1, help="Number of shadow decisions to evaluate")
 
     parsed = parser.parse_args(args)
-    disp, traces, code = run_shadow_orchestration(parsed.project, repeat=parsed.repeat)
+    disp, traces, code = run_shadow_orchestration(parsed.project, expectation_path=parsed.expectation, repeat=parsed.repeat)
 
     print(f"DISPOSITION: {disp}")
     print(f"EXECUTED TRACES: {len(traces)}")

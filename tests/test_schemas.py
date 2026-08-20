@@ -145,6 +145,7 @@ class TestSchemaMetaValidation:
         "planner_decision.schema.json",
         "shadow_trace.schema.json",
         "canonical_project_snapshot.schema.json",
+        "shadow_expectation.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
@@ -188,3 +189,40 @@ class TestSchemaMetaValidation:
             assert schema_id not in ids, f"Duplicate $id '{schema_id}' found in {schema_file}"
             ids.add(schema_id)
         assert len(ids) == len(self.ALL_SCHEMAS)
+
+    def test_openai_strict_structured_output_compatibility(self):
+        """Prove planner_decision.schema.json satisfies OpenAI strict Structured Outputs requirements."""
+        import json
+        from jsonschema import Draft202012Validator
+        from aos.validate import SCHEMA_DIR
+
+        path = SCHEMA_DIR / "planner_decision.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+
+        Draft202012Validator.check_schema(schema)
+        assert schema.get("type") == "object"
+        assert schema.get("additionalProperties") is False
+
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        # Every property MUST be listed in required
+        for prop_name in properties.keys():
+            assert prop_name in required, f"Property '{prop_name}' must be listed in required for OpenAI strict mode"
+
+        # Check nested objects recursively
+        def check_node(node, name):
+            if isinstance(node, dict):
+                if node.get("type") == "object" or "properties" in node:
+                    assert node.get("additionalProperties") is False, f"Object node '{name}' must have additionalProperties=false"
+                    node_props = node.get("properties", {})
+                    node_req = set(node.get("required", []))
+                    for k in node_props.keys():
+                        assert k in node_req, f"Nested property '{k}' in '{name}' must be listed in required"
+                    for k, v in node_props.items():
+                        check_node(v, f"{name}.{k}")
+                elif node.get("type") == "array" and "items" in node:
+                    check_node(node["items"], f"{name}[items]")
+
+        for prop_name, prop_val in properties.items():
+            check_node(prop_val, prop_name)
