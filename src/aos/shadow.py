@@ -11,7 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from aos.planner import FakePlannerProvider, OpenAIPlannerProvider, PlannerProvider
+from aos.planner import (
+    FakePlannerProvider,
+    OpenAIPlannerProvider,
+    PlannerContractError,
+    PlannerCredentialError,
+    PlannerError,
+    PlannerProvider,
+    PlannerTransientError,
+)
 from aos.policy import PolicyEngine
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import load_schema, validate_document, validate_file
@@ -146,7 +154,6 @@ def run_shadow_orchestration(
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(repeat):
-        # Provider evaluation with max 1 transient network retry
         decision_data = None
         resp_id = None
         usage_data = None
@@ -157,18 +164,24 @@ def run_shadow_orchestration(
                 decision_data, resp_id, usage_data = provider.generate_plan(prompt, planner_schema)
                 last_exception = None
                 break
-            except PermissionError as pe:
+            except (PlannerCredentialError, PermissionError) as pe:
                 print(f"PROVIDER_CREDENTIAL_REQUIRED: {pe}", file=sys.stderr)
                 return "PROVIDER_CREDENTIAL_REQUIRED", traces, 3
-            except Exception as e:
-                last_exception = e
-                if isinstance(e, (ConnectionError, TimeoutError, OSError)) and attempt < max_network_retries:
+            except PlannerContractError as pce:
+                print(f"HOLD: Planner contract failure: {pce}", file=sys.stderr)
+                return "HOLD", traces, 1
+            except (PlannerTransientError, ConnectionError, TimeoutError, OSError) as te:
+                last_exception = te
+                if attempt < max_network_retries:
                     continue
                 else:
                     break
+            except Exception as unk:
+                print(f"HOLD: Unknown provider failure: {unk}", file=sys.stderr)
+                return "HOLD", traces, 1
 
         if last_exception is not None or decision_data is None:
-            print(f"PROVIDER_UNAVAILABLE: Planner evaluation failed: {last_exception}", file=sys.stderr)
+            print(f"PROVIDER_UNAVAILABLE: Planner transient evaluation failed after retries: {last_exception}", file=sys.stderr)
             return "PROVIDER_UNAVAILABLE", traces, 4
 
         # Check stale revision after batch step (re-resolution failure MUST fail closed)

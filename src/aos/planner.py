@@ -6,6 +6,22 @@ import json
 import os
 from typing import Any, Dict, Protocol, Tuple
 
+class PlannerError(Exception):
+    """Base internal planner exception."""
+    pass
+
+class PlannerTransientError(PlannerError):
+    """Transient network/API error eligible for retry."""
+    pass
+
+class PlannerCredentialError(PlannerError):
+    """Missing or invalid credential error."""
+    pass
+
+class PlannerContractError(PlannerError):
+    """Schema, model refusal, incomplete response, or semantic contract failure."""
+    pass
+
 class PlannerProvider(Protocol):
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
         ...
@@ -17,13 +33,13 @@ class OpenAIPlannerProvider:
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise PermissionError("OPENAI_API_KEY environment variable is missing")
+            raise PlannerCredentialError("OPENAI_API_KEY environment variable is missing")
 
         import openai
         client = openai.OpenAI(api_key=api_key)
 
         if not hasattr(client, "responses") or not callable(getattr(client.responses, "create", None)):
-            raise RuntimeError("OpenAI Responses API (client.responses.create) is unavailable in current SDK")
+            raise PlannerContractError("OpenAI Responses API (client.responses.create) is unavailable in current SDK")
 
         instructions = (
             "You are the AOS Shadow Planner. Your task is to evaluate canonical project control "
@@ -50,18 +66,21 @@ class OpenAIPlannerProvider:
                 }
             )
         except Exception as e:
-            # Taxonomy mapping for OpenAI exceptions
             err_name = e.__class__.__name__
-            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError)):
-                raise ConnectionError(f"OpenAI transient error ({err_name}): {e}") from e
-            elif isinstance(e, openai.RateLimitError):
-                raise ConnectionError(f"OpenAI rate limit ({err_name}): {e}") from e
+            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)):
+                raise PlannerTransientError(f"OpenAI transient error ({err_name}): {e}") from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
-                raise PermissionError(f"OpenAI auth/permission failure ({err_name}): {e}") from e
+                raise PlannerCredentialError(f"OpenAI auth/permission failure ({err_name}): {e}") from e
             elif isinstance(e, openai.BadRequestError):
-                raise ValueError(f"OpenAI invalid request/schema ({err_name}): {e}") from e
+                raise PlannerContractError(f"OpenAI invalid request/schema ({err_name}): {e}") from e
             else:
-                raise RuntimeError(f"OpenAI provider failure ({err_name}): {e}") from e
+                raise PlannerContractError(f"OpenAI provider contract failure ({err_name}): {e}") from e
+
+        # Inspect Responses API completion status
+        status = getattr(response, "status", None)
+        if status and status not in ("completed", "complete"):
+            inc_details = getattr(response, "incomplete_details", None)
+            raise PlannerContractError(f"OpenAI response status '{status}' incomplete: {inc_details}")
 
         # Extract output text content and check refusal
         content_str = None
@@ -72,19 +91,19 @@ class OpenAIPlannerProvider:
                 if getattr(item, "type", None) == "message" and hasattr(item, "content"):
                     for part in item.content:
                         if getattr(part, "type", None) == "refusal":
-                            raise ValueError(f"OpenAI model refused response: {getattr(part, 'refusal', '')}")
+                            raise PlannerContractError(f"OpenAI model refused response: {getattr(part, 'refusal', '')}")
                         if getattr(part, "type", None) == "text":
                             content_str = getattr(part, "text", None)
                             if content_str:
                                 break
 
         if not content_str:
-            raise ValueError("OpenAI Responses API returned empty content")
+            raise PlannerContractError("OpenAI Responses API returned empty content")
 
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise ValueError(f"OpenAI model output is not valid JSON: {e}") from e
+            raise PlannerContractError(f"OpenAI model output is not valid JSON: {e}") from e
 
         response_id = getattr(response, "id", None)
 
@@ -124,7 +143,7 @@ class FakePlannerProvider:
             raise self.exception_to_raise
 
         if self.attempts <= self.transient_failures_count:
-            raise ConnectionError(f"Transient network error on attempt {self.attempts}")
+            raise PlannerTransientError(f"Transient network error on attempt {self.attempts}")
 
         if self.decision_override:
             return self.decision_override, "fake-response-id-001", {

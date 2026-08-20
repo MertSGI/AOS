@@ -30,3 +30,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not live_read_only'"
+markers = [
+    "live_read_only: mark test as requiring live GitHub network access"
+]

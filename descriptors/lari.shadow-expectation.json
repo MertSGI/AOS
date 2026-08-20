@@ -6,6 +6,6 @@
   "expected_milestone": "LARİ Clinic",
   "expected_canonical_next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
   "expected_target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
-  "created_at": "2026-08-20T21:58:00Z",
-  "verifier_identity": "Independent-Verifier-Cycle-2"
+  "created_at": "2026-08-20T19:10:44Z",
+  "verifier_identity": "GPT-5.6 Sol independent verifier"
 }
