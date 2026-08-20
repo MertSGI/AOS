@@ -22,6 +22,8 @@ TYPE_TO_SCHEMA = {
     "evidence": "evidence.schema.json",
     "decision_event": "decision_event.schema.json",
     "escalation": "escalation.schema.json",
+    "planner_decision": "planner_decision.schema.json",
+    "shadow_trace": "shadow_trace.schema.json",
 }
 
 

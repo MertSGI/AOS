@@ -3,12 +3,14 @@
   "project_id": "lari",
   "repository": "MertSGI/Randapp-main",
   "control_ref": "control/lari-project-control-plane",
-  "description": "LARİ Clinic & Health Tourism Platform",
+  "description": "LARİ Clinic & Health Tourism Platform shadow descriptor",
   "control": {
     "state": "docs/project-control/STATE.json",
     "decisions": "docs/project-control/DECISIONS.md",
     "evidence": "docs/project-control/EVIDENCE.jsonl",
-    "roadmap": "docs/project-control/ROADMAP_12W.md"
+    "roadmap": "docs/project-control/ROADMAP_12W.md",
+    "ai_handoff": "docs/project-control/AI_HANDOFF.md",
+    "update_protocol": "docs/project-control/UPDATE_PROTOCOL.md"
   },
   "authority": {
     "production_mutation": "human_required",

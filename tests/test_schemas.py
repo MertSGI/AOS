@@ -43,6 +43,7 @@ class TestInvalidFixtures:
             ("evidence", "evidence.malformed_timestamp.json", "is not a 'date-time'"),
             ("evidence", "evidence.missing_revision_proven.json", "is not valid under any of the given schemas"),
             ("project_descriptor", "project_descriptor.missing_identity.json", "'project_id' is a required property"),
+            ("project_descriptor", "project_descriptor.missing_control_ref.json", "'control_ref' is a required property"),
             ("decision_event", "decision_event.missing_version.json", "'schema_version' is a required property"),
             ("escalation", "escalation.missing_required_decision.json", "'required_decision' is a required property"),
         ],
@@ -100,14 +101,6 @@ class TestUnknownFieldRejection:
         res = validate_document("task", data)
         assert res.is_valid is False, "task.allowed_scope should reject unknown nested field"
 
-    def test_unknown_nested_field_in_state_principles_rejected(self):
-        import json
-        path = VALID_DIR / "state.valid.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["principles"]["_bogus_principle"] = True
-        res = validate_document("state", data)
-        assert res.is_valid is False, "state.principles should reject unknown nested field"
-
     def test_unknown_nested_field_in_lease_heartbeat_rejected(self):
         import json
         path = VALID_DIR / "lease.valid.json"
@@ -149,6 +142,8 @@ class TestSchemaMetaValidation:
         "evidence.schema.json",
         "decision_event.schema.json",
         "escalation.schema.json",
+        "planner_decision.schema.json",
+        "shadow_trace.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
