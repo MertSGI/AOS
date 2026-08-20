@@ -51,3 +51,56 @@ class ProjectSourceAdapter:
             contents[key] = content
             hashes[path] = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return contents, hashes
+
+    def build_normalized_snapshot(
+        self,
+        project_id: str,
+        exact_sha: str,
+        raw_contents: Dict[str, str],
+        file_hashes: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Extract and normalize external canonical control state into a canonical project snapshot."""
+        state_raw = raw_contents.get("state")
+        if not state_raw:
+            raise ValueError("Canonical state file missing from fetched context")
+
+        try:
+            state_data = json.loads(state_raw)
+        except Exception as e:
+            raise ValueError(f"Failed to parse canonical STATE.json: {e}") from e
+
+        current_milestone = state_data.get("current_milestone")
+        canonical_next_action = state_data.get("next_action")
+
+        ambiguity_reasons = []
+        if not current_milestone:
+            ambiguity_reasons.append("Missing required 'current_milestone' in canonical state")
+        if not canonical_next_action:
+            ambiguity_reasons.append("Missing required 'next_action' in canonical state")
+
+        # Extract target_base_sha if present (e.g., LARI core_rc4)
+        target_base_sha = None
+        if "canonical_refs" in state_data and isinstance(state_data["canonical_refs"], dict):
+            core_rc4 = state_data["canonical_refs"].get("core_rc4")
+            if isinstance(core_rc4, dict) and "sha" in core_rc4:
+                target_base_sha = core_rc4["sha"]
+
+        # Fallback to lari_pilot core_rc4_sha if present
+        if not target_base_sha and "lari_pilot" in state_data and isinstance(state_data["lari_pilot"], dict):
+            target_base_sha = state_data["lari_pilot"].get("core_rc4_sha")
+
+        snapshot = {
+            "schema_version": "0.1.0",
+            "project_id": project_id,
+            "repository": self.repository,
+            "source_ref": self.control_ref,
+            "source_sha": exact_sha,
+            "current_status": state_data.get("current_status") or state_data.get("status"),
+            "current_milestone": current_milestone or "UNKNOWN_MILESTONE",
+            "canonical_next_action": canonical_next_action or "UNKNOWN_NEXT_ACTION",
+            "target_base_sha": target_base_sha,
+            "has_ambiguity": len(ambiguity_reasons) > 0,
+            "ambiguity_reasons": ambiguity_reasons,
+            "input_file_hashes": file_hashes
+        }
+        return snapshot

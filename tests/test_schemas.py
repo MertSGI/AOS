@@ -144,6 +144,7 @@ class TestSchemaMetaValidation:
         "escalation.schema.json",
         "planner_decision.schema.json",
         "shadow_trace.schema.json",
+        "canonical_project_snapshot.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)

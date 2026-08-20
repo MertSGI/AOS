@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from aos.planner import FakePlannerProvider, OpenAIPlannerProvider, PlannerProvider
 from aos.policy import PolicyEngine
 from aos.source_adapter import ProjectSourceAdapter
-from aos.validate import validate_document, validate_file
+from aos.validate import load_schema, validate_document, validate_file
 
 RUNTIME_TRACE_DIR = Path(__file__).resolve().parent.parent.parent / ".aos-runtime" / "shadow"
 
@@ -22,9 +22,10 @@ def run_shadow_orchestration(
     descriptor_path: str,
     repeat: int = 1,
     provider_override: Optional[PlannerProvider] = None,
-    trace_dir_override: Optional[Path] = None
+    trace_dir_override: Optional[Path] = None,
+    max_network_retries: int = 1
 ) -> Tuple[str, List[Dict[str, Any]], int]:
-    """Execute shadow orchestration loop."""
+    """Execute shadow orchestration loop with provider retry, fail-closed trace and snapshot validation."""
     # 1. Validate descriptor
     res, code = validate_file("project_descriptor", descriptor_path)
     if not res.is_valid:
@@ -57,22 +58,21 @@ def run_shadow_orchestration(
         print(f"PROVIDER_UNAVAILABLE: Failed to fetch canonical context: {e}", file=sys.stderr)
         return "PROVIDER_UNAVAILABLE", [], 4
 
-    # Validate state.json
-    state_str = raw_contents.get("state", "{}")
+    # 4. Build normalized canonical project snapshot and validate
     try:
-        state_data = json.loads(state_str)
+        snapshot = adapter.build_normalized_snapshot(project_id, pinned_sha, raw_contents, file_hashes)
     except Exception as e:
-        print(f"INVALID_CANONICAL_STATE: Failed to parse STATE.json: {e}", file=sys.stderr)
+        print(f"INVALID_CANONICAL_STATE: Failed to build normalized project snapshot: {e}", file=sys.stderr)
         return "INVALID_CANONICAL_STATE", [], 5
 
-    state_val = validate_document("state", state_data)
-    if not state_val.is_valid:
-        print(f"INVALID_CANONICAL_STATE: Remote STATE.json schema invalid:", file=sys.stderr)
-        for e in state_val.errors:
+    snap_val = validate_document("canonical_project_snapshot", snapshot)
+    if not snap_val.is_valid:
+        print(f"INVALID_CANONICAL_STATE: Canonical project snapshot invalid:", file=sys.stderr)
+        for e in snap_val.errors:
             print(f"  - {e}", file=sys.stderr)
         return "INVALID_CANONICAL_STATE", [], 5
 
-    # 4. Instantiate planner provider
+    # 5. Instantiate planner provider
     if provider_override is not None:
         provider = provider_override
         provider_name = provider.__class__.__name__
@@ -86,33 +86,17 @@ def run_shadow_orchestration(
         provider_name = "OpenAI"
         model_name = "gpt-5.6-sol"
 
-    load_planner_schema = validate_document("planner_decision", {
-        "schema_version": "0.1.0",
-        "project_id": project_id,
-        "source_sha": pinned_sha,
-        "selected_milestone": state_data.get("current_milestone", ""),
-        "selected_next_action": state_data.get("next_action", ""),
-        "target_base_sha": None,
-        "risk_class": "R0",
-        "mutation_intent": "NONE",
-        "ambiguity_detected": False,
-        "ambiguity_reasons": [],
-        "human_gate_required": False,
-        "rationale": "Valid test rationale",
-        "disposition": "SHADOW_ACCEPT"
-    })
-
-    from aos.validate import load_schema
     planner_schema = load_schema("planner_decision.schema.json")
 
-    # Construct bounded prompt
+    # Construct bounded prompt from normalized snapshot
     prompt = (
         f"PROJECT_ID: {project_id}\n"
         f"REPOSITORY: {repository}\n"
         f"RESOLVED SOURCE SHA: {pinned_sha}\n"
-        f"CANONICAL MILESTONE: {state_data.get('current_milestone')}\n"
-        f"CANONICAL STATUS: {state_data.get('current_status')}\n"
-        f"CANONICAL NEXT ACTION: {state_data.get('next_action')}\n\n"
+        f"CANONICAL MILESTONE: {snapshot['current_milestone']}\n"
+        f"CANONICAL STATUS: {snapshot['current_status']}\n"
+        f"CANONICAL NEXT ACTION: {snapshot['canonical_next_action']}\n"
+        f"TARGET BASE SHA: {snapshot['target_base_sha'] or 'NONE'}\n\n"
         f"DECISIONS:\n{raw_contents.get('decisions', '')[:2000]}\n\n"
         f"ROADMAP:\n{raw_contents.get('roadmap', '')[:2000]}\n"
     )
@@ -125,28 +109,45 @@ def run_shadow_orchestration(
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(repeat):
-        try:
-            decision_data, resp_id, usage_data = provider.generate_plan(prompt, planner_schema)
-        except Exception as e:
-            print(f"PROVIDER_UNAVAILABLE: Planner evaluation failed: {e}", file=sys.stderr)
+        # Provider evaluation with max 1 transient network retry
+        decision_data = None
+        resp_id = None
+        usage_data = None
+        last_exception = None
+
+        for attempt in range(1 + max_network_retries):
+            try:
+                decision_data, resp_id, usage_data = provider.generate_plan(prompt, planner_schema)
+                last_exception = None
+                break
+            except PermissionError as pe:
+                print(f"PROVIDER_CREDENTIAL_REQUIRED: {pe}", file=sys.stderr)
+                return "PROVIDER_CREDENTIAL_REQUIRED", traces, 3
+            except Exception as e:
+                last_exception = e
+                # Transient network retry check (e.g. ConnectionError, TimeoutError, OSError)
+                if isinstance(e, (ConnectionError, TimeoutError, OSError)) and attempt < max_network_retries:
+                    continue
+                else:
+                    break
+
+        if last_exception is not None or decision_data is None:
+            print(f"PROVIDER_UNAVAILABLE: Planner evaluation failed: {last_exception}", file=sys.stderr)
             return "PROVIDER_UNAVAILABLE", traces, 4
 
-        # Check stale revision after batch step
+        # Check stale revision after batch step (re-resolution failure MUST fail closed)
         try:
             re_resolved_sha = adapter.resolve_ref_to_sha()
         except Exception:
-            re_resolved_sha = pinned_sha
+            re_resolved_sha = None  # Signal re-resolution failure
 
         policy_checks, final_disp = policy_engine.evaluate(
             decision=decision_data,
             expected_project_id=project_id,
             pinned_source_sha=pinned_sha,
-            canonical_state_data=state_data,
+            canonical_snapshot=snapshot,
             re_resolved_sha=re_resolved_sha
         )
-
-        if final_disp == "HOLD":
-            overall_disposition = "HOLD"
 
         trace_id = f"TRACE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
         trace = {
@@ -173,10 +174,15 @@ def run_shadow_orchestration(
             ]
         }
 
-        # Validate trace against schema
+        # Fail closed on trace schema validation failure
         trace_val = validate_document("shadow_trace", trace)
         if not trace_val.is_valid:
-            print(f"Warning: generated shadow trace failed schema validation: {[e.message for e in trace_val.errors]}", file=sys.stderr)
+            print(f"FAIL_CLOSED: Generated shadow trace failed schema validation!", file=sys.stderr)
+            final_disp = "HOLD"
+            trace["final_disposition"] = "HOLD"
+
+        if final_disp == "HOLD":
+            overall_disposition = "HOLD"
 
         trace_path = trace_dir / f"{trace_id}.json"
         with open(trace_path, "w", encoding="utf-8") as tf:

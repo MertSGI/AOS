@@ -20,19 +20,19 @@ class PolicyCheckResult:
         }
 
 class PolicyEngine:
-    """Enforces deterministic policy checks on planner decisions."""
+    """Enforces project-independent deterministic policy checks on planner decisions."""
 
     def evaluate(
         self,
         decision: Dict[str, Any],
         expected_project_id: str,
         pinned_source_sha: str,
-        canonical_state_data: Dict[str, Any],
+        canonical_snapshot: Dict[str, Any],
         re_resolved_sha: str | None = None
     ) -> Tuple[List[PolicyCheckResult], str]:
         checks: List[PolicyCheckResult] = []
 
-        # Check 1: Schema validity
+        # Check 1: Schema validity of decision
         val_res = validate_document("planner_decision", decision)
         if not val_res.is_valid:
             err_msg = "; ".join([e.message for e in val_res.errors])
@@ -54,12 +54,13 @@ class PolicyEngine:
         else:
             checks.append(PolicyCheckResult("SOURCE_SHA_MATCH", "PASS", f"Source SHA matches pinned SHA '{pinned_source_sha}'"))
 
-        # Check 4: Stale revision defense (if re-resolved SHA provided)
-        if re_resolved_sha is not None:
-            if re_resolved_sha != pinned_source_sha:
-                checks.append(PolicyCheckResult("STALE_REVISION_DEFENSE", "FAIL", f"Source ref moved during batch: '{re_resolved_sha}' != '{pinned_source_sha}'"))
-            else:
-                checks.append(PolicyCheckResult("STALE_REVISION_DEFENSE", "PASS", "Source ref remained unchanged during decision batch"))
+        # Check 4: Stale revision defense (if re-resolution failed or moved)
+        if re_resolved_sha is None:
+            checks.append(PolicyCheckResult("SOURCE_RERESOLUTION_FAILED", "FAIL", "Failed to re-resolve source ref after decision batch"))
+        elif re_resolved_sha != pinned_source_sha:
+            checks.append(PolicyCheckResult("STALE_REVISION_DEFENSE", "FAIL", f"Source ref moved during batch: '{re_resolved_sha}' != '{pinned_source_sha}'"))
+        else:
+            checks.append(PolicyCheckResult("STALE_REVISION_DEFENSE", "PASS", "Source ref remained unchanged during decision batch"))
 
         # Check 5: Mutation intent must be NONE
         mutation_intent = decision.get("mutation_intent")
@@ -76,7 +77,7 @@ class PolicyEngine:
             checks.append(PolicyCheckResult("RISK_CLASS", "PASS", "Risk class is R0"))
 
         # Check 7: Canonical milestone exact match
-        canonical_milestone = canonical_state_data.get("current_milestone")
+        canonical_milestone = canonical_snapshot.get("current_milestone")
         dec_milestone = decision.get("selected_milestone")
         if dec_milestone != canonical_milestone:
             checks.append(PolicyCheckResult("CANONICAL_MILESTONE_MATCH", "FAIL", f"Selected milestone '{dec_milestone}' != canonical '{canonical_milestone}'"))
@@ -84,23 +85,32 @@ class PolicyEngine:
             checks.append(PolicyCheckResult("CANONICAL_MILESTONE_MATCH", "PASS", f"Selected milestone matches canonical '{canonical_milestone}'"))
 
         # Check 8: Canonical next_action exact match
-        canonical_next_action = canonical_state_data.get("next_action")
+        canonical_next_action = canonical_snapshot.get("canonical_next_action")
         dec_next_action = decision.get("selected_next_action")
         if dec_next_action != canonical_next_action:
             checks.append(PolicyCheckResult("CANONICAL_NEXT_ACTION_MATCH", "FAIL", f"Selected next_action does not match canonical next_action"))
         else:
             checks.append(PolicyCheckResult("CANONICAL_NEXT_ACTION_MATCH", "PASS", "Selected next_action matches canonical next_action"))
 
-        # Check 9: Frozen Core RC SHA match (if present in LARI canonical state)
-        lari_core_rc4_sha = canonical_state_data.get("canonical_refs", {}).get("core_rc4", {}).get("sha")
-        if lari_core_rc4_sha:
-            # Verify that next action references this exact frozen SHA if mentioned
-            if "e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a" in canonical_next_action and lari_core_rc4_sha != "e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a":
-                checks.append(PolicyCheckResult("FROZEN_BASELINE_MATCH", "FAIL", f"Frozen baseline SHA '{lari_core_rc4_sha}' != expected 'e1bb23dbbc2f1f079ec6bbc93e3cb9b83db1839a'"))
+        # Check 9: Target base SHA match (project-independent)
+        required_target_base = canonical_snapshot.get("target_base_sha")
+        dec_target_base = decision.get("target_base_sha")
+        if required_target_base:
+            if not dec_target_base:
+                checks.append(PolicyCheckResult("TARGET_BASE_SHA_MATCH", "FAIL", f"Target base SHA is required ({required_target_base}) but planner decision provided none"))
+            elif dec_target_base != required_target_base:
+                checks.append(PolicyCheckResult("TARGET_BASE_SHA_MATCH", "FAIL", f"Selected target_base_sha '{dec_target_base}' != required '{required_target_base}'"))
             else:
-                checks.append(PolicyCheckResult("FROZEN_BASELINE_MATCH", "PASS", "Frozen baseline SHA matches expected"))
+                checks.append(PolicyCheckResult("TARGET_BASE_SHA_MATCH", "PASS", f"Target base SHA matches required '{required_target_base}'"))
+        else:
+            checks.append(PolicyCheckResult("TARGET_BASE_SHA_MATCH", "PASS", "No target base SHA required for this snapshot"))
 
-        # Check 10: Ambiguity & Human Gate handling
+        # Check 10: Pre-detected Snapshot Ambiguity
+        if canonical_snapshot.get("has_ambiguity", False):
+            reasons = "; ".join(canonical_snapshot.get("ambiguity_reasons", []))
+            checks.append(PolicyCheckResult("CANONICAL_AMBIGUITY", "FAIL", f"Canonical snapshot has ambiguities: {reasons}"))
+
+        # Check 11: Ambiguity & Human Gate handling
         ambiguity_detected = decision.get("ambiguity_detected", False)
         human_gate_required = decision.get("human_gate_required", False)
         dec_disposition = decision.get("disposition")

@@ -24,6 +24,7 @@ TYPE_TO_SCHEMA = {
     "escalation": "escalation.schema.json",
     "planner_decision": "planner_decision.schema.json",
     "shadow_trace": "shadow_trace.schema.json",
+    "canonical_project_snapshot": "canonical_project_snapshot.schema.json",
 }
 
 

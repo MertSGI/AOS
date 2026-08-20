@@ -6,13 +6,18 @@
   "required": [
     "schema_version",
     "updated_at",
+    "project",
+    "status",
+    "current_gate",
+    "delivery_train",
+    "principles",
     "next_action"
   ],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
     },
     "updated_at": {
       "type": "string",
@@ -42,25 +47,13 @@
         }
       }
     },
-    "product": {
-      "type": "string"
-    },
-    "repository": {
-      "type": "string"
-    },
     "status": {
       "type": "string",
       "minLength": 1
     },
-    "current_status": {
-      "type": "string"
-    },
     "current_gate": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9_.-]+$"
-    },
-    "current_milestone": {
-      "type": "string"
+      "pattern": "^AOS-[0-9]+$"
     },
     "delivery_train": {
       "type": "array",
@@ -70,55 +63,124 @@
       },
       "minItems": 1
     },
-    "master_delivery_train": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "delivery_commitment": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "canonical_refs": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "active_workstreams": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "external_dependencies": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "non_blocking_validation": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "current_blockers": {
-      "type": "array"
-    },
-    "evidence_policy": {
-      "type": "object",
-      "additionalProperties": true
-    },
-    "reopen_policy": {
-      "type": "object",
-      "additionalProperties": true
-    },
     "principles": {
       "type": "object",
-      "additionalProperties": true
+      "required": [
+        "fail_closed",
+        "evidence_over_claims",
+        "exact_revision_required",
+        "planner_executor_verifier_separation",
+        "human_critical_authority",
+        "portable_multi_project",
+        "multi_pc_required",
+        "canonical_truth_in_version_control"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fail_closed": {
+          "type": "boolean"
+        },
+        "evidence_over_claims": {
+          "type": "boolean"
+        },
+        "exact_revision_required": {
+          "type": "boolean"
+        },
+        "planner_executor_verifier_separation": {
+          "type": "boolean"
+        },
+        "human_critical_authority": {
+          "type": "boolean"
+        },
+        "portable_multi_project": {
+          "type": "boolean"
+        },
+        "multi_pc_required": {
+          "type": "boolean"
+        },
+        "canonical_truth_in_version_control": {
+          "type": "boolean"
+        }
+      }
     },
     "initial_integrations": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {
+        "reasoning": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "baseline_model": {
+              "type": "string"
+            },
+            "api": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        },
+        "executor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        },
+        "canonical_store": {
+          "type": "string"
+        },
+        "coordination_store": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "single_machine": {
+              "type": "string"
+            },
+            "distributed_recommendation": {
+              "type": "string"
+            },
+            "canonical": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
     },
     "lari_pilot": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {
+        "integration_mode": {
+          "type": "string"
+        },
+        "verified_current_product_status": {
+          "type": "string"
+        },
+        "verified_current_milestone": {
+          "type": "string"
+        },
+        "core_rc4_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "ui_v2": {
+          "type": "string"
+        },
+        "roadmap_reset_allowed": {
+          "type": "boolean"
+        }
+      }
     },
     "human_gate_default": {
       "type": "array",
@@ -140,22 +202,34 @@
         "type": "object",
         "required": [
           "gate",
-          "status"
+          "name",
+          "status",
+          "evidence_level",
+          "closed_at"
         ],
-        "additionalProperties": true,
+        "additionalProperties": false,
         "properties": {
           "gate": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9_.-]+$"
+            "pattern": "^AOS-[0-9]+$"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "CLOSED_PROVEN",
+              "ACCEPTED",
+              "IN_PROGRESS",
+              "OPEN",
+              "HOLD"
+            ]
           },
           "evidence_level": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "foundation_baseline_sha": {
             "type": "string",
@@ -165,12 +239,9 @@
             "type": "string",
             "pattern": "^[0-9a-f]{40}$"
           },
-          "tested_sha": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{40}$"
-          },
           "closed_at": {
-            "type": "string"
+            "type": "string",
+            "format": "date-time"
           },
           "reopen_condition": {
             "type": "string"
