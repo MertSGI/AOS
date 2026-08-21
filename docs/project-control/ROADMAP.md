@@ -108,6 +108,9 @@ The LARI proof case is evaluated against an independently pinned exact canonical
 - no unauthorized mutation,
 - ambiguous scenario transitions to HOLD.
 
+### Status
+`CLOSED_PROVEN` (`E3_ISOLATED_RUNTIME_PROVEN`, verified SHA `2c756c9772673adf887c770572409dfa71a83c93`, live proof run `32489975306`)
+
 ---
 
 ## AOS-3 — Controlled Single-Worker Execution

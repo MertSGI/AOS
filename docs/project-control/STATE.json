@@ -1,14 +1,14 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-19T23:57:00+03:00",
+    "updated_at": "2026-08-21T17:15:10+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_1_CLOSED_PROVEN_AOS_2_READY",
-    "current_gate": "AOS-2",
+    "status": "AOS_2_CLOSED_PROVEN_AOS_3_PREREQUISITE_PENDING",
+    "current_gate": "AOS-3",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
         "AOS-1 Canonical Memory & Schemas",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Complete AOS-2 provider-agnostic free-first shadow benchmark preparation and independent expectation refresh.",
+    "next_action": "Establish and verify the generic machine-readable execution-base authority required by AOS-3, then prepare controlled single-worker R1 execution under LIVE_GUARD.",
     "implementation_started": true,
     "accepted_gates": [
         {
@@ -90,6 +90,15 @@
             "verified_sha": "dba163276a141688685c23ecca884d4a17893e3a",
             "closed_at": "2026-08-19T23:57:00+03:00",
             "reopen_condition": "Schema breakdown, invalid memory contract, or evidence contradiction."
+        },
+        {
+            "gate": "AOS-2",
+            "name": "Shadow Orchestrator",
+            "status": "CLOSED_PROVEN",
+            "evidence_level": "E3_ISOLATED_RUNTIME_PROVEN",
+            "verified_sha": "2c756c9772673adf887c770572409dfa71a83c93",
+            "closed_at": "2026-08-21T17:15:10+03:00",
+            "reopen_condition": "Authoritative contradiction in provider routing, shadow decision integrity, canonical policy validation, exact-revision proof, or accepted runtime evidence."
         }
     ]
 }
