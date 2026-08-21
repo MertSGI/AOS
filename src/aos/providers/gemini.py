@@ -13,20 +13,34 @@ UNSUPPORTED_GEMINI_KEYWORDS = {"$schema", "$id", "pattern", "minLength", "maxLen
 
 
 def project_gemini_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Derive a provider schema projection by stripping unsupported JSON Schema keywords."""
+    """Derive a provider schema projection by stripping unsupported JSON Schema keywords and narrowing schema_version."""
     if not isinstance(schema, dict):
         return schema
 
-    projected: Dict[str, Any] = {}
-    for k, v in schema.items():
-        if k in UNSUPPORTED_GEMINI_KEYWORDS:
-            continue
-        if isinstance(v, dict):
-            projected[k] = project_gemini_schema(v)
-        elif isinstance(v, list):
-            projected[k] = [project_gemini_schema(item) if isinstance(item, dict) else item for item in v]
-        else:
-            projected[k] = v
+    def _clean(obj: Any) -> Any:
+        if not isinstance(obj, dict):
+            return obj
+        clean_obj: Dict[str, Any] = {}
+        for k, v in obj.items():
+            if k in UNSUPPORTED_GEMINI_KEYWORDS:
+                continue
+            if isinstance(v, dict):
+                clean_obj[k] = _clean(v)
+            elif isinstance(v, list):
+                clean_obj[k] = [_clean(item) if isinstance(item, dict) else item for item in v]
+            else:
+                clean_obj[k] = v
+        return clean_obj
+
+    projected = _clean(schema)
+
+    if isinstance(projected, dict) and "properties" in projected and isinstance(projected["properties"], dict):
+        if "schema_version" in projected["properties"]:
+            projected["properties"]["schema_version"] = {
+                "type": "string",
+                "enum": ["0.1.0"],
+            }
+
     return projected
 
 
@@ -49,6 +63,7 @@ class GeminiPlannerProvider:
         instructions = (
             "You are the AOS Shadow Planner. Your task is to evaluate canonical project control "
             "context and output a bounded planner decision JSON matching the provided schema. "
+            'For the current AOS planner decision contract, schema_version MUST be exactly "0.1.0". '
             "You MUST select the canonical milestone and canonical next_action EXACTLY as provided "
             "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
         )

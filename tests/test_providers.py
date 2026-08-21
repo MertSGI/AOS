@@ -917,3 +917,145 @@ class TestSchemaAndAdapterRegressions:
             with pytest.raises(PlannerContractError) as exc_info:
                 provider.generate_plan("test", {})
             assert "FinishReason.MAX_TOKENS" in str(exc_info.value)
+
+
+# =========================================================================
+# 32-35. Gemini schema_version Projection Remediation Tests
+# =========================================================================
+
+class TestGeminiSchemaVersionProjectionRemediation:
+    def test_canonical_planner_schema_unchanged_accepts_0_1_0_rejects_1_0_0(self):
+        """Canonical schema pattern is ^0\\.1(\\.[0-9]+)?$, accepts 0.1.0, rejects 1.0.0."""
+        from aos.validate import load_schema, validate_document
+        schema = load_schema("planner_decision.schema.json")
+        assert schema["properties"]["schema_version"]["pattern"] == "^0\\.1(\\.[0-9]+)?$"
+
+        valid_dec = {
+            "schema_version": "0.1.0",
+            "project_id": "lari",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Action",
+            "target_base_sha": None,
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Test",
+            "disposition": "SHADOW_ACCEPT",
+        }
+        res_valid = validate_document("planner_decision", valid_dec)
+        assert res_valid.is_valid is True
+
+        invalid_dec = dict(valid_dec, schema_version="1.0.0")
+        res_invalid = validate_document("planner_decision", invalid_dec)
+        assert res_invalid.is_valid is False
+        assert any("pattern" in e.validator for e in res_invalid.errors)
+
+    def test_gemini_projected_schema_narrows_schema_version_without_mutating_input(self):
+        """project_gemini_schema sets schema_version enum to ['0.1.0'] and does not mutate input."""
+        from aos.validate import load_schema
+        raw_schema = load_schema("planner_decision.schema.json")
+        import copy
+        input_copy = copy.deepcopy(raw_schema)
+
+        projected = project_gemini_schema(raw_schema)
+
+        # 1. Pattern stripped from projected schema
+        assert "pattern" not in projected["properties"]["schema_version"]
+
+        # 2. enum ['0.1.0'] set in projected schema
+        assert projected["properties"]["schema_version"] == {
+            "type": "string",
+            "enum": ["0.1.0"],
+        }
+
+        # 3. Input raw_schema was NOT mutated
+        assert raw_schema == input_copy
+        assert raw_schema["properties"]["schema_version"]["pattern"] == "^0\\.1(\\.[0-9]+)?$"
+
+    def test_gemini_request_sends_projected_schema_and_updated_instructions(self, monkeypatch):
+        """GeminiPlannerProvider passes narrowed schema_version enum and prompt instructions."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = "STOP"
+        mock_response = MagicMock()
+        mock_response.text = '{"schema_version": "0.1.0", "project_id": "lari"}'
+        mock_response.candidates = [mock_candidate]
+        mock_response.usage_metadata.prompt_token_count = 100
+        mock_response.usage_metadata.cached_content_token_count = 0
+        mock_response.usage_metadata.candidates_token_count = 50
+        mock_response.usage_metadata.total_token_count = 150
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        from aos.validate import load_schema
+        canonical_schema = load_schema("planner_decision.schema.json")
+
+        with patch("google.genai.Client", return_value=mock_client):
+            decision, resp_id, usage = provider.generate_plan("test prompt", canonical_schema)
+
+        call_kwargs = mock_client.models.generate_content.call_args.kwargs
+        sent_schema = call_kwargs["config"].response_json_schema
+        assert sent_schema["properties"]["schema_version"] == {"type": "string", "enum": ["0.1.0"]}
+
+        sent_contents = call_kwargs["contents"]
+        assert 'For the current AOS planner decision contract, schema_version MUST be exactly "0.1.0".' in sent_contents
+
+    def test_gemini_response_with_schema_version_1_0_0_is_rejected_by_policy_without_rewriting(self, monkeypatch, tmp_path):
+        """A 1.0.0 response from Gemini is not rewritten and fails downstream canonical policy validation."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+
+        bad_version_json = json.dumps({
+            "schema_version": "1.0.0",
+            "project_id": "lari",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Action",
+            "target_base_sha": None,
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Test",
+            "disposition": "SHADOW_ACCEPT",
+        })
+
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = "STOP"
+        mock_response = MagicMock()
+        mock_response.text = bad_version_json
+        mock_response.candidates = [mock_candidate]
+        mock_response.usage_metadata.prompt_token_count = 100
+        mock_response.usage_metadata.cached_content_token_count = 0
+        mock_response.usage_metadata.candidates_token_count = 50
+        mock_response.usage_metadata.total_token_count = 150
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.Client", return_value=mock_client):
+            decision, resp_id, usage = provider.generate_plan("test prompt", {})
+
+            # Confirm no rewriting occurred in provider adapter
+            assert decision["schema_version"] == "1.0.0"
+
+            # Pass through shadow orchestration and verify policy rejection
+            disp, traces, code = run_shadow_orchestration(
+                descriptor_path=str(DESCRIPTOR_PATH),
+                expectation_path=str(EXPECTATION_PATH),
+                provider_override=provider,
+                adapter_override=FakeProjectSourceAdapter(),
+                trace_dir_override=tmp_path,
+                source_mode="pinned_proof",
+            )
+        assert disp == "HOLD"
+        assert traces[0]["final_disposition"] == "HOLD"
+        failed_checks = [c for c in traces[0]["policy_checks"] if c["status"] == "FAIL"]
+        assert any(c["check_id"] == "SCHEMA_VALIDATION" for c in failed_checks)
