@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from aos.validate import validate_document
+
 
 class ExecutionAuthorityResult:
     """Result of execution authority validation."""
@@ -37,44 +39,70 @@ def validate_execution_authority(
     """Validate that task execution authority strictly matches canonical project snapshot authority."""
     errors: List[str] = []
 
-    # 1. Canonical snapshot must not have ambiguity
+    # 1. Validate canonical snapshot document against schema
+    snapshot_validation = validate_document("canonical_project_snapshot", snapshot)
+    if not snapshot_validation.is_valid:
+        snap_errs = "; ".join(str(e) for e in snapshot_validation.errors)
+        errors.append(f"Canonical project snapshot schema validation failed: {snap_errs}")
+        return ExecutionAuthorityResult(
+            is_valid=False,
+            disposition="HOLD",
+            errors=errors,
+            execution_base_sha=None,
+        )
+
+    # 2. Validate canonical task document against schema
+    task_validation = validate_document("task", task)
+    if not task_validation.is_valid:
+        task_errs = "; ".join(str(e) for e in task_validation.errors)
+        errors.append(f"Canonical task schema validation failed: {task_errs}")
+        return ExecutionAuthorityResult(
+            is_valid=False,
+            disposition="HOLD",
+            errors=errors,
+            execution_base_sha=None,
+        )
+
+    # 3. Snapshot ambiguity check
     if snapshot.get("has_ambiguity") or snapshot.get("ambiguity_reasons"):
         reasons = "; ".join(snapshot.get("ambiguity_reasons", []))
         errors.append(f"Canonical snapshot has ambiguity: {reasons}")
 
-    # 2. Execution base SHA must exist in canonical snapshot
+    # 4. next_action_execution_base_sha presence & format
     exec_base_sha = snapshot.get("next_action_execution_base_sha")
     if not exec_base_sha:
         errors.append("Canonical snapshot missing next_action_execution_base_sha authority")
     elif not isinstance(exec_base_sha, str) or not re.match(r"^[0-9a-f]{40}$", exec_base_sha):
         errors.append(f"Canonical execution base SHA is malformed: '{exec_base_sha}'")
 
-    # 3. Project ID match
+    # 5. project_id exact match
     task_project_id = task.get("project_id")
     snapshot_project_id = snapshot.get("project_id")
-    if not task_project_id:
-        errors.append("Task missing project_id")
-    elif task_project_id != snapshot_project_id:
+    if task_project_id != snapshot_project_id:
         errors.append(f"Task project_id '{task_project_id}' != snapshot project_id '{snapshot_project_id}'")
 
-    # 4. Task base_sha must equal canonical next_action_execution_base_sha
+    # 6. task.gate == 'AOS-3'
+    task_gate = task.get("gate")
+    if task_gate != "AOS-3":
+        errors.append(f"Task gate '{task_gate}' is not compatible with initial execution entry (must be 'AOS-3')")
+
+    # 7. task.risk_class == 'R1' (R1 isolated implementation only)
+    task_risk = task.get("risk_class")
+    if task_risk != "R1":
+        errors.append(f"Task risk_class '{task_risk}' is not eligible for initial AOS-3 controlled execution (must be R1)")
+
+    # 8. task.base_sha == snapshot.next_action_execution_base_sha
     task_base_sha = task.get("base_sha")
-    if not task_base_sha:
-        errors.append("Task missing base_sha")
-    elif exec_base_sha and task_base_sha != exec_base_sha:
+    if exec_base_sha and task_base_sha != exec_base_sha:
         errors.append(f"Task base_sha '{task_base_sha}' != canonical execution base SHA '{exec_base_sha}'")
 
-    # 5. Task gate and risk class compatibility for controlled single-worker execution
-    task_risk = task.get("risk_class")
-    if task_risk not in ("R0", "R1"):
-        errors.append(f"Task risk_class '{task_risk}' is not eligible for controlled execution (must be R0 or R1)")
-
     if errors:
+        valid_exec_sha = exec_base_sha if isinstance(exec_base_sha, str) and re.match(r"^[0-9a-f]{40}$", exec_base_sha) else None
         return ExecutionAuthorityResult(
             is_valid=False,
             disposition="HOLD",
             errors=errors,
-            execution_base_sha=exec_base_sha,
+            execution_base_sha=valid_exec_sha,
         )
 
     return ExecutionAuthorityResult(
