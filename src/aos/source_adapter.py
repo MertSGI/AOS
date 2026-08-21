@@ -114,11 +114,28 @@ class ProjectSourceAdapter:
         current_milestone = resolve_json_pointer(state_data, milestone_ptr)
         canonical_next_action = resolve_json_pointer(state_data, next_action_ptr)
 
+        ambiguity_reasons = []
+
         target_base_sha = None
         if target_sha_ptr:
             target_base_sha = resolve_json_pointer(state_data, target_sha_ptr)
 
-        ambiguity_reasons = []
+        exec_base_sha_ptr = p_config.get("next_action_execution_base_sha_pointer")
+        exec_base_sha_required = p_config.get("next_action_execution_base_sha_required", False)
+
+        next_action_execution_base_sha = None
+        if exec_base_sha_ptr:
+            raw_exec_sha = resolve_json_pointer(state_data, exec_base_sha_ptr)
+            if raw_exec_sha is not None:
+                import re
+                if not isinstance(raw_exec_sha, str) or not re.match(r"^[0-9a-f]{40}$", raw_exec_sha):
+                    ambiguity_reasons.append(f"Malformed execution base SHA at pointer '{exec_base_sha_ptr}': {raw_exec_sha}")
+                else:
+                    next_action_execution_base_sha = raw_exec_sha
+            elif exec_base_sha_required:
+                ambiguity_reasons.append(f"Missing required execution base SHA at pointer '{exec_base_sha_ptr}'")
+        elif exec_base_sha_required:
+            ambiguity_reasons.append("Missing required execution base SHA pointer configuration")
         if not current_milestone:
             ambiguity_reasons.append(f"Missing required milestone at pointer '{milestone_ptr}'")
         if not canonical_next_action:
@@ -141,6 +158,7 @@ class ProjectSourceAdapter:
             "current_milestone": str(current_milestone) if current_milestone else "UNKNOWN_MILESTONE",
             "canonical_next_action": str(canonical_next_action) if canonical_next_action else "UNKNOWN_NEXT_ACTION",
             "target_base_sha": str(target_base_sha) if target_base_sha else None,
+            "next_action_execution_base_sha": str(next_action_execution_base_sha) if next_action_execution_base_sha else None,
             "has_ambiguity": len(ambiguity_reasons) > 0,
             "ambiguity_reasons": ambiguity_reasons,
             "input_file_hashes": file_hashes
