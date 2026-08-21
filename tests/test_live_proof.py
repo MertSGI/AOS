@@ -11,11 +11,14 @@ from aos.live_proof import (
     main,
     run_readiness_checks,
     scan_traces_for_credentials,
+    validate_request_file,
 )
 
 DESCRIPTOR_PATH = Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"
 EXPECTATION_PATH = Path(__file__).parent.parent / "descriptors" / "lari.shadow-expectation.json"
 POLICY_PATH = Path(__file__).parent.parent / "descriptors" / "lari.planner-policy.json"
+REQUEST_PATH = Path(__file__).parent.parent / ".aos-control" / "live-proof-request.json"
+WORKFLOW_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "aos2-remote-live-proof.yml"
 
 
 class TestLiveProofDryRun:
@@ -45,6 +48,134 @@ class TestLiveProofDryRun:
             status, code = execute_live_proof(dry_run=True, verify_git=False)
             assert status == "READY_FOR_CREDENTIAL_INPUT"
             assert mock_bm.call_count == 0
+
+
+class TestLiveProofCIMode:
+    def test_ci_mode_accepts_existing_env_credentials_without_prompt(self, monkeypatch, tmp_path):
+        """CI mode uses existing env keys without calling getpass or input."""
+        monkeypatch.setenv("GEMINI_API_KEY", "ci-gemini-key-123")
+        monkeypatch.setenv("GROQ_API_KEY", "ci-groq-key-456")
+
+        req_path = tmp_path / "valid_request.json"
+        req_path.write_text(json.dumps({"schema_version": "0.1.0", "gate": "AOS-2", "authorized": True, "request_id": "REQ-123"}), encoding="utf-8")
+
+        mock_prompt = MagicMock()
+        mock_input = MagicMock()
+
+        with patch("aos.live_proof.run_benchmark", return_value={"benchmark_status": "PASS", "providers": {"gemini": {"status": "PASS"}, "groq": {"status": "PASS"}}, "total_runs": 6, "total_pass": 6}) as mock_bm:
+            status, code = execute_live_proof(
+                ci=True,
+                request_path=str(req_path),
+                prompt_func=mock_prompt,
+                input_func=mock_input,
+                trace_dir_override=tmp_path,
+                verify_git=False,
+            )
+            assert status == "LIVE_FREE_PROVIDER_PROOF_READY_FOR_INDEPENDENT_VERIFICATION"
+            assert code == 0
+            assert mock_prompt.call_count == 0
+            assert mock_input.call_count == 0
+            assert mock_bm.call_count == 1
+
+    def test_ci_mode_missing_gemini_secret_holds_before_provider_call(self, monkeypatch, tmp_path):
+        """CI mode with missing Gemini key holds before calling run_benchmark."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("GROQ_API_KEY", "ci-groq-key")
+
+        req_path = tmp_path / "valid_request.json"
+        req_path.write_text(json.dumps({"schema_version": "0.1.0", "gate": "AOS-2", "authorized": True, "request_id": "REQ-123"}), encoding="utf-8")
+
+        with patch("aos.live_proof.run_benchmark") as mock_bm:
+            status, code = execute_live_proof(
+                ci=True,
+                request_path=str(req_path),
+                verify_git=False,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_bm.call_count == 0
+
+    def test_ci_mode_missing_groq_secret_holds_before_provider_call(self, monkeypatch, tmp_path):
+        """CI mode with missing Groq key holds before calling run_benchmark."""
+        monkeypatch.setenv("GEMINI_API_KEY", "ci-gemini-key")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+        req_path = tmp_path / "valid_request.json"
+        req_path.write_text(json.dumps({"schema_version": "0.1.0", "gate": "AOS-2", "authorized": True, "request_id": "REQ-123"}), encoding="utf-8")
+
+        with patch("aos.live_proof.run_benchmark") as mock_bm:
+            status, code = execute_live_proof(
+                ci=True,
+                request_path=str(req_path),
+                verify_git=False,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_bm.call_count == 0
+
+    def test_request_authorized_false_holds_before_provider_call(self, monkeypatch, tmp_path):
+        """CI mode with authorized=False holds before provider call."""
+        monkeypatch.setenv("GEMINI_API_KEY", "ci-gemini-key")
+        monkeypatch.setenv("GROQ_API_KEY", "ci-groq-key")
+
+        req_path = tmp_path / "unauth_request.json"
+        req_path.write_text(json.dumps({"schema_version": "0.1.0", "gate": "AOS-2", "authorized": False, "request_id": "NOT_AUTHORIZED"}), encoding="utf-8")
+
+        with patch("aos.live_proof.run_benchmark") as mock_bm:
+            status, code = execute_live_proof(
+                ci=True,
+                request_path=str(req_path),
+                verify_git=False,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_bm.call_count == 0
+
+    def test_wrong_gate_in_request_holds(self, monkeypatch, tmp_path):
+        """CI mode with gate!='AOS-2' holds before provider call."""
+        monkeypatch.setenv("GEMINI_API_KEY", "ci-gemini-key")
+        monkeypatch.setenv("GROQ_API_KEY", "ci-groq-key")
+
+        req_path = tmp_path / "wrong_gate_request.json"
+        req_path.write_text(json.dumps({"schema_version": "0.1.0", "gate": "AOS-99", "authorized": True, "request_id": "REQ-99"}), encoding="utf-8")
+
+        with patch("aos.live_proof.run_benchmark") as mock_bm:
+            status, code = execute_live_proof(
+                ci=True,
+                request_path=str(req_path),
+                verify_git=False,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_bm.call_count == 0
+
+    def test_initial_committed_request_file_is_unauthorized(self):
+        """Committed request file .aos-control/live-proof-request.json has authorized=False."""
+        assert REQUEST_PATH.exists()
+        data = json.loads(REQUEST_PATH.read_text(encoding="utf-8"))
+        assert data.get("authorized") is False
+        assert data.get("gate") == "AOS-2"
+        assert data.get("request_id") == "NOT_AUTHORIZED"
+
+
+class TestWorkflowContract:
+    def test_workflow_file_exists(self):
+        """Workflow file .github/workflows/aos2-remote-live-proof.yml exists."""
+        assert WORKFLOW_PATH.exists()
+
+    def test_workflow_triggers_and_permissions(self):
+        """Workflow file has contents: read, no pull_request/schedule triggers, and exact branch/path scope."""
+        content = WORKFLOW_PATH.read_text(encoding="utf-8")
+        assert "permissions:" in content
+        assert "contents: read" in content
+        assert "pull_request:" not in content
+        assert "schedule:" not in content
+        assert "feature/aos-2-shadow-orchestrator" in content
+        assert ".aos-control/live-proof-request.json" in content
+        assert "python -m aos.live_proof --ci" in content
+        assert "secrets.GEMINI_API_KEY" in content
+        assert "secrets.GROQ_API_KEY" in content
+        assert "secrets.OPENAI_API_KEY" not in content
 
 
 class TestLiveProofReadinessFailures:
