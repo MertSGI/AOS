@@ -8,6 +8,26 @@ from typing import Any, Dict, Tuple
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
+UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
+
+
+def project_groq_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive a provider schema projection by stripping meta-schema keywords for Groq strict Structured Outputs."""
+    if not isinstance(schema, dict):
+        return schema
+
+    projected: Dict[str, Any] = {}
+    for k, v in schema.items():
+        if k in UNSUPPORTED_GROQ_KEYWORDS:
+            continue
+        if isinstance(v, dict):
+            projected[k] = project_groq_schema(v)
+        elif isinstance(v, list):
+            projected[k] = [project_groq_schema(item) if isinstance(item, dict) else item for item in v]
+        else:
+            projected[k] = v
+    return projected
+
 
 class GroqPlannerProvider:
     """PlannerProvider adapter for Groq using the OpenAI-compatible API."""
@@ -32,6 +52,8 @@ class GroqPlannerProvider:
             "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
         )
 
+        provider_schema = project_groq_schema(schema)
+
         try:
             response = client.chat.completions.create(
                 model=self.model,
@@ -44,7 +66,7 @@ class GroqPlannerProvider:
                     "json_schema": {
                         "name": "planner_decision",
                         "strict": True,
-                        "schema": schema,
+                        "schema": provider_schema,
                     },
                 },
                 max_tokens=1000,

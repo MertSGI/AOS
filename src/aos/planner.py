@@ -130,11 +130,13 @@ class FakePlannerProvider:
         self,
         decision_override: Dict[str, Any] | None = None,
         transient_failures_count: int = 0,
-        exception_to_raise: Exception | None = None
+        exception_to_raise: Exception | None = None,
+        model: str = "fake-model",
     ):
         self.decision_override = decision_override
         self.transient_failures_count = transient_failures_count
         self.exception_to_raise = exception_to_raise
+        self.model = model
         self.attempts = 0
 
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:

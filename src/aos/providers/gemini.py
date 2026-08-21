@@ -8,6 +8,26 @@ from typing import Any, Dict, Tuple
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
+UNSUPPORTED_GEMINI_KEYWORDS = {"$schema", "$id", "pattern", "minLength", "maxLength", "format"}
+
+
+def project_gemini_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive a provider schema projection by stripping unsupported JSON Schema keywords."""
+    if not isinstance(schema, dict):
+        return schema
+
+    projected: Dict[str, Any] = {}
+    for k, v in schema.items():
+        if k in UNSUPPORTED_GEMINI_KEYWORDS:
+            continue
+        if isinstance(v, dict):
+            projected[k] = project_gemini_schema(v)
+        elif isinstance(v, list):
+            projected[k] = [project_gemini_schema(item) if isinstance(item, dict) else item for item in v]
+        else:
+            projected[k] = v
+    return projected
+
 
 class GeminiPlannerProvider:
     """PlannerProvider adapter for Google Gemini via the google-genai SDK."""
@@ -32,13 +52,15 @@ class GeminiPlannerProvider:
             "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
         )
 
+        provider_schema = project_gemini_schema(schema)
+
         try:
             response = client.models.generate_content(
                 model=self.model,
                 contents=f"{instructions}\n\n{prompt}",
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=schema,
+                    response_json_schema=provider_schema,
                     max_output_tokens=1000,
                 ),
             )

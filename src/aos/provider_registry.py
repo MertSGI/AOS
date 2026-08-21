@@ -26,8 +26,21 @@ class ProviderEntry:
 
 
 @dataclass
+class ProviderExecutionContext:
+    """Immutable execution context for an authenticated/selected provider."""
+    provider_id: str
+    model_id: str
+    billing_class: str
+    data_classification: str
+    selection_reason: str
+    fallback_used: bool = False
+    fallback_from: Optional[str] = None
+
+
+@dataclass
 class RoutingResult:
     """Result of deterministic provider selection."""
+    context: ProviderExecutionContext
     selected_provider_id: str
     selected_model_id: str
     selection_reason: str
@@ -75,6 +88,7 @@ class ProviderRouter:
         risk_class: str = "R0",
         skip_providers: Optional[List[str]] = None,
         ignore_credentials: bool = False,
+        post_invocation_failed_provider: Optional[str] = None,
     ) -> Optional[RoutingResult]:
         """Select the first eligible provider for a risk class and data classification.
 
@@ -87,13 +101,15 @@ class ProviderRouter:
 
         preferred = route.get("preferred_providers", [])
         data_class = self.registry.data_classification
-        fallback_used = False
-        fallback_from = None
+
+        # Post-invocation fallback only applies if a prior provider was actually invoked and failed transiently
+        is_post_invocation_fallback = (
+            post_invocation_failed_provider is not None
+            and self.registry.allow_provider_fallback
+        )
 
         for provider_id in preferred:
             if provider_id in skip:
-                fallback_from = fallback_from or provider_id
-                fallback_used = True
                 continue
 
             entry = self.registry.get_provider(provider_id)
@@ -114,25 +130,31 @@ class ProviderRouter:
 
             if not ignore_credentials and entry.cloud_local == "CLOUD" and entry.credential_env_var:
                 if not os.environ.get(entry.credential_env_var):
-                    fallback_from = fallback_from or provider_id
-                    fallback_used = True
+                    # Eligibility filtering skip - NOT a post-invocation fallback
                     continue
-
-            if entry.cloud_local == "LOCAL":
-                # Local provider availability is checked at call time, not here
-                pass
 
             reason = f"Selected '{entry.provider_id}' ({entry.model_id}): "
             reason += f"billing={entry.billing_class}, data={data_class}, risk={risk_class}"
-            if fallback_used:
-                reason += f", fallback_from='{fallback_from}'"
+            if is_post_invocation_fallback:
+                reason += f", fallback_from='{post_invocation_failed_provider}'"
+
+            ctx = ProviderExecutionContext(
+                provider_id=entry.provider_id,
+                model_id=entry.model_id,
+                billing_class=entry.billing_class,
+                data_classification=data_class,
+                selection_reason=reason,
+                fallback_used=is_post_invocation_fallback,
+                fallback_from=post_invocation_failed_provider if is_post_invocation_fallback else None,
+            )
 
             return RoutingResult(
+                context=ctx,
                 selected_provider_id=entry.provider_id,
                 selected_model_id=entry.model_id,
                 selection_reason=reason,
-                fallback_used=fallback_used,
-                fallback_from=fallback_from,
+                fallback_used=is_post_invocation_fallback,
+                fallback_from=post_invocation_failed_provider if is_post_invocation_fallback else None,
             )
 
         return None

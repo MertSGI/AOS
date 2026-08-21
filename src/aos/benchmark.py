@@ -10,12 +10,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aos.planner import OpenAIPlannerProvider, PlannerProvider
-from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
+from aos.provider_registry import (
+    ProviderExecutionContext,
+    ProviderRegistry,
+    ProviderRouter,
+    load_routing_policy,
+)
 from aos.providers.gemini import GeminiPlannerProvider
 from aos.providers.groq import GroqPlannerProvider
 from aos.providers.ollama import OllamaPlannerProvider
 from aos.shadow import run_shadow_orchestration
-
+from aos.source_adapter import ProjectSourceAdapter
 
 PROVIDER_FACTORIES = {
     "gemini": lambda model: GeminiPlannerProvider(model=model),
@@ -33,6 +38,7 @@ def run_benchmark(
     repeat: int = 3,
     trace_dir_override: Optional[Path] = None,
     provider_overrides: Optional[Dict[str, PlannerProvider]] = None,
+    adapter_override: Optional[ProjectSourceAdapter] = None,
     source_mode: str = "pinned_proof",
     risk_class: str = "R0",
 ) -> Dict[str, Any]:
@@ -52,18 +58,21 @@ def run_benchmark(
     }
 
     for pid in provider_ids:
-        # Validate governance via ProviderRouter for each requested provider
         entry = registry.get_provider(pid)
         if entry is None:
             print(f"PROVIDER_POLICY_HOLD: Provider '{pid}' not defined in routing policy", file=sys.stderr)
             results["providers"][pid] = {"status": "PROVIDER_POLICY_HOLD", "reason": f"Provider '{pid}' not in policy"}
             results["benchmark_status"] = "HOLD"
             results["total_hold"] += 1
-            continue
+            break  # Stop benchmark immediately on policy failure (no provider shopping)
 
-        # Check policy eligibility via router (ignoring credentials check if provider_overrides is supplied)
+        # Check policy eligibility via router (ignoring credential env check if provider_overrides is supplied for mock tests)
         ignore_creds = provider_overrides is not None and pid in provider_overrides
-        route_check = router.select(risk_class=risk_class, skip_providers=[p for p in registry._providers.keys() if p != pid], ignore_credentials=ignore_creds)
+        route_check = router.select(
+            risk_class=risk_class,
+            skip_providers=[p for p in registry._providers.keys() if p != pid],
+            ignore_credentials=ignore_creds,
+        )
         if not route_check:
             print(f"PROVIDER_POLICY_HOLD: Provider '{pid}' rejected by routing policy (billing/data/risk/enabled)", file=sys.stderr)
             results["providers"][pid] = {
@@ -73,7 +82,9 @@ def run_benchmark(
             }
             results["benchmark_status"] = "HOLD"
             results["total_hold"] += 1
-            continue
+            break  # Stop benchmark immediately on policy rejection
+
+        exec_ctx = route_check.context
 
         if provider_overrides and pid in provider_overrides:
             provider = provider_overrides[pid]
@@ -83,17 +94,21 @@ def run_benchmark(
                 results["providers"][pid] = {"status": "FACTORY_NOT_FOUND"}
                 results["benchmark_status"] = "HOLD"
                 results["total_hold"] += 1
-                continue
+                break
             provider = factory(entry.model_id)
 
         provider_results = []
+        aborted = False
+
         for i in range(repeat):
             disp, traces, code = run_shadow_orchestration(
                 descriptor_path,
                 expectation_path=expectation_path,
                 repeat=1,
                 provider_override=provider,
+                execution_context_override=exec_ctx,
                 trace_dir_override=trace_dir_override,
+                adapter_override=adapter_override,
                 source_mode=source_mode,
                 risk_class=risk_class,
             )
@@ -116,22 +131,19 @@ def run_benchmark(
                 results["total_pass"] += 1
             else:
                 results["total_hold"] += 1
-                results["benchmark_status"] = "HOLD"
+                results["benchmark_status"] = "HOLD" if disp != "STALE_EXPECTATION" else "STALE"
+                aborted = True
+                break  # Fail fast on any run failure within a provider
 
-            if disp in ("STALE_EXPECTATION", "HOLD"):
-                results["benchmark_status"] = "HOLD" if disp == "HOLD" else "STALE"
-                results["providers"][pid] = {
-                    "status": disp,
-                    "runs": provider_results,
-                }
-                # Atomic batch failure: if any run fails, mark overall benchmark as non-PASS
-                break
-
-        all_pass = len(provider_results) == repeat and all(r["disposition"] == "SHADOW_ACCEPT" for r in provider_results)
+        all_pass = not aborted and len(provider_results) == repeat and all(r["disposition"] == "SHADOW_ACCEPT" for r in provider_results)
         results["providers"][pid] = {
-            "status": "PASS" if all_pass else "HOLD",
+            "status": "PASS" if all_pass else ("STALE_EXPECTATION" if not all_pass and any(r["disposition"] == "STALE_EXPECTATION" for r in provider_results) else "HOLD"),
             "runs": provider_results,
         }
+
+        if aborted:
+            # STOP downstream providers immediately (no provider shopping for a PASS)
+            break
 
     return results
 

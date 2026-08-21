@@ -126,6 +126,9 @@ The LARI proof case is evaluated against an independently pinned exact canonical
 - task control-generation / control-epoch pinning,
 - stale-control task invalidation.
 
+### Prerequisites
+- Controlled execution requires the integrated project's normalized canonical control plane to expose a stable machine-readable execution-base authority for the current next action (e.g., `next_action_execution_base_sha`).
+
 ### First eligible task class
 R1 isolated implementation only.
 

@@ -21,7 +21,14 @@ from aos.planner import (
     PlannerTransientError,
 )
 from aos.policy import PolicyEngine
-from aos.provider_registry import ProviderRegistry, ProviderRouter, RoutingResult, load_routing_policy
+from aos.provider_registry import (
+    ProviderEntry,
+    ProviderExecutionContext,
+    ProviderRegistry,
+    ProviderRouter,
+    RoutingResult,
+    load_routing_policy,
+)
 from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import load_schema, validate_document, validate_file
@@ -41,6 +48,7 @@ def run_shadow_orchestration(
     expectation_path: Optional[str] = None,
     repeat: int = 1,
     provider_override: Optional[PlannerProvider] = None,
+    execution_context_override: Optional[ProviderExecutionContext] = None,
     trace_dir_override: Optional[Path] = None,
     max_network_retries: int = 1,
     adapter_override: Optional[ProjectSourceAdapter] = None,
@@ -150,30 +158,30 @@ def run_shadow_orchestration(
                 return "HOLD", [], 1
 
     # 6. Instantiate planner provider & policy router
-    routing_result: Optional[RoutingResult] = None
-    registry: Optional[ProviderRegistry] = None
+    exec_ctx: Optional[ProviderExecutionContext] = execution_context_override
 
-    if routing_policy_path:
+    if not exec_ctx and routing_policy_path:
         registry = load_routing_policy(routing_policy_path)
         router = ProviderRouter(registry)
-        routing_result = router.select(risk_class=risk_class)
-        if not routing_result:
+        route_res = router.select(risk_class=risk_class)
+        if not route_res:
             print("PROVIDER_POLICY_HOLD: No eligible provider for policy/risk/data class", file=sys.stderr)
             return "PROVIDER_POLICY_HOLD", [], 1
+        exec_ctx = route_res.context
 
     if provider_override is not None:
         provider = provider_override
         provider_name = provider.__class__.__name__
         model_name = getattr(provider, "model", "fake-model")
-    elif routing_result:
-        pid = routing_result.selected_provider_id
+    elif exec_ctx:
+        pid = exec_ctx.provider_id
         cls = PROVIDER_MAP.get(pid)
         if not cls:
             print(f"PROVIDER_UNAVAILABLE: Provider class for '{pid}' not found", file=sys.stderr)
             return "PROVIDER_UNAVAILABLE", [], 4
-        provider = cls(model=routing_result.selected_model_id)
+        provider = cls(model=exec_ctx.model_id)
         provider_name = provider.__class__.__name__
-        model_name = routing_result.selected_model_id
+        model_name = exec_ctx.model_id
     else:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -277,14 +285,13 @@ def run_shadow_orchestration(
             ]
         }
 
-        # Populate real routing metadata if routing policy was used
-        if routing_result and registry:
-            entry = registry.get_provider(routing_result.selected_provider_id)
-            trace["provider_id"] = routing_result.selected_provider_id
-            trace["billing_class"] = entry.billing_class if entry else "UNKNOWN"
-            trace["data_classification"] = registry.data_classification
-            trace["selection_reason"] = routing_result.selection_reason
-            trace["fallback_used"] = routing_result.fallback_used
+        # Populate real routing metadata from execution context if present
+        if exec_ctx:
+            trace["provider_id"] = exec_ctx.provider_id
+            trace["billing_class"] = exec_ctx.billing_class
+            trace["data_classification"] = exec_ctx.data_classification
+            trace["selection_reason"] = exec_ctx.selection_reason
+            trace["fallback_used"] = exec_ctx.fallback_used
 
         # Fail closed on trace schema validation failure
         trace_val = validate_document("shadow_trace", trace)
