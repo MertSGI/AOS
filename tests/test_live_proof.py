@@ -494,3 +494,105 @@ class TestLiveProofSummaryOutputs:
 
         captured = capsys.readouterr().out
         assert "Overall: HOLD" in captured
+
+
+class TestPolicyHoldDiagnostics:
+    def test_policy_hold_prints_failed_check_ids_and_messages(self, capsys, tmp_path):
+        """Policy HOLD prints failed check IDs and messages to stderr without credentials."""
+        from aos.planner import FakePlannerProvider
+        from aos.shadow import run_shadow_orchestration
+        from test_providers import FakeProjectSourceAdapter
+
+        bad_decision = {
+            "schema_version": "0.1.0",
+            "project_id": "lari",
+            "source_sha": "0000000000000000000000000000000000000000",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
+            "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Bad sha",
+            "disposition": "SHADOW_ACCEPT",
+        }
+
+        provider = FakePlannerProvider(decision_override=bad_decision)
+        disp, traces, code = run_shadow_orchestration(
+            descriptor_path=str(Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"),
+            expectation_path=str(Path(__file__).parent.parent / "descriptors" / "lari.shadow-expectation.json"),
+            provider_override=provider,
+            adapter_override=FakeProjectSourceAdapter(),
+            trace_dir_override=tmp_path,
+            source_mode="pinned_proof",
+        )
+
+        assert disp == "HOLD"
+        captured = capsys.readouterr()
+        stderr = captured.err
+        assert "POLICY_HOLD:" in stderr
+        assert "planner_disposition=SHADOW_ACCEPT" in stderr
+        assert "FAIL SOURCE_SHA_MATCH:" in stderr
+        assert "AIzaSy" not in stderr
+
+    def test_planner_disposition_hold_prints_planner_disposition_diagnostic(self, capsys, tmp_path):
+        """Planner returning non-SHADOW_ACCEPT disposition prints PLANNER_DISPOSITION diagnostic."""
+        from aos.planner import FakePlannerProvider
+        from aos.shadow import run_shadow_orchestration
+        from test_providers import FakeProjectSourceAdapter
+
+        hold_decision = {
+            "schema_version": "0.1.0",
+            "project_id": "lari",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
+            "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": True,
+            "ambiguity_reasons": ["Ambiguous prompt"],
+            "human_gate_required": True,
+            "rationale": "Ambiguity detected",
+            "disposition": "HOLD",
+        }
+
+        provider = FakePlannerProvider(decision_override=hold_decision)
+        disp, traces, code = run_shadow_orchestration(
+            descriptor_path=str(Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"),
+            expectation_path=str(Path(__file__).parent.parent / "descriptors" / "lari.shadow-expectation.json"),
+            provider_override=provider,
+            adapter_override=FakeProjectSourceAdapter(),
+            trace_dir_override=tmp_path,
+            source_mode="pinned_proof",
+        )
+
+        assert disp == "HOLD"
+        captured = capsys.readouterr()
+        stderr = captured.err
+        assert "POLICY_HOLD:" in stderr
+        assert "planner_disposition=HOLD" in stderr
+        assert "FAIL PLANNER_DISPOSITION:" in stderr
+        assert "planner disposition 'HOLD' != 'SHADOW_ACCEPT'" in stderr
+
+    def test_shadow_accept_does_not_print_policy_hold(self, capsys, tmp_path):
+        """Valid SHADOW_ACCEPT decision does not print POLICY_HOLD to stderr."""
+        from aos.planner import FakePlannerProvider
+        from aos.shadow import run_shadow_orchestration
+        from test_providers import FakeProjectSourceAdapter
+
+        provider = FakePlannerProvider()
+        disp, traces, code = run_shadow_orchestration(
+            descriptor_path=str(Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"),
+            expectation_path=str(Path(__file__).parent.parent / "descriptors" / "lari.shadow-expectation.json"),
+            provider_override=provider,
+            adapter_override=FakeProjectSourceAdapter(),
+            trace_dir_override=tmp_path,
+            source_mode="pinned_proof",
+        )
+
+        assert disp == "SHADOW_ACCEPT"
+        captured = capsys.readouterr()
+        assert "POLICY_HOLD:" not in captured.err

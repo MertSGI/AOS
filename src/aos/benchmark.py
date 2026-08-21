@@ -124,6 +124,16 @@ def run_benchmark(
                 run_result["model"] = traces[0].get("model")
                 run_result["usage"] = traces[0].get("usage")
                 run_result["mutation_performed"] = traces[0].get("mutation_performed")
+                planner_dec = traces[0].get("planner_decision") or {}
+                if planner_dec:
+                    run_result["planner_disposition"] = planner_dec.get("disposition")
+                failed_checks = [
+                    {"check_id": c.get("check_id"), "message": c.get("message")}
+                    for c in (traces[0].get("policy_checks") or [])
+                    if c.get("status") != "PASS"
+                ]
+                if failed_checks:
+                    run_result["failed_policy_checks"] = failed_checks
             provider_results.append(run_result)
             results["total_runs"] += 1
 

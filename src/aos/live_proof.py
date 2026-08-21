@@ -377,6 +377,13 @@ def execute_live_proof(
         for pid, pdata in (results.get("providers") or {}).items():
             st = pdata.get("status", "HOLD")
             print(f"{pid.capitalize()}: {st}")
+            for r in (pdata.get("runs") or []):
+                if r.get("disposition") != "SHADOW_ACCEPT":
+                    if r.get("planner_disposition"):
+                        print(f"  Planner disposition: {r.get('planner_disposition')}")
+                    if r.get("failed_policy_checks"):
+                        for fc in r["failed_policy_checks"]:
+                            print(f"  FAIL {fc.get('check_id')}: {fc.get('message')}")
         print("\nOverall: HOLD")
         return "HOLD", 1
 

@@ -260,6 +260,18 @@ def run_shadow_orchestration(
             re_resolved_sha=re_resolved_sha
         )
 
+        if final_disp != "SHADOW_ACCEPT":
+            planner_disp = decision_data.get("disposition", "UNKNOWN") if decision_data else "UNKNOWN"
+            print("POLICY_HOLD:", file=sys.stderr)
+            print(f"  planner_disposition={planner_disp}", file=sys.stderr)
+            failed_checks = [c for c in policy_checks if c.status != "PASS"]
+            if failed_checks:
+                for fc in failed_checks:
+                    print(f"  FAIL {fc.check_id}: {fc.message}", file=sys.stderr)
+            else:
+                print("  FAIL PLANNER_DISPOSITION:", file=sys.stderr)
+                print(f"  planner disposition '{planner_disp}' != 'SHADOW_ACCEPT'", file=sys.stderr)
+
         trace_id = f"TRACE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
         trace: Dict[str, Any] = {
             "schema_version": "0.1.0",
