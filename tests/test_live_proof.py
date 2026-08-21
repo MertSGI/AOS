@@ -12,7 +12,6 @@ from aos.live_proof import (
     run_readiness_checks,
     scan_traces_for_credentials,
 )
-from aos.planner import FakePlannerProvider
 
 DESCRIPTOR_PATH = Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"
 EXPECTATION_PATH = Path(__file__).parent.parent / "descriptors" / "lari.shadow-expectation.json"
@@ -25,6 +24,13 @@ class TestLiveProofDryRun:
         status, code = execute_live_proof(dry_run=True, verify_git=False)
         assert status == "READY_FOR_CREDENTIAL_INPUT"
         assert code == 0
+
+    def test_dry_run_reports_aos_revision(self, capsys):
+        """Dry-run outputs the captured aos_revision SHA."""
+        status, code = execute_live_proof(dry_run=True, verify_git=False)
+        captured = capsys.readouterr().out
+        assert "AOS Revision:" in captured
+        assert status == "READY_FOR_CREDENTIAL_INPUT"
 
     def test_dry_run_makes_zero_credential_prompts(self):
         """Dry-run does not call getpass or prompt function."""
@@ -42,6 +48,28 @@ class TestLiveProofDryRun:
 
 
 class TestLiveProofReadinessFailures:
+    def test_head_equals_origin_feature_readiness_pass(self):
+        """When current HEAD == origin/feature/aos-2-shadow-orchestrator, readiness passes."""
+        sha = "1111111111111111111111111111111111111111"
+        with patch("aos.live_proof.get_git_info", return_value=("feature/aos-2-shadow-orchestrator", sha, "9109859e6d6a231598c22f68224f512f198c9a49", sha, True)):
+            ok, reason, _, _, revision = run_readiness_checks(verify_git=True)
+            assert ok is True
+            assert reason == "READINESS_OK"
+            assert revision == sha
+
+    def test_head_not_equals_origin_feature_holds_before_prompt(self):
+        """When current HEAD != origin/feature, readiness fails before prompt."""
+        with patch("aos.live_proof.get_git_info", return_value=("feature/aos-2-shadow-orchestrator", "local-sha-123", "9109859e6d6a231598c22f68224f512f198c9a49", "remote-sha-456", True)):
+            mock_prompt = MagicMock()
+            status, code = execute_live_proof(
+                dry_run=False,
+                prompt_func=mock_prompt,
+                verify_git=True,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_prompt.call_count == 0
+
     def test_invalid_descriptor_holds_before_prompt(self, tmp_path):
         """Invalid project descriptor fails readiness check before credential prompt."""
         bad_desc = tmp_path / "bad_desc.json"
@@ -60,7 +88,20 @@ class TestLiveProofReadinessFailures:
 
     def test_wrong_branch_holds_before_prompt(self):
         """Wrong git branch fails readiness check before prompt."""
-        with patch("aos.live_proof.get_git_info", return_value=("wrong-branch", "0999f8ce5034faf94306564bee27220a3051228d", "9109859e6d6a231598c22f68224f512f198c9a49", True)):
+        with patch("aos.live_proof.get_git_info", return_value=("wrong-branch", "sha1", "9109859e6d6a231598c22f68224f512f198c9a49", "sha1", True)):
+            mock_prompt = MagicMock()
+            status, code = execute_live_proof(
+                dry_run=False,
+                prompt_func=mock_prompt,
+                verify_git=True,
+            )
+            assert status == "HOLD"
+            assert code == 1
+            assert mock_prompt.call_count == 0
+
+    def test_wrong_origin_main_holds_before_prompt(self):
+        """Wrong origin/main SHA fails readiness check before prompt."""
+        with patch("aos.live_proof.get_git_info", return_value=("feature/aos-2-shadow-orchestrator", "sha1", "wrong-main-sha", "sha1", True)):
             mock_prompt = MagicMock()
             status, code = execute_live_proof(
                 dry_run=False,
@@ -73,7 +114,7 @@ class TestLiveProofReadinessFailures:
 
     def test_dirty_tracked_git_state_holds_before_prompt(self):
         """Dirty tracked git working tree fails readiness check before prompt."""
-        with patch("aos.live_proof.get_git_info", return_value=("feature/aos-2-shadow-orchestrator", "0999f8ce5034faf94306564bee27220a3051228d", "9109859e6d6a231598c22f68224f512f198c9a49", False)):
+        with patch("aos.live_proof.get_git_info", return_value=("feature/aos-2-shadow-orchestrator", "sha1", "9109859e6d6a231598c22f68224f512f198c9a49", "sha1", False)):
             mock_prompt = MagicMock()
             status, code = execute_live_proof(
                 dry_run=False,
@@ -89,7 +130,7 @@ class TestLiveProofReadinessFailures:
         policy_data = {
             "schema_version": "0.1.0",
             "routing_mode": "DETERMINISTIC",
-            "allow_paid_fallback": True,  # Forbidden
+            "allow_paid_fallback": True,
             "allow_provider_fallback": True,
             "data_classification": "PUBLIC",
             "risk_routes": {"R0": {"preferred_providers": ["gemini", "groq"]}},
@@ -145,20 +186,43 @@ class TestLiveProofReadinessFailures:
 
 
 class TestLiveProofSecretHandling:
-    def test_getpass_used_for_secrets(self, monkeypatch, tmp_path):
-        """Masked prompt function (getpass) is called for keys."""
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    def test_existing_credential_requires_confirmation_accepted(self, monkeypatch, tmp_path):
+        """If existing key is in env and user responds 'y', existing key is used without getpass."""
+        monkeypatch.setenv("GEMINI_API_KEY", "existing-gemini-key")
+        monkeypatch.setenv("GROQ_API_KEY", "existing-groq-key")
 
-        mock_prompt = MagicMock(side_effect=["secret-gemini-key", "secret-groq-key"])
+        mock_prompt = MagicMock()
+        mock_input = MagicMock(side_effect=["y", "y"])
 
         with patch("aos.live_proof.run_benchmark", return_value={"benchmark_status": "PASS", "providers": {"gemini": {"status": "PASS"}, "groq": {"status": "PASS"}}, "total_runs": 6, "total_pass": 6}):
             status, code = execute_live_proof(
                 dry_run=False,
                 prompt_func=mock_prompt,
+                input_func=mock_input,
                 trace_dir_override=tmp_path,
                 verify_git=False,
             )
+            assert mock_input.call_count == 2
+            assert mock_prompt.call_count == 0
+            assert status == "LIVE_FREE_PROVIDER_PROOF_READY_FOR_INDEPENDENT_VERIFICATION"
+
+    def test_rejected_existing_credential_causes_masked_getpass_prompt(self, monkeypatch, tmp_path):
+        """If user rejects existing key with 'n', masked getpass prompt is triggered for new key."""
+        monkeypatch.setenv("GEMINI_API_KEY", "old-gemini-key")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+        mock_prompt = MagicMock(side_effect=["new-gemini-key", "new-groq-key"])
+        mock_input = MagicMock(side_effect=["n"])
+
+        with patch("aos.live_proof.run_benchmark", return_value={"benchmark_status": "PASS", "providers": {"gemini": {"status": "PASS"}, "groq": {"status": "PASS"}}, "total_runs": 6, "total_pass": 6}):
+            status, code = execute_live_proof(
+                dry_run=False,
+                prompt_func=mock_prompt,
+                input_func=mock_input,
+                trace_dir_override=tmp_path,
+                verify_git=False,
+            )
+            assert mock_input.call_count == 1
             assert mock_prompt.call_count == 2
             assert status == "LIVE_FREE_PROVIDER_PROOF_READY_FOR_INDEPENDENT_VERIFICATION"
 
