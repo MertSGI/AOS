@@ -17,6 +17,7 @@ from aos.git_workspace import (
     inspect_github_repository_identity,
     normalize_github_repository_name,
 )
+from aos.scope_guard import validate_scope
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
@@ -409,7 +410,6 @@ class TestControlledExecutionEngineFinalHardened:
         task = make_generic_task(paths=["src/"], forbidden_paths=["docs/CHARTER.md"])
         mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
         mock_worker = MockTestDoubleWorkerAdapter()
-        # Post-worker changes was only src/app.py, but verification created docs/CHARTER.md!
         mock_ws = MockGitWorkspace(
             "repo", task["base_sha"], task["task_id"],
             changed_files=["src/app.py"],
@@ -464,7 +464,7 @@ class TestControlledExecutionEngineFinalHardened:
         mock_ws = MockGitWorkspace(
             "repo", task["base_sha"], task["task_id"],
             post_worker_head=task["base_sha"],
-            final_head_sha="9999999999999999999999999999999999999999",  # Changed during verification!
+            final_head_sha="9999999999999999999999999999999999999999",
         )
 
         engine = ControlledExecutionEngine(
@@ -489,7 +489,7 @@ class TestControlledExecutionEngineFinalHardened:
         mock_ws = MockGitWorkspace(
             "repo", task["base_sha"], task["task_id"],
             post_worker_branch=f"aos/{task['task_id'].lower()}",
-            final_branch="main",  # Switched during verification!
+            final_branch="main",
         )
 
         engine = ControlledExecutionEngine(
@@ -513,7 +513,7 @@ class TestControlledExecutionEngineFinalHardened:
             "GenericOrg/GenericRepo", "control/main",
             control_sha="4c55eecdbe064c74b34af31a1daf9851689e4fe8",
             second_control_sha="9999999999999999999999999999999999999999",
-            stale_on_call=3,  # Post-worker checkpoint C
+            stale_on_call=3,
         )
         mock_worker = MockTestDoubleWorkerAdapter()
         mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
@@ -537,7 +537,7 @@ class TestControlledExecutionEngineFinalHardened:
         res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
         assert any("STALE_CONTROL_REVISION_POST_WORKER" in e for e in res["errors"])
-        assert verification_called is False  # Zero verification calls!
+        assert verification_called is False
 
     def test_final_control_stale_holds_after_verification(self):
         """13. Control moving after verification (Checkpoint D) returns HOLD."""
@@ -547,7 +547,7 @@ class TestControlledExecutionEngineFinalHardened:
             "GenericOrg/GenericRepo", "control/main",
             control_sha="4c55eecdbe064c74b34af31a1daf9851689e4fe8",
             second_control_sha="9999999999999999999999999999999999999999",
-            stale_on_call=4,  # Final checkpoint D
+            stale_on_call=4,
         )
         mock_worker = MockTestDoubleWorkerAdapter()
         mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
@@ -610,15 +610,20 @@ class TestRealGitControlledWorkspace:
     @pytest.fixture
     def real_git_repo(self):
         temp_dir = tempfile.mkdtemp(prefix="aos_real_git_test_")
-        # Initialize bare origin and working clone
         subprocess.run(["git", "init", temp_dir], capture_output=True, check=True)
         subprocess.run(["git", "config", "user.name", "AOS Tester"], cwd=temp_dir, capture_output=True, check=True)
         subprocess.run(["git", "config", "user.email", "tester@mertsgi.org"], cwd=temp_dir, capture_output=True, check=True)
         subprocess.run(["git", "remote", "add", "origin", "https://github.com/TestOrg/TestRepo.git"], cwd=temp_dir, capture_output=True, check=True)
 
-        # Initial commit
+        # Initial commit with directories
+        os.makedirs(os.path.join(temp_dir, "src"), exist_ok=True)
+        os.makedirs(os.path.join(temp_dir, "docs"), exist_ok=True)
         (Path(temp_dir) / "README.md").write_text("Hello", encoding="utf-8")
-        subprocess.run(["git", "add", "README.md"], cwd=temp_dir, capture_output=True, check=True)
+        (Path(temp_dir) / "src" / "original.py").write_text("def safe(): pass", encoding="utf-8")
+        (Path(temp_dir) / "src" / "a.py").write_text("def a(): pass", encoding="utf-8")
+        (Path(temp_dir) / "docs" / "CHARTER.md").write_text("# Charter", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=temp_dir, capture_output=True, check=True)
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=temp_dir, capture_output=True, check=True)
         head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=temp_dir, capture_output=True, text=True, check=True).stdout.strip()
 
@@ -633,36 +638,135 @@ class TestRealGitControlledWorkspace:
         clone_dir = ws.setup()
 
         try:
-            # Verify disposable clone has 0 remotes
             remotes = subprocess.run(["git", "remote"], cwd=clone_dir, capture_output=True, text=True, check=True).stdout.strip()
             assert remotes == ""
 
-            # Verify push fails locally
             push_res = subprocess.run(["git", "push", "origin", "aos/task-100"], cwd=clone_dir, capture_output=True, text=True)
             assert push_res.returncode != 0
 
-            # Verify source repo received no new branches
             source_branches = subprocess.run(["git", "branch"], cwd=repo_dir, capture_output=True, text=True, check=True).stdout
             assert "aos/task-100" not in source_branches
         finally:
             ws.cleanup()
 
-    def test_real_git_changed_files_with_spaces_renames_deletes_untracked(self, real_git_repo):
-        """16. Real Git changed file discovery handles spaces, renames, deletes, and untracked files."""
+    def test_real_git_rename_allowed_to_allowed_pass(self, real_git_repo):
+        """16. Allowed -> allowed rename: changed_paths has both endpoints and scope guard PASS."""
         repo_dir, base_sha = real_git_repo
-        ws = GitWorkspace(repo_dir, base_sha, "TASK-101")
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-102")
         clone_dir = ws.setup()
 
         try:
-            # 1. File with spaces
+            subprocess.run(["git", "mv", "src/a.py", "src/b.py"], cwd=clone_dir, capture_output=True, check=True)
+            changed = ws.get_changed_files()
+            assert "src/a.py" in changed
+            assert "src/b.py" in changed
+
+            scope_res = validate_scope(changed, {"paths": ["src/"], "forbidden_paths": []})
+            assert scope_res.is_valid is True
+        finally:
+            ws.cleanup()
+
+    def test_real_git_rename_allowed_to_out_of_scope_fail(self, real_git_repo):
+        """17. Allowed -> out-of-scope rename: changed_paths has both endpoints and scope guard FAILS."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-103")
+        clone_dir = ws.setup()
+
+        try:
+            subprocess.run(["git", "mv", "src/original.py", "outside.py"], cwd=clone_dir, capture_output=True, check=True)
+            changed = ws.get_changed_files()
+            assert "src/original.py" in changed
+            assert "outside.py" in changed
+
+            scope_res = validate_scope(changed, {"paths": ["src/"], "forbidden_paths": []})
+            assert scope_res.is_valid is False
+            assert any("outside.py" in v for v in scope_res.violations)
+        finally:
+            ws.cleanup()
+
+    def test_real_git_rename_allowed_to_forbidden_destination_fail(self, real_git_repo):
+        """18. Allowed -> forbidden destination rename: scope guard FAILS."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-104")
+        clone_dir = ws.setup()
+
+        try:
+            subprocess.run(["git", "mv", "src/a.py", "docs/FORBIDDEN.md"], cwd=clone_dir, capture_output=True, check=True)
+            changed = ws.get_changed_files()
+            assert "src/a.py" in changed
+            assert "docs/FORBIDDEN.md" in changed
+
+            scope_res = validate_scope(changed, {"paths": ["src/"], "forbidden_paths": ["docs/FORBIDDEN.md"]})
+            assert scope_res.is_valid is False
+            assert any("docs/FORBIDDEN.md" in v for v in scope_res.violations)
+        finally:
+            ws.cleanup()
+
+    def test_real_git_rename_forbidden_source_to_allowed_destination_fail(self, real_git_repo):
+        """19. Forbidden source -> allowed destination rename: scope guard FAILS."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-105")
+        clone_dir = ws.setup()
+
+        try:
+            subprocess.run(["git", "mv", "docs/CHARTER.md", "src/recovered.py"], cwd=clone_dir, capture_output=True, check=True)
+            changed = ws.get_changed_files()
+            assert "docs/CHARTER.md" in changed
+            assert "src/recovered.py" in changed
+
+            scope_res = validate_scope(changed, {"paths": ["src/"], "forbidden_paths": ["docs/CHARTER.md"]})
+            assert scope_res.is_valid is False
+            assert any("docs/CHARTER.md" in v for v in scope_res.violations)
+        finally:
+            ws.cleanup()
+
+    def test_real_git_diff_failure_raises_and_fails_closed(self, real_git_repo):
+        """20. git diff failure raises RuntimeError and fails closed."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-106")
+        ws.setup()
+
+        try:
+            with pytest.raises(RuntimeError):
+                ws.get_changed_files(from_sha="0000000000000000000000000000000000000000")
+        finally:
+            ws.cleanup()
+
+    def test_real_git_status_failure_raises_and_fails_closed(self, real_git_repo):
+        """21. git status failure raises RuntimeError and fails closed."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-107")
+        ws.setup()
+
+        # Mock runner inside workspace to force status failure
+        orig_runner = ws.runner
+
+        def _failing_runner(args, cwd):
+            if "status" in args:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="Simulated status failure")
+            return orig_runner(args, cwd)
+
+        ws.runner = _failing_runner
+
+        try:
+            with pytest.raises(RuntimeError):
+                ws.get_changed_files()
+        finally:
+            ws.cleanup()
+
+    def test_real_git_changed_files_with_spaces_and_deletes_and_untracked(self, real_git_repo):
+        """22. Filenames with spaces, deletions, and untracked files are preserved without strip()."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-108")
+        clone_dir = ws.setup()
+
+        try:
             space_file = Path(clone_dir) / "file with spaces.txt"
             space_file.write_text("content", encoding="utf-8")
 
-            # 2. Untracked file
             untracked = Path(clone_dir) / "untracked.py"
             untracked.write_text("print(1)", encoding="utf-8")
 
-            # 3. Deleted file
             (Path(clone_dir) / "README.md").unlink()
 
             changed = ws.get_changed_files()

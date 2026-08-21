@@ -362,20 +362,21 @@ class ControlledExecutionEngine:
             _record_check("worker_execution", "FAIL", worker_err_msg)
 
         # Inspect post-worker workspace state
+        inspection_error: Optional[str] = None
         try:
             post_worker_head = workspace.get_current_head()
             post_worker_branch = workspace.get_current_branch()
             post_worker_changed_paths = workspace.get_changed_files()
         except Exception as e:
+            inspection_error = f"Failed to inspect post-worker workspace: {e}"
             post_worker_head = initial_head
             post_worker_branch = worker_branch
             post_worker_changed_paths = []
-            if not worker_failed:
-                worker_failed = True
-                worker_err_msg = f"Failed to inspect post-worker workspace: {e}"
-                _record_check("worker_execution", "FAIL", worker_err_msg)
 
         if worker_failed:
+            errs = [worker_err_msg]
+            if inspection_error:
+                errs.append(inspection_error)
             workspace.cleanup()
             return _build_and_validate_result(
                 "WORKER_FAILED",
@@ -389,7 +390,25 @@ class ControlledExecutionEngine:
                 timed_out=w_res.timed_out if w_res else False,
                 mutation_performed=len(post_worker_changed_paths) > 0,
                 mutation_attempted=worker_mutation_attempted,
-                err_list=[worker_err_msg],
+                err_list=errs,
+            )
+
+        if inspection_error:
+            _record_check("git_integrity_post_worker", "FAIL", inspection_error)
+            workspace.cleanup()
+            return _build_and_validate_result(
+                "VERIFICATION_FAILED",
+                control_sha=live_control_sha,
+                exec_base_sha=exec_base_sha,
+                worker_branch=worker_branch,
+                initial_head=initial_head,
+                final_head=post_worker_head,
+                changed_paths=post_worker_changed_paths,
+                exit_code=w_res.exit_code if w_res else 0,
+                timed_out=w_res.timed_out if w_res else False,
+                mutation_performed=len(post_worker_changed_paths) > 0,
+                mutation_attempted=worker_mutation_attempted,
+                err_list=[inspection_error],
             )
 
         # 12. Post-Worker Git Integrity

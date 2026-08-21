@@ -189,18 +189,45 @@ class GitWorkspace:
         """Get list of normalized repository-relative file paths changed since base_sha (NUL-delimited).
 
         Fails closed by raising RuntimeError if diff or status cannot be queried.
+        Preserves leading/trailing whitespaces within filenames without calling strip().
+        Preserves BOTH source and destination paths for renames and copies.
         """
         if not self.workspace_dir:
             raise RuntimeError("Workspace not initialized")
         base = from_sha or self.base_sha
         changed = set()
 
-        # 1. NUL-delimited committed diff since base
-        diff_bytes = self._run_raw_git(["diff", "-z", "--name-only", base, "HEAD"])
-        for p in diff_bytes.split(b"\x00"):
-            clean = p.decode("utf-8", errors="replace").strip().replace("\\", "/")
-            if clean:
-                changed.add(clean)
+        # 1. NUL-delimited committed diff with --name-status since base
+        diff_bytes = self._run_raw_git(["diff", "-z", "--name-status", base, "HEAD"])
+        items = diff_bytes.split(b"\x00")
+        i = 0
+        while i < len(items):
+            item = items[i]
+            if not item:
+                i += 1
+                continue
+            status = item.decode("utf-8", errors="replace")
+            if status.startswith(("R", "C")):
+                # Rename or copy record: status, source, dest
+                if (i + 2) < len(items):
+                    src_p = items[i + 1].decode("utf-8", errors="replace").replace("\\", "/")
+                    dst_p = items[i + 2].decode("utf-8", errors="replace").replace("\\", "/")
+                    if src_p:
+                        changed.add(src_p)
+                    if dst_p:
+                        changed.add(dst_p)
+                    i += 3
+                else:
+                    i += 1
+            else:
+                # Other statuses (M, A, D, etc.): status, path
+                if (i + 1) < len(items):
+                    p = items[i + 1].decode("utf-8", errors="replace").replace("\\", "/")
+                    if p:
+                        changed.add(p)
+                    i += 2
+                else:
+                    i += 1
 
         # 2. NUL-delimited status for working tree & untracked files
         status_bytes = self._run_raw_git(["status", "-z", "--porcelain"])
@@ -213,16 +240,19 @@ class GitWorkspace:
                 continue
             if len(item) >= 3:
                 status_code = item[:2].decode("utf-8", errors="replace")
-                filepath = item[3:].decode("utf-8", errors="replace").strip().replace("\\", "/")
-                if "R" in status_code and (i + 1) < len(items):
-                    # Renamed file has next NUL item as new path
-                    i += 1
-                    filepath = items[i].decode("utf-8", errors="replace").strip().replace("\\", "/")
+                # Destination / main path (do not .strip()!)
+                filepath = item[3:].decode("utf-8", errors="replace").replace("\\", "/")
                 if filepath:
                     changed.add(filepath)
+                # If rename or copy, next item is the source path
+                if any(c in status_code for c in ("R", "C")) and (i + 1) < len(items):
+                    i += 1
+                    orig_path = items[i].decode("utf-8", errors="replace").replace("\\", "/")
+                    if orig_path:
+                        changed.add(orig_path)
             i += 1
 
-        # Validate path traversal or absolute path artifacts
+        # Validate path traversal or absolute path artifacts without strip()
         result = []
         for path in sorted(list(changed)):
             if path.startswith("/") or ".." in path.split("/"):
@@ -236,11 +266,13 @@ class GitWorkspace:
 
     def _run_raw_git(self, args: List[str]) -> bytes:
         target_cwd = self.workspace_dir or self.repository_path
-        res = subprocess.run(["git"] + args, cwd=target_cwd, capture_output=True)
+        res = self.runner(["git"] + args, target_cwd)
         if res.returncode != 0:
-            err = res.stderr.decode("utf-8", errors="replace").strip() or res.stdout.decode("utf-8", errors="replace").strip()
+            err = (res.stderr or "").strip() if isinstance(res.stderr, str) else (res.stderr or b"").decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"Git query failed ('git {' '.join(args)}'): {err}")
-        return res.stdout
+        if isinstance(res.stdout, bytes):
+            return res.stdout
+        return (res.stdout or "").encode("utf-8")
 
     def cleanup(self) -> None:
         """Safely clean up disposable worker clone directory."""
