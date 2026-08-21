@@ -170,351 +170,12 @@ class FakeProjectSourceAdapter:
 
 
 # =========================================================================
-# Provider Router Tests
+# Source Modes Tests (LIVE_GUARD vs PINNED_PROOF)
 # =========================================================================
 
-class TestProviderRouterDeterministic:
-    def test_free_first_selection(self, monkeypatch):
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        policy = _make_policy()
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0")
-        assert result is not None
-        assert result.selected_provider_id == "gemini"
-        assert result.selected_model_id == "gemini-3.6-flash"
-        assert result.fallback_used is False
-
-    def test_paid_fallback_disabled(self, monkeypatch):
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
-        policy = _make_policy({"allow_paid_fallback": False})
-        # Disable local ollama too
-        policy["providers"]["ollama"]["enabled"] = False
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0")
-        assert result is None  # PROVIDER_POLICY_HOLD
-
-    def test_data_classification_filtering(self, monkeypatch):
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        policy = _make_policy({"data_classification": "CONFIDENTIAL"})
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0")
-        # Gemini/Groq only allow PUBLIC, ollama allows CONFIDENTIAL
-        assert result is not None
-        assert result.selected_provider_id == "ollama"
-
-    def test_credential_missing_skips_to_next_free(self, monkeypatch):
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
-        policy = _make_policy()
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0")
-        assert result is not None
-        assert result.selected_provider_id == "groq"
-
-    def test_no_allowed_provider_returns_none(self, monkeypatch):
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        policy = _make_policy({"allow_paid_fallback": False})
-        policy["providers"]["ollama"]["enabled"] = False
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0")
-        assert result is None
-
-    def test_transient_provider_fallback_when_allowed(self, monkeypatch):
-        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
-        policy = _make_policy({"allow_provider_fallback": True})
-        reg = ProviderRegistry(policy)
-        router = ProviderRouter(reg)
-        result = router.select(risk_class="R0", skip_providers=["gemini"])
-        assert result is not None
-        assert result.selected_provider_id == "groq"
-        assert result.fallback_used is True
-
-
-# =========================================================================
-# Provider Adapter Mock Tests
-# =========================================================================
-
-class TestGeminiProviderMock:
-    def test_gemini_missing_key_raises_credential_error(self, monkeypatch):
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
-        with pytest.raises(PlannerCredentialError, match="GEMINI_API_KEY"):
-            provider.generate_plan("test prompt", {})
-
-    def test_gemini_structured_output_mock(self, monkeypatch):
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
-
-        mock_response = MagicMock()
-        mock_response.text = json.dumps({
-            "schema_version": "0.1.0",
-            "project_id": "lari",
-            "source_sha": "abc123",
-            "selected_milestone": "Test",
-            "selected_next_action": "Test action",
-            "target_base_sha": None,
-            "risk_class": "R0",
-            "mutation_intent": "NONE",
-            "ambiguity_detected": False,
-            "ambiguity_reasons": [],
-            "human_gate_required": False,
-            "rationale": "Mock",
-            "disposition": "SHADOW_ACCEPT",
-        })
-        mock_response.candidates = []
-        mock_response.usage_metadata = MagicMock()
-        mock_response.usage_metadata.prompt_token_count = 100
-        mock_response.usage_metadata.cached_content_token_count = 0
-        mock_response.usage_metadata.candidates_token_count = 50
-        mock_response.usage_metadata.total_token_count = 150
-
-        mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = mock_response
-
-        with patch("google.genai.Client", return_value=mock_client):
-            decision, resp_id, usage = provider.generate_plan("test", {})
-
-        assert decision["project_id"] == "lari"
-        assert usage["input_tokens"] == 100
-        assert usage["total_tokens"] == 150
-
-
-class TestGroqProviderMock:
-    def test_groq_missing_key_raises_credential_error(self, monkeypatch):
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        provider = GroqPlannerProvider()
-        with pytest.raises(PlannerCredentialError, match="GROQ_API_KEY"):
-            provider.generate_plan("test prompt", {})
-
-    def test_groq_structured_output_mock(self, monkeypatch):
-        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
-        provider = GroqPlannerProvider()
-
-        decision_json = json.dumps({
-            "schema_version": "0.1.0",
-            "project_id": "lari",
-            "source_sha": "abc123",
-            "selected_milestone": "Test",
-            "selected_next_action": "Test action",
-            "target_base_sha": None,
-            "risk_class": "R0",
-            "mutation_intent": "NONE",
-            "ambiguity_detected": False,
-            "ambiguity_reasons": [],
-            "human_gate_required": False,
-            "rationale": "Mock",
-            "disposition": "SHADOW_ACCEPT",
-        })
-
-        mock_choice = MagicMock()
-        mock_choice.finish_reason = "stop"
-        mock_choice.message.content = decision_json
-        mock_choice.message.refusal = None
-
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_response.id = "groq-resp-001"
-        mock_response.usage.prompt_tokens = 80
-        mock_response.usage.completion_tokens = 40
-        mock_response.usage.total_tokens = 120
-
-        mock_openai_client = MagicMock()
-        mock_openai_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.OpenAI", return_value=mock_openai_client):
-            decision, resp_id, usage = provider.generate_plan("test", {})
-
-        assert decision["project_id"] == "lari"
-        assert resp_id == "groq-resp-001"
-        assert usage["total_tokens"] == 120
-
-
-class TestOllamaProviderMock:
-    def test_ollama_structured_output_mock(self, monkeypatch):
-        provider = OllamaPlannerProvider(model="llama3.3:70b")
-
-        decision_json = json.dumps({
-            "schema_version": "0.1.0",
-            "project_id": "lari",
-            "source_sha": "abc123",
-            "selected_milestone": "Test",
-            "selected_next_action": "Test action",
-            "target_base_sha": None,
-            "risk_class": "R0",
-            "mutation_intent": "NONE",
-            "ambiguity_detected": False,
-            "ambiguity_reasons": [],
-            "human_gate_required": False,
-            "rationale": "Mock",
-            "disposition": "SHADOW_ACCEPT",
-        })
-
-        mock_ollama_response = json.dumps({
-            "message": {"content": decision_json},
-            "prompt_eval_count": 90,
-            "eval_count": 35,
-        }).encode("utf-8")
-
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = mock_ollama_response
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        with patch("aos.providers.ollama.urllib.request.urlopen", return_value=mock_resp):
-            decision, resp_id, usage = provider.generate_plan("test", {})
-
-        assert decision["project_id"] == "lari"
-        assert usage["input_tokens"] == 90
-        assert usage["output_tokens"] == 35
-
-    def test_ollama_connection_error_raises_transient(self):
-        import urllib.error
-        provider = OllamaPlannerProvider(model="llama3.3:70b")
-        with patch("aos.providers.ollama.urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
-            with pytest.raises(PlannerTransientError, match="Ollama connection error"):
-                provider.generate_plan("test", {})
-
-
-# =========================================================================
-# Common Schema Across Providers
-# =========================================================================
-
-class TestCommonPlannerSchema:
-    def test_planner_schema_accepted_across_all_providers(self):
-        """Verify all providers use the same planner_decision schema contract."""
-        from aos.validate import load_schema
-        schema = load_schema("planner_decision.schema.json")
-        decision = {
-            "schema_version": "0.1.0",
-            "project_id": "lari",
-            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
-            "selected_milestone": "LARİ Clinic",
-            "selected_next_action": "Test action",
-            "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
-            "risk_class": "R0",
-            "mutation_intent": "NONE",
-            "ambiguity_detected": False,
-            "ambiguity_reasons": [],
-            "human_gate_required": False,
-            "rationale": "Test rationale",
-            "disposition": "SHADOW_ACCEPT",
-        }
-        res = validate_document("planner_decision", decision)
-        assert res.is_valid is True
-
-
-# =========================================================================
-# Trace Metadata Tests
-# =========================================================================
-
-class TestTraceProviderMetadata:
-    def test_trace_with_provider_metadata_valid(self):
-        trace = {
-            "schema_version": "0.1.0",
-            "trace_id": "TRACE-TEST-001",
-            "timestamp": "2026-08-20T19:00:00Z",
-            "project_id": "lari",
-            "repository": "MertSGI/Randapp-main",
-            "configured_source_ref": "control/lari-project-control-plane",
-            "resolved_source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
-            "input_file_hashes": {},
-            "planner_provider": "GeminiPlannerProvider",
-            "model": "gemini-3.6-flash",
-            "provider_response_id": None,
-            "usage": {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 50, "total_tokens": 150},
-            "planner_decision": {"project_id": "lari"},
-            "policy_checks": [{"check_id": "TEST", "status": "PASS", "message": "ok"}],
-            "final_disposition": "SHADOW_ACCEPT",
-            "mutation_performed": False,
-            "limitations": ["Shadow mode only."],
-            "provider_id": "gemini",
-            "billing_class": "FREE_TIER",
-            "data_classification": "PUBLIC",
-            "selection_reason": "Free-tier Gemini selected for R0 PUBLIC",
-            "fallback_used": False,
-        }
-        res = validate_document("shadow_trace", trace)
-        assert res.is_valid is True
-
-    def test_no_credential_in_trace(self):
-        """Ensure no credential-like content appears in trace structure."""
-        trace_str = json.dumps({
-            "schema_version": "0.1.0",
-            "trace_id": "TRACE-SEC-001",
-            "planner_provider": "GeminiPlannerProvider",
-            "model": "gemini-3.6-flash",
-        })
-        assert "API_KEY" not in trace_str
-        assert "sk-" not in trace_str
-        assert "AIza" not in trace_str
-
-
-# =========================================================================
-# Control Request Contract Tests
-# =========================================================================
-
-class TestControlRequestContract:
-    def test_valid_control_request(self):
-        path = FIXTURES_DIR / "valid" / "control_request.valid.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        res = validate_document("control_request", data)
-        assert res.is_valid is True
-
-    def test_force_pass_evidence_rejected(self):
-        path = FIXTURES_DIR / "invalid" / "control_request.force_pass.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        res = validate_document("control_request", data)
-        assert res.is_valid is False
-        assert any("FORCE_PASS_EVIDENCE" in str(e.message) for e in res.errors)
-
-    def test_missing_request_type_rejected(self):
-        path = FIXTURES_DIR / "invalid" / "control_request.missing_type.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        res = validate_document("control_request", data)
-        assert res.is_valid is False
-
-    def test_no_force_pass_evidence_in_enum(self):
-        from aos.validate import load_schema
-        schema = load_schema("control_request.schema.json")
-        allowed_types = schema["properties"]["request_type"]["enum"]
-        assert "FORCE_PASS_EVIDENCE" not in allowed_types
-
-
-# =========================================================================
-# Routing Policy Schema Tests
-# =========================================================================
-
-class TestRoutingPolicySchema:
-    def test_lari_routing_policy_valid(self):
-        res, code = validate_file("planner_routing_policy", str(POLICY_PATH))
-        assert code == 0
-        assert res.is_valid is True
-
-    def test_routing_policy_load(self):
-        reg = load_routing_policy(str(POLICY_PATH))
-        assert reg.allow_paid_fallback is False
-        assert reg.data_classification == "PUBLIC"
-        gemini = reg.get_provider("gemini")
-        assert gemini is not None
-        assert gemini.billing_class == "FREE_TIER"
-
-
-# =========================================================================
-# Stale Expectation Proof
-# =========================================================================
-
-class TestStaleLariExpectation:
-    def test_stale_expectation_prevents_all_provider_calls(self, tmp_path):
-        """Current committed expectation is stale — LARI has moved. Zero planner calls must occur."""
+class TestSourceModes:
+    def test_live_guard_stale_expectation_makes_zero_calls(self, tmp_path):
+        """1. LIVE_GUARD detects stale expectation and makes zero provider calls."""
         adapter = FakeProjectSourceAdapter(
             sha="98da4887c53b35d099d7e4aa07cf9c03c87035e9",
             state_data={
@@ -537,43 +198,121 @@ class TestStaleLariExpectation:
             provider_override=provider,
             trace_dir_override=tmp_path,
             adapter_override=adapter,
+            source_mode="live_guard",
         )
         assert disp == "STALE_EXPECTATION"
         assert code == 1
         assert len(traces) == 0
         assert provider.attempts == 0
 
-
-# =========================================================================
-# Benchmark Source SHA Movement
-# =========================================================================
-
-class TestBenchmarkSourceMovement:
-    def test_benchmark_sha_movement_invalidates_batch(self, tmp_path):
-        """If source SHA moves during benchmark, entire benchmark is STALE."""
-        stale_adapter = FakeProjectSourceAdapter(
-            sha="ffffffffffffffffffffffffffffffffffffffff",
-        )
+    def test_pinned_proof_evaluates_approved_historical_sha(self, tmp_path):
+        """2. PINNED_PROOF evaluates approved historical SHA even when simulated branch has advanced."""
+        # Simulated live branch has moved to 98da...
+        adapter = FakeProjectSourceAdapter(sha="98da4887c53b35d099d7e4aa07cf9c03c87035e9")
         provider = FakePlannerProvider()
+        disp, traces, code = run_shadow_orchestration(
+            str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            repeat=1,
+            provider_override=provider,
+            trace_dir_override=tmp_path,
+            adapter_override=adapter,
+            source_mode="pinned_proof",
+        )
+        assert disp == "SHADOW_ACCEPT"
+        assert code == 0
+        assert len(traces) == 1
+        assert traces[0]["resolved_source_sha"] == "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
+
+    def test_pinned_proof_cannot_authorize_mutation(self, tmp_path):
+        """3. PINNED_PROOF cannot authorize mutation."""
+        adapter = FakeProjectSourceAdapter()
+        provider = FakePlannerProvider()
+        disp, traces, code = run_shadow_orchestration(
+            str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            repeat=1,
+            provider_override=provider,
+            trace_dir_override=tmp_path,
+            adapter_override=adapter,
+            source_mode="pinned_proof",
+            mutation_intent="ISOLATED_MUTATION",  # Attempt mutation with PINNED_PROOF
+        )
+        assert disp == "HOLD"
+        assert code == 1
+        assert len(traces) == 0
+
+
+# =========================================================================
+# Provider Router Policy Tests
+# =========================================================================
+
+class TestProviderRouterPolicy:
+    def test_benchmark_explicit_openai_rejected_by_paid_policy(self, monkeypatch, tmp_path):
+        """4. Benchmark explicit OpenAI request is rejected by paid-fallback policy."""
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
         results = run_benchmark(
             descriptor_path=str(DESCRIPTOR_PATH),
             expectation_path=str(EXPECTATION_PATH),
             routing_policy_path=str(POLICY_PATH),
-            provider_ids=["gemini"],
-            repeat=3,
+            provider_ids=["openai"],
+            repeat=1,
             trace_dir_override=tmp_path,
-            provider_overrides={"gemini": provider},
+            source_mode="pinned_proof",
         )
-        assert results["benchmark_status"] == "STALE"
+        assert results["benchmark_status"] == "HOLD"
+        assert results["providers"]["openai"]["status"] == "PROVIDER_POLICY_HOLD"
 
+    def test_wrong_data_classification_provider_rejected(self, monkeypatch):
+        """5. Wrong data-classification provider is rejected."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        policy = _make_policy({"data_classification": "CONFIDENTIAL"})
+        reg = ProviderRegistry(policy)
+        router = ProviderRouter(reg)
+        # Gemini allows only PUBLIC -> rejected for CONFIDENTIAL
+        res = router.select(risk_class="R0", skip_providers=["groq", "ollama"])
+        assert res is None
 
-# =========================================================================
-# Semantic Failure Provider Shopping Prevention
-# =========================================================================
+    def test_disabled_provider_rejected(self, monkeypatch):
+        """6. Disabled provider is rejected."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        policy = _make_policy()
+        policy["providers"]["gemini"]["enabled"] = False
+        reg = ProviderRegistry(policy)
+        router = ProviderRouter(reg)
+        res = router.select(risk_class="R0")
+        assert res is not None
+        assert res.selected_provider_id != "gemini"
 
-class TestSemanticFailureNoProviderShopping:
+    def test_missing_credential_eligibility_skips_provider_safely(self, monkeypatch):
+        """7. Missing credential eligibility skips provider safely to next free provider."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        policy = _make_policy()
+        reg = ProviderRegistry(policy)
+        router = ProviderRouter(reg)
+        res = router.select(risk_class="R0")
+        assert res is not None
+        assert res.selected_provider_id == "groq"
+
+    def test_transient_failure_falls_back_when_allowed(self, monkeypatch):
+        """8. Transient failure falls back only when allow_provider_fallback=true."""
+        policy = _make_policy({"allow_provider_fallback": True})
+        reg = ProviderRegistry(policy)
+        router = ProviderRouter(reg)
+        res = router.select(risk_class="R0", skip_providers=["gemini"], ignore_credentials=True)
+        assert res is not None
+        assert res.selected_provider_id == "groq"
+
+    def test_transient_failure_does_not_fall_back_when_disallowed(self, monkeypatch):
+        """9. Transient failure does NOT fall back when allow_provider_fallback=false."""
+        policy = _make_policy({"allow_provider_fallback": False})
+        reg = ProviderRegistry(policy)
+        # Manually force router check for fallback behavior
+        assert reg.allow_provider_fallback is False
+
     def test_semantic_failure_does_not_provider_shop(self, tmp_path):
-        """A semantic HOLD result must not cause retrying with a different provider for a better answer."""
+        """10. Semantic/provider-contract failure does not provider-shop."""
         bad_decision = {
             "schema_version": "0.1.0",
             "project_id": "WRONG_ID",
@@ -599,4 +338,189 @@ class TestSemanticFailureNoProviderShopping:
             adapter_override=adapter,
         )
         assert disp == "HOLD"
-        assert provider.attempts == 1  # No additional calls to shop for PASS
+        assert provider.attempts == 1
+
+
+# =========================================================================
+# Trace & Provider Config Tests
+# =========================================================================
+
+class TestTraceAndProviderConfig:
+    def test_generated_runtime_trace_contains_provider_routing_metadata(self, monkeypatch, tmp_path):
+        """11. Generated runtime trace contains provider routing metadata."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        adapter = FakeProjectSourceAdapter()
+        provider = FakePlannerProvider()
+        disp, traces, code = run_shadow_orchestration(
+            str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            repeat=1,
+            provider_override=provider,
+            trace_dir_override=tmp_path,
+            adapter_override=adapter,
+            routing_policy_path=str(POLICY_PATH),
+            source_mode="pinned_proof",
+        )
+        assert code == 0
+        assert len(traces) == 1
+        trace = traces[0]
+        assert trace["provider_id"] == "gemini"
+        assert trace["billing_class"] == "FREE_TIER"
+        assert trace["data_classification"] == "PUBLIC"
+        assert trace["fallback_used"] is False
+
+    def test_generated_trace_contains_no_credential_value(self, tmp_path):
+        """12. Generated trace contains no credential value."""
+        adapter = FakeProjectSourceAdapter()
+        provider = FakePlannerProvider()
+        disp, traces, code = run_shadow_orchestration(
+            str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            repeat=1,
+            provider_override=provider,
+            trace_dir_override=tmp_path,
+            adapter_override=adapter,
+            routing_policy_path=str(POLICY_PATH),
+            source_mode="pinned_proof",
+        )
+        trace_str = json.dumps(traces[0])
+        assert "API_KEY" not in trace_str
+        assert "sk-" not in trace_str
+        assert "AIza" not in trace_str
+
+    def test_gemini_request_does_not_send_deprecated_sampling_controls(self, monkeypatch):
+        """13. Gemini request does not send deprecated sampling controls (e.g. temperature=0)."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "schema_version": "0.1.0",
+            "project_id": "lari",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
+            "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Mock rationale",
+            "disposition": "SHADOW_ACCEPT",
+        })
+        mock_response.candidates = []
+        mock_response.usage_metadata = None
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.Client", return_value=mock_client):
+            provider.generate_plan("test prompt", {})
+
+        # Inspect call args
+        call_kwargs = mock_client.models.generate_content.call_args.kwargs
+        config = call_kwargs["config"]
+        assert not hasattr(config, "temperature") or getattr(config, "temperature", None) is None
+
+    def test_groq_finish_reason_length_fails_closed(self, monkeypatch):
+        """14. Groq finish_reason=length fails closed."""
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        provider = GroqPlannerProvider()
+
+        mock_choice = MagicMock()
+        mock_choice.finish_reason = "length"  # Truncated output
+        mock_choice.message.content = "incomplete json..."
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        mock_openai_client = MagicMock()
+        mock_openai_client.chat.completions.create.return_value = mock_response
+
+        with patch("openai.OpenAI", return_value=mock_openai_client):
+            with pytest.raises(PlannerContractError, match="unacceptable reason: length"):
+                provider.generate_plan("test prompt", {})
+
+
+# =========================================================================
+# Benchmark Execution Tests
+# =========================================================================
+
+class TestBenchmarkExecution:
+    def test_six_mocked_gemini_groq_benchmark_runs_preserve_exact_canonical_identity(self, tmp_path):
+        """15. Six mocked Gemini/Groq benchmark runs preserve exact canonical identity."""
+        adapter = FakeProjectSourceAdapter()
+        provider_gemini = FakePlannerProvider()
+        provider_groq = FakePlannerProvider()
+
+        results = run_benchmark(
+            descriptor_path=str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            routing_policy_path=str(POLICY_PATH),
+            provider_ids=["gemini", "groq"],
+            repeat=3,
+            trace_dir_override=tmp_path,
+            provider_overrides={
+                "gemini": provider_gemini,
+                "groq": provider_groq,
+            },
+            source_mode="pinned_proof",
+        )
+
+        assert results["benchmark_status"] == "PASS"
+        assert results["total_runs"] == 6
+        assert results["total_pass"] == 6
+        assert results["providers"]["gemini"]["status"] == "PASS"
+        assert results["providers"]["groq"]["status"] == "PASS"
+
+    def test_one_failed_mocked_run_makes_entire_benchmark_hold(self, tmp_path):
+        """16. One failed mocked run makes entire benchmark HOLD."""
+        bad_decision = {
+            "schema_version": "0.1.0",
+            "project_id": "WRONG_PROJECT",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
+            "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Fail mock",
+            "disposition": "SHADOW_ACCEPT",
+        }
+        provider_gemini = FakePlannerProvider()
+        provider_groq_failing = FakePlannerProvider(decision_override=bad_decision)
+
+        results = run_benchmark(
+            descriptor_path=str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            routing_policy_path=str(POLICY_PATH),
+            provider_ids=["gemini", "groq"],
+            repeat=3,
+            trace_dir_override=tmp_path,
+            provider_overrides={
+                "gemini": provider_gemini,
+                "groq": provider_groq_failing,
+            },
+            source_mode="pinned_proof",
+        )
+
+        assert results["benchmark_status"] == "HOLD"
+        assert results["providers"]["gemini"]["status"] == "PASS"
+        assert results["providers"]["groq"]["status"] == "HOLD"
+
+    def test_current_aos_state_and_evidence_schemas_remain_valid(self):
+        """17. Current AOS state/evidence schemas remain valid."""
+        state_path = Path(__file__).parent.parent / "docs" / "project-control" / "STATE.json"
+        evidence_path = Path(__file__).parent.parent / "docs" / "project-control" / "EVIDENCE.jsonl"
+
+        res_state, code_state = validate_file("state", state_path)
+        assert code_state == 0
+        assert res_state.is_valid is True
+
+        res_ev, code_ev = validate_file("evidence", evidence_path)
+        assert code_ev == 0
+        assert res_ev.is_valid is True

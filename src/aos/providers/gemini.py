@@ -39,7 +39,6 @@ class GeminiPlannerProvider:
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=schema,
-                    temperature=0.0,
                     max_output_tokens=1000,
                 ),
             )

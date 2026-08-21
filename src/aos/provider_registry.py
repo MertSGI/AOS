@@ -74,6 +74,7 @@ class ProviderRouter:
         self,
         risk_class: str = "R0",
         skip_providers: Optional[List[str]] = None,
+        ignore_credentials: bool = False,
     ) -> Optional[RoutingResult]:
         """Select the first eligible provider for a risk class and data classification.
 
@@ -111,8 +112,10 @@ class ProviderRouter:
             if entry.billing_class == "PAID" and not self.registry.allow_paid_fallback:
                 continue
 
-            if entry.cloud_local == "CLOUD" and entry.credential_env_var:
+            if not ignore_credentials and entry.cloud_local == "CLOUD" and entry.credential_env_var:
                 if not os.environ.get(entry.credential_env_var):
+                    fallback_from = fallback_from or provider_id
+                    fallback_used = True
                     continue
 
             if entry.cloud_local == "LOCAL":

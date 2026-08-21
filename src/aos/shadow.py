@@ -21,10 +21,20 @@ from aos.planner import (
     PlannerTransientError,
 )
 from aos.policy import PolicyEngine
+from aos.provider_registry import ProviderRegistry, ProviderRouter, RoutingResult, load_routing_policy
+from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import load_schema, validate_document, validate_file
 
 RUNTIME_TRACE_DIR = Path(__file__).resolve().parent.parent.parent / ".aos-runtime" / "shadow"
+
+PROVIDER_MAP = {
+    "gemini": GeminiPlannerProvider,
+    "groq": GroqPlannerProvider,
+    "ollama": OllamaPlannerProvider,
+    "openai": OpenAIPlannerProvider,
+}
+
 
 def run_shadow_orchestration(
     descriptor_path: str,
@@ -33,9 +43,18 @@ def run_shadow_orchestration(
     provider_override: Optional[PlannerProvider] = None,
     trace_dir_override: Optional[Path] = None,
     max_network_retries: int = 1,
-    adapter_override: Optional[ProjectSourceAdapter] = None
+    adapter_override: Optional[ProjectSourceAdapter] = None,
+    routing_policy_path: Optional[str] = None,
+    source_mode: str = "live_guard",
+    mutation_intent: str = "NONE",
+    risk_class: str = "R0",
 ) -> Tuple[str, List[Dict[str, Any]], int]:
     """Execute shadow orchestration loop with expectation contract check, provider retry, fail-closed trace and snapshot validation."""
+    # Safety Check: PINNED_PROOF must NEVER be used for mutation
+    if source_mode == "pinned_proof" and mutation_intent != "NONE":
+        print(f"HOLD: PINNED_PROOF mode cannot be used with mutation_intent '{mutation_intent}'", file=sys.stderr)
+        return "HOLD", [], 1
+
     # 1. Validate descriptor
     res, code = validate_file("project_descriptor", descriptor_path)
     if not res.is_valid:
@@ -53,12 +72,31 @@ def run_shadow_orchestration(
 
     adapter = adapter_override or ProjectSourceAdapter(repository=repository, control_ref=control_ref)
 
-    # 2. Pin source SHA
-    try:
-        pinned_sha = adapter.resolve_ref_to_sha()
-    except Exception as e:
-        print(f"PROVIDER_UNAVAILABLE: Failed to resolve ref '{control_ref}': {e}", file=sys.stderr)
-        return "PROVIDER_UNAVAILABLE", [], 4
+    # 2. Pin source SHA based on source_mode
+    expectation_data = None
+    if expectation_path:
+        exp_res, exp_code = validate_file("shadow_expectation", expectation_path)
+        if not exp_res.is_valid:
+            print(f"INVALID_CANONICAL_STATE: Shadow expectation file '{expectation_path}' invalid:", file=sys.stderr)
+            for e in exp_res.errors:
+                print(f"  - {e}", file=sys.stderr)
+            return "INVALID_CANONICAL_STATE", [], 5
+
+        with open(expectation_path, "r", encoding="utf-8") as ef:
+            expectation_data = json.load(ef)
+
+    if source_mode == "pinned_proof":
+        if not expectation_data:
+            print(f"INVALID_CANONICAL_STATE: PINNED_PROOF mode requires a valid shadow expectation file", file=sys.stderr)
+            return "INVALID_CANONICAL_STATE", [], 5
+        pinned_sha = expectation_data["expected_source_sha"]
+    else:
+        # LIVE_GUARD mode
+        try:
+            pinned_sha = adapter.resolve_ref_to_sha()
+        except Exception as e:
+            print(f"PROVIDER_UNAVAILABLE: Failed to resolve ref '{control_ref}': {e}", file=sys.stderr)
+            return "PROVIDER_UNAVAILABLE", [], 4
 
     # 3. Fetch canonical context
     control_files = desc["control"]
@@ -83,20 +121,8 @@ def run_shadow_orchestration(
             print(f"  - {e}", file=sys.stderr)
         return "INVALID_CANONICAL_STATE", [], 5
 
-    # 5. Optional Shadow Expectation Contract Check
-    expectation_data = None
-    if expectation_path:
-        exp_res, exp_code = validate_file("shadow_expectation", expectation_path)
-        if not exp_res.is_valid:
-            print(f"INVALID_CANONICAL_STATE: Shadow expectation file '{expectation_path}' invalid:", file=sys.stderr)
-            for e in exp_res.errors:
-                print(f"  - {e}", file=sys.stderr)
-            return "INVALID_CANONICAL_STATE", [], 5
-
-        with open(expectation_path, "r", encoding="utf-8") as ef:
-            expectation_data = json.load(ef)
-
-        # Check expectation against snapshot
+    # 5. Expectation Contract Check
+    if expectation_data:
         mismatches = []
         if expectation_data["project_id"] != snapshot["project_id"]:
             mismatches.append(f"project_id '{expectation_data['project_id']}' != '{snapshot['project_id']}'")
@@ -112,28 +138,53 @@ def run_shadow_orchestration(
             mismatches.append(f"target_base_sha '{expectation_data.get('expected_target_base_sha')}' != '{snapshot.get('target_base_sha')}'")
 
         if mismatches:
-            print(f"STALE_EXPECTATION: Live canonical snapshot drifted from expectation:", file=sys.stderr)
-            for m in mismatches:
-                print(f"  - {m}", file=sys.stderr)
-            return "STALE_EXPECTATION", [], 1
+            if source_mode == "live_guard":
+                print(f"STALE_EXPECTATION: Live canonical snapshot drifted from expectation:", file=sys.stderr)
+                for m in mismatches:
+                    print(f"  - {m}", file=sys.stderr)
+                return "STALE_EXPECTATION", [], 1
+            else:
+                print(f"HOLD: PINNED_PROOF snapshot verification mismatch:", file=sys.stderr)
+                for m in mismatches:
+                    print(f"  - {m}", file=sys.stderr)
+                return "HOLD", [], 1
 
-    # 6. Instantiate planner provider
+    # 6. Instantiate planner provider & policy router
+    routing_result: Optional[RoutingResult] = None
+    registry: Optional[ProviderRegistry] = None
+
+    if routing_policy_path:
+        registry = load_routing_policy(routing_policy_path)
+        router = ProviderRouter(registry)
+        routing_result = router.select(risk_class=risk_class)
+        if not routing_result:
+            print("PROVIDER_POLICY_HOLD: No eligible provider for policy/risk/data class", file=sys.stderr)
+            return "PROVIDER_POLICY_HOLD", [], 1
+
     if provider_override is not None:
         provider = provider_override
         provider_name = provider.__class__.__name__
         model_name = getattr(provider, "model", "fake-model")
+    elif routing_result:
+        pid = routing_result.selected_provider_id
+        cls = PROVIDER_MAP.get(pid)
+        if not cls:
+            print(f"PROVIDER_UNAVAILABLE: Provider class for '{pid}' not found", file=sys.stderr)
+            return "PROVIDER_UNAVAILABLE", [], 4
+        provider = cls(model=routing_result.selected_model_id)
+        provider_name = provider.__class__.__name__
+        model_name = routing_result.selected_model_id
     else:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             print("PROVIDER_CREDENTIAL_REQUIRED: OPENAI_API_KEY environment variable missing", file=sys.stderr)
             return "PROVIDER_CREDENTIAL_REQUIRED", [], 3
         provider = OpenAIPlannerProvider(model="gpt-5.6-sol")
-        provider_name = "OpenAI"
+        provider_name = "OpenAIPlannerProvider"
         model_name = "gpt-5.6-sol"
 
     planner_schema = load_schema("planner_decision.schema.json")
 
-    # Construct bounded prompt from normalized snapshot
     prompt = (
         f"PROJECT_ID: {project_id}\n"
         f"REPOSITORY: {repository}\n"
@@ -184,11 +235,14 @@ def run_shadow_orchestration(
             print(f"PROVIDER_UNAVAILABLE: Planner transient evaluation failed after retries: {last_exception}", file=sys.stderr)
             return "PROVIDER_UNAVAILABLE", traces, 4
 
-        # Check stale revision after batch step (re-resolution failure MUST fail closed)
-        try:
-            re_resolved_sha = adapter.resolve_ref_to_sha()
-        except Exception:
-            re_resolved_sha = None  # Signal re-resolution failure
+        # Check stale revision after batch step (re-resolution failure MUST fail closed in live_guard mode)
+        if source_mode == "live_guard":
+            try:
+                re_resolved_sha = adapter.resolve_ref_to_sha()
+            except Exception:
+                re_resolved_sha = None
+        else:
+            re_resolved_sha = pinned_sha
 
         policy_checks, final_disp = policy_engine.evaluate(
             decision=decision_data,
@@ -199,7 +253,7 @@ def run_shadow_orchestration(
         )
 
         trace_id = f"TRACE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-        trace = {
+        trace: Dict[str, Any] = {
             "schema_version": "0.1.0",
             "trace_id": trace_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -217,16 +271,27 @@ def run_shadow_orchestration(
             "final_disposition": final_disp,
             "mutation_performed": False,
             "limitations": [
-                "Shadow mode execution only.",
+                f"Shadow mode execution only ({source_mode}).",
                 "No product mutation performed.",
                 "Evaluated against pinned canonical control revision."
             ]
         }
 
+        # Populate real routing metadata if routing policy was used
+        if routing_result and registry:
+            entry = registry.get_provider(routing_result.selected_provider_id)
+            trace["provider_id"] = routing_result.selected_provider_id
+            trace["billing_class"] = entry.billing_class if entry else "UNKNOWN"
+            trace["data_classification"] = registry.data_classification
+            trace["selection_reason"] = routing_result.selection_reason
+            trace["fallback_used"] = routing_result.fallback_used
+
         # Fail closed on trace schema validation failure
         trace_val = validate_document("shadow_trace", trace)
         if not trace_val.is_valid:
             print(f"FAIL_CLOSED: Generated shadow trace failed schema validation!", file=sys.stderr)
+            for e in trace_val.errors:
+                print(f"  - {e}", file=sys.stderr)
             final_disp = "HOLD"
             trace["final_disposition"] = "HOLD"
 
@@ -247,10 +312,18 @@ def main(args: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="AOS Shadow Orchestrator CLI")
     parser.add_argument("--project", required=True, help="Path to project descriptor JSON file")
     parser.add_argument("--expectation", help="Optional path to shadow expectation JSON file")
+    parser.add_argument("--routing-policy", help="Optional path to planner routing policy JSON file")
+    parser.add_argument("--source-mode", choices=["live_guard", "pinned_proof"], default="live_guard", help="Source resolution mode")
     parser.add_argument("--repeat", type=int, default=1, help="Number of shadow decisions to evaluate")
 
     parsed = parser.parse_args(args)
-    disp, traces, code = run_shadow_orchestration(parsed.project, expectation_path=parsed.expectation, repeat=parsed.repeat)
+    disp, traces, code = run_shadow_orchestration(
+        descriptor_path=parsed.project,
+        expectation_path=parsed.expectation,
+        routing_policy_path=parsed.routing_policy,
+        source_mode=parsed.source_mode,
+        repeat=parsed.repeat,
+    )
 
     print(f"DISPOSITION: {disp}")
     print(f"EXECUTED TRACES: {len(traces)}")

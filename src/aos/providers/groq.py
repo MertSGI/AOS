@@ -68,8 +68,8 @@ class GroqPlannerProvider:
 
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
-        if finish_reason and finish_reason not in ("stop", "length"):
-            raise PlannerContractError(f"Groq response finished with reason: {finish_reason}")
+        if finish_reason and finish_reason != "stop":
+            raise PlannerContractError(f"Groq response finished with unacceptable reason: {finish_reason}")
 
         content_str = getattr(choice.message, "content", None)
         if not content_str:
