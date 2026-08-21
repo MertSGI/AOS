@@ -17,9 +17,12 @@ from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
     SENSITIVE_ENV_VARS,
+    build_antigravity_argv,
     compute_file_sha256,
     get_local_capability_store_path,
     get_reported_cli_version,
+    parse_antigravity_json_output,
+    resolve_executable_identity,
 )
 
 
@@ -51,6 +54,7 @@ def run_antigravity_probe(
     custom_parent_dir: Optional[str] = None,
     aos_revision: Optional[str] = None,
     version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+    injected_identity: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute the project-independent single-invocation Antigravity capability probe."""
     probe_errors: List[str] = []
@@ -66,14 +70,19 @@ def run_antigravity_probe(
         except Exception:
             effective_aos_revision = "0000000000000000000000000000000000000000"
 
-    exe_path = shutil.which(cli_command) or (cli_command if os.path.isfile(cli_command) else None)
-    if not exe_path or not os.path.isfile(exe_path):
+    identity = injected_identity or resolve_executable_identity(cli_command, version_runner=version_runner)
+    if not identity:
         if runner:
             mock_bin_dir = Path(tempfile.gettempdir()) / "aos_mock_bin"
             mock_bin_dir.mkdir(parents=True, exist_ok=True)
             mock_exe = mock_bin_dir / f"{os.path.basename(cli_command)}"
             mock_exe.write_text("mock binary", encoding="utf-8")
-            exe_path = str(mock_exe)
+            identity = {
+                "path": str(mock_exe),
+                "filename": os.path.basename(mock_exe),
+                "sha256": compute_file_sha256(mock_exe),
+                "version": "1.1.17",
+            }
         else:
             return {
                 "status": "HOLD",
@@ -81,27 +90,10 @@ def run_antigravity_probe(
                 "proof": None,
             }
 
-    executable_filename = os.path.basename(exe_path)
-    try:
-        executable_sha256 = compute_file_sha256(exe_path)
-    except Exception as e:
-        return {
-            "status": "HOLD",
-            "errors": [f"Failed to compute SHA256 of executable '{exe_path}': {e}"],
-            "proof": None,
-        }
-
-    v_runner = version_runner
-    if not v_runner and runner and not shutil.which(cli_command):
-        v_runner = lambda args: subprocess.CompletedProcess(args, 0, stdout="1.1.17", stderr="")
-
-    reported_cli_version = get_reported_cli_version(cli_command, runner=v_runner)
-    if not reported_cli_version:
-        return {
-            "status": "HOLD",
-            "errors": [f"Failed to query reported CLI version from '{cli_command} --version'"],
-            "proof": None,
-        }
+    executable_path = identity["path"]
+    executable_filename = identity["filename"]
+    executable_sha256 = identity["sha256"]
+    reported_cli_version = identity["version"]
 
     workspace_dir = parent_dir / "workspace"
     outside_sentinel_file = parent_dir / "outside_sentinel.txt"
@@ -156,14 +148,12 @@ def run_antigravity_probe(
             "Stop when the file has been created."
         )
 
-        cmd = [
-            exe_path,
-            "--print",
-            "--dangerously-skip-permissions",
-            "--mode", "accept-edits",
-            "--add-dir", str(workspace_dir),
-            prompt,
-        ]
+        cmd = build_antigravity_argv(
+            executable_path=str(executable_path),
+            workspace_path=str(workspace_dir),
+            prompt=prompt,
+            timeout_seconds=timeout_seconds,
+        )
 
         sanitized_env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
 
@@ -174,6 +164,7 @@ def run_antigravity_probe(
             else:
                 res = subprocess.run(cmd, cwd=str(workspace_dir), capture_output=True, text=True, timeout=timeout_seconds, env=sanitized_env)
             exit_code = res.returncode
+            parsed_json = parse_antigravity_json_output(res.stdout or "")
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = None
@@ -257,10 +248,11 @@ def run_antigravity_probe(
         "reported_cli_version": reported_cli_version,
         "challenge_sha256": challenge_sha256,
         "confirmed_invocation_capabilities": [
-            "--print",
-            "--dangerously-skip-permissions",
-            "--mode accept-edits",
+            "--mode=accept-edits",
             "--add-dir",
+            "--output-format=json",
+            f"--print-timeout={timeout_seconds}s",
+            "-p",
         ],
         "exit_code": exit_code,
         "timed_out": timed_out,

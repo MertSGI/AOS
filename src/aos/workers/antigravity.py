@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.1.0"
+ADAPTER_CONTRACT_VERSION = "0.2.0"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 
 
@@ -62,28 +62,54 @@ def get_reported_cli_version(
         return None
 
 
+def resolve_executable_identity(
+    cli_command: str = "agy",
+    version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+    which_resolver: Optional[Callable[[str], Optional[str]]] = None,
+    hash_computer: Optional[Callable[[str | Path], str]] = None,
+    custom_version: Optional[str] = None,
+) -> Optional[Dict[str, str]]:
+    """Resolve full runtime identity of the CLI executable."""
+    resolver = which_resolver or shutil.which
+    exe_path = resolver(cli_command) or (cli_command if os.path.isfile(cli_command) else None)
+    if not exe_path or not os.path.isfile(exe_path):
+        return None
+
+    try:
+        hasher = hash_computer or compute_file_sha256
+        sha256 = hasher(exe_path)
+    except Exception:
+        return None
+
+    if custom_version is not None:
+        cli_version = custom_version
+    else:
+        cli_version = get_reported_cli_version(cli_command, runner=version_runner)
+
+    if not cli_version:
+        return None
+
+    return {
+        "path": os.path.abspath(exe_path),
+        "filename": os.path.basename(exe_path),
+        "sha256": sha256,
+        "version": cli_version,
+    }
+
+
 def resolve_capability_status(
     cli_command: str = "agy",
     store_path: Optional[Path] = None,
     version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+    identity: Optional[Dict[str, str]] = None,
 ) -> str:
     """Dynamically resolve machine-local capability status for the Antigravity CLI."""
     target_store = store_path or get_local_capability_store_path("antigravity")
     if not target_store.is_file():
         return "UNPROVEN"
 
-    # Find current executable
-    exe_path = shutil.which(cli_command) or (cli_command if os.path.isfile(cli_command) else None)
-    if not exe_path or not os.path.isfile(exe_path):
-        return "UNPROVEN"
-
-    try:
-        current_sha256 = compute_file_sha256(exe_path)
-    except Exception:
-        return "UNPROVEN"
-
-    current_cli_version = get_reported_cli_version(cli_command, runner=version_runner)
-    if not current_cli_version:
+    current_identity = identity or resolve_executable_identity(cli_command, version_runner=version_runner)
+    if not current_identity:
         return "UNPROVEN"
 
     try:
@@ -97,14 +123,61 @@ def resolve_capability_status(
         if (
             attestation.get("worker_adapter") == "antigravity"
             and attestation.get("adapter_contract_version") == ADAPTER_CONTRACT_VERSION
-            and attestation.get("executable_sha256") == current_sha256
-            and attestation.get("reported_cli_version") == current_cli_version
+            and attestation.get("executable_sha256") == current_identity["sha256"]
+            and attestation.get("reported_cli_version") == current_identity["version"]
             and attestation.get("capability_status") == "PROVEN"
         ):
             return "PROVEN"
         return "UNPROVEN"
     except Exception:
         return "UNPROVEN"
+
+
+def build_antigravity_argv(
+    executable_path: str,
+    workspace_path: str,
+    prompt: str,
+    timeout_seconds: int = 180,
+) -> List[str]:
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.0."""
+    return [
+        executable_path,
+        "--mode=accept-edits",
+        "--add-dir",
+        workspace_path,
+        "--output-format=json",
+        f"--print-timeout={timeout_seconds}s",
+        "-p",
+        prompt,
+    ]
+
+
+def parse_antigravity_json_output(stdout: str) -> Dict[str, Any]:
+    """Parse top-level structured Antigravity JSON output and extract sanitized summary fields."""
+    sanitized: Dict[str, Any] = {
+        "status": None,
+        "error_present": False,
+        "exit_code": None,
+        "timed_out": False,
+    }
+    if not stdout or not stdout.strip():
+        return sanitized
+
+    try:
+        parsed = json.loads(stdout.strip())
+        if isinstance(parsed, dict):
+            if "status" in parsed:
+                sanitized["status"] = str(parsed["status"])
+            if "error" in parsed or "errors" in parsed or parsed.get("status") in ("ERROR", "FAIL", "HOLD"):
+                sanitized["error_present"] = True
+            if "exit_code" in parsed and isinstance(parsed["exit_code"], int):
+                sanitized["exit_code"] = parsed["exit_code"]
+            if "timed_out" in parsed and isinstance(parsed["timed_out"], bool):
+                sanitized["timed_out"] = parsed["timed_out"]
+    except Exception:
+        # If output is not valid top-level JSON, leave sanitized defaults
+        pass
+    return sanitized
 
 
 class AntigravityWorkerAdapter(WorkerAdapter):
@@ -116,17 +189,67 @@ class AntigravityWorkerAdapter(WorkerAdapter):
         runner: Optional[Callable[[List[str], str, int, Dict[str, str]], subprocess.CompletedProcess]] = None,
         capability_status_override: Optional[str] = None,
         store_path: Optional[Path] = None,
+        version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+        injected_identity: Optional[Dict[str, str]] = None,
     ):
         self.cli_command = cli_command
         self.runner = runner or self._default_runner
         self.store_path = store_path
+        self.version_runner = version_runner
+        self.injected_identity = injected_identity
+        self.pinned_identity: Optional[Dict[str, str]] = None
+
         if capability_status_override is not None:
-            self.capability_status = capability_status_override
+            if capability_status_override == "TEST_DOUBLE":
+                self.capability_status = "TEST_DOUBLE"
+            else:
+                raise ValueError(
+                    f"Invalid capability_status_override: '{capability_status_override}'. "
+                    "Only 'TEST_DOUBLE' is permitted for injected offline/test execution."
+                )
         else:
-            self.capability_status = resolve_capability_status(self.cli_command, store_path=self.store_path)
+            resolved_id = self.injected_identity or resolve_executable_identity(
+                self.cli_command, version_runner=self.version_runner
+            )
+            self.capability_status = resolve_capability_status(
+                self.cli_command,
+                store_path=self.store_path,
+                version_runner=self.version_runner,
+                identity=resolved_id,
+            )
+            if self.capability_status == "PROVEN" and resolved_id:
+                self.pinned_identity = dict(resolved_id)
 
     def _default_runner(self, cmd: List[str], cwd: str, timeout: int, env: Dict[str, str]) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+
+    def revalidate_runtime_identity(self) -> bool:
+        """Re-resolve runtime executable identity and verify match against pinned attestation identity."""
+        if self.capability_status != "PROVEN" or not self.pinned_identity:
+            return False
+
+        current_id = self.injected_identity or resolve_executable_identity(
+            self.cli_command, version_runner=self.version_runner
+        )
+        if not current_id:
+            return False
+
+        # Verify all identity fields match pinned identity
+        if (
+            current_id.get("path") != self.pinned_identity.get("path")
+            or current_id.get("sha256") != self.pinned_identity.get("sha256")
+            or current_id.get("version") != self.pinned_identity.get("version")
+        ):
+            return False
+
+        # Re-verify store attestation still validates and matches contract
+        current_status = resolve_capability_status(
+            self.cli_command,
+            store_path=self.store_path,
+            version_runner=self.version_runner,
+            identity=current_id,
+        )
+        return current_status == "PROVEN"
 
     def execute(
         self,
@@ -141,6 +264,39 @@ class AntigravityWorkerAdapter(WorkerAdapter):
         task_id = task.get("task_id", "UNKNOWN_TASK")
         title = task.get("title", "")
         desc = task.get("description", "")
+
+        # Strict identity and capability revalidation prior to real subprocess execution
+        if self.capability_status == "TEST_DOUBLE":
+            pass
+        elif self.capability_status == "PROVEN":
+            if not self.revalidate_runtime_identity():
+                self.capability_status = "UNPROVEN"
+                finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                return WorkerExecutionResult(
+                    worker_identity=f"antigravity-cli ({self.capability_status})",
+                    workspace_path=workspace_path,
+                    exit_code=1,
+                    timed_out=False,
+                    stdout_summary="",
+                    stderr_summary="Executable runtime identity revalidation failed before execution",
+                    mutation_attempted=False,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+        else:
+            # UNPROVEN or other
+            finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            return WorkerExecutionResult(
+                worker_identity=f"antigravity-cli ({self.capability_status})",
+                workspace_path=workspace_path,
+                exit_code=1,
+                timed_out=False,
+                stdout_summary="",
+                stderr_summary="Worker capability is UNPROVEN. Execution prohibited.",
+                mutation_attempted=False,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
 
         allowed_paths = allowed_scope.get("paths", [])
         forbidden_paths = allowed_scope.get("forbidden_paths", [])
@@ -164,17 +320,15 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             "- Stop on ambiguity."
         )
 
-        exe_path = shutil.which(self.cli_command) or self.cli_command
+        resolved_exe = (self.pinned_identity or {}).get("path") or shutil.which(self.cli_command) or self.cli_command
         workspace_dir = Path(workspace_path)
 
-        cmd = [
-            exe_path,
-            "--print",
-            "--dangerously-skip-permissions",
-            "--mode", "accept-edits",
-            "--add-dir", str(workspace_dir),
-            prompt,
-        ]
+        cmd = build_antigravity_argv(
+            executable_path=str(resolved_exe),
+            workspace_path=str(workspace_dir),
+            prompt=prompt,
+            timeout_seconds=min(timeout_seconds, 180),
+        )
 
         # Scrub sensitive environment variables
         env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
@@ -188,6 +342,7 @@ class AntigravityWorkerAdapter(WorkerAdapter):
         try:
             res = self.runner(cmd, workspace_path, timeout_seconds, env)
             exit_code = res.returncode
+            parsed_json = parse_antigravity_json_output(res.stdout or "")
             stdout_summary = (res.stdout or "")[:1000]
             stderr_summary = (res.stderr or "")[:1000]
             mutation_attempted = True

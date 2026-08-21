@@ -17,10 +17,13 @@ from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
     AntigravityWorkerAdapter,
+    build_antigravity_argv,
     compute_file_sha256,
     get_local_capability_store_path,
     get_reported_cli_version,
+    parse_antigravity_json_output,
     resolve_capability_status,
+    resolve_executable_identity,
 )
 from aos.workers.antigravity_probe import (
     run_antigravity_probe,
@@ -33,7 +36,10 @@ from aos.workers.base import WorkerAdapter
 def temp_capability_env():
     temp_dir = tempfile.mkdtemp(prefix="aos_cap_test_")
     store_file = Path(temp_dir) / "antigravity.json"
-    yield temp_dir, store_file
+    fake_exe = Path(temp_dir) / "fake_bin" / "agy.exe"
+    fake_exe.parent.mkdir(parents=True, exist_ok=True)
+    fake_exe.write_text("fake binary content", encoding="utf-8")
+    yield temp_dir, store_file, str(fake_exe)
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -182,20 +188,13 @@ def make_valid_attestation(
     status="PROVEN",
     exe_name=None,
 ):
-    exe_path = shutil.which("agy")
-    if not exe_sha:
-        exe_sha = compute_file_sha256(exe_path) if exe_path else "550863e77436c18d4b2e3a60cbf6e33b39c33dbf68058294dd6e34a878c9ccaf"
-    if not cli_ver:
-        cli_ver = get_reported_cli_version("agy") or "1.1.17"
-    if not exe_name:
-        exe_name = Path(exe_path).name if exe_path else "agy"
     return {
         "schema_version": "0.1.0",
         "worker_adapter": "antigravity",
         "adapter_contract_version": contract_ver,
-        "executable_filename": exe_name,
-        "executable_sha256": exe_sha,
-        "reported_cli_version": cli_ver,
+        "executable_filename": exe_name or "agy.exe",
+        "executable_sha256": exe_sha or "550863e77436c18d4b2e3a60cbf6e33b39c33dbf68058294dd6e34a878c9ccaf",
+        "reported_cli_version": cli_ver or "1.1.17",
         "capability_status": status,
         "probe_id": "PROBE-20260821-123456-abcdef12",
         "probe_timestamp": "2026-08-21T19:00:00Z",
@@ -217,80 +216,112 @@ def make_valid_attestation(
 class TestAntigravityCapabilityResolution:
     def test_no_attestation_resolves_unproven(self, temp_capability_env):
         """1. Missing attestation file resolves to UNPROVEN."""
-        _, store_file = temp_capability_env
+        _, store_file, fake_exe = temp_capability_env
         assert not store_file.exists()
-        status = resolve_capability_status("agy", store_path=store_file)
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
 
     def test_malformed_attestation_resolves_unproven(self, temp_capability_env):
         """2. Malformed or invalid JSON attestation resolves to UNPROVEN."""
-        _, store_file = temp_capability_env
+        _, store_file, fake_exe = temp_capability_env
         store_file.write_text('{"invalid_schema": true}', encoding="utf-8")
-        status = resolve_capability_status("agy", store_path=store_file)
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
 
     def test_wrong_executable_hash_resolves_unproven(self, temp_capability_env):
         """3. Attestation with mismatched executable SHA256 resolves to UNPROVEN."""
-        _, store_file = temp_capability_env
-        att = make_valid_attestation(exe_sha="0000000000000000000000000000000000000000000000000000000000000000")
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha="0000000000000000000000000000000000000000000000000000000000000000", cli_ver="1.1.17")
         write_local_capability_attestation(att, store_path=store_file)
-        status = resolve_capability_status("agy", store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
 
     def test_wrong_cli_version_resolves_unproven(self, temp_capability_env):
         """4. Attestation with mismatched reported CLI version resolves to UNPROVEN."""
-        _, store_file = temp_capability_env
-        exe_path = shutil.which("agy")
-        current_sha = compute_file_sha256(exe_path) if exe_path else "550863e77436c18d4b2e3a60cbf6e33b39c33dbf68058294dd6e34a878c9ccaf"
-        att = make_valid_attestation(exe_sha=current_sha, cli_ver="9.9.9")
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="9.9.9")
         write_local_capability_attestation(att, store_path=store_file)
-        status = resolve_capability_status("agy", store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
 
     def test_wrong_adapter_contract_version_resolves_unproven(self, temp_capability_env):
         """5. Attestation with wrong adapter contract version resolves to UNPROVEN."""
-        _, store_file = temp_capability_env
-        exe_path = shutil.which("agy")
-        current_sha = compute_file_sha256(exe_path) if exe_path else "550863e77436c18d4b2e3a60cbf6e33b39c33dbf68058294dd6e34a878c9ccaf"
-        att = make_valid_attestation(exe_sha=current_sha, contract_ver="9.9.9")
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.1.0")
         write_local_capability_attestation(att, store_path=store_file)
-        status = resolve_capability_status("agy", store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
 
     def test_matching_attestation_resolves_proven(self, temp_capability_env):
         """6. Attestation matching exact executable SHA256 and reported version resolves to PROVEN."""
-        temp_dir, store_file = temp_capability_env
-        exe_path = shutil.which("agy")
-        if exe_path:
-            current_sha = compute_file_sha256(exe_path)
-            ver_res = subprocess.run(["agy", "--version"], capture_output=True, text=True)
-            current_ver = ver_res.stdout.strip()
-            cli_cmd = "agy"
-            filename = Path(exe_path).name
-            v_runner = None
-        else:
-            fake_exe = Path(temp_dir) / "agy"
-            fake_exe.write_text("fake binary", encoding="utf-8")
-            exe_path = str(fake_exe)
-            current_sha = compute_file_sha256(fake_exe)
-            current_ver = "1.1.15"
-            cli_cmd = str(fake_exe)
-            filename = "agy"
-            v_runner = lambda args: subprocess.CompletedProcess(args, 0, stdout="1.1.15", stderr="")
-
-        att = make_valid_attestation(exe_sha=current_sha, cli_ver=current_ver, exe_name=filename)
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver=ADAPTER_CONTRACT_VERSION,
+            exe_name=fake_id["filename"],
+        )
         write_local_capability_attestation(att, store_path=store_file)
 
-        status = resolve_capability_status(cli_cmd, store_path=store_file, version_runner=v_runner)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "PROVEN"
 
-        adapter = AntigravityWorkerAdapter(cli_command=cli_cmd, store_path=store_file)
-        if v_runner:
-            adapter.capability_status = resolve_capability_status(cli_cmd, store_path=store_file, version_runner=v_runner)
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            store_path=store_file,
+            injected_identity=fake_id,
+        )
         assert adapter.capability_status == "PROVEN"
+        assert adapter.pinned_identity == fake_id
 
-    def test_test_double_override_available_only_for_tests(self):
-        """7. TEST_DOUBLE status is explicitly passed and distinct from PROVEN/UNPROVEN."""
+    def test_arbitrary_proven_override_rejected(self):
+        """7a. Passing PROVEN as capability_status_override is strictly rejected."""
+        with pytest.raises(ValueError, match="Invalid capability_status_override"):
+            AntigravityWorkerAdapter(capability_status_override="PROVEN")
+
+    def test_arbitrary_unproven_override_rejected(self):
+        """7b. Passing UNPROVEN as capability_status_override is strictly rejected."""
+        with pytest.raises(ValueError, match="Invalid capability_status_override"):
+            AntigravityWorkerAdapter(capability_status_override="UNPROVEN")
+
+    def test_test_double_override_accepted(self):
+        """7c. TEST_DOUBLE is the only accepted capability_status_override."""
         adapter = AntigravityWorkerAdapter(capability_status_override="TEST_DOUBLE")
         assert adapter.capability_status == "TEST_DOUBLE"
 
@@ -302,59 +333,76 @@ class TestAntigravityCapabilityResolution:
 
     def test_mock_probe_execution_pass(self, temp_capability_env):
         """9. Mocked probe execution creates result file, verifies git invariants, and writes attestation."""
-        temp_dir, store_file = temp_capability_env
+        temp_dir, store_file, fake_exe = temp_capability_env
         parent_dir = Path(temp_dir) / "probe_parent"
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
 
         def _mock_coding_runner(cmd, cwd, timeout, env):
-            # Simulate worker creating probe/result.txt with challenge content
-            prompt_str = cmd[-1]
+            # Verify exact command construction
+            assert cmd[0] == fake_exe
+            assert "--mode=accept-edits" in cmd
+            assert "--output-format=json" in cmd
+            assert "--dangerously-skip-permissions" not in cmd
+            assert "--print" not in cmd
+            assert "-p" in cmd
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
+
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             probe_dir.mkdir(parents=True, exist_ok=True)
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout="Success", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"status": "SUCCESS", "exit_code": 0}), stderr="")
 
         res = run_antigravity_probe(
-            cli_command="agy",
+            cli_command=fake_exe,
             runner=_mock_coding_runner,
             store_path=store_file,
             custom_parent_dir=str(parent_dir),
             aos_revision="fce499bb3c1449a0b2048d7be779116da615f698",
+            injected_identity=fake_id,
         )
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
+        assert res["attestation"]["adapter_contract_version"] == "0.2.0"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert store_file.is_file()
 
-        # Check that adapter resolves PROVEN (on local machine with agy or CI mock)
-        if shutil.which("agy"):
-            adapter = AntigravityWorkerAdapter(store_path=store_file)
-            assert adapter.capability_status == "PROVEN"
-        else:
-            mock_exe = Path(tempfile.gettempdir()) / "aos_mock_bin" / "agy"
-            status = resolve_capability_status(
-                str(mock_exe),
-                store_path=store_file,
-                version_runner=lambda args: subprocess.CompletedProcess(args, 0, stdout="1.1.17", stderr=""),
-            )
-            assert status == "PROVEN"
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            store_path=store_file,
+            injected_identity=fake_id,
+        )
+        assert adapter.capability_status == "PROVEN"
 
     def test_mock_probe_failure_never_writes_attestation(self, temp_capability_env):
         """10. Failed probe (nonzero exit / missing file) never writes attestation."""
-        temp_dir, store_file = temp_capability_env
+        temp_dir, store_file, fake_exe = temp_capability_env
         parent_dir = Path(temp_dir) / "probe_parent_fail"
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
 
         def _mock_failing_runner(cmd, cwd, timeout, env):
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Error")
 
         res = run_antigravity_probe(
-            cli_command="agy",
+            cli_command=fake_exe,
             runner=_mock_failing_runner,
             store_path=store_file,
             custom_parent_dir=str(parent_dir),
             aos_revision="fce499bb3c1449a0b2048d7be779116da615f698",
+            injected_identity=fake_id,
         )
 
         assert res["status"] == "HOLD"
@@ -363,20 +411,27 @@ class TestAntigravityCapabilityResolution:
 
     def test_probe_scrubs_sensitive_environment_variables(self, temp_capability_env):
         """11. Probe runner receives an environment stripped of sensitive tokens."""
-        temp_dir, store_file = temp_capability_env
+        temp_dir, store_file, fake_exe = temp_capability_env
         parent_dir = Path(temp_dir) / "probe_parent_env"
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
 
         captured_env: Dict[str, str] = {}
 
         def _env_checking_runner(cmd, cwd, timeout, env):
             nonlocal captured_env
             captured_env = dict(env)
-            prompt_str = cmd[-1]
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             probe_dir.mkdir(parents=True, exist_ok=True)
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout="Success", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"status": "SUCCESS"}), stderr="")
 
         os.environ["OPENAI_API_KEY"] = "sk-fake-openai"
         os.environ["GEMINI_API_KEY"] = "fake-gemini"
@@ -385,11 +440,12 @@ class TestAntigravityCapabilityResolution:
 
         try:
             res = run_antigravity_probe(
-                cli_command="agy",
+                cli_command=fake_exe,
                 runner=_env_checking_runner,
                 store_path=store_file,
                 custom_parent_dir=str(parent_dir),
                 aos_revision="fce499bb3c1449a0b2048d7be779116da615f698",
+                injected_identity=fake_id,
             )
             assert res["status"] == "PASS"
             assert "OPENAI_API_KEY" not in captured_env
@@ -404,13 +460,23 @@ class TestAntigravityCapabilityResolution:
 
     def test_unproven_capability_engine_holds_zero_worker_calls(self, temp_capability_env):
         """12. ControlledExecutionEngine holds with 0 worker executions when adapter capability is UNPROVEN."""
-        _, store_file = temp_capability_env
+        _, store_file, fake_exe = temp_capability_env
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
         mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
 
-        adapter = AntigravityWorkerAdapter(store_path=store_file)
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            store_path=store_file,
+            injected_identity=fake_id,
+        )
         assert adapter.capability_status == "UNPROVEN"
 
         engine = ControlledExecutionEngine(
@@ -424,3 +490,211 @@ class TestAntigravityCapabilityResolution:
         res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
         assert any("UNPROVEN" in e for e in res["errors"])
+
+
+class TestAntigravityTransportContractAndIdentityPinning:
+    def test_build_antigravity_argv_exact_shape(self):
+        """Verify exact argv structure and flags according to contract v0.2.0."""
+        argv = build_antigravity_argv(
+            executable_path="/usr/bin/agy",
+            workspace_path="/tmp/workspace",
+            prompt="Do task",
+            timeout_seconds=180,
+        )
+        assert argv[0] == "/usr/bin/agy"
+        assert argv[1] == "--mode=accept-edits"
+        assert argv[2] == "--add-dir"
+        assert argv[3] == "/tmp/workspace"
+        assert argv[4] == "--output-format=json"
+        assert argv[5] == "--print-timeout=180s"
+        assert argv[6] == "-p"
+        assert argv[7] == "Do task"
+        assert len(argv) == 8
+
+        # Invariant checks
+        assert "--print" not in argv
+        assert "--dangerously-skip-permissions" not in argv
+        assert argv.count("-p") == 1
+        assert argv.count("--prompt") == 0
+
+    def test_parse_antigravity_json_output(self):
+        """Verify sanitized parsing of top-level JSON response."""
+        stdout = json.dumps({"status": "SUCCESS", "exit_code": 0, "timed_out": False, "random_extra": "foo"})
+        parsed = parse_antigravity_json_output(stdout)
+        assert parsed["status"] == "SUCCESS"
+        assert parsed["exit_code"] == 0
+        assert parsed["timed_out"] is False
+        assert parsed["error_present"] is False
+        assert "random_extra" not in parsed
+
+        err_stdout = json.dumps({"status": "ERROR", "error": "Something broke"})
+        err_parsed = parse_antigravity_json_output(err_stdout)
+        assert err_parsed["status"] == "ERROR"
+        assert err_parsed["error_present"] is True
+
+        non_json = "plain text"
+        non_parsed = parse_antigravity_json_output(non_json)
+        assert non_parsed["status"] is None
+        assert non_parsed["error_present"] is False
+
+    def test_runtime_identity_revalidation_failure_prevents_worker_subprocess(self, temp_capability_env):
+        """If identity changes before execution, execution fails closed with zero worker calls."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver=ADAPTER_CONTRACT_VERSION,
+            exe_name=fake_id["filename"],
+        )
+        write_local_capability_attestation(att, store_path=store_file)
+
+        worker_calls = 0
+
+        def _mock_runner(cmd, cwd, timeout, env):
+            nonlocal worker_calls
+            worker_calls += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            runner=_mock_runner,
+            store_path=store_file,
+            injected_identity=dict(fake_id),
+        )
+        assert adapter.capability_status == "PROVEN"
+
+        # Now simulate binary hash changing on disk
+        adapter.injected_identity["sha256"] = "1111111111111111111111111111111111111111111111111111111111111111"
+
+        res = adapter.execute(
+            task={"task_id": "TASK-1", "title": "T", "description": "D"},
+            workspace_path="/tmp/ws",
+            allowed_scope={"paths": ["src/"]},
+            base_sha="0000000000000000000000000000000000000000",
+        )
+
+        assert worker_calls == 0
+        assert adapter.capability_status == "UNPROVEN"
+        assert res.exit_code == 1
+        assert res.mutation_attempted is False
+        assert "revalidation failed" in res.stderr_summary
+
+    def test_runtime_identity_version_change_prevents_worker_subprocess(self, temp_capability_env):
+        """If reported version changes before execution, execution fails closed with zero worker calls."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver=ADAPTER_CONTRACT_VERSION,
+            exe_name=fake_id["filename"],
+        )
+        write_local_capability_attestation(att, store_path=store_file)
+
+        worker_calls = 0
+
+        def _mock_runner(cmd, cwd, timeout, env):
+            nonlocal worker_calls
+            worker_calls += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            runner=_mock_runner,
+            store_path=store_file,
+            injected_identity=dict(fake_id),
+        )
+        assert adapter.capability_status == "PROVEN"
+
+        # Simulate version update
+        adapter.injected_identity["version"] = "1.1.18"
+
+        res = adapter.execute(
+            task={"task_id": "TASK-1", "title": "T", "description": "D"},
+            workspace_path="/tmp/ws",
+            allowed_scope={"paths": ["src/"]},
+            base_sha="0000000000000000000000000000000000000000",
+        )
+
+        assert worker_calls == 0
+        assert adapter.capability_status == "UNPROVEN"
+        assert res.exit_code == 1
+        assert res.mutation_attempted is False
+
+    def test_runtime_identity_path_change_prevents_worker_subprocess(self, temp_capability_env):
+        """If executable path changes before execution, execution fails closed with zero worker calls."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver=ADAPTER_CONTRACT_VERSION,
+            exe_name=fake_id["filename"],
+        )
+        write_local_capability_attestation(att, store_path=store_file)
+
+        worker_calls = 0
+
+        def _mock_runner(cmd, cwd, timeout, env):
+            nonlocal worker_calls
+            worker_calls += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            runner=_mock_runner,
+            store_path=store_file,
+            injected_identity=dict(fake_id),
+        )
+        assert adapter.capability_status == "PROVEN"
+
+        # Simulate path change
+        adapter.injected_identity["path"] = "/other/path/agy.exe"
+
+        res = adapter.execute(
+            task={"task_id": "TASK-1", "title": "T", "description": "D"},
+            workspace_path="/tmp/ws",
+            allowed_scope={"paths": ["src/"]},
+            base_sha="0000000000000000000000000000000000000000",
+        )
+
+        assert worker_calls == 0
+        assert adapter.capability_status == "UNPROVEN"
+        assert res.exit_code == 1
+        assert res.mutation_attempted is False
+
+    def test_adapter_contract_bump_invalidates_old_attestations(self, temp_capability_env):
+        """Attestations created under contract 0.1.0 are invalid under 0.2.0."""
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver="0.1.0",
+            exe_name=fake_id["filename"],
+        )
+        write_local_capability_attestation(att, store_path=store_file)
+
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
+        assert status == "UNPROVEN"
