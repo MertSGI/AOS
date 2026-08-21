@@ -1,0 +1,38 @@
+{
+  "schema_version": "0.1.0",
+  "probe_id": "PROBE-20260821-194925-e214e543",
+  "probe_status": "HOLD",
+  "probe_timestamp": "2026-08-21T19:49:25.333331+00:00",
+  "aos_revision_used": "6023877bb949ea7b26323196effaa7575f066cdc",
+  "adapter_contract_version": "0.1.0",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "ec790d078bab3262ae96102faad9da085279308bd30146e61006f02e197abf11",
+  "reported_cli_version": "1.1.17",
+  "challenge_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
+  "confirmed_invocation_capabilities": [
+    "--print",
+    "--dangerously-skip-permissions",
+    "--mode accept-edits",
+    "--add-dir"
+  ],
+  "exit_code": 0,
+  "timed_out": false,
+  "head_before": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
+  "head_after": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
+  "branch_before": "main",
+  "branch_after": "main",
+  "changed_paths": [],
+  "expected_result_file_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
+  "actual_result_file_sha256": null,
+  "outside_sentinel_before_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
+  "outside_sentinel_after_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
+  "unexpected_external_paths_count": 0,
+  "result": "HOLD",
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": [
+    "Target probe file 'probe/result.txt' was not created",
+    "Unexpected changed paths: expected ['probe/result.txt'], got []"
+  ]
+}
