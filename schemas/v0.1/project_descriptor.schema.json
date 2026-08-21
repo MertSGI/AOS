@@ -87,6 +87,28 @@
         "max_concurrent_workers": { "type": "integer", "minimum": 1 }
       }
     },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["argv"],
+            "additionalProperties": false,
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 1
+              },
+              "timeout_seconds": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
     "extensions": {
       "type": "object",
       "additionalProperties": true

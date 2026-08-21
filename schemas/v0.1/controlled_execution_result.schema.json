@@ -21,7 +21,9 @@
     "worker_timed_out",
     "verification_checks",
     "mutation_performed",
-    "retry_count"
+    "retry_count",
+    "started_at",
+    "finished_at"
   ],
   "additionalProperties": false,
   "properties": {
@@ -52,7 +54,7 @@
       ]
     },
     "control_source_sha": {
-      "type": "string",
+      "type": ["string", "null"],
       "pattern": "^[0-9a-f]{40}$"
     },
     "execution_base_sha": {
@@ -100,7 +102,14 @@
     "verification_checks": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "object",
+        "required": ["check_id", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "check_id": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"] },
+          "message": { "type": "string" }
+        }
       }
     },
     "mutation_performed": {
@@ -111,10 +120,12 @@
       "minimum": 0
     },
     "started_at": {
-      "type": ["string", "null"]
+      "type": "string",
+      "format": "date-time"
     },
     "finished_at": {
-      "type": ["string", "null"]
+      "type": "string",
+      "format": "date-time"
     },
     "errors": {
       "type": "array",

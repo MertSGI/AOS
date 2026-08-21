@@ -48,6 +48,8 @@ class WorkerExecutionResult:
 class WorkerAdapter(ABC):
     """Abstract base class for AOS worker adapters."""
 
+    capability_status: str = "UNPROVEN"  # "PROVEN", "UNPROVEN", "TEST_DOUBLE"
+
     @abstractmethod
     def execute(
         self,
