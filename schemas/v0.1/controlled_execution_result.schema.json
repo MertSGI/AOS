@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/controlled_execution_result.schema.json",
+  "title": "AOS Controlled Execution Result Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "task_id",
+    "gate",
+    "disposition",
+    "control_source_sha",
+    "execution_base_sha",
+    "worker_branch",
+    "initial_head_sha",
+    "final_head_sha",
+    "changed_paths",
+    "scope_validation",
+    "worker_adapter",
+    "worker_exit_code",
+    "worker_timed_out",
+    "verification_checks",
+    "mutation_performed",
+    "retry_count"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "HOLD",
+        "WORKER_FAILED",
+        "VERIFICATION_FAILED",
+        "VERIFIED_CANDIDATE"
+      ]
+    },
+    "control_source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "execution_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "worker_branch": {
+      "type": ["string", "null"]
+    },
+    "initial_head_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "final_head_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "changed_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scope_validation": {
+      "type": "object",
+      "required": ["is_valid", "allowed_paths", "forbidden_paths", "violations"],
+      "additionalProperties": false,
+      "properties": {
+        "is_valid": { "type": "boolean" },
+        "allowed_paths": { "type": "array", "items": { "type": "string" } },
+        "forbidden_paths": { "type": "array", "items": { "type": "string" } },
+        "violations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "worker_adapter": {
+      "type": "string",
+      "minLength": 1
+    },
+    "worker_exit_code": {
+      "type": ["integer", "null"]
+    },
+    "worker_timed_out": {
+      "type": "boolean"
+    },
+    "verification_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "mutation_performed": {
+      "type": "boolean"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "started_at": {
+      "type": ["string", "null"]
+    },
+    "finished_at": {
+      "type": ["string", "null"]
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

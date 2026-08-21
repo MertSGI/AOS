@@ -28,6 +28,7 @@ TYPE_TO_SCHEMA = {
     "shadow_expectation": "shadow_expectation.schema.json",
     "planner_routing_policy": "planner_routing_policy.schema.json",
     "control_request": "control_request.schema.json",
+    "controlled_execution_result": "controlled_execution_result.schema.json",
 }
 
 
