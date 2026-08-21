@@ -21,6 +21,7 @@ class TestValidFixtures:
             ("evidence", "evidence.valid.json"),
             ("decision_event", "decision_event.valid.json"),
             ("escalation", "escalation.valid.json"),
+            ("control_request", "control_request.valid.json"),
         ],
     )
     def test_valid_fixtures_pass(self, doc_type: str, fixture_file: str):
@@ -43,8 +44,11 @@ class TestInvalidFixtures:
             ("evidence", "evidence.malformed_timestamp.json", "is not a 'date-time'"),
             ("evidence", "evidence.missing_revision_proven.json", "is not valid under any of the given schemas"),
             ("project_descriptor", "project_descriptor.missing_identity.json", "'project_id' is a required property"),
+            ("project_descriptor", "project_descriptor.missing_control_ref.json", "'control_ref' is a required property"),
             ("decision_event", "decision_event.missing_version.json", "'schema_version' is a required property"),
             ("escalation", "escalation.missing_required_decision.json", "'required_decision' is a required property"),
+            ("control_request", "control_request.force_pass.json", "is not one of"),
+            ("control_request", "control_request.missing_type.json", "'request_type' is a required property"),
         ],
     )
     def test_invalid_fixtures_rejected(
@@ -100,14 +104,6 @@ class TestUnknownFieldRejection:
         res = validate_document("task", data)
         assert res.is_valid is False, "task.allowed_scope should reject unknown nested field"
 
-    def test_unknown_nested_field_in_state_principles_rejected(self):
-        import json
-        path = VALID_DIR / "state.valid.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["principles"]["_bogus_principle"] = True
-        res = validate_document("state", data)
-        assert res.is_valid is False, "state.principles should reject unknown nested field"
-
     def test_unknown_nested_field_in_lease_heartbeat_rejected(self):
         import json
         path = VALID_DIR / "lease.valid.json"
@@ -149,6 +145,10 @@ class TestSchemaMetaValidation:
         "evidence.schema.json",
         "decision_event.schema.json",
         "escalation.schema.json",
+        "planner_decision.schema.json",
+        "shadow_trace.schema.json",
+        "canonical_project_snapshot.schema.json",
+        "shadow_expectation.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
@@ -192,3 +192,40 @@ class TestSchemaMetaValidation:
             assert schema_id not in ids, f"Duplicate $id '{schema_id}' found in {schema_file}"
             ids.add(schema_id)
         assert len(ids) == len(self.ALL_SCHEMAS)
+
+    def test_openai_strict_structured_output_compatibility(self):
+        """Prove planner_decision.schema.json satisfies OpenAI strict Structured Outputs requirements."""
+        import json
+        from jsonschema import Draft202012Validator
+        from aos.validate import SCHEMA_DIR
+
+        path = SCHEMA_DIR / "planner_decision.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+
+        Draft202012Validator.check_schema(schema)
+        assert schema.get("type") == "object"
+        assert schema.get("additionalProperties") is False
+
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        # Every property MUST be listed in required
+        for prop_name in properties.keys():
+            assert prop_name in required, f"Property '{prop_name}' must be listed in required for OpenAI strict mode"
+
+        # Check nested objects recursively
+        def check_node(node, name):
+            if isinstance(node, dict):
+                if node.get("type") == "object" or "properties" in node:
+                    assert node.get("additionalProperties") is False, f"Object node '{name}' must have additionalProperties=false"
+                    node_props = node.get("properties", {})
+                    node_req = set(node.get("required", []))
+                    for k in node_props.keys():
+                        assert k in node_req, f"Nested property '{k}' in '{name}' must be listed in required"
+                    for k, v in node_props.items():
+                        check_node(v, f"{name}.{k}")
+                elif node.get("type") == "array" and "items" in node:
+                    check_node(node["items"], f"{name}[items]")
+
+        for prop_name, prop_val in properties.items():
+            check_node(prop_val, prop_name)

@@ -13,6 +13,8 @@ authors = [
 ]
 dependencies = [
     "jsonschema[format-nongpl]>=4.20.0",
+    "openai==3.3.1",
+    "google-genai==2.19.0",
 ]
 
 [project.optional-dependencies]
@@ -29,3 +31,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not live_read_only'"
+markers = [
+    "live_read_only: mark test as requiring live GitHub network access"
+]

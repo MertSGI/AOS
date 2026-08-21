@@ -93,20 +93,23 @@ E2-equivalent:
 
 ### Work
 - Read canonical project state.
-- Call GPT-5.6 Sol planner with bounded structured output.
-- Validate planner output against policy.
-- Compare suggested next action against known LARİ control-plane next action.
-- Store decision trace without changing LARİ state.
+- Call a bounded PlannerProvider with deterministic structured output.
+- Use deterministic provider routing: GPT-5.6 Sol high-consequence reference baseline; qualified free/lower-cost providers allowed for R0 shadow evaluation after benchmarking.
+- Validate planner output against the same deterministic planner decision schema regardless of provider.
+- Compare suggested next action against the independently pinned exact canonical control revision.
+- Store decision trace without changing product state.
 
 ### LARİ proof case
-Expected current focus:
-`Package/Customer Customization` against frozen Core RC baseline.
+The LARI proof case is evaluated against an independently pinned exact canonical control revision and shadow expectation. Project progress must not require editing AOS core roadmap text.
 
 ### Exit criteria
 - repeated shadow decisions remain within accepted roadmap,
 - no invented phase,
 - no unauthorized mutation,
 - ambiguous scenario transitions to HOLD.
+
+### Status
+`CLOSED_PROVEN` (`E3_ISOLATED_RUNTIME_PROVEN`, verified SHA `2c756c9772673adf887c770572409dfa71a83c93`, live proof run `32489975306`)
 
 ---
 
@@ -121,7 +124,13 @@ Expected current focus:
 - worker adapter,
 - command timeout,
 - structured output capture,
-- max retry policy.
+- max retry policy,
+- Human Control Ingress consumption,
+- task control-generation / control-epoch pinning,
+- stale-control task invalidation.
+
+### Prerequisites
+- Controlled execution requires the integrated project's normalized canonical control plane to expose a stable machine-readable execution-base authority for the current next action (e.g., `next_action_execution_base_sha`).
 
 ### First eligible task class
 R1 isolated implementation only.
@@ -136,7 +145,8 @@ R1 isolated implementation only.
 ### Exit criteria
 - worker cannot legitimately mutate outside task scope,
 - exact base revision is recorded,
-- abandoned work is recoverable.
+- abandoned work is recoverable,
+- tasks fail closed when operating against stale control authority.
 
 ---
 

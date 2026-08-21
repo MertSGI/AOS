@@ -1,0 +1,11 @@
+{
+  "schema_version": "0.1.0",
+  "request_id": "CR-20260820-001",
+  "project_id": "lari",
+  "actor_type": "human_owner",
+  "request_type": "PROVIDER_POLICY_CHANGE",
+  "base_control_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+  "requested_change": "Enable Gemini 3.6 Flash as primary free-tier shadow planner for R0 evaluation",
+  "reason": "Cost optimization: free-tier provider sufficient for read-only shadow evaluation of public canonical state",
+  "requested_at": "2026-08-20T19:00:00Z"
+}

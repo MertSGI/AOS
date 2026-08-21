@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/shadow_trace.schema.json",
+  "title": "AOS Shadow Trace Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trace_id",
+    "timestamp",
+    "project_id",
+    "repository",
+    "configured_source_ref",
+    "resolved_source_sha",
+    "input_file_hashes",
+    "planner_provider",
+    "model",
+    "planner_decision",
+    "policy_checks",
+    "final_disposition",
+    "mutation_performed",
+    "limitations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "configured_source_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolved_source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "input_file_hashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "planner_provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider_response_id": {
+      "type": ["string", "null"]
+    },
+    "usage": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "total_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "planner_decision": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "policy_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check_id", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "check_id": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "final_disposition": {
+      "type": "string",
+      "enum": ["SHADOW_ACCEPT", "HOLD"]
+    },
+    "mutation_performed": {
+      "type": "boolean",
+      "const": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "provider_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "billing_class": {
+      "type": "string",
+      "enum": ["FREE_TIER", "PAID", "LOCAL", "UNKNOWN"]
+    },
+    "data_classification": {
+      "type": "string",
+      "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII_SENSITIVE"]
+    },
+    "selection_reason": {
+      "type": "string"
+    },
+    "fallback_used": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

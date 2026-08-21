@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/control_request.schema.json",
+  "title": "AOS Human Control Request Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "project_id",
+    "actor_type",
+    "request_type",
+    "base_control_sha",
+    "requested_change",
+    "reason",
+    "requested_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": ["human_owner"]
+    },
+    "request_type": {
+      "type": "string",
+      "enum": [
+        "PROJECT_POLICY_CHANGE",
+        "GLOBAL_POLICY_CHANGE",
+        "ROADMAP_CHANGE",
+        "SCOPE_CHANGE",
+        "PRIORITY_CHANGE",
+        "PAUSE_PROJECT",
+        "PAUSE_LANE",
+        "RESUME",
+        "CANCEL_TASK",
+        "REPRIORITIZE",
+        "PROVIDER_POLICY_CHANGE",
+        "HOLD"
+      ]
+    },
+    "base_control_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "requested_change": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

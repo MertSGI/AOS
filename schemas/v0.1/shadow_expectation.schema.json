@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/shadow_expectation.schema.json",
+  "title": "AOS Shadow Expectation Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "expected_source_ref",
+    "expected_source_sha",
+    "expected_milestone",
+    "expected_canonical_next_action",
+    "expected_target_base_sha",
+    "created_at",
+    "verifier_identity"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "expected_source_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "expected_milestone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_canonical_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_target_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "verifier_identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

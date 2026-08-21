@@ -150,3 +150,23 @@ If an operation can be safely performed by the AOS controller or an authorized e
 Human participation remains required for configured human gates, critical product decisions, authentication that genuinely requires human interaction, production-sensitive authority, and unresolved HOLD conditions.
 
 Manual transport during AOS bootstrap is transitional behavior, not the target operating model.
+
+---
+
+## AOS-DEC-020 — Provider-Agnostic Reasoning, Cost and Data Routing
+**Status:** ACCEPTED
+**Decision:** AOS must not depend on a single model/provider. Provider/model selection is deterministic and policy-driven according to: task risk class, required capabilities, data classification, provider availability, observed benchmark quality, and billing/cost policy.
+
+GPT-5.6 Sol remains the high-consequence reasoning reference baseline. Qualified lower-cost/free providers may be used for lower-risk work after benchmarking. Paid fallback is disabled by default. Provider routing must never weaken deterministic governance, evidence, human-gate or fail-closed requirements.
+
+**Clarification:** This decision does not supersede AOS-DEC-005. It clarifies that DEC-005 establishes a baseline, not a permanent exclusive mandate.
+
+---
+
+## AOS-DEC-021 — Human Control Ingress and Canonical Change Transactions
+**Status:** ACCEPTED
+**Decision:** Human project authority communicates interventions, policy changes, roadmap/scope/priority changes and pause/resume requests through versioned control requests pinned to an exact canonical control revision.
+
+A human request must NOT directly instruct execution workers. AOS performs impact analysis and required gates first. Accepted material changes become canonical transactions. Future controlled execution tasks will carry a control generation/epoch identity and fail closed when operating against stale control authority.
+
+Safe PAUSE/HOLD may stop execution immediately. RESUME and material roadmap/policy changes require canonical validation.

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/planner_decision.schema.json",
+  "title": "AOS Planner Decision Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "source_sha",
+    "selected_milestone",
+    "selected_next_action",
+    "target_base_sha",
+    "risk_class",
+    "mutation_intent",
+    "ambiguity_detected",
+    "ambiguity_reasons",
+    "human_gate_required",
+    "rationale",
+    "disposition"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "selected_milestone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_base_sha": {
+      "type": ["string", "null"]
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["R0", "R1", "R2", "R3", "R4"]
+    },
+    "mutation_intent": {
+      "type": "string",
+      "enum": ["NONE", "READ_ONLY", "ISOLATED_MUTATION", "PRODUCTION_MUTATION"]
+    },
+    "ambiguity_detected": {
+      "type": "boolean"
+    },
+    "ambiguity_reasons": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "human_gate_required": {
+      "type": "boolean"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "disposition": {
+      "type": "string",
+      "enum": ["SHADOW_ACCEPT", "HOLD"]
+    }
+  }
+}

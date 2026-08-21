@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/canonical_project_snapshot.schema.json",
+  "title": "AOS Canonical Project Snapshot Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "repository",
+    "source_ref",
+    "source_sha",
+    "current_milestone",
+    "canonical_next_action",
+    "input_file_hashes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "current_status": {
+      "type": ["string", "null"]
+    },
+    "current_milestone": {
+      "type": "string",
+      "minLength": 1
+    },
+    "canonical_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "has_ambiguity": {
+      "type": "boolean"
+    },
+    "ambiguity_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "input_file_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
