@@ -230,7 +230,7 @@ class GitWorkspace:
                     i += 1
 
         # 2. NUL-delimited status for working tree & untracked files
-        status_bytes = self._run_raw_git(["status", "-z", "--porcelain"])
+        status_bytes = self._run_raw_git(["status", "-z", "--porcelain", "-uall"])
         items = status_bytes.split(b"\x00")
         i = 0
         while i < len(items):

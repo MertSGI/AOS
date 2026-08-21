@@ -3,28 +3,127 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
 import os
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-CAPABILITY_STATUS = "UNPROVEN"
+ADAPTER_CONTRACT_VERSION = "0.1.0"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
+
+
+def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
+    """Get machine-local OS-appropriate path for capability attestation storage."""
+    custom_dir = os.environ.get("AOS_CAPABILITY_STORE_DIR")
+    if custom_dir:
+        return Path(custom_dir) / f"{adapter_name}.json"
+
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            base_dir = Path(local_app_data) / "AOS" / "capabilities"
+        else:
+            base_dir = Path.home() / ".aos" / "capabilities"
+    else:
+        base_dir = Path.home() / ".aos" / "capabilities"
+
+    return base_dir / f"{adapter_name}.json"
+
+
+def compute_file_sha256(path: str | Path) -> str:
+    """Compute SHA-256 hash of a local file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_reported_cli_version(
+    cli_command: str = "agy",
+    runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+) -> Optional[str]:
+    """Query CLI reported version."""
+    try:
+        if runner:
+            res = runner([cli_command, "--version"])
+        else:
+            res = subprocess.run([cli_command, "--version"], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0:
+            return (res.stdout or "").strip()
+        return None
+    except Exception:
+        return None
+
+
+def resolve_capability_status(
+    cli_command: str = "agy",
+    store_path: Optional[Path] = None,
+    version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+) -> str:
+    """Dynamically resolve machine-local capability status for the Antigravity CLI."""
+    target_store = store_path or get_local_capability_store_path("antigravity")
+    if not target_store.is_file():
+        return "UNPROVEN"
+
+    # Find current executable
+    exe_path = shutil.which(cli_command) or (cli_command if os.path.isfile(cli_command) else None)
+    if not exe_path or not os.path.isfile(exe_path):
+        return "UNPROVEN"
+
+    try:
+        current_sha256 = compute_file_sha256(exe_path)
+    except Exception:
+        return "UNPROVEN"
+
+    current_cli_version = get_reported_cli_version(cli_command, runner=version_runner)
+    if not current_cli_version:
+        return "UNPROVEN"
+
+    try:
+        with open(target_store, "r", encoding="utf-8") as f:
+            attestation = json.load(f)
+
+        val = validate_document("worker_capability_attestation", attestation)
+        if not val.is_valid:
+            return "UNPROVEN"
+
+        if (
+            attestation.get("worker_adapter") == "antigravity"
+            and attestation.get("adapter_contract_version") == ADAPTER_CONTRACT_VERSION
+            and attestation.get("executable_sha256") == current_sha256
+            and attestation.get("reported_cli_version") == current_cli_version
+            and attestation.get("capability_status") == "PROVEN"
+        ):
+            return "PROVEN"
+        return "UNPROVEN"
+    except Exception:
+        return "UNPROVEN"
 
 
 class AntigravityWorkerAdapter(WorkerAdapter):
     """WorkerAdapter implementation for Google Antigravity (agy CLI)."""
 
-    capability_status: str = CAPABILITY_STATUS
-
     def __init__(
         self,
         cli_command: str = "agy",
         runner: Optional[Callable[[List[str], str, int, Dict[str, str]], subprocess.CompletedProcess]] = None,
+        capability_status_override: Optional[str] = None,
+        store_path: Optional[Path] = None,
     ):
         self.cli_command = cli_command
         self.runner = runner or self._default_runner
+        self.store_path = store_path
+        if capability_status_override is not None:
+            self.capability_status = capability_status_override
+        else:
+            self.capability_status = resolve_capability_status(self.cli_command, store_path=self.store_path)
 
     def _default_runner(self, cmd: List[str], cwd: str, timeout: int, env: Dict[str, str]) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
@@ -65,12 +164,16 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             "- Stop on ambiguity."
         )
 
+        exe_path = shutil.which(self.cli_command) or self.cli_command
+        workspace_dir = Path(workspace_path)
+
         cmd = [
-            self.cli_command,
+            exe_path,
             "--print",
+            "--dangerously-skip-permissions",
             "--mode", "accept-edits",
-            "--add-dir", workspace_path,
-            "--prompt", prompt,
+            "--add-dir", str(workspace_dir),
+            prompt,
         ]
 
         # Scrub sensitive environment variables
