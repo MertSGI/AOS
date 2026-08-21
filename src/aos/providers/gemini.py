@@ -8,6 +8,7 @@ from typing import Any, Dict, Tuple
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
+GEMINI_MAX_OUTPUT_TOKENS = 4096
 UNSUPPORTED_GEMINI_KEYWORDS = {"$schema", "$id", "pattern", "minLength", "maxLength", "format"}
 
 
@@ -61,7 +62,7 @@ class GeminiPlannerProvider:
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_json_schema=provider_schema,
-                    max_output_tokens=1000,
+                    max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
                 ),
             )
         except Exception as e:

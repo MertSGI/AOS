@@ -864,3 +864,56 @@ class TestSchemaAndAdapterRegressions:
         res_ev, code_ev = validate_file("evidence", evidence_path)
         assert code_ev == 0
         assert res_ev.is_valid is True
+
+    def test_gemini_uses_bounded_max_output_tokens_4096(self, monkeypatch):
+        """30. Gemini request uses exactly GEMINI_MAX_OUTPUT_TOKENS = 4096."""
+        from aos.providers.gemini import GEMINI_MAX_OUTPUT_TOKENS, GeminiPlannerProvider
+        assert GEMINI_MAX_OUTPUT_TOKENS == 4096
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = "STOP"
+        mock_candidate.content.parts = [MagicMock(text='{"project_id": "lari"}')]
+
+        mock_response = MagicMock()
+        mock_response.text = '{"project_id": "lari"}'
+        mock_response.candidates = [mock_candidate]
+        mock_response.usage_metadata.prompt_token_count = 100
+        mock_response.usage_metadata.cached_content_token_count = 0
+        mock_response.usage_metadata.candidates_token_count = 50
+        mock_response.usage_metadata.total_token_count = 150
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.Client", return_value=mock_client):
+            decision, resp_id, usage = provider.generate_plan("test", {})
+
+        assert decision["project_id"] == "lari"
+        call_kwargs = mock_client.models.generate_content.call_args.kwargs
+        assert call_kwargs["config"].max_output_tokens == 4096
+
+    def test_gemini_finish_reason_max_tokens_raises_contract_error_without_fallback(self, monkeypatch, tmp_path):
+        """31. FinishReason.MAX_TOKENS raises PlannerContractError and aborts benchmark without fallback or Groq calls."""
+        from aos.planner import PlannerContractError
+        from aos.providers.gemini import GeminiPlannerProvider
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = "FinishReason.MAX_TOKENS"
+
+        mock_response = MagicMock()
+        mock_response.text = None
+        mock_response.candidates = [mock_candidate]
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.Client", return_value=mock_client):
+            with pytest.raises(PlannerContractError) as exc_info:
+                provider.generate_plan("test", {})
+            assert "FinishReason.MAX_TOKENS" in str(exc_info.value)
