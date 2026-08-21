@@ -17,6 +17,8 @@
     "changed_paths",
     "scope_validation",
     "worker_adapter",
+    "worker_capability_status",
+    "worker_mutation_attempted",
     "worker_exit_code",
     "worker_timed_out",
     "verification_checks",
@@ -92,6 +94,16 @@
     "worker_adapter": {
       "type": "string",
       "minLength": 1
+    },
+    "worker_identity": {
+      "type": ["string", "null"]
+    },
+    "worker_capability_status": {
+      "type": "string",
+      "enum": ["PROVEN", "UNPROVEN", "TEST_DOUBLE"]
+    },
+    "worker_mutation_attempted": {
+      "type": "boolean"
     },
     "worker_exit_code": {
       "type": ["integer", "null"]

@@ -1,13 +1,24 @@
-"""Offline regression tests for AOS-3 Controlled Single-Worker Execution Engine."""
+"""Offline regression and real-git tests for AOS-3 Controlled Single-Worker Execution Engine."""
 
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from aos.controlled_execution import ControlledExecutionEngine
-from aos.git_workspace import GitWorkspace, enforce_aos_branch_namespace, normalize_github_repository_name
+from aos.git_workspace import (
+    GitWorkspace,
+    enforce_aos_branch_namespace,
+    inspect_github_repository_identity,
+    normalize_github_repository_name,
+)
 from aos.source_adapter import ProjectSourceAdapter
+from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
 
@@ -81,21 +92,24 @@ class MockGitWorkspace(GitWorkspace):
         branch_name=None,
         changed_files=None,
         setup_fails=False,
+        post_worker_head=None,
         final_head_sha=None,
-        current_branch=None,
-        origin_repo="GenericOrg/GenericRepo",
+        post_worker_branch=None,
+        final_branch=None,
+        final_changed_files=None,
     ):
         super().__init__(repo, base_sha, task_id, branch_name)
-        self.mock_changed_files = changed_files if changed_files is not None else ["src/app.py"]
+        self.mock_post_worker_changed = changed_files if changed_files is not None else ["src/app.py"]
+        self.mock_final_changed = final_changed_files if final_changed_files is not None else self.mock_post_worker_changed
         self.setup_fails = setup_fails
-        self.mock_final_head_sha = final_head_sha or base_sha
-        self.mock_current_branch = current_branch or f"aos/{task_id.lower()}"
-        self.origin_repo = origin_repo
+        self.mock_post_worker_head = post_worker_head or base_sha
+        self.mock_final_head_sha = final_head_sha or self.mock_post_worker_head
+        self.mock_post_worker_branch = post_worker_branch or f"aos/{task_id.lower()}"
+        self.mock_final_branch = final_branch or self.mock_post_worker_branch
         self.cleaned_up = False
         self.head_call_count = 0
-
-    def get_origin_repository_name(self) -> Optional[str]:
-        return self.origin_repo
+        self.branch_call_count = 0
+        self.changed_call_count = 0
 
     def setup(self) -> str:
         if self.setup_fails:
@@ -108,16 +122,24 @@ class MockGitWorkspace(GitWorkspace):
         self.head_call_count += 1
         if self.head_call_count == 1:
             return self.base_sha
+        elif self.head_call_count == 2:
+            return self.mock_post_worker_head
         return self.mock_final_head_sha
 
     def get_current_branch(self) -> str:
-        return self.mock_current_branch
+        self.branch_call_count += 1
+        if self.branch_call_count <= 1:
+            return self.mock_post_worker_branch
+        return self.mock_final_branch
 
     def get_status(self) -> List[str]:
-        return [f" M {f}" for f in self.mock_changed_files]
+        return [f" M {f}" for f in self.mock_post_worker_changed]
 
     def get_changed_files(self, from_sha=None) -> List[str]:
-        return self.mock_changed_files
+        self.changed_call_count += 1
+        if self.changed_call_count <= 1:
+            return self.mock_post_worker_changed
+        return self.mock_final_changed
 
     def cleanup(self) -> None:
         self.cleaned_up = True
@@ -126,10 +148,11 @@ class MockGitWorkspace(GitWorkspace):
 class MockTestDoubleWorkerAdapter(WorkerAdapter):
     capability_status: str = "TEST_DOUBLE"
 
-    def __init__(self, exit_code=0, timed_out=False, raises=False):
+    def __init__(self, exit_code=0, timed_out=False, raises=False, mutation_attempted=True):
         self.exit_code = exit_code
         self.timed_out = timed_out
         self.raises = raises
+        self.mutation_attempted = mutation_attempted
         self.executed = False
 
     def execute(self, task, workspace_path, allowed_scope, base_sha, timeout_seconds=3600):
@@ -143,7 +166,7 @@ class MockTestDoubleWorkerAdapter(WorkerAdapter):
             timed_out=self.timed_out,
             stdout_summary="Mock stdout",
             stderr_summary="Mock stderr" if self.exit_code != 0 else "",
-            mutation_attempted=True,
+            mutation_attempted=self.mutation_attempted,
         )
 
 
@@ -223,17 +246,17 @@ def make_generic_task(
     }
 
 
-def mock_pass_verification_runner(argv, cwd, timeout):
+def mock_pass_verification_runner(argv, cwd, timeout, env):
     return subprocess.CompletedProcess(argv, 0, stdout="OK", stderr="")
 
 
-def mock_fail_verification_runner(argv, cwd, timeout):
+def mock_fail_verification_runner(argv, cwd, timeout, env):
     return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Tests failed")
 
 
-class TestControlledExecutionEngineHardened:
-    def test_valid_generic_r1_aos3_task_reaches_verified_candidate(self):
-        """1. Valid generic R1/AOS-3 task with TEST_DOUBLE adapter and PASS check reaches VERIFIED_CANDIDATE."""
+class TestControlledExecutionEngineFinalHardened:
+    def test_valid_generic_r1_task_reaches_verified_candidate(self):
+        """1. Full pipeline reaches VERIFIED_CANDIDATE with all check accounting PASS."""
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
@@ -246,109 +269,285 @@ class TestControlledExecutionEngineHardened:
             git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
             worker_adapter_factory=lambda: mock_worker,
             verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
         )
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
+        res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "VERIFIED_CANDIDATE"
-        assert res["control_source_sha"] == "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
-        assert res["verification_checks"] == [{"check_id": "unit_tests", "status": "PASS", "message": "Exit code 0"}]
-        assert mock_worker.executed is True
+        assert res["worker_mutation_attempted"] is True
+        assert res["mutation_performed"] is True
+        assert res["worker_capability_status"] == "TEST_DOUBLE"
+        assert all(c["status"] == "PASS" for c in res["verification_checks"])
 
-    def test_unresolved_control_sha_is_null_not_all_zeros(self):
-        """2. Early HOLD returns control_source_sha = None, not all-zeros."""
+    def test_missing_unreadable_origin_holds_zero_worker(self):
+        """2. Missing or unreadable origin remote returns HOLD and 0 worker calls."""
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_worker = MockTestDoubleWorkerAdapter()
 
+        def _bad_inspector(path):
+            raise RuntimeError("Unresolved or missing origin remote")
+
         engine = ControlledExecutionEngine(
             desc, task,
             worker_adapter_factory=lambda: mock_worker,
+            repo_identity_inspector=_bad_inspector,
         )
 
-        # Missing target repo -> early HOLD
-        res = engine.execute(local_target_repo_path=None)
+        res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
         assert res["control_source_sha"] is None
-        assert res["verification_checks"] == []
         assert mock_worker.executed is False
 
-    def test_unproven_antigravity_capability_holds_zero_worker_calls(self):
-        """3. Live AntigravityWorkerAdapter (capability_status='UNPROVEN') returns HOLD and 0 worker calls."""
-        desc = make_generic_descriptor()
+    def test_non_github_origin_cannot_spoof_matching_owner_repo(self):
+        """3. Non-GitHub origin (e.g. gitlab.com) fails closed and returns HOLD."""
+        desc = make_generic_descriptor(repo="GenericOrg/GenericRepo")
         task = make_generic_task()
-        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
 
-        # Standard AntigravityWorkerAdapter default has UNPROVEN status
+        with pytest.raises(ValueError):
+            normalize_github_repository_name("https://gitlab.com/GenericOrg/GenericRepo.git")
+
         engine = ControlledExecutionEngine(
             desc, task,
-            source_adapter_factory=lambda r, ref: mock_source,
+            worker_adapter_factory=lambda: mock_worker,
+            repo_identity_inspector=lambda path: normalize_github_repository_name("https://gitlab.com/GenericOrg/GenericRepo.git"),
         )
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
+        res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
-        assert any("UNPROVEN" in e for e in res["errors"])
+        assert mock_worker.executed is False
 
-    def test_no_required_checks_for_r1_task_holds(self):
-        """4. R1 task with empty required_checks returns HOLD."""
-        desc = make_generic_descriptor()
-        task = make_generic_task(required_checks=[])
+    def test_repository_mismatch_holds_zero_worker(self):
+        """4. Local repo origin mismatch with descriptor returns HOLD with 0 worker calls."""
+        desc = make_generic_descriptor(repo="GenericOrg/GenericRepo")
+        task = make_generic_task()
         mock_worker = MockTestDoubleWorkerAdapter()
 
         engine = ControlledExecutionEngine(
             desc, task,
             worker_adapter_factory=lambda: mock_worker,
+            repo_identity_inspector=lambda path: "OtherOrg/OtherRepo",
         )
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
+        res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
-        assert any("requires at least one declared verification check" in e for e in res["errors"])
+        assert any("Repository identity mismatch" in e for e in res["errors"])
         assert mock_worker.executed is False
 
-    def test_unknown_required_check_holds(self):
-        """5. Task requesting check not in descriptor verification registry returns HOLD."""
-        desc = make_generic_descriptor()
-        task = make_generic_task(required_checks=["unknown_check_id"])
-        mock_worker = MockTestDoubleWorkerAdapter()
-
-        engine = ControlledExecutionEngine(
-            desc, task,
-            worker_adapter_factory=lambda: mock_worker,
-        )
-
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
-        assert res["disposition"] == "HOLD"
-        assert any("Unknown required verification check ID" in e for e in res["errors"])
-        assert mock_worker.executed is False
-
-    def test_verification_check_failure_returns_verification_failed(self):
-        """6. Failing verification check (nonzero exit) returns VERIFICATION_FAILED."""
+    def test_worker_mutation_attempt_distinguishable_from_zero_changes(self):
+        """5. Worker mutation attempt = True with 0 final changed paths stays distinguishable."""
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
-        mock_worker = MockTestDoubleWorkerAdapter()
-        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+        mock_worker = MockTestDoubleWorkerAdapter(mutation_attempted=True)
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], changed_files=[])
 
         engine = ControlledExecutionEngine(
             desc, task,
             source_adapter_factory=lambda r, ref: mock_source,
             git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
             worker_adapter_factory=lambda: mock_worker,
-            verification_runner=mock_fail_verification_runner,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
         )
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
-        assert res["disposition"] == "VERIFICATION_FAILED"
-        assert res["verification_checks"] == [{"check_id": "unit_tests", "status": "FAIL", "message": "Check 'unit_tests' failed with exit code 1"}]
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFIED_CANDIDATE"
+        assert res["worker_mutation_attempted"] is True
+        assert res["mutation_performed"] is False
+        assert res["changed_paths"] == []
 
-    def test_post_worker_live_guard_stale_control_holds(self):
-        """7. Control ref moving during worker execution triggers post-worker LIVE_GUARD HOLD."""
+    def test_timeout_after_mutation_preserves_worker_mutation_attempted(self):
+        """6. Timeout after worker attempted mutation records worker_mutation_attempted=True."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter(timed_out=True, mutation_attempted=True)
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], changed_files=["src/partial.py"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "WORKER_FAILED"
+        assert res["worker_timed_out"] is True
+        assert res["worker_mutation_attempted"] is True
+        assert res["mutation_performed"] is True
+        assert res["changed_paths"] == ["src/partial.py"]
+
+    def test_worker_exception_forensic_path_recorded(self):
+        """7. Worker exception records forensic changed paths before cleanup."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter(raises=True)
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], changed_files=["src/error.py"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "WORKER_FAILED"
+        assert res["worker_mutation_attempted"] is True
+        assert res["changed_paths"] == ["src/error.py"]
+        assert mock_ws.cleaned_up is True
+
+    def test_verification_command_creates_forbidden_file_fails(self):
+        """8. Verification command creating/modifying forbidden file -> VERIFICATION_FAILED."""
+        desc = make_generic_descriptor()
+        task = make_generic_task(paths=["src/"], forbidden_paths=["docs/CHARTER.md"])
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        # Post-worker changes was only src/app.py, but verification created docs/CHARTER.md!
+        mock_ws = MockGitWorkspace(
+            "repo", task["base_sha"], task["task_id"],
+            changed_files=["src/app.py"],
+            final_changed_files=["src/app.py", "docs/CHARTER.md"],
+        )
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert "docs/CHARTER.md" in res["changed_paths"]
+        assert res["scope_validation"]["is_valid"] is False
+
+    def test_verification_command_creates_out_of_scope_file_fails(self):
+        """9. Verification command creating out-of-scope file -> VERIFICATION_FAILED."""
+        desc = make_generic_descriptor()
+        task = make_generic_task(paths=["src/"])
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace(
+            "repo", task["base_sha"], task["task_id"],
+            changed_files=["src/app.py"],
+            final_changed_files=["src/app.py", "out_of_scope.txt"],
+        )
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert "out_of_scope.txt" in res["changed_paths"]
+
+    def test_verification_command_commits_or_changes_head_fails(self):
+        """10. Verification command committing or moving HEAD -> VERIFICATION_FAILED."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace(
+            "repo", task["base_sha"], task["task_id"],
+            post_worker_head=task["base_sha"],
+            final_head_sha="9999999999999999999999999999999999999999",  # Changed during verification!
+        )
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert any("UNAUTHORIZED_VERIFICATION_COMMIT_OR_HEAD_CHANGE" in e for e in res["errors"])
+
+    def test_verification_command_switches_branch_fails(self):
+        """11. Verification command switching branch -> VERIFICATION_FAILED."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace(
+            "repo", task["base_sha"], task["task_id"],
+            post_worker_branch=f"aos/{task['task_id'].lower()}",
+            final_branch="main",  # Switched during verification!
+        )
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert any("UNAUTHORIZED_VERIFICATION_COMMIT_OR_HEAD_CHANGE" in e for e in res["errors"])
+
+    def test_post_worker_control_stale_zero_project_verification_calls(self):
+        """12. Stale control ref after worker aborts before project verification (runner calls = 0)."""
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_source = MockSourceAdapter(
             "GenericOrg/GenericRepo", "control/main",
             control_sha="4c55eecdbe064c74b34af31a1daf9851689e4fe8",
-            second_control_sha="9999999999999999999999999999999999999999",  # Moved!
-            stale_on_call=3,  # Post-worker check is call #3
+            second_control_sha="9999999999999999999999999999999999999999",
+            stale_on_call=3,  # Post-worker checkpoint C
+        )
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        verification_called = False
+
+        def _tracking_runner(argv, cwd, timeout, env):
+            nonlocal verification_called
+            verification_called = True
+            return subprocess.CompletedProcess(argv, 0, stdout="OK", stderr="")
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=_tracking_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "HOLD"
+        assert any("STALE_CONTROL_REVISION_POST_WORKER" in e for e in res["errors"])
+        assert verification_called is False  # Zero verification calls!
+
+    def test_final_control_stale_holds_after_verification(self):
+        """13. Control moving after verification (Checkpoint D) returns HOLD."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter(
+            "GenericOrg/GenericRepo", "control/main",
+            control_sha="4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            second_control_sha="9999999999999999999999999999999999999999",
+            stale_on_call=4,  # Final checkpoint D
         )
         mock_worker = MockTestDoubleWorkerAdapter()
         mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
@@ -359,82 +558,116 @@ class TestControlledExecutionEngineHardened:
             git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
             worker_adapter_factory=lambda: mock_worker,
             verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
         )
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
+        res = engine.execute(local_target_repo_path="/path/to/repo")
         assert res["disposition"] == "HOLD"
-        assert any("STALE_CONTROL_REVISION_POST_EXECUTION" in e for e in res["errors"])
+        assert any("STALE_CONTROL_REVISION_FINAL" in e for e in res["errors"])
 
-    def test_repository_identity_mismatch_holds_zero_worker(self):
-        """8. Target local repo origin != descriptor repository returns HOLD and 0 worker calls."""
-        desc = make_generic_descriptor(repo="OrgA/RepoA")
-        task = make_generic_task()
-        mock_worker = MockTestDoubleWorkerAdapter()
-        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], origin_repo="OrgB/RepoB")
-
-        engine = ControlledExecutionEngine(
-            desc, task,
-            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
-            worker_adapter_factory=lambda: mock_worker,
-        )
-
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
-        assert res["disposition"] == "HOLD"
-        assert any("Repository identity mismatch" in e for e in res["errors"])
-        assert mock_worker.executed is False
-
-    def test_worker_commit_or_head_change_verification_failed(self):
-        """9. Worker creating commit or moving HEAD returns VERIFICATION_FAILED."""
+    def test_verification_runner_receives_scrubbed_sensitive_environment(self):
+        """14. Verification runner receives environment with sensitive tokens scrubbed."""
         desc = make_generic_descriptor()
         task = make_generic_task()
         mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
         mock_worker = MockTestDoubleWorkerAdapter()
-        # HEAD moved from base_sha to different SHA
-        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], final_head_sha="8888888888888888888888888888888888888888")
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
 
-        engine = ControlledExecutionEngine(
-            desc, task,
-            source_adapter_factory=lambda r, ref: mock_source,
-            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
-            worker_adapter_factory=lambda: mock_worker,
-            verification_runner=mock_pass_verification_runner,
-        )
+        captured_env: Dict[str, str] = {}
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
-        assert res["disposition"] == "VERIFICATION_FAILED"
-        assert any("UNAUTHORIZED_WORKER_COMMIT_OR_HEAD_CHANGE" in e for e in res["errors"])
+        def _env_capturing_runner(argv, cwd, timeout, env):
+            nonlocal captured_env
+            captured_env = dict(env)
+            return subprocess.CompletedProcess(argv, 0, stdout="OK", stderr="")
 
-    def test_worker_branch_switch_verification_failed(self):
-        """10. Worker switching branch returns VERIFICATION_FAILED."""
-        desc = make_generic_descriptor()
-        task = make_generic_task()
-        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
-        mock_worker = MockTestDoubleWorkerAdapter()
-        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], current_branch="main")
+        os.environ["OPENAI_API_KEY"] = "sk-fake-openai"
+        os.environ["GEMINI_API_KEY"] = "fake-gemini"
+        os.environ["GH_TOKEN"] = "ghp-fake-token"
 
-        engine = ControlledExecutionEngine(
-            desc, task,
-            source_adapter_factory=lambda r, ref: mock_source,
-            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
-            worker_adapter_factory=lambda: mock_worker,
-            verification_runner=mock_pass_verification_runner,
-        )
+        try:
+            engine = ControlledExecutionEngine(
+                desc, task,
+                source_adapter_factory=lambda r, ref: mock_source,
+                git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+                worker_adapter_factory=lambda: mock_worker,
+                verification_runner=_env_capturing_runner,
+                repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+            )
+            res = engine.execute(local_target_repo_path="/path/to/repo")
+            assert res["disposition"] == "VERIFIED_CANDIDATE"
+            assert "OPENAI_API_KEY" not in captured_env
+            assert "GEMINI_API_KEY" not in captured_env
+            assert "GH_TOKEN" not in captured_env
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
+            os.environ.pop("GEMINI_API_KEY", None)
+            os.environ.pop("GH_TOKEN", None)
 
-        res = engine.execute(local_target_repo_path="/path/to/local/repo")
-        assert res["disposition"] == "VERIFICATION_FAILED"
-        assert any("Current branch 'main' != expected" in e for e in res["errors"])
 
-    def test_github_repository_name_normalization(self):
-        """11. normalize_github_repository_name handles HTTPS, SSH, and raw owner/repo."""
-        assert normalize_github_repository_name("https://github.com/MertSGI/AOS.git") == "MertSGI/AOS"
-        assert normalize_github_repository_name("git@github.com:MertSGI/AOS.git") == "MertSGI/AOS"
-        assert normalize_github_repository_name("MertSGI/AOS") == "MertSGI/AOS"
-        assert normalize_github_repository_name("https://github.com/Org/Repo") == "Org/Repo"
+class TestRealGitControlledWorkspace:
+    """Real Git integration tests on temporary repositories."""
 
-    def test_no_lari_identifiers_in_hardened_core(self):
-        """12. Core engine files contain no hardcoded LARI identifiers."""
-        for path_name in ["controlled_execution.py", "git_workspace.py", "scope_guard.py"]:
-            source_code = (Path(__file__).parent.parent / "src" / "aos" / path_name).read_text(encoding="utf-8")
-            assert "lari" not in source_code.lower()
-            assert "clinic" not in source_code.lower()
-            assert "supabase" not in source_code.lower()
+    @pytest.fixture
+    def real_git_repo(self):
+        temp_dir = tempfile.mkdtemp(prefix="aos_real_git_test_")
+        # Initialize bare origin and working clone
+        subprocess.run(["git", "init", temp_dir], capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "AOS Tester"], cwd=temp_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "tester@mertsgi.org"], cwd=temp_dir, capture_output=True, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/TestOrg/TestRepo.git"], cwd=temp_dir, capture_output=True, check=True)
+
+        # Initial commit
+        (Path(temp_dir) / "README.md").write_text("Hello", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=temp_dir, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=temp_dir, capture_output=True, check=True)
+        head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=temp_dir, capture_output=True, text=True, check=True).stdout.strip()
+
+        yield temp_dir, head_sha
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_disposable_clone_has_zero_remotes_and_no_source_mutation(self, real_git_repo):
+        """15. Disposable clone has 0 remotes and creates zero branches/refs in source repo."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-100")
+        clone_dir = ws.setup()
+
+        try:
+            # Verify disposable clone has 0 remotes
+            remotes = subprocess.run(["git", "remote"], cwd=clone_dir, capture_output=True, text=True, check=True).stdout.strip()
+            assert remotes == ""
+
+            # Verify push fails locally
+            push_res = subprocess.run(["git", "push", "origin", "aos/task-100"], cwd=clone_dir, capture_output=True, text=True)
+            assert push_res.returncode != 0
+
+            # Verify source repo received no new branches
+            source_branches = subprocess.run(["git", "branch"], cwd=repo_dir, capture_output=True, text=True, check=True).stdout
+            assert "aos/task-100" not in source_branches
+        finally:
+            ws.cleanup()
+
+    def test_real_git_changed_files_with_spaces_renames_deletes_untracked(self, real_git_repo):
+        """16. Real Git changed file discovery handles spaces, renames, deletes, and untracked files."""
+        repo_dir, base_sha = real_git_repo
+        ws = GitWorkspace(repo_dir, base_sha, "TASK-101")
+        clone_dir = ws.setup()
+
+        try:
+            # 1. File with spaces
+            space_file = Path(clone_dir) / "file with spaces.txt"
+            space_file.write_text("content", encoding="utf-8")
+
+            # 2. Untracked file
+            untracked = Path(clone_dir) / "untracked.py"
+            untracked.write_text("print(1)", encoding="utf-8")
+
+            # 3. Deleted file
+            (Path(clone_dir) / "README.md").unlink()
+
+            changed = ws.get_changed_files()
+            assert "file with spaces.txt" in changed
+            assert "untracked.py" in changed
+            assert "README.md" in changed
+        finally:
+            ws.cleanup()

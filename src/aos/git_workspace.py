@@ -3,25 +3,77 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional
 
 
 def normalize_github_repository_name(url_or_repo: str) -> str:
-    """Normalize common HTTPS, SSH, or shorthand GitHub repository strings to 'owner/repo' format."""
+    """Normalize supported GitHub repository URLs or 'owner/repo' strings to 'owner/repo'.
+
+    Fails closed if the host is not github.com or if the format is invalid.
+    """
     s = url_or_repo.strip()
-    if s.endswith(".git"):
-        s = s[:-4]
-    if "github.com/" in s:
-        s = s.split("github.com/")[1]
-    elif "github.com:" in s:
-        s = s.split("github.com:")[1]
-    parts = [p for p in s.split("/") if p]
-    if len(parts) >= 2:
-        return f"{parts[-2]}/{parts[-1]}"
-    return s
+    if not s:
+        raise ValueError("Repository identifier cannot be empty")
+
+    # If already clean owner/repo
+    if re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", s):
+        if s.endswith(".git"):
+            s = s[:-4]
+        return s
+
+    # Match supported GitHub remote URLs strictly
+    patterns = [
+        r"^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+        r"^git@github\.com:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+        r"^ssh://(?:git@)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+        r"^git://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+    ]
+
+    for p in patterns:
+        m = re.match(p, s)
+        if m:
+            owner, repo = m.group(1), m.group(2)
+            return f"{owner}/{repo}"
+
+    raise ValueError(f"Origin '{url_or_repo}' is not a valid supported GitHub repository format")
+
+
+def inspect_github_repository_identity(
+    local_repo_path: str,
+    runner: Optional[Callable[[List[str], str], subprocess.CompletedProcess]] = None,
+) -> str:
+    """Dedicated read-only inspector to determine GitHub repository identity of a local git repo."""
+    if not local_repo_path or not isinstance(local_repo_path, str) or not os.path.exists(local_repo_path):
+        raise RuntimeError(f"Local repository path '{local_repo_path}' does not exist")
+
+    def _run(cmd: List[str]) -> str:
+        if runner:
+            res = runner(cmd, local_repo_path)
+        else:
+            res = subprocess.run(cmd, cwd=local_repo_path, capture_output=True, text=True)
+        if res.returncode != 0:
+            err = res.stderr.strip() or res.stdout.strip()
+            raise RuntimeError(f"Command failed ({' '.join(cmd)}): {err}")
+        return res.stdout.strip()
+
+    # Query origin remote
+    url = ""
+    try:
+        url = _run(["git", "remote", "get-url", "origin"])
+    except Exception:
+        try:
+            url = _run(["git", "config", "--get", "remote.origin.url"])
+        except Exception as e:
+            raise RuntimeError(f"Unresolved or missing origin remote in '{local_repo_path}': {e}") from e
+
+    if not url:
+        raise RuntimeError(f"Origin remote in '{local_repo_path}' returned empty URL")
+
+    return normalize_github_repository_name(url)
 
 
 def enforce_aos_branch_namespace(task_id: str, requested_branch: Optional[str] = None) -> str:
@@ -64,14 +116,9 @@ class GitWorkspace:
     def get_origin_repository_name(self) -> Optional[str]:
         """Query target repository's origin remote and normalize to owner/repo."""
         try:
-            url = self._run_git(["remote", "get-url", "origin"], cwd=self.repository_path)
-            return normalize_github_repository_name(url)
+            return inspect_github_repository_identity(self.repository_path, runner=self.runner)
         except Exception:
-            try:
-                url = self._run_git(["config", "--get", "remote.origin.url"], cwd=self.repository_path)
-                return normalize_github_repository_name(url)
-            except Exception:
-                return None
+            return None
 
     def setup(self) -> str:
         """Create disposable clone from base_sha, disable remotes, and checkout worker branch."""
@@ -88,18 +135,20 @@ class GitWorkspace:
         self.workspace_dir = temp_root
 
         try:
-            # 1. Clone without checkout into temp directory
-            self._run_git(["clone", "--no-checkout", self.repository_path, temp_root], cwd=self.repository_path)
+            # 1. Clone without checkout and without hardlinks into temp directory
+            self._run_git(["clone", "--no-checkout", "--no-hardlinks", self.repository_path, temp_root], cwd=self.repository_path)
 
-            # 2. REMOVE/DISABLE ALL REMOTES inside disposable clone
+            # 2. REMOVE ALL REMOTES inside disposable clone
             remotes = self._run_git(["remote"], cwd=temp_root).splitlines()
             for r in remotes:
                 r_name = r.strip()
                 if r_name:
-                    try:
-                        self._run_git(["remote", "remove", r_name], cwd=temp_root)
-                    except Exception:
-                        pass
+                    self._run_git(["remote", "remove", r_name], cwd=temp_root)
+
+            # Explicitly verify no remotes remain
+            remaining_remotes = self._run_git(["remote"], cwd=temp_root).strip()
+            if remaining_remotes:
+                raise RuntimeError(f"Failed to remove all remotes: remaining: '{remaining_remotes}'")
 
             # 3. Checkout worker branch from exact base_sha
             self._run_git(["checkout", "-b", self.worker_branch, self.base_sha], cwd=temp_root)
@@ -137,45 +186,41 @@ class GitWorkspace:
         return [line.strip() for line in out.splitlines() if line.strip()]
 
     def get_changed_files(self, from_sha: Optional[str] = None) -> List[str]:
-        """Get list of normalized repository-relative file paths changed since base_sha (NUL-delimited)."""
+        """Get list of normalized repository-relative file paths changed since base_sha (NUL-delimited).
+
+        Fails closed by raising RuntimeError if diff or status cannot be queried.
+        """
         if not self.workspace_dir:
             raise RuntimeError("Workspace not initialized")
         base = from_sha or self.base_sha
         changed = set()
 
         # 1. NUL-delimited committed diff since base
-        try:
-            diff_bytes = self._run_raw_git(["diff", "-z", "--name-only", base, "HEAD"])
-            for p in diff_bytes.split(b"\x00"):
-                clean = p.decode("utf-8", errors="replace").strip().replace("\\", "/")
-                if clean:
-                    changed.add(clean)
-        except Exception:
-            pass
+        diff_bytes = self._run_raw_git(["diff", "-z", "--name-only", base, "HEAD"])
+        for p in diff_bytes.split(b"\x00"):
+            clean = p.decode("utf-8", errors="replace").strip().replace("\\", "/")
+            if clean:
+                changed.add(clean)
 
         # 2. NUL-delimited status for working tree & untracked files
-        try:
-            status_bytes = self._run_raw_git(["status", "-z", "--porcelain"])
-            # Format: 'XY path\x00' or 'R  path1\x00path2\x00'
-            items = status_bytes.split(b"\x00")
-            i = 0
-            while i < len(items):
-                item = items[i]
-                if not item:
-                    i += 1
-                    continue
-                if len(item) >= 3:
-                    status_code = item[:2].decode("utf-8", errors="replace")
-                    filepath = item[3:].decode("utf-8", errors="replace").strip().replace("\\", "/")
-                    if "R" in status_code and (i + 1) < len(items):
-                        # Renamed file has next NUL item as new path
-                        i += 1
-                        filepath = items[i].decode("utf-8", errors="replace").strip().replace("\\", "/")
-                    if filepath:
-                        changed.add(filepath)
+        status_bytes = self._run_raw_git(["status", "-z", "--porcelain"])
+        items = status_bytes.split(b"\x00")
+        i = 0
+        while i < len(items):
+            item = items[i]
+            if not item:
                 i += 1
-        except Exception:
-            pass
+                continue
+            if len(item) >= 3:
+                status_code = item[:2].decode("utf-8", errors="replace")
+                filepath = item[3:].decode("utf-8", errors="replace").strip().replace("\\", "/")
+                if "R" in status_code and (i + 1) < len(items):
+                    # Renamed file has next NUL item as new path
+                    i += 1
+                    filepath = items[i].decode("utf-8", errors="replace").strip().replace("\\", "/")
+                if filepath:
+                    changed.add(filepath)
+            i += 1
 
         # Validate path traversal or absolute path artifacts
         result = []
@@ -193,8 +238,8 @@ class GitWorkspace:
         target_cwd = self.workspace_dir or self.repository_path
         res = subprocess.run(["git"] + args, cwd=target_cwd, capture_output=True)
         if res.returncode != 0:
-            err = res.stderr.decode("utf-8", errors="replace")
-            raise RuntimeError(f"Raw git command failed: {err}")
+            err = res.stderr.decode("utf-8", errors="replace").strip() or res.stdout.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Git query failed ('git {' '.join(args)}'): {err}")
         return res.stdout
 
     def cleanup(self) -> None:
