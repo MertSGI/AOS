@@ -1,54 +1,99 @@
 {
   "schema_version": "0.1.0",
   "historical_record": "antigravity_capability_probe_history",
-  "live_coding_invocation_count": 2,
-  "authorized_invocation_budget": 1,
-  "invocation_budget_compliance": false,
-  "capability_status_after_attempts": "UNPROVEN",
-  "attempts": [
+  "total_lifetime_live_coding_invocations": 3,
+  "authorizations": [
     {
-      "attempt_number": 1,
-      "aos_revision": "cc7ac57ef1bfb21d9d5d891e0c4fd47de4d6d499",
-      "probe_id": null,
-      "probe_id_status": "NOT_RECOVERED",
-      "timestamp": null,
-      "timestamp_status": "NOT_RECOVERED",
-      "result": "HOLD",
-      "exit_code": 0,
-      "expected_probe_file_created": false,
-      "changed_paths": [],
-      "capability_proven": false,
-      "notes": "Exit code 0, expected probe/result.txt was not created, changed paths were empty, capability was not proven."
+      "authorization_id": "HISTORICAL_AUTHORIZATION_1",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 2,
+      "invocation_budget_compliance": false,
+      "capability_status_after_authorization": "UNPROVEN",
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "aos_revision": "cc7ac57ef1bfb21d9d5d891e0c4fd47de4d6d499",
+          "probe_id": null,
+          "probe_id_status": "NOT_RECOVERED",
+          "timestamp": null,
+          "timestamp_status": "NOT_RECOVERED",
+          "result": "HOLD",
+          "exit_code": 0,
+          "expected_probe_file_created": false,
+          "changed_paths": [],
+          "capability_proven": false,
+          "notes": "Exit code 0, expected probe/result.txt was not created, changed paths were empty, capability was not proven."
+        },
+        {
+          "attempt_number": 2,
+          "aos_revision": "6023877bb949ea7b26323196effaa7575f066cdc",
+          "probe_id": "PROBE-20260821-194925-e214e543",
+          "probe_timestamp": "2026-08-21T19:49:25.333331+00:00",
+          "result": "HOLD",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.1.0",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "ec790d078bab3262ae96102faad9da085279308bd30146e61006f02e197abf11",
+          "reported_cli_version": "1.1.17",
+          "challenge_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
+          "head_before": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
+          "head_after": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [],
+          "expected_result_file_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
+          "actual_result_file_sha256": null,
+          "outside_sentinel_before_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
+          "outside_sentinel_after_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
+          "unexpected_external_paths_count": 0,
+          "errors": [
+            "Target probe file 'probe/result.txt' was not created",
+            "Unexpected changed paths: expected ['probe/result.txt'], got []"
+          ],
+          "capability_proven": false,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe.json"
+        }
+      ]
     },
     {
-      "attempt_number": 2,
-      "aos_revision": "6023877bb949ea7b26323196effaa7575f066cdc",
-      "probe_id": "PROBE-20260821-194925-e214e543",
-      "probe_timestamp": "2026-08-21T19:49:25.333331+00:00",
-      "result": "HOLD",
-      "exit_code": 0,
-      "timed_out": false,
-      "adapter_contract_version": "0.1.0",
-      "executable_filename": "agy.EXE",
-      "executable_sha256": "ec790d078bab3262ae96102faad9da085279308bd30146e61006f02e197abf11",
-      "reported_cli_version": "1.1.17",
-      "challenge_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
-      "head_before": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
-      "head_after": "bccbbf32ccf9ebc4bda088e3a4ab13464669b011",
-      "branch_before": "main",
-      "branch_after": "main",
-      "changed_paths": [],
-      "expected_result_file_sha256": "1c0c5cb7b8b451ab9181fa0b7ca434a46d0707a8a8e270526ab72df742932507",
-      "actual_result_file_sha256": null,
-      "outside_sentinel_before_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
-      "outside_sentinel_after_sha256": "db9afd89385fd20f56fc3ea729244ca340a43d17ce2ce630a9d8d234166f7327",
-      "unexpected_external_paths_count": 0,
-      "errors": [
-        "Target probe file 'probe/result.txt' was not created",
-        "Unexpected changed paths: expected ['probe/result.txt'], got []"
-      ],
-      "capability_proven": false,
-      "proof_artifact_ref": "docs/proofs/antigravity_capability_probe.json"
+      "authorization_id": "AOS3-AGY-PROBE-V02-20260821-2325",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 1,
+      "invocation_budget_compliance": true,
+      "capability_status_after_authorization": "UNPROVEN",
+      "attempts": [
+        {
+          "attempt_number": 3,
+          "aos_revision": "d4f8962de43965ca41027fe41821c78967f92e30",
+          "probe_id": "PROBE-20260822-024934-4094dfe5",
+          "probe_timestamp": "2026-08-22T02:49:34.880225+00:00",
+          "result": "HOLD",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.2.0",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "ec790d078bab3262ae96102faad9da085279308bd30146e61006f02e197abf11",
+          "reported_cli_version": "1.1.17",
+          "challenge_sha256": "6f067fdefb720917bb28909878feb72390ede00a07aae17e41ce08441334b9d4",
+          "head_before": "dfac063314622a0f54ba0fe3b1a0f09115eb6573",
+          "head_after": "dfac063314622a0f54ba0fe3b1a0f09115eb6573",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [],
+          "expected_result_file_sha256": "6f067fdefb720917bb28909878feb72390ede00a07aae17e41ce08441334b9d4",
+          "actual_result_file_sha256": null,
+          "outside_sentinel_before_sha256": "d92600a79fe3464826cf7ebe972e7132bd1084a3f7af98107c3c7543a22ba68d",
+          "outside_sentinel_after_sha256": "d92600a79fe3464826cf7ebe972e7132bd1084a3f7af98107c3c7543a22ba68d",
+          "unexpected_external_paths_count": 0,
+          "errors": [
+            "Target probe file 'probe/result.txt' was not created",
+            "Unexpected changed paths: expected ['probe/result.txt'], got []"
+          ],
+          "capability_proven": false,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.json"
+        }
+      ]
     }
   ]
 }
