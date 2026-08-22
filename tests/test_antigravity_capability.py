@@ -216,20 +216,24 @@ def make_valid_attestation(
 
 
 def make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", tool_error=False, soft_denial=False, raw_message=True):
+    """Build NDJSON matching the official Antigravity CLI nested protocol.
+
+    Protocol shape:  {"event": "<type>", "<type>": {<payload>}}
+    """
     events = [
-        {"type": "init", "permission_mode": "ask", "cwd": "/tmp/ws", "tools": [{"name": "write_file"}, {"name": "run_command"}]},
+        {"event": "init", "init": {"permission_mode": "ask", "cwd": "/tmp/ws", "tools": ["write_file", "run_command"]}},
     ]
     if raw_message:
-        events.append({"type": "message", "content": "I am writing the file now."})
+        events.append({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}})
     if include_write_tool:
         tool_state = "denied" if soft_denial else ("error" if tool_error else "completed")
-        tc_dict = {"name": "write_file", "state": tool_state}
+        tool_info: dict = {}
         if soft_denial:
-            tc_dict["error"] = "Permission denied: user prompt not answered in headless mode"
+            tool_info["error"] = {"type": "PERMISSION_DENIED", "message": "Permission denied: user prompt not answered in headless mode"}
         elif tool_error:
-            tc_dict["error"] = "Disk I/O error"
-        events.append({"type": "tool_call", "tool_call": tc_dict})
-    events.append({"type": "result", "status": status})
+            tool_info["error"] = {"type": "TOOL_ERROR", "message": "Disk I/O error"}
+        events.append({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": tool_state, "tool_info": tool_info}})
+    events.append({"event": "result", "result": {"status": status}})
     return "\n".join(json.dumps(e) for e in events)
 
 
@@ -393,7 +397,7 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.1"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.2"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
@@ -568,44 +572,69 @@ class TestAntigravityExactContentAndStreamObservability:
         assert any("exact UTF-8 required" in e for e in res3["errors"])
 
     def test_stream_parser_fail_closed_rules(self):
-        """Sanitized stream parser enforces strict event count and structure."""
+        """Sanitized stream parser enforces strict event count and structure (nested protocol)."""
         # 1. Missing init
-        stream_no_init = json.dumps({"type": "result", "status": "SUCCESS"})
+        stream_no_init = json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
         p1 = parse_antigravity_stream_output(stream_no_init)
         assert p1["is_valid_stream"] is False
         assert any("Expected exactly 1 init event" in e for e in p1["parser_errors"])
 
         # 2. Missing terminal result
-        stream_no_result = json.dumps({"type": "init"})
+        stream_no_result = json.dumps({"event": "init", "init": {"permission_mode": "ask"}})
         p2 = parse_antigravity_stream_output(stream_no_result)
         assert p2["is_valid_stream"] is False
         assert any("Expected exactly 1 terminal result" in e for e in p2["parser_errors"])
 
         # 3. Duplicate terminal results
-        stream_dup_result = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+        stream_dup_result = (
+            json.dumps({"event": "init", "init": {"permission_mode": "ask"}})
+            + "\n" + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            + "\n" + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
         p3 = parse_antigravity_stream_output(stream_dup_result)
         assert p3["is_valid_stream"] is False
         assert any("Expected exactly 1 terminal result" in e for e in p3["parser_errors"])
 
         # 4. Malformed JSON line
-        stream_malformed = json.dumps({"type": "init"}) + "\n{not json\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+        stream_malformed = json.dumps({"event": "init", "init": {}}) + "\n{not json\n" + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
         p4 = parse_antigravity_stream_output(stream_malformed)
         assert p4["is_valid_stream"] is False
         assert any("Malformed JSON" in e for e in p4["parser_errors"])
 
         # 5. Non-success terminal status
-        stream_error = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "result", "status": "ERROR"})
+        stream_error = json.dumps({"event": "init", "init": {}}) + "\n" + json.dumps({"event": "result", "result": {"status": "ERROR"}})
         p5 = parse_antigravity_stream_output(stream_error)
         assert p5["is_valid_stream"] is False
         assert p5["terminal_error_present"] is True
 
+        # 6. Old flat schema rejected
+        stream_flat = json.dumps({"type": "init", "permission_mode": "ask"})
+        p6 = parse_antigravity_stream_output(stream_flat)
+        assert p6["is_valid_stream"] is False
+        assert any("deprecated 'type' discriminator" in e for e in p6["parser_errors"])
+
+        # 7. Missing nested payload rejected
+        stream_no_payload = json.dumps({"event": "init"})
+        p7 = parse_antigravity_stream_output(stream_no_payload)
+        assert p7["is_valid_stream"] is False
+        assert any("missing nested 'init' payload" in e for e in p7["parser_errors"])
+
+        # 8. Unknown event type rejected
+        stream_unknown = (
+            json.dumps({"event": "init", "init": {"permission_mode": "ask"}})
+            + "\n" + json.dumps({"event": "custom_unknown_event", "custom_unknown_event": {}})
+        )
+        p8 = parse_antigravity_stream_output(stream_unknown)
+        assert p8["is_valid_stream"] is False
+        assert any("Unknown event type" in e for e in p8["parser_errors"])
+
     def test_sanitized_stream_parser_no_leakage(self):
-        """Stream parser does not leak raw tool parameters, paths, or message transcripts."""
+        """Stream parser does not leak raw tool parameters, paths, or message transcripts (nested protocol)."""
         raw_stream = (
-            json.dumps({"type": "init", "permission_mode": "ask", "cwd": "/secret/path/to/ws", "tools": [{"name": "write_file"}]}) + "\n"
-            + json.dumps({"type": "message", "content": "Sensitive agent reasoning with token sk-12345"}) + "\n"
-            + json.dumps({"type": "tool_call", "tool_call": {"name": "write_file", "args": {"path": "/secret/probe/result.txt", "content": "secret"}}}) + "\n"
-            + json.dumps({"type": "result", "status": "SUCCESS"})
+            json.dumps({"event": "init", "init": {"permission_mode": "ask", "cwd": "/secret/path/to/ws", "tools": ["write_file"]}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed", "text_delta": "Sensitive agent reasoning with token sk-12345"}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "completed", "tool_info": {"args": {"path": "/secret/probe/result.txt", "content": "secret"}}}}) + "\n"
+            + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
         )
         parsed = parse_antigravity_stream_output(raw_stream, workspace_path="/secret/path/to/ws")
         assert parsed["is_valid_stream"] is True
@@ -620,6 +649,7 @@ class TestAntigravityExactContentAndStreamObservability:
         assert "args" not in tc
         assert "content" not in str(parsed)
         assert "sk-12345" not in str(parsed)
+        assert "text_delta" not in str(parsed)
 
     def test_file_appearing_without_write_tool_event_fails(self, temp_capability_env):
         """File created without behavioral write tool evidence in stream fails probe."""
@@ -639,7 +669,11 @@ class TestAntigravityExactContentAndStreamObservability:
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
             # Stream only has message event, no tool call
-            stream = json.dumps({"type": "init", "tools": [{"name": "read_file"}]}) + "\n" + json.dumps({"type": "message", "content": "Done"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+            stream = (
+                json.dumps({"event": "init", "init": {"tools": ["read_file"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
         res = run_antigravity_probe(fake_exe, runner=_runner_no_write_tool, store_path=store_file, injected_identity=fake_id)
@@ -657,7 +691,11 @@ class TestAntigravityExactContentAndStreamObservability:
         }
 
         def _runner_chatty_agent(cmd, cwd, timeout, env):
-            stream = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "message", "content": "I understand the instruction."}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+            stream = (
+                json.dumps({"event": "init", "init": {}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
         res = run_antigravity_probe(fake_exe, runner=_runner_chatty_agent, store_path=store_file, injected_identity=fake_id)

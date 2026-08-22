@@ -202,19 +202,21 @@ def run_antigravity_probe(
             exit_code = 1
             probe_errors.append(f"Antigravity invocation failed with exception: {e}")
 
-        # Process stderr metadata without persisting raw stderr
+        # Parse stream-json output first
+        stream_parse_result = parse_antigravity_stream_output(raw_stdout, workspace_path=str(workspace_dir))
+        if not stream_parse_result["is_valid_stream"]:
+            for pe in stream_parse_result["parser_errors"]:
+                probe_errors.append(f"Stream parser failure: {pe}")
+
+        # Process stderr metadata without persisting raw stderr.
+        # Merge stderr permission signals into the stream result via OR so
+        # evidence is never lost even if the stream itself contains no denial.
         if raw_stderr.strip():
             stderr_present = True
             stderr_len = len(raw_stderr)
             stderr_sha256 = hashlib.sha256(raw_stderr.encode("utf-8")).hexdigest()
             if "permission" in raw_stderr.lower() or "denied" in raw_stderr.lower() or "ask" in raw_stderr.lower():
                 stream_parse_result["permission_soft_denial_observed"] = True
-
-        # Parse stream-json output
-        stream_parse_result = parse_antigravity_stream_output(raw_stdout, workspace_path=str(workspace_dir))
-        if not stream_parse_result["is_valid_stream"]:
-            for pe in stream_parse_result["parser_errors"]:
-                probe_errors.append(f"Stream parser failure: {pe}")
 
         # 5. Post-probe forensic inspection
         if exit_code != 0:

@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.1"
+ADAPTER_CONTRACT_VERSION = "0.2.2"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
@@ -142,7 +142,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.1."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.2."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -189,7 +189,12 @@ def parse_antigravity_json_output(stdout: str) -> Dict[str, Any]:
 
 
 def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] = None) -> Dict[str, Any]:
-    """Parse Antigravity stream-json (NDJSON) output with fail-closed validation rules.
+    """Parse Antigravity stream-json (NDJSON) output using the official CLI nested protocol.
+
+    Official protocol uses top-level ``"event"`` discriminator with nested payload objects:
+    - ``{"event": "init", "init": {...}}``
+    - ``{"event": "step_update", "step_update": {...}}``
+    - ``{"event": "result", "result": {...}}``
 
     Extracts sanitized behavioral evidence for capability diagnosis without persisting
     raw parameters, raw outputs, or full agent transcripts.
@@ -233,86 +238,110 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
             result["parser_errors"].append(f"Stream event on line {idx + 1} is not a JSON object")
             return result
 
-        event_type = event.get("type")
+        event_type = event.get("event")
 
-        # 1. Init event
+        # Reject old synthetic flat schema that uses "type" instead of "event"
+        if event_type is None and "type" in event:
+            result["parser_errors"].append(
+                f"Stream line {idx + 1} uses deprecated 'type' discriminator instead of 'event'; "
+                "this parser requires the official nested protocol"
+            )
+            return result
+
+        if event_type is None:
+            result["parser_errors"].append(f"Stream line {idx + 1} missing 'event' discriminator")
+            return result
+
+        # --- 1. Init event ---
         if event_type == "init":
             init_count += 1
-            if "permission_mode" in event:
-                result["permission_mode"] = str(event["permission_mode"])
-            elif "permissionMode" in event:
-                result["permission_mode"] = str(event["permissionMode"])
-            elif "mode" in event:
-                result["permission_mode"] = str(event["mode"])
+            payload = event.get("init")
+            if not isinstance(payload, dict):
+                result["parser_errors"].append(f"Init event on line {idx + 1} missing nested 'init' payload")
+                return result
 
-            # Check reported cwd if available
-            reported_cwd = event.get("cwd") or event.get("workspace")
+            if "permission_mode" in payload:
+                result["permission_mode"] = str(payload["permission_mode"])
+
+            # Compare reported cwd to expected workspace without persisting the raw path
+            reported_cwd = payload.get("cwd")
             if reported_cwd and normalized_expected_ws:
                 normalized_reported = os.path.abspath(str(reported_cwd)).lower()
                 result["reported_cwd_matches_workspace"] = (normalized_reported == normalized_expected_ws)
 
-            # Check available tools in init
-            available_tools = event.get("tools") or event.get("available_tools") or event.get("availableTools") or []
+            # Check advertised tools — official CLI uses list[str]
+            available_tools = payload.get("tools") or []
             if isinstance(available_tools, list):
                 for t in available_tools:
                     t_name = t.get("name") if isinstance(t, dict) else str(t)
-                    if t_name in NATIVE_FILE_EDIT_TOOLS or "write" in str(t_name).lower():
+                    if t_name in NATIVE_FILE_EDIT_TOOLS:
                         result["write_tool_available"] = True
 
-        # 2. Step update / Tool / Message events
-        elif event_type in ("step_update", "tool_call", "tool_result", "message", "action"):
-            # Check for agent response text / message
-            if event_type == "message" or "message" in event or "content" in event or "response" in event:
-                result["agent_response_observed"] = True
+        # --- 2. Step update event ---
+        elif event_type == "step_update":
+            payload = event.get("step_update")
+            if not isinstance(payload, dict):
+                result["parser_errors"].append(f"step_update event on line {idx + 1} missing nested 'step_update' payload")
+                return result
 
-            # Check for tool call records
-            tool_data = event.get("tool_call") or event.get("tool") or (event if event_type in ("tool_call", "tool_result") else None)
-            if isinstance(tool_data, dict):
-                raw_tool_name = tool_data.get("name") or tool_data.get("tool_name") or tool_data.get("tool") or "unknown_tool"
-                tool_state = str(tool_data.get("state") or tool_data.get("status") or ("completed" if event_type == "tool_result" else "called"))
-                # Check error / denial status
+            step_type = payload.get("step_type")
+            state = str(payload.get("state") or "UNKNOWN")
+
+            # Agent response detection
+            if step_type == "agent_response":
+                result["agent_response_observed"] = True
+                # Do NOT persist text_delta, agent text, reasoning, or usage
+
+            # Tool step detection
+            elif step_type == "tool":
+                tool_name = str(payload.get("tool_name") or "unknown_tool")
+                tool_info = payload.get("tool_info") or {}
+
                 err_present = False
                 err_type = None
-                if tool_data.get("error") or tool_data.get("errors") or tool_state in ("error", "failed", "denied"):
+                tool_error = tool_info.get("error") if isinstance(tool_info, dict) else None
+                if tool_error:
                     err_present = True
-                    err_val = str(tool_data.get("error") or tool_data.get("error_type") or tool_state)
-                    if "permission" in err_val.lower() or "denied" in err_val.lower() or "ask" in err_val.lower():
+                    error_type_str = str(tool_error.get("type") or "") if isinstance(tool_error, dict) else str(tool_error)
+                    error_msg_str = str(tool_error.get("message") or "") if isinstance(tool_error, dict) else ""
+                    combined = (error_type_str + " " + error_msg_str).lower()
+                    if any(kw in combined for kw in ("permission", "approval", "denied", "denial", "interactive review")):
                         result["permission_soft_denial_observed"] = True
                         err_type = "PERMISSION_DENIED"
                     else:
                         err_type = "TOOL_ERROR"
 
                 sanitized_call = {
-                    "tool_name": str(raw_tool_name),
-                    "state": tool_state,
+                    "tool_name": tool_name,
+                    "state": state,
                     "error_present": err_present,
                     "error_type": err_type,
                 }
                 result["tool_calls"].append(sanitized_call)
                 result["tool_call_count"] += 1
 
-                if str(raw_tool_name) in NATIVE_FILE_EDIT_TOOLS or "write" in str(raw_tool_name).lower():
+                # A tool appearing in a step also confirms availability
+                if tool_name in NATIVE_FILE_EDIT_TOOLS:
                     result["write_tool_available"] = True
 
-            # Soft denial indications in step_update
-            if event.get("soft_denial") or event.get("permission_denied"):
-                result["permission_soft_denial_observed"] = True
-
-        # 3. Terminal result event
-        elif event_type in ("result", "terminal", "session_end", "completed"):
+        # --- 3. Terminal result event ---
+        elif event_type == "result":
             terminal_result_count += 1
-            status_val = str(event.get("status") or event.get("result") or "UNKNOWN")
+            payload = event.get("result")
+            if not isinstance(payload, dict):
+                result["parser_errors"].append(f"result event on line {idx + 1} missing nested 'result' payload")
+                return result
+            status_val = str(payload.get("status") or "UNKNOWN")
             result["terminal_status"] = status_val
-            if status_val not in ("SUCCESS", "PASS", "COMPLETED") or event.get("error") or event.get("errors"):
+            if status_val != "SUCCESS":
                 result["terminal_error_present"] = True
-                if "permission" in str(event.get("error") or "").lower():
-                    result["permission_soft_denial_observed"] = True
 
-        # Check soft-denial hints in any event
-        if "permission" in str(event).lower() and ("denied" in str(event).lower() or "prompt" in str(event).lower() or "approval" in str(event).lower()):
-            result["permission_soft_denial_observed"] = True
+        else:
+            # Unknown event type — fail closed
+            result["parser_errors"].append(f"Unknown event type '{event_type}' on stream line {idx + 1}")
+            return result
 
-    # Validate fail-closed stream rules
+    # Validate fail-closed stream structure rules
     if init_count != 1:
         result["parser_errors"].append(f"Expected exactly 1 init event, found {init_count}")
     if terminal_result_count != 1:
