@@ -14,8 +14,10 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.0"
+ADAPTER_CONTRACT_VERSION = "0.2.1"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
+SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
+NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
 
 
 def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
@@ -138,14 +140,20 @@ def build_antigravity_argv(
     workspace_path: str,
     prompt: str,
     timeout_seconds: int = 180,
+    output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.0."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.1."""
+    if output_format not in SUPPORTED_OUTPUT_FORMATS:
+        raise ValueError(
+            f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
+        )
+
     return [
         executable_path,
         "--mode=accept-edits",
         "--add-dir",
         workspace_path,
-        "--output-format=json",
+        f"--output-format={output_format}",
         f"--print-timeout={timeout_seconds}s",
         "-p",
         prompt,
@@ -178,6 +186,144 @@ def parse_antigravity_json_output(stdout: str) -> Dict[str, Any]:
         # If output is not valid top-level JSON, leave sanitized defaults
         pass
     return sanitized
+
+
+def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] = None) -> Dict[str, Any]:
+    """Parse Antigravity stream-json (NDJSON) output with fail-closed validation rules.
+
+    Extracts sanitized behavioral evidence for capability diagnosis without persisting
+    raw parameters, raw outputs, or full agent transcripts.
+    """
+    result: Dict[str, Any] = {
+        "is_valid_stream": False,
+        "terminal_status": None,
+        "permission_mode": None,
+        "reported_cwd_matches_workspace": None,
+        "write_tool_available": False,
+        "tool_call_count": 0,
+        "tool_calls": [],
+        "agent_response_observed": False,
+        "permission_soft_denial_observed": False,
+        "terminal_error_present": False,
+        "parser_errors": [],
+    }
+
+    if not stdout or not stdout.strip():
+        result["parser_errors"].append("Stream output is empty")
+        return result
+
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        result["parser_errors"].append("Stream output contains no non-empty lines")
+        return result
+
+    init_count = 0
+    terminal_result_count = 0
+
+    normalized_expected_ws = os.path.abspath(workspace_path).lower() if workspace_path else None
+
+    for idx, line in enumerate(lines):
+        try:
+            event = json.loads(line)
+        except Exception as e:
+            result["parser_errors"].append(f"Malformed JSON on stream line {idx + 1}: {e}")
+            return result
+
+        if not isinstance(event, dict):
+            result["parser_errors"].append(f"Stream event on line {idx + 1} is not a JSON object")
+            return result
+
+        event_type = event.get("type")
+
+        # 1. Init event
+        if event_type == "init":
+            init_count += 1
+            if "permission_mode" in event:
+                result["permission_mode"] = str(event["permission_mode"])
+            elif "permissionMode" in event:
+                result["permission_mode"] = str(event["permissionMode"])
+            elif "mode" in event:
+                result["permission_mode"] = str(event["mode"])
+
+            # Check reported cwd if available
+            reported_cwd = event.get("cwd") or event.get("workspace")
+            if reported_cwd and normalized_expected_ws:
+                normalized_reported = os.path.abspath(str(reported_cwd)).lower()
+                result["reported_cwd_matches_workspace"] = (normalized_reported == normalized_expected_ws)
+
+            # Check available tools in init
+            available_tools = event.get("tools") or event.get("available_tools") or event.get("availableTools") or []
+            if isinstance(available_tools, list):
+                for t in available_tools:
+                    t_name = t.get("name") if isinstance(t, dict) else str(t)
+                    if t_name in NATIVE_FILE_EDIT_TOOLS or "write" in str(t_name).lower():
+                        result["write_tool_available"] = True
+
+        # 2. Step update / Tool / Message events
+        elif event_type in ("step_update", "tool_call", "tool_result", "message", "action"):
+            # Check for agent response text / message
+            if event_type == "message" or "message" in event or "content" in event or "response" in event:
+                result["agent_response_observed"] = True
+
+            # Check for tool call records
+            tool_data = event.get("tool_call") or event.get("tool") or (event if event_type in ("tool_call", "tool_result") else None)
+            if isinstance(tool_data, dict):
+                raw_tool_name = tool_data.get("name") or tool_data.get("tool_name") or tool_data.get("tool") or "unknown_tool"
+                tool_state = str(tool_data.get("state") or tool_data.get("status") or ("completed" if event_type == "tool_result" else "called"))
+                # Check error / denial status
+                err_present = False
+                err_type = None
+                if tool_data.get("error") or tool_data.get("errors") or tool_state in ("error", "failed", "denied"):
+                    err_present = True
+                    err_val = str(tool_data.get("error") or tool_data.get("error_type") or tool_state)
+                    if "permission" in err_val.lower() or "denied" in err_val.lower() or "ask" in err_val.lower():
+                        result["permission_soft_denial_observed"] = True
+                        err_type = "PERMISSION_DENIED"
+                    else:
+                        err_type = "TOOL_ERROR"
+
+                sanitized_call = {
+                    "tool_name": str(raw_tool_name),
+                    "state": tool_state,
+                    "error_present": err_present,
+                    "error_type": err_type,
+                }
+                result["tool_calls"].append(sanitized_call)
+                result["tool_call_count"] += 1
+
+                if str(raw_tool_name) in NATIVE_FILE_EDIT_TOOLS or "write" in str(raw_tool_name).lower():
+                    result["write_tool_available"] = True
+
+            # Soft denial indications in step_update
+            if event.get("soft_denial") or event.get("permission_denied"):
+                result["permission_soft_denial_observed"] = True
+
+        # 3. Terminal result event
+        elif event_type in ("result", "terminal", "session_end", "completed"):
+            terminal_result_count += 1
+            status_val = str(event.get("status") or event.get("result") or "UNKNOWN")
+            result["terminal_status"] = status_val
+            if status_val not in ("SUCCESS", "PASS", "COMPLETED") or event.get("error") or event.get("errors"):
+                result["terminal_error_present"] = True
+                if "permission" in str(event.get("error") or "").lower():
+                    result["permission_soft_denial_observed"] = True
+
+        # Check soft-denial hints in any event
+        if "permission" in str(event).lower() and ("denied" in str(event).lower() or "prompt" in str(event).lower() or "approval" in str(event).lower()):
+            result["permission_soft_denial_observed"] = True
+
+    # Validate fail-closed stream rules
+    if init_count != 1:
+        result["parser_errors"].append(f"Expected exactly 1 init event, found {init_count}")
+    if terminal_result_count != 1:
+        result["parser_errors"].append(f"Expected exactly 1 terminal result event, found {terminal_result_count}")
+    if result["terminal_status"] != "SUCCESS":
+        result["parser_errors"].append(f"Terminal status is not SUCCESS: got '{result['terminal_status']}'")
+
+    if not result["parser_errors"]:
+        result["is_valid_stream"] = True
+
+    return result
 
 
 class AntigravityWorkerAdapter(WorkerAdapter):

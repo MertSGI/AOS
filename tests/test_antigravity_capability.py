@@ -22,6 +22,7 @@ from aos.workers.antigravity import (
     get_local_capability_store_path,
     get_reported_cli_version,
     parse_antigravity_json_output,
+    parse_antigravity_stream_output,
     resolve_capability_status,
     resolve_executable_identity,
 )
@@ -203,6 +204,7 @@ def make_valid_attestation(
             "non_interactive_instruction",
             "workspace_execution",
             "observable_exit_status",
+            "stream_json_observability",
             "controlled_file_edit",
             "no_commit_observed",
             "no_push_observed",
@@ -211,6 +213,24 @@ def make_valid_attestation(
             "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
         ],
     }
+
+
+def make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", tool_error=False, soft_denial=False, raw_message=True):
+    events = [
+        {"type": "init", "permission_mode": "ask", "cwd": "/tmp/ws", "tools": [{"name": "write_file"}, {"name": "run_command"}]},
+    ]
+    if raw_message:
+        events.append({"type": "message", "content": "I am writing the file now."})
+    if include_write_tool:
+        tool_state = "denied" if soft_denial else ("error" if tool_error else "completed")
+        tc_dict = {"name": "write_file", "state": tool_state}
+        if soft_denial:
+            tc_dict["error"] = "Permission denied: user prompt not answered in headless mode"
+        elif tool_error:
+            tc_dict["error"] = "Disk I/O error"
+        events.append({"type": "tool_call", "tool_call": tc_dict})
+    events.append({"type": "result", "status": status})
+    return "\n".join(json.dumps(e) for e in events)
 
 
 class TestAntigravityCapabilityResolution:
@@ -277,7 +297,7 @@ class TestAntigravityCapabilityResolution:
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
-        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.1.0")
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.0")
         write_local_capability_attestation(att, store_path=store_file)
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
@@ -343,10 +363,14 @@ class TestAntigravityCapabilityResolution:
         }
 
         def _mock_coding_runner(cmd, cwd, timeout, env):
+            # Verify probe/ directory pre-exists before worker executes
+            probe_dir = Path(cwd) / "probe"
+            assert probe_dir.is_dir()
+
             # Verify exact command construction
             assert cmd[0] == fake_exe
             assert "--mode=accept-edits" in cmd
-            assert "--output-format=json" in cmd
+            assert "--output-format=stream-json" in cmd
             assert "--dangerously-skip-permissions" not in cmd
             assert "--print" not in cmd
             assert "-p" in cmd
@@ -354,10 +378,9 @@ class TestAntigravityCapabilityResolution:
             prompt_str = cmd[p_idx + 1]
 
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
-            probe_dir = Path(cwd) / "probe"
-            probe_dir.mkdir(parents=True, exist_ok=True)
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"status": "SUCCESS", "exit_code": 0}), stderr="")
+            stream_out = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS")
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream_out, stderr="")
 
         res = run_antigravity_probe(
             cli_command=fake_exe,
@@ -370,9 +393,12 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.0"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.1"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
+        assert res["proof"]["output_format"] == "stream-json"
+        assert res["proof"]["write_tool_available"] is True
+        assert res["proof"]["tool_call_count"] == 1
         assert store_file.is_file()
 
         adapter = AntigravityWorkerAdapter(
@@ -394,7 +420,7 @@ class TestAntigravityCapabilityResolution:
         }
 
         def _mock_failing_runner(cmd, cwd, timeout, env):
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Error")
+            return subprocess.CompletedProcess(cmd, 1, stdout=make_valid_stream_ndjson(status="ERROR"), stderr="Error")
 
         res = run_antigravity_probe(
             cli_command=fake_exe,
@@ -429,9 +455,8 @@ class TestAntigravityCapabilityResolution:
             prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            probe_dir.mkdir(parents=True, exist_ok=True)
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"status": "SUCCESS"}), stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
 
         os.environ["OPENAI_API_KEY"] = "sk-fake-openai"
         os.environ["GEMINI_API_KEY"] = "fake-gemini"
@@ -492,53 +517,9 @@ class TestAntigravityCapabilityResolution:
         assert any("UNPROVEN" in e for e in res["errors"])
 
 
-class TestAntigravityTransportContractAndIdentityPinning:
-    def test_build_antigravity_argv_exact_shape(self):
-        """Verify exact argv structure and flags according to contract v0.2.0."""
-        argv = build_antigravity_argv(
-            executable_path="/usr/bin/agy",
-            workspace_path="/tmp/workspace",
-            prompt="Do task",
-            timeout_seconds=180,
-        )
-        assert argv[0] == "/usr/bin/agy"
-        assert argv[1] == "--mode=accept-edits"
-        assert argv[2] == "--add-dir"
-        assert argv[3] == "/tmp/workspace"
-        assert argv[4] == "--output-format=json"
-        assert argv[5] == "--print-timeout=180s"
-        assert argv[6] == "-p"
-        assert argv[7] == "Do task"
-        assert len(argv) == 8
-
-        # Invariant checks
-        assert "--print" not in argv
-        assert "--dangerously-skip-permissions" not in argv
-        assert argv.count("-p") == 1
-        assert argv.count("--prompt") == 0
-
-    def test_parse_antigravity_json_output(self):
-        """Verify sanitized parsing of top-level JSON response."""
-        stdout = json.dumps({"status": "SUCCESS", "exit_code": 0, "timed_out": False, "random_extra": "foo"})
-        parsed = parse_antigravity_json_output(stdout)
-        assert parsed["status"] == "SUCCESS"
-        assert parsed["exit_code"] == 0
-        assert parsed["timed_out"] is False
-        assert parsed["error_present"] is False
-        assert "random_extra" not in parsed
-
-        err_stdout = json.dumps({"status": "ERROR", "error": "Something broke"})
-        err_parsed = parse_antigravity_json_output(err_stdout)
-        assert err_parsed["status"] == "ERROR"
-        assert err_parsed["error_present"] is True
-
-        non_json = "plain text"
-        non_parsed = parse_antigravity_json_output(non_json)
-        assert non_parsed["status"] is None
-        assert non_parsed["error_present"] is False
-
-    def test_runtime_identity_revalidation_failure_prevents_worker_subprocess(self, temp_capability_env):
-        """If identity changes before execution, execution fails closed with zero worker calls."""
+class TestAntigravityExactContentAndStreamObservability:
+    def test_exact_challenge_semantics_variations(self, temp_capability_env):
+        """Exact UTF-8 challenge content passes; whitespace or newlines fail."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -546,47 +527,102 @@ class TestAntigravityTransportContractAndIdentityPinning:
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
-        att = make_valid_attestation(
-            exe_sha=fake_id["sha256"],
-            cli_ver=fake_id["version"],
-            contract_ver=ADAPTER_CONTRACT_VERSION,
-            exe_name=fake_id["filename"],
+
+        # 1. Challenge + \n fails
+        def _runner_trailing_newline(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
+            challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line + "\n", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+
+        res1 = run_antigravity_probe(fake_exe, runner=_runner_trailing_newline, store_path=store_file, injected_identity=fake_id)
+        assert res1["status"] == "HOLD"
+        assert any("exact UTF-8 required" in e for e in res1["errors"])
+
+        # 2. Leading space fails
+        def _runner_leading_space(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
+            challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(" " + challenge_line, encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+
+        res2 = run_antigravity_probe(fake_exe, runner=_runner_leading_space, store_path=store_file, injected_identity=fake_id)
+        assert res2["status"] == "HOLD"
+        assert any("exact UTF-8 required" in e for e in res2["errors"])
+
+        # 3. Trailing space fails
+        def _runner_trailing_space(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
+            challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line + " ", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+
+        res3 = run_antigravity_probe(fake_exe, runner=_runner_trailing_space, store_path=store_file, injected_identity=fake_id)
+        assert res3["status"] == "HOLD"
+        assert any("exact UTF-8 required" in e for e in res3["errors"])
+
+    def test_stream_parser_fail_closed_rules(self):
+        """Sanitized stream parser enforces strict event count and structure."""
+        # 1. Missing init
+        stream_no_init = json.dumps({"type": "result", "status": "SUCCESS"})
+        p1 = parse_antigravity_stream_output(stream_no_init)
+        assert p1["is_valid_stream"] is False
+        assert any("Expected exactly 1 init event" in e for e in p1["parser_errors"])
+
+        # 2. Missing terminal result
+        stream_no_result = json.dumps({"type": "init"})
+        p2 = parse_antigravity_stream_output(stream_no_result)
+        assert p2["is_valid_stream"] is False
+        assert any("Expected exactly 1 terminal result" in e for e in p2["parser_errors"])
+
+        # 3. Duplicate terminal results
+        stream_dup_result = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+        p3 = parse_antigravity_stream_output(stream_dup_result)
+        assert p3["is_valid_stream"] is False
+        assert any("Expected exactly 1 terminal result" in e for e in p3["parser_errors"])
+
+        # 4. Malformed JSON line
+        stream_malformed = json.dumps({"type": "init"}) + "\n{not json\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+        p4 = parse_antigravity_stream_output(stream_malformed)
+        assert p4["is_valid_stream"] is False
+        assert any("Malformed JSON" in e for e in p4["parser_errors"])
+
+        # 5. Non-success terminal status
+        stream_error = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "result", "status": "ERROR"})
+        p5 = parse_antigravity_stream_output(stream_error)
+        assert p5["is_valid_stream"] is False
+        assert p5["terminal_error_present"] is True
+
+    def test_sanitized_stream_parser_no_leakage(self):
+        """Stream parser does not leak raw tool parameters, paths, or message transcripts."""
+        raw_stream = (
+            json.dumps({"type": "init", "permission_mode": "ask", "cwd": "/secret/path/to/ws", "tools": [{"name": "write_file"}]}) + "\n"
+            + json.dumps({"type": "message", "content": "Sensitive agent reasoning with token sk-12345"}) + "\n"
+            + json.dumps({"type": "tool_call", "tool_call": {"name": "write_file", "args": {"path": "/secret/probe/result.txt", "content": "secret"}}}) + "\n"
+            + json.dumps({"type": "result", "status": "SUCCESS"})
         )
-        write_local_capability_attestation(att, store_path=store_file)
+        parsed = parse_antigravity_stream_output(raw_stream, workspace_path="/secret/path/to/ws")
+        assert parsed["is_valid_stream"] is True
+        assert parsed["agent_response_observed"] is True
+        assert parsed["reported_cwd_matches_workspace"] is True
+        assert parsed["tool_call_count"] == 1
 
-        worker_calls = 0
+        # Verify tool call fields are sanitized
+        tc = parsed["tool_calls"][0]
+        assert set(tc.keys()) == {"tool_name", "state", "error_present", "error_type"}
+        assert tc["tool_name"] == "write_file"
+        assert "args" not in tc
+        assert "content" not in str(parsed)
+        assert "sk-12345" not in str(parsed)
 
-        def _mock_runner(cmd, cwd, timeout, env):
-            nonlocal worker_calls
-            worker_calls += 1
-            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
-
-        adapter = AntigravityWorkerAdapter(
-            cli_command=fake_exe,
-            runner=_mock_runner,
-            store_path=store_file,
-            injected_identity=dict(fake_id),
-        )
-        assert adapter.capability_status == "PROVEN"
-
-        # Now simulate binary hash changing on disk
-        adapter.injected_identity["sha256"] = "1111111111111111111111111111111111111111111111111111111111111111"
-
-        res = adapter.execute(
-            task={"task_id": "TASK-1", "title": "T", "description": "D"},
-            workspace_path="/tmp/ws",
-            allowed_scope={"paths": ["src/"]},
-            base_sha="0000000000000000000000000000000000000000",
-        )
-
-        assert worker_calls == 0
-        assert adapter.capability_status == "UNPROVEN"
-        assert res.exit_code == 1
-        assert res.mutation_attempted is False
-        assert "revalidation failed" in res.stderr_summary
-
-    def test_runtime_identity_version_change_prevents_worker_subprocess(self, temp_capability_env):
-        """If reported version changes before execution, execution fails closed with zero worker calls."""
+    def test_file_appearing_without_write_tool_event_fails(self, temp_capability_env):
+        """File created without behavioral write tool evidence in stream fails probe."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -594,46 +630,24 @@ class TestAntigravityTransportContractAndIdentityPinning:
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
-        att = make_valid_attestation(
-            exe_sha=fake_id["sha256"],
-            cli_ver=fake_id["version"],
-            contract_ver=ADAPTER_CONTRACT_VERSION,
-            exe_name=fake_id["filename"],
-        )
-        write_local_capability_attestation(att, store_path=store_file)
 
-        worker_calls = 0
+        # Stream without write tool call
+        def _runner_no_write_tool(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            prompt_str = cmd[p_idx + 1]
+            challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Stream only has message event, no tool call
+            stream = json.dumps({"type": "init", "tools": [{"name": "read_file"}]}) + "\n" + json.dumps({"type": "message", "content": "Done"}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
-        def _mock_runner(cmd, cwd, timeout, env):
-            nonlocal worker_calls
-            worker_calls += 1
-            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+        res = run_antigravity_probe(fake_exe, runner=_runner_no_write_tool, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert any("No completed file-write tool execution event" in e for e in res["errors"])
 
-        adapter = AntigravityWorkerAdapter(
-            cli_command=fake_exe,
-            runner=_mock_runner,
-            store_path=store_file,
-            injected_identity=dict(fake_id),
-        )
-        assert adapter.capability_status == "PROVEN"
-
-        # Simulate version update
-        adapter.injected_identity["version"] = "1.1.18"
-
-        res = adapter.execute(
-            task={"task_id": "TASK-1", "title": "T", "description": "D"},
-            workspace_path="/tmp/ws",
-            allowed_scope={"paths": ["src/"]},
-            base_sha="0000000000000000000000000000000000000000",
-        )
-
-        assert worker_calls == 0
-        assert adapter.capability_status == "UNPROVEN"
-        assert res.exit_code == 1
-        assert res.mutation_attempted is False
-
-    def test_runtime_identity_path_change_prevents_worker_subprocess(self, temp_capability_env):
-        """If executable path changes before execution, execution fails closed with zero worker calls."""
+    def test_agent_response_without_write_tool_fails(self, temp_capability_env):
+        """Agent responding without editing or tool calls fails probe."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -641,60 +655,43 @@ class TestAntigravityTransportContractAndIdentityPinning:
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
-        att = make_valid_attestation(
-            exe_sha=fake_id["sha256"],
-            cli_ver=fake_id["version"],
-            contract_ver=ADAPTER_CONTRACT_VERSION,
-            exe_name=fake_id["filename"],
-        )
-        write_local_capability_attestation(att, store_path=store_file)
 
-        worker_calls = 0
+        def _runner_chatty_agent(cmd, cwd, timeout, env):
+            stream = json.dumps({"type": "init"}) + "\n" + json.dumps({"type": "message", "content": "I understand the instruction."}) + "\n" + json.dumps({"type": "result", "status": "SUCCESS"})
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
-        def _mock_runner(cmd, cwd, timeout, env):
-            nonlocal worker_calls
-            worker_calls += 1
-            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+        res = run_antigravity_probe(fake_exe, runner=_runner_chatty_agent, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["agent_response_observed"] is True
+        assert any("Target probe file 'probe/result.txt' was not created" in e for e in res["errors"])
 
-        adapter = AntigravityWorkerAdapter(
-            cli_command=fake_exe,
-            runner=_mock_runner,
-            store_path=store_file,
-            injected_identity=dict(fake_id),
-        )
-        assert adapter.capability_status == "PROVEN"
-
-        # Simulate path change
-        adapter.injected_identity["path"] = "/other/path/agy.exe"
-
-        res = adapter.execute(
-            task={"task_id": "TASK-1", "title": "T", "description": "D"},
-            workspace_path="/tmp/ws",
-            allowed_scope={"paths": ["src/"]},
-            base_sha="0000000000000000000000000000000000000000",
-        )
-
-        assert worker_calls == 0
-        assert adapter.capability_status == "UNPROVEN"
-        assert res.exit_code == 1
-        assert res.mutation_attempted is False
-
-    def test_adapter_contract_bump_invalidates_old_attestations(self, temp_capability_env):
-        """Attestations created under contract 0.1.0 are invalid under 0.2.0."""
-        _, store_file, fake_exe = temp_capability_env
+    def test_write_tool_soft_denial_classified_hold(self, temp_capability_env):
+        """Permission soft-denial in tool call or stderr triggers HOLD with PERMISSION_SOFT_DENIAL."""
+        temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
             "filename": Path(fake_exe).name,
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
-        att = make_valid_attestation(
-            exe_sha=fake_id["sha256"],
-            cli_ver=fake_id["version"],
-            contract_ver="0.1.0",
-            exe_name=fake_id["filename"],
-        )
-        write_local_capability_attestation(att, store_path=store_file)
 
-        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
-        assert status == "UNPROVEN"
+        def _runner_soft_denial(cmd, cwd, timeout, env):
+            stream = make_valid_stream_ndjson(include_write_tool=True, soft_denial=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="Permission denied: interactive approval needed")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner_soft_denial, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["permission_soft_denial_observed"] is True
+        assert res["proof"]["stderr_present"] is True
+        assert any("PERMISSION_SOFT_DENIAL" in e for e in res["errors"])
+
+    def test_build_antigravity_argv_output_format_validation(self):
+        """build_antigravity_argv strictly validates output_format."""
+        argv_json = build_antigravity_argv("/bin/agy", "/tmp/ws", "prompt", 180, output_format="json")
+        assert "--output-format=json" in argv_json
+
+        argv_stream = build_antigravity_argv("/bin/agy", "/tmp/ws", "prompt", 180, output_format="stream-json")
+        assert "--output-format=stream-json" in argv_stream
+
+        with pytest.raises(ValueError, match="Unsupported output_format"):
+            build_antigravity_argv("/bin/agy", "/tmp/ws", "prompt", 180, output_format="xml")

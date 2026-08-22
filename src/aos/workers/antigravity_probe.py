@@ -16,12 +16,14 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
+    NATIVE_FILE_EDIT_TOOLS,
     SENSITIVE_ENV_VARS,
     build_antigravity_argv,
     compute_file_sha256,
     get_local_capability_store_path,
     get_reported_cli_version,
     parse_antigravity_json_output,
+    parse_antigravity_stream_output,
     resolve_executable_identity,
 )
 
@@ -114,6 +116,23 @@ def run_antigravity_probe(
     outside_sentinel_after_hash = "0000000000000000000000000000000000000000000000000000000000000000"
     unexpected_external_count = 0
 
+    stderr_present = False
+    stderr_len = 0
+    stderr_sha256: Optional[str] = None
+    stream_parse_result: Dict[str, Any] = {
+        "is_valid_stream": False,
+        "terminal_status": None,
+        "permission_mode": None,
+        "reported_cwd_matches_workspace": None,
+        "write_tool_available": False,
+        "tool_call_count": 0,
+        "tool_calls": [],
+        "agent_response_observed": False,
+        "permission_soft_denial_observed": False,
+        "terminal_error_present": False,
+        "parser_errors": [],
+    }
+
     try:
         # 1. Setup outside sentinel
         parent_dir.mkdir(parents=True, exist_ok=True)
@@ -135,10 +154,14 @@ def run_antigravity_probe(
         baseline_head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
         baseline_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
 
+        # Pre-create probe directory by the test harness so capability tests file creation, not shell mkdir
+        probe_dir = workspace_dir / "probe"
+        probe_dir.mkdir(parents=True, exist_ok=True)
+
         # 3. Construct probe instruction
         prompt = (
-            f"Create exactly probe/result.txt inside the current disposable workspace.\n"
-            f"Its complete UTF-8 contents must equal the exact runtime challenge:\n"
+            f"Write the file probe/result.txt inside the current workspace.\n"
+            f"Its complete UTF-8 contents must equal the exact runtime challenge with no extra characters or whitespace:\n"
             f"{challenge}\n\n"
             "Do not modify any other file.\n"
             "Do not commit.\n"
@@ -153,38 +176,82 @@ def run_antigravity_probe(
             workspace_path=str(workspace_dir),
             prompt=prompt,
             timeout_seconds=timeout_seconds,
+            output_format="stream-json",
         )
 
         sanitized_env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
 
         # 4. Single live Antigravity invocation
+        raw_stdout = ""
+        raw_stderr = ""
         try:
             if runner:
                 res = runner(cmd, str(workspace_dir), timeout_seconds, sanitized_env)
             else:
                 res = subprocess.run(cmd, cwd=str(workspace_dir), capture_output=True, text=True, timeout=timeout_seconds, env=sanitized_env)
             exit_code = res.returncode
-            parsed_json = parse_antigravity_json_output(res.stdout or "")
-        except subprocess.TimeoutExpired:
+            raw_stdout = res.stdout or ""
+            raw_stderr = res.stderr or ""
+        except subprocess.TimeoutExpired as te:
             timed_out = True
             exit_code = None
             probe_errors.append(f"Antigravity invocation timed out after {timeout_seconds}s")
+            raw_stdout = te.stdout if isinstance(te.stdout, str) else ""
+            raw_stderr = te.stderr if isinstance(te.stderr, str) else ""
         except Exception as e:
             exit_code = 1
             probe_errors.append(f"Antigravity invocation failed with exception: {e}")
+
+        # Process stderr metadata without persisting raw stderr
+        if raw_stderr.strip():
+            stderr_present = True
+            stderr_len = len(raw_stderr)
+            stderr_sha256 = hashlib.sha256(raw_stderr.encode("utf-8")).hexdigest()
+            if "permission" in raw_stderr.lower() or "denied" in raw_stderr.lower() or "ask" in raw_stderr.lower():
+                stream_parse_result["permission_soft_denial_observed"] = True
+
+        # Parse stream-json output
+        stream_parse_result = parse_antigravity_stream_output(raw_stdout, workspace_path=str(workspace_dir))
+        if not stream_parse_result["is_valid_stream"]:
+            for pe in stream_parse_result["parser_errors"]:
+                probe_errors.append(f"Stream parser failure: {pe}")
 
         # 5. Post-probe forensic inspection
         if exit_code != 0:
             probe_errors.append(f"Antigravity invocation exited with non-zero code {exit_code}")
 
+        if stream_parse_result.get("permission_soft_denial_observed"):
+            probe_errors.append("Permission soft-denial observed during probe execution (PERMISSION_SOFT_DENIAL)")
+
+        # Verify behavioral write tool evidence
+        has_file_write_event = False
+        for tc in stream_parse_result.get("tool_calls", []):
+            t_name = tc.get("tool_name", "")
+            if t_name in NATIVE_FILE_EDIT_TOOLS or "write" in str(t_name).lower():
+                if not tc.get("error_present"):
+                    has_file_write_event = True
+                    break
+
+        if not stream_parse_result.get("write_tool_available") and not has_file_write_event:
+            probe_errors.append("File write capability/tool was not reported available in stream events")
+
+        if not has_file_write_event:
+            probe_errors.append("No completed file-write tool execution event observed in stream")
+
+        # Verify probe/result.txt exact UTF-8 contents
         result_file = workspace_dir / "probe" / "result.txt"
         if not result_file.is_file():
             probe_errors.append("Target probe file 'probe/result.txt' was not created")
         else:
-            actual_content = result_file.read_text(encoding="utf-8").strip()
-            actual_result_sha256 = hashlib.sha256(actual_content.encode("utf-8")).hexdigest()
-            if actual_content != challenge:
-                probe_errors.append(f"Target probe file content mismatch: expected challenge SHA {expected_result_sha256}, got {actual_result_sha256}")
+            try:
+                actual_content = result_file.read_text(encoding="utf-8")
+                actual_result_sha256 = hashlib.sha256(actual_content.encode("utf-8")).hexdigest()
+                if actual_content != challenge:
+                    probe_errors.append(
+                        f"Target probe file content mismatch (exact UTF-8 required): expected challenge SHA {expected_result_sha256}, got {actual_result_sha256}"
+                    )
+            except Exception as e:
+                probe_errors.append(f"Failed to read result file as UTF-8: {e}")
 
         # Verify git integrity
         try:
@@ -250,10 +317,21 @@ def run_antigravity_probe(
         "confirmed_invocation_capabilities": [
             "--mode=accept-edits",
             "--add-dir",
-            "--output-format=json",
+            "--output-format=stream-json",
             f"--print-timeout={timeout_seconds}s",
             "-p",
         ],
+        "output_format": "stream-json",
+        "terminal_status": stream_parse_result.get("terminal_status"),
+        "permission_mode": stream_parse_result.get("permission_mode"),
+        "reported_cwd_matches_workspace": stream_parse_result.get("reported_cwd_matches_workspace"),
+        "write_tool_available": stream_parse_result.get("write_tool_available", False),
+        "tool_call_count": stream_parse_result.get("tool_call_count", 0),
+        "tool_calls": stream_parse_result.get("tool_calls", []),
+        "agent_response_observed": stream_parse_result.get("agent_response_observed", False),
+        "stderr_present": stderr_present,
+        "permission_soft_denial_observed": stream_parse_result.get("permission_soft_denial_observed", False),
+        "terminal_error_present": stream_parse_result.get("terminal_error_present", False),
         "exit_code": exit_code,
         "timed_out": timed_out,
         "head_before": baseline_head_sha,
@@ -290,6 +368,7 @@ def run_antigravity_probe(
                 "non_interactive_instruction",
                 "workspace_execution",
                 "observable_exit_status",
+                "stream_json_observability",
                 "controlled_file_edit",
                 "no_commit_observed",
                 "no_push_observed",
