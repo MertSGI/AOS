@@ -347,7 +347,7 @@ class TestAntigravityCapabilityResolution:
         assert status == "UNPROVEN"
 
     def test_old_v024_attestation_resolves_unproven(self, temp_capability_env):
-        """5d. Old 0.2.4 attestation resolves to UNPROVEN under contract 0.2.5."""
+        """5d. Old 0.2.4 attestation resolves to UNPROVEN under contract 0.2.6."""
         _, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -356,6 +356,20 @@ class TestAntigravityCapabilityResolution:
             "version": "1.1.17",
         }
         att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.4")
+        write_local_capability_attestation(att, store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
+        assert status == "UNPROVEN"
+
+    def test_old_v025_attestation_resolves_unproven(self, temp_capability_env):
+        """5e. Old 0.2.5 attestation resolves to UNPROVEN under contract 0.2.6."""
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.5")
         write_local_capability_attestation(att, store_path=store_file)
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
@@ -451,7 +465,7 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.5"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.6"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
@@ -1176,6 +1190,57 @@ class TestAntigravityExactContentAndStreamObservability:
         assert res["proof"]["error_message_sha256"] is None
         assert res["proof"]["tool_failure_classification"] == "TOOL_FAILURE_UNKNOWN"
         assert res["proof"]["permission_soft_denial_observed"] is False
+
+        # Tool calls exact semantics
+        assert len(res["proof"]["tool_calls"]) == 2
+        active_tc = res["proof"]["tool_calls"][0]
+        assert active_tc["state"] == "ACTIVE"
+        assert active_tc["error_present"] is False
+        assert active_tc["error_type"] is None
+
+        error_tc = res["proof"]["tool_calls"][1]
+        assert error_tc["state"] == "ERROR"
+        assert error_tc["error_present"] is False
+        assert error_tc["error_type"] is None
+
+    def test_top_level_and_tool_call_error_present_consistency(self):
+        """C. Top-level failed_tool_error_present and tool_calls[-1].error_present never contradict."""
+        # 1. No error payload on ERROR state
+        stream_no_payload = (
+            json.dumps({"event": "init", "init": {"cwd": "/tmp/ws", "tools": ["write_to_file"]}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ERROR", "tool_info": {}}}) + "\n"
+            + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
+        p1 = parse_antigravity_stream_output(stream_no_payload, workspace_path="/tmp/ws")
+        assert p1["is_valid_stream"] is True
+        assert p1["failed_tool_error_present"] is False
+        assert p1["tool_calls"][-1]["error_present"] is False
+        assert p1["tool_calls"][-1]["error_type"] is None
+
+        # 2. Real error payload on ERROR state
+        stream_with_payload = (
+            json.dumps({"event": "init", "init": {"cwd": "/tmp/ws", "tools": ["write_to_file"]}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ERROR", "tool_info": {"error": {"type": "FileError", "message": "Disk full"}}}}) + "\n"
+            + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
+        p2 = parse_antigravity_stream_output(stream_with_payload, workspace_path="/tmp/ws")
+        assert p2["is_valid_stream"] is True
+        assert p2["failed_tool_error_present"] is True
+        assert p2["tool_calls"][-1]["error_present"] is True
+        assert p2["tool_calls"][-1]["error_type"] == "FILE_WRITE_ERROR"
+
+        # 3. Real error payload on DONE state
+        stream_done_payload = (
+            json.dumps({"event": "init", "init": {"cwd": "/tmp/ws", "tools": ["write_to_file"]}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {"error": {"type": "FileError", "message": "Failed write"}}}}) + "\n"
+            + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
+        p3 = parse_antigravity_stream_output(stream_done_payload, workspace_path="/tmp/ws")
+        assert p3["is_valid_stream"] is True
+        assert p3["failed_tool_error_present"] is True
+        assert p3["completed_write_tool_observed"] is False
+        assert p3["failed_native_write_tool_observed"] is True
+        assert p3["tool_calls"][-1]["error_present"] is True
 
     def test_active_error_followed_by_done_probe_holds(self, temp_capability_env):
         """E. ACTIVE -> ERROR -> DONE with exact challenge file: completed_write_tool_observed true, but failed_native_write_tool_observed true -> probe HOLD."""

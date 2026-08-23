@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.5"
+ADAPTER_CONTRACT_VERSION = "0.2.6"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
@@ -145,7 +145,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.5."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.6."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -459,7 +459,7 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 sanitized_call = {
                     "tool_name": tool_name,
                     "state": state,
-                    "error_present": err_payload_present or is_error_state,
+                    "error_present": err_payload_present,
                     "error_type": err_type,
                 }
                 result["tool_calls"].append(sanitized_call)
