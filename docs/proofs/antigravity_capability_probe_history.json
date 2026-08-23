@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1.0",
   "historical_record": "antigravity_capability_probe_history",
-  "total_lifetime_live_coding_invocations": 5,
+  "total_lifetime_live_coding_invocations": 6,
   "authorizations": [
     {
       "authorization_id": "HISTORICAL_AUTHORIZATION_1",
@@ -175,6 +175,48 @@
           ],
           "capability_proven": false,
           "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.6.json"
+        }
+      ]
+    },
+    {
+      "authorization_id": "AOS3-AGY-PROBE-V026-NODEFIX-20260823-1629",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 1,
+      "invocation_budget_compliance": true,
+      "capability_status_after_authorization": "UNPROVEN",
+      "attempts": [
+        {
+          "attempt_number": 6,
+          "aos_revision": "3353e8cf0ec9f06e65e6f951e3bf001d979ae0fe",
+          "probe_id": "PROBE-20260823-133525-5061b85d",
+          "probe_timestamp": "2026-08-23T13:35:25.539929+00:00",
+          "result": "HOLD",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.2.6",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "29b1eab86d7c7175b3c89465c0e9b21390a79b4cd26e432c2d82a2e1f1b3c37b",
+          "reported_cli_version": "1.1.19",
+          "challenge_sha256": "5e6e12d2513091dacc692a9c96187d6ad6e59e4b1e97d081c943cadf594bb9b2",
+          "head_before": "b3bf44558e8f61cb62680a41fbe419ee1136c87c",
+          "head_after": "b3bf44558e8f61cb62680a41fbe419ee1136c87c",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [],
+          "expected_result_file_sha256": "5e6e12d2513091dacc692a9c96187d6ad6e59e4b1e97d081c943cadf594bb9b2",
+          "actual_result_file_sha256": null,
+          "outside_sentinel_before_sha256": "ea800506bea70697201645a6f9f27ba7b4387f95b5641c8a635f5ac0ca2cf507",
+          "outside_sentinel_after_sha256": "ea800506bea70697201645a6f9f27ba7b4387f95b5641c8a635f5ac0ca2cf507",
+          "unexpected_external_paths_count": 0,
+          "errors": [
+            "Terminal result status is not SUCCESS: got 'ERROR'",
+            "No completed file-write tool execution event (state=DONE, no error) observed in stream",
+            "Failed native file-write tool execution event observed during stream execution",
+            "Target probe file 'probe/result.txt' was not created",
+            "Unexpected changed paths: expected ['probe/result.txt'], got []"
+          ],
+          "capability_proven": false,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.6_nodefix.json"
         }
       ]
     }
