@@ -222,6 +222,12 @@ def run_antigravity_probe(
         if exit_code != 0:
             probe_errors.append(f"Antigravity invocation exited with non-zero code {exit_code}")
 
+        if not stream_parse_result.get("is_valid_stream"):
+            probe_errors.append(f"Stream parser failure: {'; '.join(stream_parse_result.get('parser_errors', []))}")
+
+        if stream_parse_result.get("terminal_status") != "SUCCESS" or stream_parse_result.get("terminal_error_present"):
+            probe_errors.append(f"Terminal result status is not SUCCESS: got '{stream_parse_result.get('terminal_status')}'")
+
         if stream_parse_result.get("permission_soft_denial_observed"):
             probe_errors.append("Permission soft-denial observed during probe execution (PERMISSION_SOFT_DENIAL)")
 
@@ -321,12 +327,24 @@ def run_antigravity_probe(
             "-p",
         ],
         "output_format": "stream-json",
+        "stream_valid": stream_parse_result.get("is_valid_stream", False),
         "terminal_status": stream_parse_result.get("terminal_status"),
         "permission_mode": stream_parse_result.get("permission_mode"),
         "reported_cwd_matches_workspace": stream_parse_result.get("reported_cwd_matches_workspace"),
         "write_tool_advertised": stream_parse_result.get("write_tool_advertised", False),
         "write_tool_available": stream_parse_result.get("write_tool_available", False),
         "completed_write_tool_observed": stream_parse_result.get("completed_write_tool_observed", False),
+        "failed_step_observed": stream_parse_result.get("failed_step_observed", False),
+        "failed_step_type": stream_parse_result.get("failed_step_type"),
+        "failed_tool_observed": stream_parse_result.get("failed_tool_observed", False),
+        "failed_tool_name": stream_parse_result.get("failed_tool_name"),
+        "failed_tool_state": stream_parse_result.get("failed_tool_state"),
+        "failed_tool_error_present": stream_parse_result.get("failed_tool_error_present", False),
+        "failed_tool_error_type": stream_parse_result.get("failed_tool_error_type"),
+        "error_message_present": stream_parse_result.get("error_message_present", False),
+        "error_message_byte_length": stream_parse_result.get("error_message_byte_length", 0),
+        "error_message_sha256": stream_parse_result.get("error_message_sha256"),
+        "tool_failure_classification": stream_parse_result.get("tool_failure_classification", "NONE"),
         "tool_call_count": stream_parse_result.get("tool_call_count", 0),
         "tool_calls": stream_parse_result.get("tool_calls", []),
         "agent_response_observed": stream_parse_result.get("agent_response_observed", False),

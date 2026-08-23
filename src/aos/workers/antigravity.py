@@ -14,11 +14,13 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.3"
+ADAPTER_CONTRACT_VERSION = "0.2.4"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
-OFFICIAL_STEP_STATES = {"ACTIVE", "DONE"}
+NORMAL_STEP_STATES = {"ACTIVE", "DONE"}
+OBSERVED_FAILURE_STEP_STATES = {"ERROR"}
+OFFICIAL_STEP_STATES = NORMAL_STEP_STATES | OBSERVED_FAILURE_STEP_STATES
 
 
 def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
@@ -143,7 +145,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.3."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.4."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -189,6 +191,63 @@ def parse_antigravity_json_output(stdout: str) -> Dict[str, Any]:
     return sanitized
 
 
+def sanitize_tool_error(tool_error: Any) -> Dict[str, Any]:
+    """Derive sanitized diagnostic metadata from a tool error without persisting raw message or parameters."""
+    if not tool_error:
+        return {
+            "error_present": False,
+            "error_type": None,
+            "error_message_present": False,
+            "error_message_byte_length": 0,
+            "error_message_sha256": None,
+            "permission_soft_denial": False,
+            "classification": "NONE",
+        }
+
+    raw_type = ""
+    raw_msg = ""
+    if isinstance(tool_error, dict):
+        raw_type = str(tool_error.get("type") or "")
+        raw_msg = str(tool_error.get("message") or "")
+    else:
+        raw_type = str(tool_error)
+
+    has_msg = bool(raw_msg.strip())
+    msg_bytes = raw_msg.encode("utf-8") if has_msg else b""
+    msg_len = len(msg_bytes)
+    msg_sha = hashlib.sha256(msg_bytes).hexdigest() if has_msg else None
+
+    combined = (raw_type + " " + raw_msg).lower()
+    is_perm_denial = any(
+        kw in combined for kw in ("permission", "approval", "denied", "denial", "interactive review", "interactive approval")
+    )
+
+    # Classify error type into controlled taxonomy
+    norm_type: Optional[str] = None
+    if is_perm_denial:
+        norm_type = "PERMISSION_DENIED"
+        classification = "PERMISSION_DENIED"
+    elif any(kw in combined for kw in ("file", "write", "disk", "io", "directory", "path", "read-only")):
+        norm_type = "FILE_WRITE_ERROR"
+        classification = "FILE_WRITE_ERROR"
+    elif raw_type.strip():
+        norm_type = "TOOL_ERROR"
+        classification = "TOOL_ERROR"
+    else:
+        norm_type = "UNKNOWN_TOOL_ERROR"
+        classification = "TOOL_FAILURE_UNKNOWN"
+
+    return {
+        "error_present": True,
+        "error_type": norm_type,
+        "error_message_present": has_msg,
+        "error_message_byte_length": msg_len,
+        "error_message_sha256": msg_sha,
+        "permission_soft_denial": is_perm_denial,
+        "classification": classification,
+    }
+
+
 def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] = None) -> Dict[str, Any]:
     """Parse Antigravity stream-json (NDJSON) output using the official CLI nested protocol.
 
@@ -197,7 +256,9 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
     - ``{"event": "step_update", "step_update": {...}}``
     - ``{"event": "result", "result": {...}}``
 
-    Official step_update states are strictly: ``"ACTIVE"`` and ``"DONE"``.
+    Step states:
+    - Normal transition states: ``"ACTIVE"``, ``"DONE"``
+    - Empirically observed failure state: ``"ERROR"``
 
     Extracts sanitized behavioral evidence for capability diagnosis without persisting
     raw parameters, raw outputs, or full agent transcripts.
@@ -210,6 +271,17 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
         "write_tool_advertised": False,
         "write_tool_available": False,
         "completed_write_tool_observed": False,
+        "failed_step_observed": False,
+        "failed_step_type": None,
+        "failed_tool_observed": False,
+        "failed_tool_name": None,
+        "failed_tool_state": None,
+        "failed_tool_error_present": False,
+        "failed_tool_error_type": None,
+        "error_message_present": False,
+        "error_message_byte_length": 0,
+        "error_message_sha256": None,
+        "tool_failure_classification": "NONE",
         "tool_call_count": 0,
         "tool_calls": [],
         "agent_response_observed": False,
@@ -303,6 +375,11 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 )
                 return result
 
+            is_error_state = (state in OBSERVED_FAILURE_STEP_STATES)
+            if is_error_state:
+                result["failed_step_observed"] = True
+                result["failed_step_type"] = str(step_type) if step_type else "UNKNOWN"
+
             # Agent response detection
             if step_type == "agent_response":
                 result["agent_response_observed"] = True
@@ -318,19 +395,29 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 tool_name = str(raw_tool_name).strip()
                 tool_info = payload.get("tool_info") or {}
 
-                err_present = False
-                err_type = None
                 tool_error = tool_info.get("error") if isinstance(tool_info, dict) else None
-                if tool_error:
-                    err_present = True
-                    error_type_str = str(tool_error.get("type") or "") if isinstance(tool_error, dict) else str(tool_error)
-                    error_msg_str = str(tool_error.get("message") or "") if isinstance(tool_error, dict) else ""
-                    combined = (error_type_str + " " + error_msg_str).lower()
-                    if any(kw in combined for kw in ("permission", "approval", "denied", "denial", "interactive review")):
-                        result["permission_soft_denial_observed"] = True
-                        err_type = "PERMISSION_DENIED"
-                    else:
-                        err_type = "TOOL_ERROR"
+                sanitized_err = sanitize_tool_error(tool_error)
+
+                err_present = sanitized_err["error_present"] or is_error_state
+                err_type = sanitized_err["error_type"]
+                if is_error_state and not err_type:
+                    err_type = "TOOL_ERROR"
+
+                if sanitized_err["permission_soft_denial"]:
+                    result["permission_soft_denial_observed"] = True
+
+                if is_error_state or sanitized_err["error_present"]:
+                    result["failed_tool_observed"] = True
+                    result["failed_tool_name"] = tool_name
+                    result["failed_tool_state"] = state
+                    result["failed_tool_error_present"] = True
+                    result["failed_tool_error_type"] = err_type
+                    result["error_message_present"] = sanitized_err["error_message_present"]
+                    result["error_message_byte_length"] = sanitized_err["error_message_byte_length"]
+                    result["error_message_sha256"] = sanitized_err["error_message_sha256"]
+                    result["tool_failure_classification"] = sanitized_err["classification"]
+                    if is_error_state and result["tool_failure_classification"] == "NONE":
+                        result["tool_failure_classification"] = "TOOL_FAILURE_UNKNOWN"
 
                 sanitized_call = {
                     "tool_name": tool_name,
@@ -367,8 +454,8 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
         result["parser_errors"].append(f"Expected exactly 1 init event, found {init_count}")
     if terminal_result_count != 1:
         result["parser_errors"].append(f"Expected exactly 1 terminal result event, found {terminal_result_count}")
-    if result["terminal_status"] != "SUCCESS":
-        result["parser_errors"].append(f"Terminal status is not SUCCESS: got '{result['terminal_status']}'")
+    if result["terminal_status"] is None:
+        result["parser_errors"].append("Missing terminal result status")
 
     if not result["parser_errors"]:
         result["is_valid_stream"] = True
