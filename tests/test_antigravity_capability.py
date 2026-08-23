@@ -215,24 +215,35 @@ def make_valid_attestation(
     }
 
 
-def make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", tool_error=False, soft_denial=False, raw_message=True):
+def make_valid_stream_ndjson(
+    include_write_tool=True,
+    status="SUCCESS",
+    tool_error=False,
+    soft_denial=False,
+    raw_message=True,
+    cwd="/tmp/ws",
+    active_step=False,
+    tool_name="write_file",
+):
     """Build NDJSON matching the official Antigravity CLI nested protocol.
 
-    Protocol shape:  {"event": "<type>", "<type>": {<payload>}}
+    Official step_update states are strictly: ACTIVE and DONE.
     """
     events = [
-        {"event": "init", "init": {"permission_mode": "ask", "cwd": "/tmp/ws", "tools": ["write_file", "run_command"]}},
+        {"event": "init", "init": {"permission_mode": "ask", "cwd": cwd, "tools": [tool_name, "run_command"]}},
     ]
     if raw_message:
-        events.append({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}})
+        events.append({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "DONE"}})
     if include_write_tool:
-        tool_state = "denied" if soft_denial else ("error" if tool_error else "completed")
-        tool_info: dict = {}
+        tool_info: dict = {"name": tool_name}
         if soft_denial:
             tool_info["error"] = {"type": "PERMISSION_DENIED", "message": "Permission denied: user prompt not answered in headless mode"}
         elif tool_error:
             tool_info["error"] = {"type": "TOOL_ERROR", "message": "Disk I/O error"}
-        events.append({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": tool_state, "tool_info": tool_info}})
+
+        if active_step:
+            events.append({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": tool_name, "state": "ACTIVE", "tool_info": tool_info}})
+        events.append({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": tool_name, "state": "DONE", "tool_info": tool_info}})
     events.append({"event": "result", "result": {"status": status}})
     return "\n".join(json.dumps(e) for e in events)
 
@@ -302,6 +313,20 @@ class TestAntigravityCapabilityResolution:
             "version": "1.1.17",
         }
         att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.0")
+        write_local_capability_attestation(att, store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
+        assert status == "UNPROVEN"
+
+    def test_old_v022_attestation_resolves_unproven(self, temp_capability_env):
+        """5b. Old 0.2.2 attestation resolves to UNPROVEN under contract 0.2.3."""
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.2")
         write_local_capability_attestation(att, store_path=store_file)
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
@@ -383,7 +408,7 @@ class TestAntigravityCapabilityResolution:
 
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            stream_out = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS")
+            stream_out = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream_out, stderr="")
 
         res = run_antigravity_probe(
@@ -397,11 +422,14 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.2"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.3"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
+        assert res["proof"]["write_tool_advertised"] is True
         assert res["proof"]["write_tool_available"] is True
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["reported_cwd_matches_workspace"] is True
         assert res["proof"]["tool_call_count"] == 1
         assert store_file.is_file()
 
@@ -460,7 +488,7 @@ class TestAntigravityCapabilityResolution:
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         os.environ["OPENAI_API_KEY"] = "sk-fake-openai"
         os.environ["GEMINI_API_KEY"] = "fake-gemini"
@@ -539,7 +567,7 @@ class TestAntigravityExactContentAndStreamObservability:
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(challenge_line + "\n", encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         res1 = run_antigravity_probe(fake_exe, runner=_runner_trailing_newline, store_path=store_file, injected_identity=fake_id)
         assert res1["status"] == "HOLD"
@@ -552,7 +580,7 @@ class TestAntigravityExactContentAndStreamObservability:
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(" " + challenge_line, encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         res2 = run_antigravity_probe(fake_exe, runner=_runner_leading_space, store_path=store_file, injected_identity=fake_id)
         assert res2["status"] == "HOLD"
@@ -565,7 +593,7 @@ class TestAntigravityExactContentAndStreamObservability:
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(challenge_line + " ", encoding="utf-8")
-            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(), stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         res3 = run_antigravity_probe(fake_exe, runner=_runner_trailing_space, store_path=store_file, injected_identity=fake_id)
         assert res3["status"] == "HOLD"
@@ -628,31 +656,54 @@ class TestAntigravityExactContentAndStreamObservability:
         assert p8["is_valid_stream"] is False
         assert any("Unknown event type" in e for e in p8["parser_errors"])
 
+        # 9. Invalid / unknown step_update state rejected
+        stream_bad_state = (
+            json.dumps({"event": "init", "init": {"permission_mode": "ask"}})
+            + "\n" + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "completed"}})
+            + "\n" + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
+        p9 = parse_antigravity_stream_output(stream_bad_state)
+        assert p9["is_valid_stream"] is False
+        assert any("invalid state" in e for e in p9["parser_errors"])
+
+        # 10. Non-string tool_name rejected
+        stream_bad_tool_name = (
+            json.dumps({"event": "init", "init": {"permission_mode": "ask"}})
+            + "\n" + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": 12345, "state": "DONE"}})
+            + "\n" + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+        )
+        p10 = parse_antigravity_stream_output(stream_bad_tool_name)
+        assert p10["is_valid_stream"] is False
+        assert any("missing valid string tool_name" in e for e in p10["parser_errors"])
+
     def test_sanitized_stream_parser_no_leakage(self):
         """Stream parser does not leak raw tool parameters, paths, or message transcripts (nested protocol)."""
         raw_stream = (
             json.dumps({"event": "init", "init": {"permission_mode": "ask", "cwd": "/secret/path/to/ws", "tools": ["write_file"]}}) + "\n"
-            + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed", "text_delta": "Sensitive agent reasoning with token sk-12345"}}) + "\n"
-            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "completed", "tool_info": {"args": {"path": "/secret/probe/result.txt", "content": "secret"}}}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "DONE", "text_delta": "Sensitive agent reasoning with token sk-12345"}}) + "\n"
+            + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {"args": {"path": "/secret/probe/result.txt", "content": "secret"}}}}) + "\n"
             + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
         )
         parsed = parse_antigravity_stream_output(raw_stream, workspace_path="/secret/path/to/ws")
         assert parsed["is_valid_stream"] is True
         assert parsed["agent_response_observed"] is True
         assert parsed["reported_cwd_matches_workspace"] is True
+        assert parsed["write_tool_advertised"] is True
+        assert parsed["completed_write_tool_observed"] is True
         assert parsed["tool_call_count"] == 1
 
         # Verify tool call fields are sanitized
         tc = parsed["tool_calls"][0]
         assert set(tc.keys()) == {"tool_name", "state", "error_present", "error_type"}
         assert tc["tool_name"] == "write_file"
+        assert tc["state"] == "DONE"
         assert "args" not in tc
         assert "content" not in str(parsed)
         assert "sk-12345" not in str(parsed)
         assert "text_delta" not in str(parsed)
 
-    def test_file_appearing_without_write_tool_event_fails(self, temp_capability_env):
-        """File created without behavioral write tool evidence in stream fails probe."""
+    def test_official_done_write_event_passes(self, temp_capability_env):
+        """Official DONE write event + exact file creation passes capability probe."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -661,27 +712,49 @@ class TestAntigravityExactContentAndStreamObservability:
             "version": "1.1.17",
         }
 
-        # Stream without write tool call
-        def _runner_no_write_tool(cmd, cwd, timeout, env):
+        def _runner(cmd, cwd, timeout, env):
             p_idx = cmd.index("-p")
-            prompt_str = cmd[p_idx + 1]
-            challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
             (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
-            # Stream only has message event, no tool call
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "PASS"
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["write_tool_advertised"] is True
+
+    def test_active_only_write_event_fails(self, temp_capability_env):
+        """ACTIVE write event without DONE fails probe (state=ACTIVE is not completed)."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner_active_only(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Stream with ACTIVE write tool step only (no DONE step)
             stream = (
-                json.dumps({"event": "init", "init": {"tools": ["read_file"]}}) + "\n"
-                + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}}) + "\n"
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
                 + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
-        res = run_antigravity_probe(fake_exe, runner=_runner_no_write_tool, store_path=store_file, injected_identity=fake_id)
+        res = run_antigravity_probe(fake_exe, runner=_runner_active_only, store_path=store_file, injected_identity=fake_id)
         assert res["status"] == "HOLD"
+        assert res["proof"]["completed_write_tool_observed"] is False
         assert any("No completed file-write tool execution event" in e for e in res["errors"])
 
-    def test_agent_response_without_write_tool_fails(self, temp_capability_env):
-        """Agent responding without editing or tool calls fails probe."""
+    def test_active_followed_by_done_write_event_passes(self, temp_capability_env):
+        """ACTIVE followed by DONE write event passes capability probe."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -690,21 +763,71 @@ class TestAntigravityExactContentAndStreamObservability:
             "version": "1.1.17",
         }
 
-        def _runner_chatty_agent(cmd, cwd, timeout, env):
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd, active_step=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "PASS"
+        assert res["proof"]["completed_write_tool_observed"] is True
+
+    def test_done_write_event_with_tool_error_fails(self, temp_capability_env):
+        """DONE write event with tool_info.error fails capability probe."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner_tool_err(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd, tool_error=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner_tool_err, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["completed_write_tool_observed"] is False
+        assert any("No completed file-write tool execution event" in e for e in res["errors"])
+
+    def test_unknown_write_like_tool_fails(self, temp_capability_env):
+        """Unknown tool containing 'write' substring (e.g. write_something) fails capability probe."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
             stream = (
-                json.dumps({"event": "init", "init": {}}) + "\n"
-                + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "completed"}}) + "\n"
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_something_custom"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_something_custom", "state": "DONE", "tool_info": {}}}) + "\n"
                 + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
-        res = run_antigravity_probe(fake_exe, runner=_runner_chatty_agent, store_path=store_file, injected_identity=fake_id)
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
         assert res["status"] == "HOLD"
-        assert res["proof"]["agent_response_observed"] is True
-        assert any("Target probe file 'probe/result.txt' was not created" in e for e in res["errors"])
+        assert res["proof"]["write_tool_advertised"] is False
+        assert res["proof"]["completed_write_tool_observed"] is False
+        assert any("Native file-write tool was not advertised" in e for e in res["errors"])
 
-    def test_write_tool_soft_denial_classified_hold(self, temp_capability_env):
-        """Permission soft-denial in tool call or stderr triggers HOLD with PERMISSION_SOFT_DENIAL."""
+    def test_write_step_without_init_advertisement_fails(self, temp_capability_env):
+        """Write tool step observed without init.tools advertisement fails probe."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -713,11 +836,196 @@ class TestAntigravityExactContentAndStreamObservability:
             "version": "1.1.17",
         }
 
-        def _runner_soft_denial(cmd, cwd, timeout, env):
-            stream = make_valid_stream_ndjson(include_write_tool=True, soft_denial=True)
-            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="Permission denied: interactive approval needed")
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Init does not advertise write_to_file, but step uses it
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["read_file"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
-        res = run_antigravity_probe(fake_exe, runner=_runner_soft_denial, store_path=store_file, injected_identity=fake_id)
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["write_tool_advertised"] is False
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert any("Native file-write tool was not advertised" in e for e in res["errors"])
+
+    def test_init_advertisement_without_completed_write_step_fails(self, temp_capability_env):
+        """Init advertising write_to_file without completed write step fails probe."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Init advertises write_to_file, but step only has agent_response
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "DONE"}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["write_tool_advertised"] is True
+        assert res["proof"]["completed_write_tool_observed"] is False
+        assert any("No completed file-write tool execution event" in e for e in res["errors"])
+
+    def test_init_cwd_exact_match_passes(self, temp_capability_env):
+        """Exact workspace cwd in init event passes workspace cwd gate."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "PASS"
+        assert res["proof"]["reported_cwd_matches_workspace"] is True
+
+    def test_init_cwd_mismatch_fails(self, temp_capability_env):
+        """Mismatch in init reported cwd triggers HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Mismatched cwd
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd="/some/wrong/directory")
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["reported_cwd_matches_workspace"] is False
+        assert any("CLI reported cwd does not match" in e for e in res["errors"])
+
+    def test_missing_init_cwd_fails(self, temp_capability_env):
+        """Missing init.cwd triggers HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Stream without cwd in init
+            stream = (
+                json.dumps({"event": "init", "init": {"tools": ["write_file"]}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["reported_cwd_matches_workspace"] is False
+        assert any("CLI reported cwd does not match" in e for e in res["errors"])
+
+    def test_stderr_only_permission_denial_classified_hold(self, temp_capability_env):
+        """Stderr-only permission denial triggers HOLD even if stream contains no denial and status=SUCCESS."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner_stderr_only(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            # Perfectly valid stream with NO denial in stream
+            stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", soft_denial=False, cwd=cwd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="Permission denied: user prompt not answered in headless mode")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner_stderr_only, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["permission_soft_denial_observed"] is True
+        assert res["proof"]["stderr_present"] is True
+        assert any("PERMISSION_SOFT_DENIAL" in e for e in res["errors"])
+
+    def test_stream_only_permission_denial_classified_hold(self, temp_capability_env):
+        """Stream-only permission denial triggers HOLD even if stderr is empty."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner_stream_only(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = make_valid_stream_ndjson(include_write_tool=True, soft_denial=True, cwd=cwd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner_stream_only, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["permission_soft_denial_observed"] is True
+        assert res["proof"]["stderr_present"] is False
+        assert any("PERMISSION_SOFT_DENIAL" in e for e in res["errors"])
+
+    def test_stream_plus_stderr_permission_denial_classified_hold(self, temp_capability_env):
+        """Stream + stderr both containing denial signals triggers HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+
+        def _runner_both(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = make_valid_stream_ndjson(include_write_tool=True, soft_denial=True, cwd=cwd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="Permission denied: interactive review required")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner_both, store_path=store_file, injected_identity=fake_id)
         assert res["status"] == "HOLD"
         assert res["proof"]["permission_soft_denial_observed"] is True
         assert res["proof"]["stderr_present"] is True

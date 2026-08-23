@@ -14,10 +14,11 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.2"
+ADAPTER_CONTRACT_VERSION = "0.2.3"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
+OFFICIAL_STEP_STATES = {"ACTIVE", "DONE"}
 
 
 def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
@@ -142,7 +143,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.2."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.3."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -196,6 +197,8 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
     - ``{"event": "step_update", "step_update": {...}}``
     - ``{"event": "result", "result": {...}}``
 
+    Official step_update states are strictly: ``"ACTIVE"`` and ``"DONE"``.
+
     Extracts sanitized behavioral evidence for capability diagnosis without persisting
     raw parameters, raw outputs, or full agent transcripts.
     """
@@ -204,7 +207,9 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
         "terminal_status": None,
         "permission_mode": None,
         "reported_cwd_matches_workspace": None,
+        "write_tool_advertised": False,
         "write_tool_available": False,
+        "completed_write_tool_observed": False,
         "tool_call_count": 0,
         "tool_calls": [],
         "agent_response_observed": False,
@@ -266,8 +271,13 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
             # Compare reported cwd to expected workspace without persisting the raw path
             reported_cwd = payload.get("cwd")
             if reported_cwd and normalized_expected_ws:
-                normalized_reported = os.path.abspath(str(reported_cwd)).lower()
-                result["reported_cwd_matches_workspace"] = (normalized_reported == normalized_expected_ws)
+                try:
+                    normalized_reported = os.path.abspath(str(reported_cwd)).lower()
+                    result["reported_cwd_matches_workspace"] = (normalized_reported == normalized_expected_ws)
+                except Exception:
+                    result["reported_cwd_matches_workspace"] = False
+            else:
+                result["reported_cwd_matches_workspace"] = False
 
             # Check advertised tools — official CLI uses list[str]
             available_tools = payload.get("tools") or []
@@ -275,6 +285,7 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 for t in available_tools:
                     t_name = t.get("name") if isinstance(t, dict) else str(t)
                     if t_name in NATIVE_FILE_EDIT_TOOLS:
+                        result["write_tool_advertised"] = True
                         result["write_tool_available"] = True
 
         # --- 2. Step update event ---
@@ -285,7 +296,12 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 return result
 
             step_type = payload.get("step_type")
-            state = str(payload.get("state") or "UNKNOWN")
+            state = payload.get("state")
+            if not isinstance(state, str) or state not in OFFICIAL_STEP_STATES:
+                result["parser_errors"].append(
+                    f"step_update event on line {idx + 1} has invalid state '{state}'; expected one of {sorted(list(OFFICIAL_STEP_STATES))}"
+                )
+                return result
 
             # Agent response detection
             if step_type == "agent_response":
@@ -294,7 +310,12 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
 
             # Tool step detection
             elif step_type == "tool":
-                tool_name = str(payload.get("tool_name") or "unknown_tool")
+                raw_tool_name = payload.get("tool_name")
+                if not isinstance(raw_tool_name, str) or not raw_tool_name.strip():
+                    result["parser_errors"].append(f"Tool step on line {idx + 1} missing valid string tool_name")
+                    return result
+
+                tool_name = str(raw_tool_name).strip()
                 tool_info = payload.get("tool_info") or {}
 
                 err_present = False
@@ -320,9 +341,9 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 result["tool_calls"].append(sanitized_call)
                 result["tool_call_count"] += 1
 
-                # A tool appearing in a step also confirms availability
-                if tool_name in NATIVE_FILE_EDIT_TOOLS:
-                    result["write_tool_available"] = True
+                # Completed native write tool observed only if state == "DONE", exact match in NATIVE_FILE_EDIT_TOOLS, and no error
+                if state == "DONE" and tool_name in NATIVE_FILE_EDIT_TOOLS and not err_present:
+                    result["completed_write_tool_observed"] = True
 
         # --- 3. Terminal result event ---
         elif event_type == "result":

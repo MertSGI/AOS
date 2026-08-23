@@ -225,20 +225,17 @@ def run_antigravity_probe(
         if stream_parse_result.get("permission_soft_denial_observed"):
             probe_errors.append("Permission soft-denial observed during probe execution (PERMISSION_SOFT_DENIAL)")
 
-        # Verify behavioral write tool evidence
-        has_file_write_event = False
-        for tc in stream_parse_result.get("tool_calls", []):
-            t_name = tc.get("tool_name", "")
-            if t_name in NATIVE_FILE_EDIT_TOOLS or "write" in str(t_name).lower():
-                if not tc.get("error_present"):
-                    has_file_write_event = True
-                    break
+        # Verify workspace cwd matching gate
+        if stream_parse_result.get("reported_cwd_matches_workspace") is not True:
+            probe_errors.append("CLI reported cwd does not match expected workspace directory or is missing")
 
-        if not stream_parse_result.get("write_tool_available") and not has_file_write_event:
-            probe_errors.append("File write capability/tool was not reported available in stream events")
+        # Verify write tool was advertised in init.tools
+        if not stream_parse_result.get("write_tool_advertised"):
+            probe_errors.append("Native file-write tool was not advertised in init.tools stream event")
 
-        if not has_file_write_event:
-            probe_errors.append("No completed file-write tool execution event observed in stream")
+        # Verify completed write tool execution observed during execution (state == DONE, exact native tool, no error)
+        if not stream_parse_result.get("completed_write_tool_observed"):
+            probe_errors.append("No completed file-write tool execution event (state=DONE, no error) observed in stream")
 
         # Verify probe/result.txt exact UTF-8 contents
         result_file = workspace_dir / "probe" / "result.txt"
@@ -327,7 +324,9 @@ def run_antigravity_probe(
         "terminal_status": stream_parse_result.get("terminal_status"),
         "permission_mode": stream_parse_result.get("permission_mode"),
         "reported_cwd_matches_workspace": stream_parse_result.get("reported_cwd_matches_workspace"),
+        "write_tool_advertised": stream_parse_result.get("write_tool_advertised", False),
         "write_tool_available": stream_parse_result.get("write_tool_available", False),
+        "completed_write_tool_observed": stream_parse_result.get("completed_write_tool_observed", False),
         "tool_call_count": stream_parse_result.get("tool_call_count", 0),
         "tool_calls": stream_parse_result.get("tool_calls", []),
         "agent_response_observed": stream_parse_result.get("agent_response_observed", False),
