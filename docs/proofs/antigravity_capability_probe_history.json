@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1.0",
   "historical_record": "antigravity_capability_probe_history",
-  "total_lifetime_live_coding_invocations": 3,
+  "total_lifetime_live_coding_invocations": 4,
   "authorizations": [
     {
       "authorization_id": "HISTORICAL_AUTHORIZATION_1",
@@ -92,6 +92,47 @@
           ],
           "capability_proven": false,
           "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.json"
+        }
+      ]
+    },
+    {
+      "authorization_id": "AOS3-AGY-PROBE-V023-20260823-0932",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 1,
+      "invocation_budget_compliance": true,
+      "capability_status_after_authorization": "UNPROVEN",
+      "attempts": [
+        {
+          "attempt_number": 4,
+          "aos_revision": "09dc60f27862d5213eb1910dc1e7296d3226af17",
+          "probe_id": "PROBE-20260823-064913-732de217",
+          "probe_timestamp": "2026-08-23T06:49:13.459412+00:00",
+          "result": "HOLD",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.2.3",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "c895e3f7bd21e5a00c460029fff71d6f1c6e78cda983d6b70e40f9325fd3c57b",
+          "reported_cli_version": "1.1.18",
+          "challenge_sha256": "7f7d1f5cf391ec8498384be7b39ff8bd5393dd3288593b768da210cf57d54717",
+          "head_before": "39e80ac157c791839912567b449578df51ac4afd",
+          "head_after": "39e80ac157c791839912567b449578df51ac4afd",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [],
+          "expected_result_file_sha256": "7f7d1f5cf391ec8498384be7b39ff8bd5393dd3288593b768da210cf57d54717",
+          "actual_result_file_sha256": null,
+          "outside_sentinel_before_sha256": "38bb50e5e7fd573516f4f62ed4d9964e3326d6fab59687b5195c54eacd25b2db",
+          "outside_sentinel_after_sha256": "38bb50e5e7fd573516f4f62ed4d9964e3326d6fab59687b5195c54eacd25b2db",
+          "unexpected_external_paths_count": 0,
+          "errors": [
+            "Stream parser failure: step_update event on line 6 has invalid state 'ERROR'; expected one of ['ACTIVE', 'DONE']",
+            "No completed file-write tool execution event (state=DONE, no error) observed in stream",
+            "Target probe file 'probe/result.txt' was not created",
+            "Unexpected changed paths: expected ['probe/result.txt'], got []"
+          ],
+          "capability_proven": false,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.3.json"
         }
       ]
     }
