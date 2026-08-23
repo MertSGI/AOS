@@ -243,6 +243,10 @@ def run_antigravity_probe(
         if not stream_parse_result.get("completed_write_tool_observed"):
             probe_errors.append("No completed file-write tool execution event (state=DONE, no error) observed in stream")
 
+        # Verify no failed native write tool attempt was observed during the execution flow
+        if stream_parse_result.get("failed_native_write_tool_observed"):
+            probe_errors.append("Failed native file-write tool execution event observed during stream execution")
+
         # Verify probe/result.txt exact UTF-8 contents
         result_file = workspace_dir / "probe" / "result.txt"
         if not result_file.is_file():
@@ -334,6 +338,7 @@ def run_antigravity_probe(
         "write_tool_advertised": stream_parse_result.get("write_tool_advertised", False),
         "write_tool_available": stream_parse_result.get("write_tool_available", False),
         "completed_write_tool_observed": stream_parse_result.get("completed_write_tool_observed", False),
+        "failed_native_write_tool_observed": stream_parse_result.get("failed_native_write_tool_observed", False),
         "failed_step_observed": stream_parse_result.get("failed_step_observed", False),
         "failed_step_type": stream_parse_result.get("failed_step_type"),
         "failed_tool_observed": stream_parse_result.get("failed_tool_observed", False),

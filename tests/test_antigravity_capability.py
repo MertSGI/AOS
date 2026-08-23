@@ -25,6 +25,7 @@ from aos.workers.antigravity import (
     parse_antigravity_stream_output,
     resolve_capability_status,
     resolve_executable_identity,
+    sanitize_tool_error,
 )
 from aos.workers.antigravity_probe import (
     run_antigravity_probe,
@@ -332,7 +333,7 @@ class TestAntigravityCapabilityResolution:
         assert status == "UNPROVEN"
 
     def test_old_v023_attestation_resolves_unproven(self, temp_capability_env):
-        """5c. Old 0.2.3 attestation resolves to UNPROVEN under contract 0.2.4."""
+        """5c. Old 0.2.3 attestation resolves to UNPROVEN under contract 0.2.5."""
         _, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -341,6 +342,20 @@ class TestAntigravityCapabilityResolution:
             "version": "1.1.17",
         }
         att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.3")
+        write_local_capability_attestation(att, store_path=store_file)
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
+        assert status == "UNPROVEN"
+
+    def test_old_v024_attestation_resolves_unproven(self, temp_capability_env):
+        """5d. Old 0.2.4 attestation resolves to UNPROVEN under contract 0.2.5."""
+        _, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.17",
+        }
+        att = make_valid_attestation(exe_sha=fake_id["sha256"], cli_ver="1.1.17", contract_ver="0.2.4")
         write_local_capability_attestation(att, store_path=store_file)
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id)
         assert status == "UNPROVEN"
@@ -436,7 +451,7 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.4"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.5"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
@@ -444,6 +459,7 @@ class TestAntigravityCapabilityResolution:
         assert res["proof"]["write_tool_advertised"] is True
         assert res["proof"]["write_tool_available"] is True
         assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["failed_native_write_tool_observed"] is False
         assert res["proof"]["reported_cwd_matches_workspace"] is True
         assert res["proof"]["failed_step_observed"] is False
         assert res["proof"]["failed_tool_observed"] is False
@@ -1084,6 +1100,7 @@ class TestAntigravityExactContentAndStreamObservability:
         assert res["proof"]["stream_valid"] is True
         assert res["proof"]["terminal_status"] == "SUCCESS"
         assert res["proof"]["completed_write_tool_observed"] is False
+        assert res["proof"]["failed_native_write_tool_observed"] is True
         assert res["proof"]["failed_step_observed"] is True
         assert res["proof"]["failed_tool_observed"] is True
         assert res["proof"]["failed_tool_name"] == "write_file"
@@ -1120,12 +1137,14 @@ class TestAntigravityExactContentAndStreamObservability:
         assert res["status"] == "HOLD"
         assert res["proof"]["stream_valid"] is True
         assert res["proof"]["completed_write_tool_observed"] is False
+        assert res["proof"]["failed_native_write_tool_observed"] is True
         assert res["proof"]["failed_tool_observed"] is True
+        assert res["proof"]["failed_tool_error_present"] is True
         assert res["proof"]["failed_tool_error_type"] == "PERMISSION_DENIED"
         assert res["proof"]["permission_soft_denial_observed"] is True
 
     def test_active_followed_by_error_no_tool_info_error(self, temp_capability_env):
-        """D. ACTIVE -> ERROR with NO tool_info.error: valid stream, neutral TOOL_FAILURE_UNKNOWN, HOLD."""
+        """A & D. ACTIVE -> ERROR with NO tool_info.error: valid stream, error_present false, error_type null, TOOL_FAILURE_UNKNOWN, HOLD."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -1147,12 +1166,95 @@ class TestAntigravityExactContentAndStreamObservability:
         assert res["status"] == "HOLD"
         assert res["proof"]["stream_valid"] is True
         assert res["proof"]["completed_write_tool_observed"] is False
+        assert res["proof"]["failed_native_write_tool_observed"] is True
         assert res["proof"]["failed_tool_observed"] is True
         assert res["proof"]["failed_tool_state"] == "ERROR"
-        assert res["proof"]["failed_tool_error_present"] is True
-        assert res["proof"]["failed_tool_error_type"] == "TOOL_ERROR"
+        assert res["proof"]["failed_tool_error_present"] is False
+        assert res["proof"]["failed_tool_error_type"] is None
+        assert res["proof"]["error_message_present"] is False
+        assert res["proof"]["error_message_byte_length"] == 0
+        assert res["proof"]["error_message_sha256"] is None
         assert res["proof"]["tool_failure_classification"] == "TOOL_FAILURE_UNKNOWN"
         assert res["proof"]["permission_soft_denial_observed"] is False
+
+    def test_active_error_followed_by_done_probe_holds(self, temp_capability_env):
+        """E. ACTIVE -> ERROR -> DONE with exact challenge file: completed_write_tool_observed true, but failed_native_write_tool_observed true -> probe HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.18",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "ERROR", "tool_info": {"error": {"type": "IOError", "message": "Failed to write file"}}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["failed_native_write_tool_observed"] is True
+        assert any("Failed native file-write tool execution event observed" in e for e in res["errors"])
+
+    def test_done_with_tool_info_error_fails(self, temp_capability_env):
+        """G. DONE with tool_info.error: completed_write_tool_observed false, failed_native_write_tool_observed true, HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.18",
+        }
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {"error": {"type": "FileError", "message": "Failed to write file"}}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["completed_write_tool_observed"] is False
+        assert res["proof"]["failed_native_write_tool_observed"] is True
+
+    def test_error_classifier_precision(self):
+        """H, I, J, K. Error classifier distinguishes controlled file write terms and avoids false positives on 'io'."""
+        # H. 'operation failed' must NOT classify FILE_WRITE_ERROR
+        res_h = sanitize_tool_error({"type": "RuntimeError", "message": "operation failed"})
+        assert res_h["classification"] == "TOOL_ERROR"
+        assert res_h["error_type"] == "TOOL_ERROR"
+
+        # I. 'version mismatch' must NOT classify FILE_WRITE_ERROR
+        res_i = sanitize_tool_error({"type": "VersionError", "message": "version mismatch detected"})
+        assert res_i["classification"] == "TOOL_ERROR"
+        assert res_i["error_type"] == "TOOL_ERROR"
+
+        # J. 'Failed to write file' classifies FILE_WRITE_ERROR
+        res_j = sanitize_tool_error({"type": "CustomError", "message": "Failed to write file"})
+        assert res_j["classification"] == "FILE_WRITE_ERROR"
+        assert res_j["error_type"] == "FILE_WRITE_ERROR"
+
+        # K. 'I/O error while writing' classifies FILE_WRITE_ERROR
+        res_k = sanitize_tool_error({"type": "CustomError", "message": "I/O error while writing"})
+        assert res_k["classification"] == "FILE_WRITE_ERROR"
+        assert res_k["error_type"] == "FILE_WRITE_ERROR"
 
     def test_error_followed_by_terminal_error(self, temp_capability_env):
         """F. ERROR followed by terminal ERROR: terminal_status ERROR captured, HOLD."""

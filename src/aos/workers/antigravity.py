@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.4"
+ADAPTER_CONTRACT_VERSION = "0.2.5"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
@@ -145,7 +145,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.4."""
+    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.5."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -207,12 +207,23 @@ def sanitize_tool_error(tool_error: Any) -> Dict[str, Any]:
     raw_type = ""
     raw_msg = ""
     if isinstance(tool_error, dict):
-        raw_type = str(tool_error.get("type") or "")
-        raw_msg = str(tool_error.get("message") or "")
+        raw_type = str(tool_error.get("type") or "").strip()
+        raw_msg = str(tool_error.get("message") or "").strip()
     else:
-        raw_type = str(tool_error)
+        raw_type = str(tool_error).strip()
 
-    has_msg = bool(raw_msg.strip())
+    if not raw_type and not raw_msg:
+        return {
+            "error_present": False,
+            "error_type": None,
+            "error_message_present": False,
+            "error_message_byte_length": 0,
+            "error_message_sha256": None,
+            "permission_soft_denial": False,
+            "classification": "NONE",
+        }
+
+    has_msg = bool(raw_msg)
     msg_bytes = raw_msg.encode("utf-8") if has_msg else b""
     msg_len = len(msg_bytes)
     msg_sha = hashlib.sha256(msg_bytes).hexdigest() if has_msg else None
@@ -222,15 +233,37 @@ def sanitize_tool_error(tool_error: Any) -> Dict[str, Any]:
         kw in combined for kw in ("permission", "approval", "denied", "denial", "interactive review", "interactive approval")
     )
 
+    # Controlled matching for file/write errors avoiding false positives on substring "io"
+    file_write_types = {"ioerror", "oserror", "filewriteerror", "fileerror", "patherror"}
+    file_write_phrases = (
+        "file",
+        "write",
+        "writing",
+        "disk",
+        "directory",
+        "path",
+        "read-only",
+        "readonly",
+        "i/o",
+        "input/output",
+    )
+    is_file_write_error = (
+        raw_type.lower() in file_write_types
+        or any(phrase in combined for phrase in file_write_phrases)
+    )
+
     # Classify error type into controlled taxonomy
     norm_type: Optional[str] = None
     if is_perm_denial:
         norm_type = "PERMISSION_DENIED"
         classification = "PERMISSION_DENIED"
-    elif any(kw in combined for kw in ("file", "write", "disk", "io", "directory", "path", "read-only")):
+    elif is_file_write_error:
         norm_type = "FILE_WRITE_ERROR"
         classification = "FILE_WRITE_ERROR"
-    elif raw_type.strip():
+    elif raw_type:
+        norm_type = "TOOL_ERROR"
+        classification = "TOOL_ERROR"
+    elif has_msg:
         norm_type = "TOOL_ERROR"
         classification = "TOOL_ERROR"
     else:
@@ -271,6 +304,7 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
         "write_tool_advertised": False,
         "write_tool_available": False,
         "completed_write_tool_observed": False,
+        "failed_native_write_tool_observed": False,
         "failed_step_observed": False,
         "failed_step_type": None,
         "failed_tool_observed": False,
@@ -398,38 +432,41 @@ def parse_antigravity_stream_output(stdout: str, workspace_path: Optional[str] =
                 tool_error = tool_info.get("error") if isinstance(tool_info, dict) else None
                 sanitized_err = sanitize_tool_error(tool_error)
 
-                err_present = sanitized_err["error_present"] or is_error_state
+                err_payload_present = sanitized_err["error_present"]
                 err_type = sanitized_err["error_type"]
-                if is_error_state and not err_type:
-                    err_type = "TOOL_ERROR"
 
                 if sanitized_err["permission_soft_denial"]:
                     result["permission_soft_denial_observed"] = True
 
-                if is_error_state or sanitized_err["error_present"]:
+                # Check if this tool is a native write tool
+                is_native_write = (tool_name in NATIVE_FILE_EDIT_TOOLS)
+                if is_native_write and (is_error_state or err_payload_present):
+                    result["failed_native_write_tool_observed"] = True
+
+                if is_error_state or err_payload_present:
                     result["failed_tool_observed"] = True
                     result["failed_tool_name"] = tool_name
                     result["failed_tool_state"] = state
-                    result["failed_tool_error_present"] = True
+                    result["failed_tool_error_present"] = err_payload_present
                     result["failed_tool_error_type"] = err_type
                     result["error_message_present"] = sanitized_err["error_message_present"]
                     result["error_message_byte_length"] = sanitized_err["error_message_byte_length"]
                     result["error_message_sha256"] = sanitized_err["error_message_sha256"]
                     result["tool_failure_classification"] = sanitized_err["classification"]
-                    if is_error_state and result["tool_failure_classification"] == "NONE":
+                    if is_error_state and not err_payload_present:
                         result["tool_failure_classification"] = "TOOL_FAILURE_UNKNOWN"
 
                 sanitized_call = {
                     "tool_name": tool_name,
                     "state": state,
-                    "error_present": err_present,
+                    "error_present": err_payload_present or is_error_state,
                     "error_type": err_type,
                 }
                 result["tool_calls"].append(sanitized_call)
                 result["tool_call_count"] += 1
 
                 # Completed native write tool observed only if state == "DONE", exact match in NATIVE_FILE_EDIT_TOOLS, and no error
-                if state == "DONE" and tool_name in NATIVE_FILE_EDIT_TOOLS and not err_present:
+                if state == "DONE" and is_native_write and not err_payload_present:
                     result["completed_write_tool_observed"] = True
 
         # --- 3. Terminal result event ---
