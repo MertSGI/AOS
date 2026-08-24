@@ -11,7 +11,8 @@ DESCRIPTOR_PATH = Path(__file__).parent.parent / "descriptors" / "lari.descripto
 
 def make_valid_snapshot(
     project_id: str = "lari",
-    exec_base_sha: str = "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637"
+    exec_base_sha: str = "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
+    current_milestone: str = "AOS-3"
 ):
     return {
         "schema_version": "0.1.0",
@@ -20,7 +21,7 @@ def make_valid_snapshot(
         "source_ref": "control/lari-project-control-plane",
         "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
         "current_status": "CORE_SOFTWARE_RC_CLOSED_PROVEN",
-        "current_milestone": "LARİ Clinic",
+        "current_milestone": current_milestone,
         "canonical_next_action": "Execute Block 3 Workspace / UI implementation",
         "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
         "next_action_execution_base_sha": exec_base_sha,
@@ -207,42 +208,59 @@ class TestSourceAdapterExecutionBaseResolution:
 
 
 class TestExecutionAuthorityValidator:
-    def test_fully_canonical_valid_r1_aos3_task_with_matching_base_accept(self):
-        """Fully canonical valid R1 / AOS-3 task with matching base returns ACCEPT."""
-        snapshot = make_valid_snapshot()
-        task = make_valid_task()
+    def test_task_gate_matches_snapshot_milestone_aos3_accept(self):
+        """A. Task gate 'AOS-3' + snapshot milestone 'AOS-3' returns ACCEPT."""
+        snapshot = make_valid_snapshot(current_milestone="AOS-3")
+        task = make_valid_task(gate="AOS-3")
         res = validate_execution_authority(snapshot, task)
         assert res.is_valid is True
         assert res.disposition == "ACCEPT"
         assert res.execution_base_sha == "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637"
 
-    def test_r0_task_holds(self):
-        """R0 task returns HOLD (only R1 isolated implementation allowed for AOS-3)."""
-        snapshot = make_valid_snapshot()
-        task = make_valid_task(risk_class="R0")
+    def test_task_gate_matches_snapshot_milestone_aos4_accept(self):
+        """B. Task gate 'AOS-4' + snapshot milestone 'AOS-4' returns ACCEPT."""
+        snapshot = make_valid_snapshot(current_milestone="AOS-4")
+        task = make_valid_task(gate="AOS-4")
+        res = validate_execution_authority(snapshot, task)
+        assert res.is_valid is True
+        assert res.disposition == "ACCEPT"
+        assert res.execution_base_sha == "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637"
+
+    def test_arbitrary_project_milestone_m1_accept(self):
+        """C. Arbitrary project milestone 'M1' + task gate 'M1' returns ACCEPT."""
+        snapshot = make_valid_snapshot(current_milestone="M1")
+        task = make_valid_task(gate="M1")
+        res = validate_execution_authority(snapshot, task)
+        assert res.is_valid is True
+        assert res.disposition == "ACCEPT"
+
+    def test_snapshot_milestone_m1_task_gate_m2_holds(self):
+        """D. Snapshot milestone 'M1' + task gate 'M2' returns HOLD."""
+        snapshot = make_valid_snapshot(current_milestone="M1")
+        task = make_valid_task(gate="M2")
         res = validate_execution_authority(snapshot, task)
         assert res.is_valid is False
         assert res.disposition == "HOLD"
-        assert any("risk_class 'R0'" in e for e in res.errors)
+        assert any("Task gate 'M2' does not match canonical snapshot milestone 'M1'" in e for e in res.errors)
 
-    def test_r2_r3_r4_tasks_hold(self):
-        """R2, R3, R4 tasks return HOLD."""
-        snapshot = make_valid_snapshot()
-        for r_class in ["R2", "R3", "R4"]:
-            task = make_valid_task(risk_class=r_class)
-            res = validate_execution_authority(snapshot, task)
-            assert res.is_valid is False
-            assert res.disposition == "HOLD"
-            assert any(f"risk_class '{r_class}'" in e for e in res.errors)
-
-    def test_wrong_gate_holds(self):
-        """Gate other than 'AOS-3' (e.g. 'AOS-2') returns HOLD."""
-        snapshot = make_valid_snapshot()
-        task = make_valid_task(gate="AOS-2")
+    def test_aos4_task_against_aos3_snapshot_holds(self):
+        """E. AOS-4 task against AOS-3 snapshot returns HOLD."""
+        snapshot = make_valid_snapshot(current_milestone="AOS-3")
+        task = make_valid_task(gate="AOS-4")
         res = validate_execution_authority(snapshot, task)
         assert res.is_valid is False
         assert res.disposition == "HOLD"
-        assert any("Task gate 'AOS-2'" in e for e in res.errors)
+        assert any("Task gate 'AOS-4' does not match canonical snapshot milestone 'AOS-3'" in e for e in res.errors)
+
+    def test_malformed_missing_milestone_fails_closed(self):
+        """F. Malformed or missing milestone in snapshot fails closed."""
+        snapshot = make_valid_snapshot()
+        del snapshot["current_milestone"]
+        task = make_valid_task(gate="AOS-3")
+        res = validate_execution_authority(snapshot, task)
+        assert res.is_valid is False
+        assert res.disposition == "HOLD"
+        assert any("Canonical project snapshot schema validation failed" in e for e in res.errors)
 
     def test_missing_gate_holds_via_schema_validation(self):
         """Task with missing gate fails canonical task schema validation and returns HOLD."""

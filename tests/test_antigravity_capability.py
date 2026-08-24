@@ -61,7 +61,7 @@ class MockSourceAdapter(ProjectSourceAdapter):
             "state": json.dumps({
                 "schema_version": "0.1.0",
                 "current_status": "READY",
-                "current_milestone": "M1",
+                "current_milestone": "AOS-3",
                 "next_action": "Do task",
                 "next_action_execution_base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             }),
@@ -79,7 +79,7 @@ class MockSourceAdapter(ProjectSourceAdapter):
             "source_ref": self.control_ref,
             "source_sha": exact_sha,
             "current_status": "READY",
-            "current_milestone": "M1",
+            "current_milestone": "AOS-3",
             "canonical_next_action": "Do task",
             "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
             "next_action_execution_base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
@@ -92,9 +92,10 @@ class MockSourceAdapter(ProjectSourceAdapter):
 class MockGitWorkspace(GitWorkspace):
     def __init__(self, repo, base_sha, task_id, branch_name=None):
         super().__init__(repo, base_sha, task_id, branch_name)
+        self.workspace_dir = None
 
     def setup(self) -> str:
-        self.workspace_dir = "/tmp/mock_cap_ws"
+        self.workspace_dir = tempfile.mkdtemp(prefix="mock_cap_ws_")
         self.initial_head_sha = self.base_sha
         return self.workspace_dir
 
@@ -108,7 +109,8 @@ class MockGitWorkspace(GitWorkspace):
         return []
 
     def cleanup(self) -> None:
-        pass
+        if self.workspace_dir and os.path.exists(self.workspace_dir):
+            shutil.rmtree(self.workspace_dir, ignore_errors=True)
 
 
 def make_generic_descriptor(project_id="generic_project", repo="GenericOrg/GenericRepo"):

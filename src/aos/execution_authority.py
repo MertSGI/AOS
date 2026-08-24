@@ -81,15 +81,16 @@ def validate_execution_authority(
     if task_project_id != snapshot_project_id:
         errors.append(f"Task project_id '{task_project_id}' != snapshot project_id '{snapshot_project_id}'")
 
-    # 6. task.gate == 'AOS-3'
+    # 6. task.gate == snapshot.current_milestone
     task_gate = task.get("gate")
-    if task_gate != "AOS-3":
-        errors.append(f"Task gate '{task_gate}' is not compatible with initial execution entry (must be 'AOS-3')")
+    snapshot_milestone = snapshot.get("current_milestone")
+    if not task_gate or task_gate != snapshot_milestone:
+        errors.append(f"Task gate '{task_gate}' does not match canonical snapshot milestone '{snapshot_milestone}'")
 
     # 7. task.risk_class == 'R1' (R1 isolated implementation only)
     task_risk = task.get("risk_class")
     if task_risk != "R1":
-        errors.append(f"Task risk_class '{task_risk}' is not eligible for initial AOS-3 controlled execution (must be R1)")
+        errors.append(f"Task risk_class '{task_risk}' is not eligible for controlled execution (must be R1)")
 
     # 8. task.base_sha == snapshot.next_action_execution_base_sha
     task_base_sha = task.get("base_sha")

@@ -41,6 +41,25 @@
           "from pathlib import Path; import sys; p=Path('docs/proofs/aos3_e2e_worker_result.txt'); sys.exit(0 if p.is_file() and p.read_bytes()==b'AOS-3-R1-E2E-REFERENCE\\n' else 1)"
         ],
         "timeout_seconds": 30
+      },
+      "aos4_verification_foundation_tests": {
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_verification.py"
+        ],
+        "timeout_seconds": 120
+      },
+      "aos_full_regression": {
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "-q"
+        ],
+        "timeout_seconds": 180
       }
     }
   }

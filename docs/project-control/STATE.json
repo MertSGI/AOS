@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-24T20:26:03+03:00",
+    "updated_at": "2026-08-24T21:02:15+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_BOOTSTRAP_FIRST_R1_TASK_PENDING",
+    "status": "AOS_4_BOOTSTRAP_CONTROLLER_PREREQUISITE_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Execute canonical AOS-4 foundation task AOS4-REF-001 through ControlledExecutionEngine from the exact bootstrap execution base after independent review of this control transaction.",
+    "next_action": "Independently verify generic execution authority, mandatory AOS4 verification checks, and durable verified-candidate handoff; then execute canonical AOS4-REF-001 through ControlledExecutionEngine from execution base 1dfd59f850383dc4f40a59fd42462facb2b89315.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,12 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "PENDING"
+            "reference_status": "BLOCKED_CONTROLLER_PREREQUISITE_REVIEW",
+            "controller_prerequisites": {
+                "generic_execution_authority": "IMPLEMENTED_REVIEW_PENDING",
+                "required_checks_contract": "IMPLEMENTED_REVIEW_PENDING",
+                "durable_candidate_handoff": "IMPLEMENTED_REVIEW_PENDING"
+            }
         }
     },
     "accepted_gates": [

@@ -7,6 +7,7 @@ import os
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from aos.candidate_store import CandidateStoreError, persist_verified_candidate
 from aos.execution_authority import validate_execution_authority
 from aos.git_workspace import (
     GitWorkspace,
@@ -128,6 +129,7 @@ class ControlledExecutionEngine:
             mutation_performed: bool = False,
             mutation_attempted: bool = False,
             err_list: Optional[List[str]] = None,
+            extensions: Optional[Dict[str, Any]] = None,
         ) -> Dict[str, Any]:
             finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             all_errors = (err_list or []) + errors
@@ -166,6 +168,9 @@ class ControlledExecutionEngine:
                 "finished_at": finished_at,
                 "errors": all_errors,
             }
+
+            if extensions:
+                res["extensions"] = extensions
 
             # Self-validate result against canonical schema
             val = validate_document("controlled_execution_result", res)
@@ -548,10 +553,8 @@ class ControlledExecutionEngine:
         else:
             _record_check("scope_guard_final", "PASS")
 
-        # Cleanup workspace now that final forensics are captured
-        workspace.cleanup()
-
         if verification_failed:
+            workspace.cleanup()
             return _build_and_validate_result(
                 "VERIFICATION_FAILED",
                 control_sha=live_control_sha,
@@ -569,11 +572,12 @@ class ControlledExecutionEngine:
                 err_list=verification_err_msgs,
             )
 
-        # 19. Checkpoint D: Final LIVE_GUARD
+        # 19. Checkpoint D: Final LIVE_GUARD (Before Candidate Persistence)
         try:
             final_control_sha = source_adapter.resolve_ref_to_sha()
             if final_control_sha != live_control_sha:
                 _record_check("live_guard_final", "FAIL", f"Control moved to '{final_control_sha}'")
+                workspace.cleanup()
                 return _build_and_validate_result(
                     "HOLD",
                     control_sha=live_control_sha,
@@ -593,9 +597,49 @@ class ControlledExecutionEngine:
             _record_check("live_guard_final", "PASS")
         except Exception as e:
             _record_check("live_guard_final", "FAIL", str(e))
+            workspace.cleanup()
             return _build_and_validate_result("HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha, err_list=[f"Final LIVE_GUARD check failed: {e}"])
 
-        # 20. All checks passed -> VERIFIED_CANDIDATE
+        # 20. Candidate Persistence: Persist verified candidate workspace to machine-local store
+        try:
+            candidate_metadata = persist_verified_candidate(
+                workspace_path=workspace_dir,
+                project_id=str(project_id) if project_id else "unknown",
+                task_id=str(task_id) if task_id else "unknown",
+                gate=str(gate) if gate else "unknown",
+                control_source_sha=live_control_sha,
+                execution_base_sha=exec_base_sha,
+                worker_branch=worker_branch,
+                initial_head_sha=initial_head,
+                final_head_sha=final_head,
+                changed_paths=final_changed_paths,
+                source_repo_path=local_target_repo_path,
+            )
+            _record_check("candidate_persistence", "PASS", f"Persisted candidate {candidate_metadata.get('candidate_id')}")
+        except Exception as e:
+            _record_check("candidate_persistence", "FAIL", str(e))
+            workspace.cleanup()
+            return _build_and_validate_result(
+                "VERIFICATION_FAILED",
+                control_sha=live_control_sha,
+                exec_base_sha=exec_base_sha,
+                worker_branch=worker_branch,
+                initial_head=initial_head,
+                final_head=final_head,
+                changed_paths=final_changed_paths,
+                scope_valid=True,
+                violations=[],
+                exit_code=w_res.exit_code if w_res else 0,
+                timed_out=w_res.timed_out if w_res else False,
+                mutation_performed=len(final_changed_paths) > 0,
+                mutation_attempted=worker_mutation_attempted,
+                err_list=[f"Candidate persistence failed: {e}"],
+            )
+
+        # 21. Cleanup disposable workspace now that candidate is persisted
+        workspace.cleanup()
+
+        # 22. All checks passed -> VERIFIED_CANDIDATE with candidate extension
         return _build_and_validate_result(
             "VERIFIED_CANDIDATE",
             control_sha=live_control_sha,
@@ -610,4 +654,5 @@ class ControlledExecutionEngine:
             timed_out=w_res.timed_out if w_res else False,
             mutation_performed=len(final_changed_paths) > 0,
             mutation_attempted=worker_mutation_attempted,
+            extensions={"candidate": candidate_metadata},
         )

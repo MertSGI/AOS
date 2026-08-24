@@ -11,6 +11,7 @@
   "allowed_scope": {
     "paths": [
       "src/aos/verification.py",
+      "src/aos/validate.py",
       "schemas/v0.1/verification_result.schema.json",
       "tests/test_verification.py"
     ],
@@ -28,7 +29,10 @@
   },
   "evidence_requirements": {
     "minimum_level": "E3_ISOLATED_RUNTIME_PROVEN",
-    "required_checks": []
+    "required_checks": [
+      "aos4_verification_foundation_tests",
+      "aos_full_regression"
+    ]
   },
   "retry_policy": {
     "max_retries": 0,

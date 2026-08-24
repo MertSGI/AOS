@@ -55,7 +55,7 @@ class MockSourceAdapter(ProjectSourceAdapter):
             "state": json.dumps({
                 "schema_version": "0.1.0",
                 "current_status": "READY",
-                "current_milestone": "M1",
+                "current_milestone": "AOS-3",
                 "next_action": "Do task",
                 "next_action_execution_base_sha": self.exec_base_sha if self.has_exec_base else None,
             }),
@@ -74,7 +74,7 @@ class MockSourceAdapter(ProjectSourceAdapter):
             "source_ref": self.control_ref,
             "source_sha": exact_sha,
             "current_status": "READY",
-            "current_milestone": "M1",
+            "current_milestone": "AOS-3",
             "canonical_next_action": "Do task",
             "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
             "next_action_execution_base_sha": self.exec_base_sha if self.has_exec_base else None,
@@ -115,7 +115,12 @@ class MockGitWorkspace(GitWorkspace):
     def setup(self) -> str:
         if self.setup_fails:
             raise RuntimeError("Mock git workspace setup failed")
-        self.workspace_dir = "/tmp/mock_workspace"
+        self.workspace_dir = tempfile.mkdtemp(prefix="mock_ws_")
+        # create mock files in workspace
+        for rel_f in self.mock_post_worker_changed:
+            target_f = Path(self.workspace_dir) / rel_f
+            target_f.parent.mkdir(parents=True, exist_ok=True)
+            target_f.write_text("mock content\n", encoding="utf-8")
         self.initial_head_sha = self.base_sha
         return self.workspace_dir
 
@@ -144,6 +149,8 @@ class MockGitWorkspace(GitWorkspace):
 
     def cleanup(self) -> None:
         self.cleaned_up = True
+        if hasattr(self, "workspace_dir") and self.workspace_dir and os.path.exists(self.workspace_dir):
+            shutil.rmtree(self.workspace_dir, ignore_errors=True)
 
 
 class MockTestDoubleWorkerAdapter(WorkerAdapter):
