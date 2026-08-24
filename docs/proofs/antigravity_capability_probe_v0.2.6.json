@@ -1,0 +1,111 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS3-AGY-DIAGNOSTIC-V026-20260823-1410",
+  "authorized_invocation_budget": 1,
+  "actual_live_coding_invocations": 1,
+  "invocation_budget_compliance": true,
+  "probe_id": "PROBE-20260823-112938-6911624c",
+  "probe_status": "HOLD",
+  "probe_timestamp": "2026-08-23T11:29:38.687415+00:00",
+  "aos_revision_used": "cd1ec09db0b7917758535e6dd9e7cb091ea1ad16",
+  "adapter_contract_version": "0.2.6",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "29b1eab86d7c7175b3c89465c0e9b21390a79b4cd26e432c2d82a2e1f1b3c37b",
+  "reported_cli_version": "1.1.19",
+  "challenge_sha256": "18a9963e5e3455c5505d99bf23f617734053b20f2e517bbc5677b7a4b5fadbb3",
+  "confirmed_invocation_capabilities": [
+    "--mode=accept-edits",
+    "--add-dir",
+    "--output-format=stream-json",
+    "--print-timeout=180s",
+    "-p"
+  ],
+  "output_format": "stream-json",
+  "stream_valid": true,
+  "terminal_status": "ERROR",
+  "permission_mode": "request-review",
+  "reported_cwd_matches_workspace": true,
+  "write_tool_advertised": true,
+  "write_tool_available": true,
+  "completed_write_tool_observed": false,
+  "failed_native_write_tool_observed": true,
+  "failed_step_observed": true,
+  "failed_step_type": "tool",
+  "failed_tool_observed": true,
+  "failed_tool_name": "invoke_subagent",
+  "failed_tool_state": "ERROR",
+  "failed_tool_error_present": true,
+  "failed_tool_error_type": "FILE_WRITE_ERROR",
+  "error_message_present": true,
+  "error_message_byte_length": 214,
+  "error_message_sha256": "c575e5573d682af69aad54eb6305ecffbdd02f43d42e31ee227a584bbfe22716",
+  "tool_failure_classification": "FILE_WRITE_ERROR",
+  "tool_call_count": 6,
+  "tool_calls": [
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "ERROR",
+      "error_present": true,
+      "error_type": "FILE_WRITE_ERROR"
+    },
+    {
+      "tool_name": "run_command",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "run_command",
+      "state": "ERROR",
+      "error_present": true,
+      "error_type": "FILE_WRITE_ERROR"
+    },
+    {
+      "tool_name": "invoke_subagent",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "invoke_subagent",
+      "state": "ERROR",
+      "error_present": true,
+      "error_type": "FILE_WRITE_ERROR"
+    }
+  ],
+  "agent_response_observed": true,
+  "stderr_present": false,
+  "permission_soft_denial_observed": false,
+  "terminal_error_present": true,
+  "exit_code": 0,
+  "timed_out": false,
+  "head_before": "03b17d47173df9f4dc5f2defdf88c2d394630b2b",
+  "head_after": "03b17d47173df9f4dc5f2defdf88c2d394630b2b",
+  "branch_before": "main",
+  "branch_after": "main",
+  "changed_paths": [],
+  "expected_result_file_sha256": "18a9963e5e3455c5505d99bf23f617734053b20f2e517bbc5677b7a4b5fadbb3",
+  "actual_result_file_sha256": null,
+  "outside_sentinel_before_sha256": "725705bb3d51d15d8cd9aa710f2b0731e326473b8529cc4dc9df59981a8257df",
+  "outside_sentinel_after_sha256": "725705bb3d51d15d8cd9aa710f2b0731e326473b8529cc4dc9df59981a8257df",
+  "unexpected_external_paths_count": 0,
+  "result": "HOLD",
+  "capability_status_after": "UNPROVEN",
+  "attestation_written": false,
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": [
+    "Terminal result status is not SUCCESS: got 'ERROR'",
+    "No completed file-write tool execution event (state=DONE, no error) observed in stream",
+    "Failed native file-write tool execution event observed during stream execution",
+    "Target probe file 'probe/result.txt' was not created",
+    "Unexpected changed paths: expected ['probe/result.txt'], got []"
+  ]
+}

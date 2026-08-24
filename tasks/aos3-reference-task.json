@@ -1,0 +1,41 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS3-REF-001",
+  "gate": "AOS-3",
+  "title": "AOS-3 Generic R1 Controlled Execution Reference",
+  "description": "Create exactly one ordinary workspace file at docs/proofs/aos3_e2e_worker_result.txt containing exactly AOS-3-R1-E2E-REFERENCE followed by one LF byte. Modify no other file. Do not commit, push, change branch, use ArtifactMetadata, or initiate Artifact Review.",
+  "risk_class": "R1",
+  "base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+  "branch_name": "aos/aos3-ref-001",
+  "allowed_scope": {
+    "paths": [
+      "docs/proofs/aos3_e2e_worker_result.txt"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "src/",
+      "schemas/",
+      ".github/",
+      "descriptors/",
+      "tasks/"
+    ]
+  },
+  "worker_requirements": {
+    "adapter": "antigravity",
+    "isolated_worktree": true,
+    "timeout_seconds": 180
+  },
+  "evidence_requirements": {
+    "minimum_level": "E3_ISOLATED_RUNTIME_PROVEN",
+    "required_checks": [
+      "reference_exact_file"
+    ]
+  },
+  "retry_policy": {
+    "max_retries": 0,
+    "retry_count": 0,
+    "auto_retry_on_semantic_failure": false,
+    "on_exhausted": "HOLD"
+  }
+}

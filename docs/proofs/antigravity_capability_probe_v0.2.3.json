@@ -1,0 +1,59 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS3-AGY-PROBE-V023-20260823-0932",
+  "authorized_live_coding_invocations": 1,
+  "actual_live_coding_invocations": 1,
+  "invocation_budget_compliance": true,
+  "probe_id": "PROBE-20260823-064913-732de217",
+  "probe_timestamp": "2026-08-23T06:49:13.459412+00:00",
+  "aos_revision_used": "09dc60f27862d5213eb1910dc1e7296d3226af17",
+  "adapter_contract_version": "0.2.3",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "c895e3f7bd21e5a00c460029fff71d6f1c6e78cda983d6b70e40f9325fd3c57b",
+  "reported_cli_version": "1.1.18",
+  "output_format": "stream-json",
+  "terminal_status": null,
+  "permission_mode": "request-review",
+  "reported_cwd_matches_workspace": true,
+  "write_tool_advertised": true,
+  "write_tool_available": true,
+  "completed_write_tool_observed": false,
+  "tool_call_count": 1,
+  "tool_calls": [
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    }
+  ],
+  "agent_response_observed": true,
+  "stderr_present": false,
+  "permission_soft_denial_observed": false,
+  "terminal_error_present": false,
+  "challenge_sha256": "7f7d1f5cf391ec8498384be7b39ff8bd5393dd3288593b768da210cf57d54717",
+  "exit_code": 0,
+  "timed_out": false,
+  "head_before": "39e80ac157c791839912567b449578df51ac4afd",
+  "head_after": "39e80ac157c791839912567b449578df51ac4afd",
+  "branch_before": "main",
+  "branch_after": "main",
+  "changed_paths": [],
+  "expected_result_file_sha256": "7f7d1f5cf391ec8498384be7b39ff8bd5393dd3288593b768da210cf57d54717",
+  "actual_result_file_sha256": null,
+  "outside_sentinel_before_sha256": "38bb50e5e7fd573516f4f62ed4d9964e3326d6fab59687b5195c54eacd25b2db",
+  "outside_sentinel_after_sha256": "38bb50e5e7fd573516f4f62ed4d9964e3326d6fab59687b5195c54eacd25b2db",
+  "unexpected_external_paths_count": 0,
+  "result": "HOLD",
+  "capability_status_after_probe": "UNPROVEN",
+  "attestation_written": false,
+  "errors": [
+    "Stream parser failure: step_update event on line 6 has invalid state 'ERROR'; expected one of ['ACTIVE', 'DONE']",
+    "No completed file-write tool execution event (state=DONE, no error) observed in stream",
+    "Target probe file 'probe/result.txt' was not created",
+    "Unexpected changed paths: expected ['probe/result.txt'], got []"
+  ],
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ]
+}

@@ -61,7 +61,9 @@
         "canonical_next_action_pointer": { "type": "string", "minLength": 1 },
         "target_base_sha_pointer": { "type": "string" },
         "target_base_sha_required": { "type": "boolean" },
-        "require_target_base_in_next_action": { "type": "boolean" }
+        "require_target_base_in_next_action": { "type": "boolean" },
+        "next_action_execution_base_sha_pointer": { "type": "string" },
+        "next_action_execution_base_sha_required": { "type": "boolean" }
       }
     },
     "authority": {
@@ -83,6 +85,28 @@
         "branch_prefix": { "type": "string" },
         "isolated_worktree_required": { "type": "boolean" },
         "max_concurrent_workers": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["argv"],
+            "additionalProperties": false,
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 1
+              },
+              "timeout_seconds": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
       }
     },
     "extensions": {

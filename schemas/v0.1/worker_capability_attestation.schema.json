@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/worker_capability_attestation.schema.json",
+  "title": "AOS Worker Capability Attestation Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "worker_adapter",
+    "adapter_contract_version",
+    "executable_filename",
+    "executable_sha256",
+    "reported_cli_version",
+    "runtime_environment_profile_version",
+    "runtime_environment_fingerprint_sha256",
+    "capability_status",
+    "probe_id",
+    "probe_timestamp",
+    "aos_revision_used_for_probe",
+    "capabilities_proven",
+    "limitations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "worker_adapter": {
+      "type": "string",
+      "enum": ["antigravity"]
+    },
+    "adapter_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "executable_filename": {
+      "type": "string",
+      "minLength": 1
+    },
+    "executable_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reported_cli_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_environment_profile_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_environment_fingerprint_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "capability_status": {
+      "type": "string",
+      "enum": ["PROVEN", "UNPROVEN", "TEST_DOUBLE"]
+    },
+    "probe_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "probe_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "aos_revision_used_for_probe": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "capabilities_proven": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

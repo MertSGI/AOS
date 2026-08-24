@@ -1,14 +1,14 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-21T17:15:10+03:00",
+    "updated_at": "2026-08-24T18:59:53+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_2_CLOSED_PROVEN_AOS_3_PREREQUISITE_PENDING",
-    "current_gate": "AOS-3",
+    "status": "AOS_3_CLOSED_PROVEN_AOS_4_READY",
+    "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
         "AOS-1 Canonical Memory & Schemas",
@@ -68,8 +68,42 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Establish and verify the generic machine-readable execution-base authority required by AOS-3, then prepare controlled single-worker R1 execution under LIVE_GUARD.",
+    "next_action": "Integrate the independently accepted AOS-3 CLOSED_PROVEN transaction into main, then begin AOS-4 Independent Verification & HOLD without executing any new product mutation until AOS-4 control authority is prepared.",
     "implementation_started": true,
+    "extensions": {
+        "aos3_controlled_execution": {
+            "machine_capability_status": "PROVEN",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.8",
+            "capability_probe_id": "PROBE-20260824-112913-88edd2a4",
+            "capability_implementation_sha": "d44b30c30c0b6a9d143c94f58fddaafe9cebe4a1",
+            "capability_proof_commit_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+            "next_action_execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+            "reference_descriptor": "descriptors/aos.descriptor.json",
+            "reference_task": "tasks/aos3-reference-task.json",
+            "e2e_reference_status": "CLOSED_PROVEN",
+            "result_gate_hardening_sha": "45b64fc77ec287bbd12daf4f4a9bfb9d4d642c90",
+            "result_gate_hardening_review": "INDEPENDENTLY_ACCEPTED",
+            "last_e2e_authorization_id": "AOS3-R1-E2E-REF-001-20260824-1650",
+            "last_e2e_proof_commit_sha": "bfdd029006eb1268383d5d684be27fff3478d61c",
+            "last_e2e_disposition": "WORKER_FAILED",
+            "last_e2e_retry_count": 0,
+            "human_gate_required_before_next_live_e2e": true,
+            "current_e2e_authorization_id": "AOS3-R1-E2E-REF-002-20260824-1725",
+            "current_e2e_authorization_type": "EXPLICIT_HUMAN_REAUTHORIZATION",
+            "current_e2e_authorization_status": "CONSUMED",
+            "current_e2e_authorization_consumed": true,
+            "current_e2e_attempt_number": 2,
+            "current_e2e_unreviewed_disposition": "VERIFIED_CANDIDATE",
+            "current_e2e_unreviewed_proof": "docs/proofs/aos3_r1_e2e_reference_execution_attempt2.json",
+            "current_e2e_review_status": "INDEPENDENTLY_ACCEPTED",
+            "current_e2e_review_verifier": "GPT-5.6 Sol",
+            "current_e2e_reviewed_proof_sha": "c96e1c8c29d8a1dfb0f881651a0588ee9d8c0906",
+            "aos3_closure_status": "CLOSED_PROVEN",
+            "current_e2e_controlled_execution_max": 1,
+            "current_e2e_retry_max": 0
+        }
+    },
     "accepted_gates": [
         {
             "gate": "AOS-0",
@@ -99,6 +133,15 @@
             "verified_sha": "2c756c9772673adf887c770572409dfa71a83c93",
             "closed_at": "2026-08-21T17:15:10+03:00",
             "reopen_condition": "Authoritative contradiction in provider routing, shadow decision integrity, canonical policy validation, exact-revision proof, or accepted runtime evidence."
+        },
+        {
+            "gate": "AOS-3",
+            "name": "Controlled Single-Worker Execution",
+            "status": "CLOSED_PROVEN",
+            "evidence_level": "E3_ISOLATED_RUNTIME_PROVEN",
+            "verified_sha": "c96e1c8c29d8a1dfb0f881651a0588ee9d8c0906",
+            "closed_at": "2026-08-24T18:59:53+03:00",
+            "reopen_condition": "Authoritative contradiction in machine capability, canonical execution-base authority, structured worker-result integrity, scope/Git containment, LIVE_GUARD behavior, deterministic verification, or accepted AOS-3 runtime evidence."
         }
     ]
 }

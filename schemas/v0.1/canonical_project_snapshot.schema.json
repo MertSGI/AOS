@@ -50,6 +50,10 @@
       "type": ["string", "null"],
       "pattern": "^[0-9a-f]{40}$"
     },
+    "next_action_execution_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
     "has_ambiguity": {
       "type": "boolean"
     },

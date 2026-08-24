@@ -148,6 +148,9 @@ R1 isolated implementation only.
 - abandoned work is recoverable,
 - tasks fail closed when operating against stale control authority.
 
+### Status
+`CLOSED_PROVEN` (`E3_ISOLATED_RUNTIME_PROVEN`, verified execution proof SHA `c96e1c8c29d8a1dfb0f881651a0588ee9d8c0906`, authorization SHA `fd5d2f5b4ed20b374fb319e8a8cc5191f6c3f8c2`, reference task `AOS3-REF-001`)
+
 ---
 
 ## AOS-4 — Independent Verification & HOLD

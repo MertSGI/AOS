@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS3-AGY-PROBE-V02-20260821-2325",
+  "authorized_live_coding_invocations": 1,
+  "actual_live_coding_invocations": 1,
+  "invocation_budget_compliance": true,
+  "probe_id": "PROBE-20260822-024934-4094dfe5",
+  "probe_status": "HOLD",
+  "probe_timestamp": "2026-08-22T02:49:34.880225+00:00",
+  "aos_revision_used": "d4f8962de43965ca41027fe41821c78967f92e30",
+  "adapter_contract_version": "0.2.0",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "ec790d078bab3262ae96102faad9da085279308bd30146e61006f02e197abf11",
+  "reported_cli_version": "1.1.17",
+  "challenge_sha256": "6f067fdefb720917bb28909878feb72390ede00a07aae17e41ce08441334b9d4",
+  "confirmed_invocation_capabilities": [
+    "--mode=accept-edits",
+    "--add-dir",
+    "--output-format=json",
+    "--print-timeout=180s",
+    "-p"
+  ],
+  "exit_code": 0,
+  "timed_out": false,
+  "head_before": "dfac063314622a0f54ba0fe3b1a0f09115eb6573",
+  "head_after": "dfac063314622a0f54ba0fe3b1a0f09115eb6573",
+  "branch_before": "main",
+  "branch_after": "main",
+  "changed_paths": [],
+  "expected_result_file_sha256": "6f067fdefb720917bb28909878feb72390ede00a07aae17e41ce08441334b9d4",
+  "actual_result_file_sha256": null,
+  "outside_sentinel_before_sha256": "d92600a79fe3464826cf7ebe972e7132bd1084a3f7af98107c3c7543a22ba68d",
+  "outside_sentinel_after_sha256": "d92600a79fe3464826cf7ebe972e7132bd1084a3f7af98107c3c7543a22ba68d",
+  "unexpected_external_paths_count": 0,
+  "result": "HOLD",
+  "capability_status_after_probe": "UNPROVEN",
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": [
+    "Target probe file 'probe/result.txt' was not created",
+    "Unexpected changed paths: expected ['probe/result.txt'], got []"
+  ]
+}
