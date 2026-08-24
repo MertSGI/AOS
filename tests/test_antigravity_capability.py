@@ -477,7 +477,7 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.7"
+        assert res["attestation"]["adapter_contract_version"] == ADAPTER_CONTRACT_VERSION
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
@@ -1386,8 +1386,8 @@ class TestAntigravityExactContentAndStreamObservability:
         assert parsed["permission_soft_denial_observed"] is False
 
 
-class TestAntigravityCapabilityV027:
-    """Offline test suite for Antigravity capability contract v0.2.7."""
+class TestAntigravityCapabilityV028:
+    """Offline test suite for Antigravity capability contract v0.2.8."""
 
     def test_canonical_challenge_exact_lf_pass(self, temp_capability_env):
         """A. Canonical challenge: challenge_line + LF => exact PASS candidate."""
@@ -1433,7 +1433,7 @@ class TestAntigravityCapabilityV027:
         assert res["attestation"] is not None
         assert res["attestation"]["capability_status"] == "PROVEN"
         assert res["attestation"]["runtime_environment_fingerprint_sha256"] == fp
-        assert res["attestation"]["adapter_contract_version"] == "0.2.7"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.8"
 
     def test_challenge_no_trailing_lf_fails(self, temp_capability_env):
         """B. No trailing LF: exact mismatch HOLD."""
@@ -1575,7 +1575,7 @@ class TestAntigravityCapabilityV027:
         assert any("Permission soft-denial observed" in e for e in res["errors"])
 
     def test_probe_prompt_restrictions(self, temp_capability_env):
-        """H & I. Probe prompt explicitly prohibits run_command/shell/etc and defines exact LF byte format."""
+        """H & I. Probe prompt explicitly prohibits run_command/shell/etc, ArtifactMetadata/IsArtifact, and defines exact LF byte format."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
         captured_prompt = []
@@ -1588,32 +1588,109 @@ class TestAntigravityCapabilityV027:
         run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
         assert len(captured_prompt) == 1
         prompt = captured_prompt[0]
-        # H. Prohibits shell
+        # Ordinary workspace file
+        assert "ORDINARY workspace file" in prompt
+        assert "Do not treat probe/result.txt as an Artifact" in prompt
+        # Artifact prohibitions
+        assert "Do not set IsArtifact=true" in prompt
+        assert "Do not include ArtifactMetadata" in prompt
+        assert "Do not initiate Artifact Review" in prompt
+        # Shell prohibitions
         assert "DO NOT use run_command" in prompt
         assert "shell" in prompt
         assert "PowerShell" in prompt
         assert "cmd" in prompt
         assert "invoke_subagent" in prompt
-        # I. Exact LF definition
+        # Exact LF definition
         assert "exactly ONE LF character" in prompt
         assert "No CR" in prompt
         assert "No blank second line" in prompt
 
-    def test_old_026_attestation_resolves_unproven(self, temp_capability_env):
-        """J. Old 0.2.6 attestation resolves UNPROVEN under contract 0.2.7."""
+    def test_production_worker_adapter_prompt_no_artifact_rules(self, temp_capability_env):
+        """E & F. Production AntigravityWorkerAdapter prompt contains generic no-artifact rules and does not hardcode probe/result.txt."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        prof = resolve_runtime_environment_profile()
+        fp = compute_runtime_environment_fingerprint(prof)
+
+        valid_attestation = make_valid_attestation(
+            exe_sha=fake_id["sha256"],
+            cli_ver=fake_id["version"],
+            contract_ver="0.2.8",
+            exe_name=fake_id["filename"],
+            fingerprint=fp,
+        )
+        store_file.write_text(json.dumps(valid_attestation, indent=2), encoding="utf-8")
+
+        captured_cmd = []
+
+        def _mock_runner(cmd, cwd, timeout, env):
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"status": "SUCCESS"}), stderr="")
+
+        adapter = AntigravityWorkerAdapter(
+            cli_command=fake_exe,
+            store_path=store_file,
+            injected_identity=fake_id,
+            runner=_mock_runner,
+        )
+        task = make_generic_task()
+        adapter.execute(task, workspace_path=temp_dir, allowed_scope={"paths": ["src/"]}, base_sha=task["base_sha"])
+
+        p_idx = captured_cmd.index("-p")
+        prompt = captured_cmd[p_idx + 1]
+
+        # E. Contains generic no-artifact rules
+        assert "ordinary native workspace file read/edit operations" in prompt
+        assert "Do not create or present Antigravity Artifacts" in prompt
+        assert "Do not set IsArtifact=true" in prompt
+        assert "Do not supply ArtifactMetadata" in prompt
+        assert "Do not request interactive Artifact Review" in prompt
+        # F. Does NOT hardcode probe/result.txt
+        assert "probe/result.txt" not in prompt
+
+    def test_mock_artifact_permission_error_followed_by_done_holds(self, temp_capability_env):
+        """H. Mock Artifact/permission error (ACTIVE -> ERROR/PERMISSION_DENIED -> ACTIVE -> DONE) => HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ERROR", "tool_info": {"error": {"type": "PERMISSION_DENIED", "message": "Permission denied: user prompt not answered in headless mode"}}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "ERROR"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["failed_native_write_tool_observed"] is True
+        assert res["proof"]["permission_soft_denial_observed"] is True
+        assert any("Permission soft-denial observed" in e for e in res["errors"])
+
+    def test_old_027_attestation_resolves_unproven(self, temp_capability_env):
+        """J. Old 0.2.7 attestation resolves UNPROVEN under contract 0.2.8."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
         old_attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.6",
+            "adapter_contract_version": "0.2.7",
             "executable_filename": fake_id["filename"],
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],
             "runtime_environment_profile_version": "0.1.0",
             "runtime_environment_fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
             "capability_status": "PROVEN",
-            "probe_id": "PROBE-OLD-026",
+            "probe_id": "PROBE-OLD-027",
             "probe_timestamp": "2026-08-24T00:00:00Z",
             "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
             "capabilities_proven": ["noninteractive_headless_transport"],
@@ -1623,8 +1700,8 @@ class TestAntigravityCapabilityV027:
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint="0000000000000000000000000000000000000000000000000000000000000000")
         assert status == "UNPROVEN"
 
-    def test_matching_027_identity_and_fingerprint_resolves_proven(self, temp_capability_env):
-        """K. Matching 0.2.7 identity and runtime fingerprint resolves PROVEN."""
+    def test_matching_028_identity_and_fingerprint_resolves_proven(self, temp_capability_env):
+        """K. Matching 0.2.8 identity and runtime fingerprint resolves PROVEN."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
         prof = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
@@ -1633,14 +1710,14 @@ class TestAntigravityCapabilityV027:
         valid_attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.7",
+            "adapter_contract_version": "0.2.8",
             "executable_filename": fake_id["filename"],
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],
             "runtime_environment_profile_version": "0.1.0",
             "runtime_environment_fingerprint_sha256": fp,
             "capability_status": "PROVEN",
-            "probe_id": "PROBE-NEW-027",
+            "probe_id": "PROBE-NEW-028",
             "probe_timestamp": "2026-08-24T00:00:00Z",
             "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
             "capabilities_proven": ["noninteractive_headless_transport"],
@@ -1663,7 +1740,7 @@ class TestAntigravityCapabilityV027:
         attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.7",
+            "adapter_contract_version": "0.2.8",
             "executable_filename": fake_id["filename"],
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],
@@ -1677,7 +1754,6 @@ class TestAntigravityCapabilityV027:
             "limitations": ["Mock limitation"],
         }
         store_file.write_text(json.dumps(attestation, indent=2), encoding="utf-8")
-        # When checking against updated profile (with enabled plugin), status must be UNPROVEN
         status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint=fp_after)
         assert status == "UNPROVEN"
 
@@ -1694,7 +1770,7 @@ class TestAntigravityCapabilityV027:
         attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.7",
+            "adapter_contract_version": "0.2.8",
             "executable_filename": fake_id["filename"],
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],

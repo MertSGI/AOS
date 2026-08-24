@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.7"
+ADAPTER_CONTRACT_VERSION = "0.2.8"
 RUNTIME_ENVIRONMENT_PROFILE_VERSION = "0.1.0"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
@@ -59,30 +59,37 @@ def resolve_runtime_environment_profile(
     node_finder: Optional[Callable[[], Optional[str]]] = None,
     node_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
 ) -> Dict[str, Any]:
-    """Build a deterministic sanitized runtime environment profile from local Antigravity configuration."""
+    """Resolve generic, sanitized host runtime environment profile for Antigravity execution."""
     root = config_root or (Path.home() / ".gemini")
-    enabled_plugins = set()
-    permissions_config: Dict[str, Any] = {}
 
-    # 1. Discover installed plugins and their baseline hooks status
+    # 1. Inspect installed plugins under root / config / plugins
     plugins_dir = root / "config" / "plugins"
+    enabled_plugins = set()
     if plugins_dir.is_dir():
-        for item in sorted(plugins_dir.iterdir()):
+        for item in plugins_dir.iterdir():
             if item.is_dir():
-                p_name = item.name
-                hooks_f = item / "hooks.json"
-                if hooks_f.is_file():
+                hooks_file = item / "hooks.json"
+                if hooks_file.is_file():
                     try:
-                        with open(hooks_f, "r", encoding="utf-8") as f:
-                            h_data = json.load(f)
-                        if isinstance(h_data, dict):
-                            p_info = h_data.get(p_name, {})
-                            if isinstance(p_info, dict) and p_info.get("enabled", True) is True:
-                                enabled_plugins.add(p_name)
-                    except Exception as e:
-                        raise ValueError(f"Malformed plugin hooks configuration: {hooks_f} ({e})")
+                        with open(hooks_file, "r", encoding="utf-8") as f:
+                            hooks_data = json.load(f)
+                        if isinstance(hooks_data, dict):
+                            for p_name, p_val in hooks_data.items():
+                                if isinstance(p_val, dict) and p_val.get("enabled", True):
+                                    enabled_plugins.add(p_name)
+                                elif isinstance(p_val, dict):
+                                    enabled_plugins.add(p_name)
+                                else:
+                                    enabled_plugins.add(item.name)
+                        else:
+                            enabled_plugins.add(item.name)
+                    except Exception:
+                        enabled_plugins.add(item.name)
+                else:
+                    enabled_plugins.add(item.name)
 
-    # 2. Check root / config / config.json for overrides and permissions
+    # 2. Check root / config / config.json for disabled plugins and permission settings
+    permissions_config: Dict[str, Any] = {}
     config_json_f = root / "config" / "config.json"
     if config_json_f.is_file():
         try:
@@ -90,14 +97,12 @@ def resolve_runtime_environment_profile(
                 c_data = json.load(f)
             if not isinstance(c_data, dict):
                 raise ValueError(f"Malformed config.json at {config_json_f}")
-            plugins_overrides = c_data.get("plugins", {})
-            if isinstance(plugins_overrides, dict):
-                for p_name, p_state in plugins_overrides.items():
-                    if isinstance(p_state, dict):
-                        if p_state.get("enabled") is False:
-                            enabled_plugins.discard(p_name)
-                        elif p_state.get("enabled") is True:
-                            enabled_plugins.add(p_name)
+            if "plugins" in c_data and isinstance(c_data["plugins"], dict):
+                for p_name, p_info in c_data["plugins"].items():
+                    if isinstance(p_info, dict) and p_info.get("enabled") is False:
+                        enabled_plugins.discard(p_name)
+                    elif isinstance(p_info, dict) and p_info.get("enabled") is True:
+                        enabled_plugins.add(p_name)
             for k in [
                 "agentMode",
                 "toolPermission",
@@ -164,9 +169,8 @@ def compute_runtime_environment_fingerprint(profile: Dict[str, Any]) -> str:
     return hashlib.sha256(canon_bytes).hexdigest()
 
 
-def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
-    """Get machine-local OS-appropriate path for capability attestation storage."""
-    custom_dir = os.environ.get("AOS_CAPABILITY_STORE_DIR")
+def get_local_capability_store_path(adapter_name: str = "antigravity", custom_dir: Optional[str] = None) -> Path:
+    """Resolve standard machine-local capability store path."""
     if custom_dir:
         return Path(custom_dir) / f"{adapter_name}.json"
 
@@ -300,7 +304,7 @@ def build_antigravity_argv(
     timeout_seconds: int = 180,
     output_format: str = "json",
 ) -> List[str]:
-    """Construct unambiguous, headless Antigravity CLI argv matching contract v0.2.6."""
+    """Construct unambiguous, headless Antigravity CLI argv."""
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(
             f"Unsupported output_format: '{output_format}'. Supported formats: {sorted(list(SUPPORTED_OUTPUT_FORMATS))}"
@@ -785,6 +789,13 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             f"Forbidden Scope Paths: {forbidden_paths}\n"
             "Execution Safety Rules:\n"
             "- Workspace is disposable and isolated.\n"
+            "- Use ordinary native workspace file read/edit operations (e.g. write_to_file, replace_file_content, view_file).\n"
+            "- Do not create or present Antigravity Artifacts.\n"
+            "- Do not mark ordinary source/code files as artifacts.\n"
+            "- Do not set IsArtifact=true.\n"
+            "- Do not supply ArtifactMetadata for ordinary file edits.\n"
+            "- Do not request interactive Artifact Review or user feedback.\n"
+            "- If an operation cannot proceed without interactive approval, STOP and report the blocker instead of attempting to bypass review.\n"
             "- Modify only allowed paths.\n"
             "- Do not modify forbidden paths.\n"
             "- Do not commit.\n"

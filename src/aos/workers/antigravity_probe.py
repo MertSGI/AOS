@@ -167,7 +167,13 @@ def run_antigravity_probe(
 
         # 3. Construct probe instruction
         prompt = (
-            f"Create probe/result.txt using native file-edit tools.\n\n"
+            f"Create probe/result.txt as an ORDINARY workspace file using native file-edit tools.\n\n"
+            f"Do not treat probe/result.txt as an Artifact.\n"
+            f"For this ordinary native write:\n"
+            f"- Do not set IsArtifact=true.\n"
+            f"- Do not include ArtifactMetadata.\n"
+            f"- Do not initiate Artifact Review.\n"
+            f"- Do not request user feedback or interactive review.\n\n"
             f"The file must contain exactly ONE UTF-8 text line:\n"
             f"{challenge_line}\n"
             f"followed by exactly ONE LF character (U+000A / byte 0x0A).\n\n"
