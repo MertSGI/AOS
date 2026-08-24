@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-24T17:33:25+03:00",
+    "updated_at": "2026-08-24T17:35:46+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_3_R1_E2E_ATTEMPT_2_AUTHORIZED_SINGLE_EXECUTION",
+    "status": "AOS_3_R1_E2E_ATTEMPT_2_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-3",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Execute canonical generic R1 task AOS3-REF-001 exactly once through ControlledExecutionEngine under authorization AOS3-R1-E2E-REF-002-20260824-1725 from execution base be12aa492ce3d8e3e9d447a8e8845ab8c7018dde and require independent review of the resulting VERIFIED_CANDIDATE or HOLD.",
+    "next_action": "Independently review AOS3-REF-001 attempt-2 execution evidence before any AOS-3 closure, retry, or further live execution.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -81,17 +81,21 @@
             "next_action_execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
             "reference_descriptor": "descriptors/aos.descriptor.json",
             "reference_task": "tasks/aos3-reference-task.json",
-            "e2e_reference_status": "REAUTHORIZED_SINGLE_LIVE_EXECUTION_ATTEMPT_2",
+            "e2e_reference_status": "ATTEMPT_2_EXECUTED_INDEPENDENT_REVIEW_PENDING",
             "result_gate_hardening_sha": "45b64fc77ec287bbd12daf4f4a9bfb9d4d642c90",
             "result_gate_hardening_review": "INDEPENDENTLY_ACCEPTED",
             "last_e2e_authorization_id": "AOS3-R1-E2E-REF-001-20260824-1650",
             "last_e2e_proof_commit_sha": "bfdd029006eb1268383d5d684be27fff3478d61c",
             "last_e2e_disposition": "WORKER_FAILED",
             "last_e2e_retry_count": 0,
-            "human_gate_required_before_next_live_e2e": false,
+            "human_gate_required_before_next_live_e2e": true,
             "current_e2e_authorization_id": "AOS3-R1-E2E-REF-002-20260824-1725",
             "current_e2e_authorization_type": "EXPLICIT_HUMAN_REAUTHORIZATION",
-            "current_e2e_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "current_e2e_authorization_status": "CONSUMED",
+            "current_e2e_authorization_consumed": true,
+            "current_e2e_attempt_number": 2,
+            "current_e2e_unreviewed_disposition": "VERIFIED_CANDIDATE",
+            "current_e2e_unreviewed_proof": "docs/proofs/aos3_r1_e2e_reference_execution_attempt2.json",
             "current_e2e_controlled_execution_max": 1,
             "current_e2e_retry_max": 0
         }
