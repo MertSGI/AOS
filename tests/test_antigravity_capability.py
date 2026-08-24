@@ -2142,3 +2142,139 @@ class TestAntigravityCapabilityV028:
         res = engine.execute(local_target_repo_path=str(tmp_path))
         assert res["disposition"] == "WORKER_FAILED"
         assert verif_call_count == 0
+
+    def test_production_worker_prompt_no_shell_rules(self):
+        """A, B, C, D, E, F. Production worker prompt explicitly contains no-shell and controller-owned verification rules generically."""
+        captured_prompt = []
+
+        def mock_runner(cmd, cwd, timeout, env):
+            # Find prompt argument after -p
+            if "-p" in cmd:
+                p_idx = cmd.index("-p") + 1
+                if p_idx < len(cmd):
+                    captured_prompt.append(cmd[p_idx])
+            valid_stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+                json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=valid_stream, stderr="")
+
+        adapter = AntigravityWorkerAdapter(capability_status_override="TEST_DOUBLE", runner=mock_runner)
+        res = adapter.execute(
+            task={"task_id": "GENERIC-T1", "title": "Generic Task", "description": "Generic Description"},
+            workspace_path="/tmp/test_ws",
+            allowed_scope={"paths": ["generic/output.txt"]},
+            base_sha="0"*40,
+        )
+        assert len(captured_prompt) == 1
+        prompt_text = captured_prompt[0]
+
+        # A. Prohibits run_command
+        assert "Do NOT use run_command." in prompt_text
+
+        # B. Prohibits shell, terminal, PowerShell, cmd, bash, or sh
+        assert "Do NOT use shell, terminal, PowerShell, cmd, bash, or sh." in prompt_text
+
+        # C. States deterministic verification belongs to ControlledExecutionEngine
+        assert "Deterministic verification is owned by ControlledExecutionEngine after the worker returns." in prompt_text
+
+        # D. States worker must STOP after requested workspace mutation is complete
+        assert "Once the requested workspace mutation is complete, STOP." in prompt_text
+
+        # E. States if shell appears necessary, STOP and report blocker
+        assert "If you believe shell execution is necessary, STOP and report the blocker" in prompt_text
+
+        # F. Does NOT hardcode specific task IDs or paths
+        assert "AOS3-REF-001" not in prompt_text
+        assert "docs/proofs/aos3_e2e_worker_result.txt" not in prompt_text
+
+    def test_post_write_run_command_error_yields_failure(self):
+        """H. Write succeeds but subsequent run_command produces permission error -> failure."""
+        ws_path = "/tmp/test_ws"
+        stream_with_run_cmd_error = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file", "run_command"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "run_command", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "run_command", "state": "ERROR", "tool_info": {"error": {"message": "Permission denied for run_command"}}}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=stream_with_run_cmd_error, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Failed tool observed" in res.stderr_summary
+
+    def test_controlled_execution_with_clean_stream_proceeds_to_verification(self, tmp_path):
+        """I. Controlled execution integration with clean TEST_DOUBLE Antigravity stream proceeds to project verification."""
+        task = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "task_id": "TEST-R1-PASS",
+            "gate": "AOS-3",
+            "risk_class": "R1",
+            "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
+            "branch_name": "aos/test-r1-pass",
+            "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
+            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
+            "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
+        }
+        descriptor = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "repository": "MertSGI/AOS",
+            "control_ref": "feature/aos-3-execution-base-authority",
+            "control": {"state": "docs/project-control/STATE.json", "decisions": "DECISIONS.md", "evidence": "EVIDENCE.jsonl", "roadmap": "ROADMAP.md"},
+            "authority": {"production_mutation": "human_required", "roadmap_change": "human_required", "destructive_data": "human_required"},
+            "verification": {"checks": {"chk1": {"argv": ["python", "-c", "import sys; sys.exit(0)"]}}},
+        }
+
+        verif_call_count = 0
+
+        def mock_verif_runner(argv, cwd, timeout_seconds, env):
+            nonlocal verif_call_count
+            verif_call_count += 1
+            return subprocess.CompletedProcess(argv, 0, stdout="PASS", stderr="")
+
+        def mock_worker_runner(cmd, cwd, timeout, env):
+            clean_stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+                json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+            )
+            # Create the file in mock workspace
+            p = Path(cwd) / "docs" / "proofs" / "result.txt"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("RESULT_CONTENT\n", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, stdout=clean_stream, stderr="")
+
+        class WorkspaceWithRealFile(MockGitWorkspace):
+            def get_changed_files(self):
+                return ["docs/proofs/result.txt"]
+
+        adapter_instance = AntigravityWorkerAdapter(capability_status_override="TEST_DOUBLE", runner=mock_worker_runner)
+
+        engine = ControlledExecutionEngine(
+            project_descriptor=descriptor,
+            canonical_task=task,
+            source_adapter_factory=lambda repo, ref: MockSourceAdapter(repo, ref),
+            git_workspace_factory=lambda repo, base, tid, bname: WorkspaceWithRealFile(repo, base, tid, bname),
+            worker_adapter_factory=lambda: adapter_instance,
+            verification_runner=mock_verif_runner,
+            repo_identity_inspector=lambda path: "MertSGI/AOS",
+        )
+
+        res = engine.execute(local_target_repo_path=str(tmp_path))
+        assert res["disposition"] == "VERIFIED_CANDIDATE"
+        assert verif_call_count == 1
