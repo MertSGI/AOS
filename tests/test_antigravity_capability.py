@@ -384,7 +384,7 @@ class TestAntigravityCapabilityResolution:
         assert status == "UNPROVEN"
 
     def test_matching_attestation_resolves_proven(self, temp_capability_env):
-        """6. Attestation matching exact executable SHA256 and reported version resolves to PROVEN."""
+        """6. Attestation matching exact executable SHA256, reported version, and current host runtime profile resolves to PROVEN."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -392,11 +392,14 @@ class TestAntigravityCapabilityResolution:
             "sha256": compute_file_sha256(fake_exe),
             "version": "1.1.17",
         }
+        current_prof = resolve_runtime_environment_profile()
+        current_fp = compute_runtime_environment_fingerprint(current_prof)
         att = make_valid_attestation(
             exe_sha=fake_id["sha256"],
             cli_ver=fake_id["version"],
             contract_ver=ADAPTER_CONTRACT_VERSION,
             exe_name=fake_id["filename"],
+            fingerprint=current_fp,
         )
         write_local_capability_attestation(att, store_path=store_file)
 
