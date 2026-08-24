@@ -10,6 +10,8 @@
     "executable_filename",
     "executable_sha256",
     "reported_cli_version",
+    "runtime_environment_profile_version",
+    "runtime_environment_fingerprint_sha256",
     "capability_status",
     "probe_id",
     "probe_timestamp",
@@ -42,6 +44,14 @@
     "reported_cli_version": {
       "type": "string",
       "minLength": 1
+    },
+    "runtime_environment_profile_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_environment_fingerprint_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
     "capability_status": {
       "type": "string",

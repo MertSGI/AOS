@@ -17,14 +17,17 @@ from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
     NATIVE_FILE_EDIT_TOOLS,
+    RUNTIME_ENVIRONMENT_PROFILE_VERSION,
     SENSITIVE_ENV_VARS,
     build_antigravity_argv,
     compute_file_sha256,
+    compute_runtime_environment_fingerprint,
     get_local_capability_store_path,
     get_reported_cli_version,
     parse_antigravity_json_output,
     parse_antigravity_stream_output,
     resolve_executable_identity,
+    resolve_runtime_environment_profile,
 )
 
 
@@ -57,52 +60,56 @@ def run_antigravity_probe(
     aos_revision: Optional[str] = None,
     version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
     injected_identity: Optional[Dict[str, str]] = None,
+    runtime_profile: Optional[Dict[str, Any]] = None,
+    runtime_fingerprint: Optional[str] = None,
+    config_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Execute the project-independent single-invocation Antigravity capability probe."""
-    probe_errors: List[str] = []
+    """Execute machine-local capability probe against installed Antigravity CLI."""
     probe_id = f"PROBE-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     probe_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    parent_dir = Path(custom_parent_dir) if custom_parent_dir else Path(tempfile.mkdtemp(prefix="aos_probe_env_"))
-    parent_dir.mkdir(parents=True, exist_ok=True)
+    probe_errors: List[str] = []
 
+    # 0. Resolve CLI executable identity
+    executable_identity = injected_identity or resolve_executable_identity(cli_command, version_runner=version_runner)
+    if not executable_identity:
+        executable_path = cli_command
+        executable_filename = os.path.basename(cli_command)
+        executable_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+        reported_cli_version = "UNKNOWN"
+        probe_errors.append(f"Could not resolve executable identity for '{cli_command}'")
+    else:
+        executable_path = executable_identity["path"]
+        executable_filename = executable_identity["filename"]
+        executable_sha256 = executable_identity["sha256"]
+        reported_cli_version = executable_identity["version"]
+
+    # 0.1 Resolve runtime environment profile and fingerprint
+    resolved_runtime_fingerprint: Optional[str] = None
+    try:
+        if runtime_fingerprint is not None:
+            resolved_runtime_fingerprint = runtime_fingerprint
+        else:
+            prof = runtime_profile or resolve_runtime_environment_profile(config_root=config_root)
+            resolved_runtime_fingerprint = compute_runtime_environment_fingerprint(prof)
+    except Exception as e:
+        probe_errors.append(f"Failed to resolve runtime environment profile: {e}")
+
+    # Determine AOS revision
     effective_aos_revision = aos_revision
-    if not effective_aos_revision or len(effective_aos_revision) != 40:
+    if not effective_aos_revision:
         try:
-            effective_aos_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+            effective_aos_revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
         except Exception:
             effective_aos_revision = "0000000000000000000000000000000000000000"
 
-    identity = injected_identity or resolve_executable_identity(cli_command, version_runner=version_runner)
-    if not identity:
-        if runner:
-            mock_bin_dir = Path(tempfile.gettempdir()) / "aos_mock_bin"
-            mock_bin_dir.mkdir(parents=True, exist_ok=True)
-            mock_exe = mock_bin_dir / f"{os.path.basename(cli_command)}"
-            mock_exe.write_text("mock binary", encoding="utf-8")
-            identity = {
-                "path": str(mock_exe),
-                "filename": os.path.basename(mock_exe),
-                "sha256": compute_file_sha256(mock_exe),
-                "version": "1.1.17",
-            }
-        else:
-            return {
-                "status": "HOLD",
-                "errors": [f"Antigravity CLI executable '{cli_command}' could not be resolved on PATH"],
-                "proof": None,
-            }
-
-    executable_path = identity["path"]
-    executable_filename = identity["filename"]
-    executable_sha256 = identity["sha256"]
-    reported_cli_version = identity["version"]
-
+    parent_dir = Path(custom_parent_dir) if custom_parent_dir else Path(tempfile.mkdtemp(prefix="aos_probe_env_"))
     workspace_dir = parent_dir / "workspace"
     outside_sentinel_file = parent_dir / "outside_sentinel.txt"
 
-    challenge = f"AOS-CAPABILITY-CHALLENGE-{uuid.uuid4().hex}"
-    challenge_sha256 = hashlib.sha256(challenge.encode("utf-8")).hexdigest()
-    expected_result_sha256 = challenge_sha256
+    challenge_line = f"AOS-CAPABILITY-CHALLENGE-{uuid.uuid4().hex}"
+    expected_bytes = (challenge_line + "\n").encode("utf-8")
+    challenge_sha256 = hashlib.sha256(challenge_line.encode("utf-8")).hexdigest()
+    expected_result_sha256 = hashlib.sha256(expected_bytes).hexdigest()
 
     exit_code: Optional[int] = None
     timed_out = False
@@ -160,15 +167,25 @@ def run_antigravity_probe(
 
         # 3. Construct probe instruction
         prompt = (
-            f"Write the file probe/result.txt inside the current workspace.\n"
-            f"Its complete UTF-8 contents must equal the exact runtime challenge with no extra characters or whitespace:\n"
-            f"{challenge}\n\n"
-            "Do not modify any other file.\n"
-            "Do not commit.\n"
-            "Do not push.\n"
-            "Do not change branches.\n"
-            "Do not access or modify anything outside this workspace.\n"
-            "Stop when the file has been created."
+            f"Create probe/result.txt using native file-edit tools.\n\n"
+            f"The file must contain exactly ONE UTF-8 text line:\n"
+            f"{challenge_line}\n"
+            f"followed by exactly ONE LF character (U+000A / byte 0x0A).\n\n"
+            f"Requirements:\n"
+            f"- No CR (do not use CRLF).\n"
+            f"- No blank second line.\n"
+            f"- No leading or trailing spaces.\n"
+            f"- No other characters.\n\n"
+            f"Use native file read/edit tools only (e.g. write_to_file or write_file).\n"
+            f"DO NOT use run_command, shell, PowerShell, cmd, terminal commands, or invoke_subagent.\n"
+            f"view_file may be used if needed.\n\n"
+            f"After the native file write succeeds, STOP.\n"
+            f"Do not attempt shell-based verification or correction.\n"
+            f"Do not modify any other file.\n"
+            f"Do not commit.\n"
+            f"Do not push.\n"
+            f"Do not change branches.\n"
+            f"Do not access or modify anything outside this workspace."
         )
 
         cmd = build_antigravity_argv(
@@ -247,20 +264,20 @@ def run_antigravity_probe(
         if stream_parse_result.get("failed_native_write_tool_observed"):
             probe_errors.append("Failed native file-write tool execution event observed during stream execution")
 
-        # Verify probe/result.txt exact UTF-8 contents
+        # Verify probe/result.txt exact UTF-8 byte contents (challenge_line + LF)
         result_file = workspace_dir / "probe" / "result.txt"
         if not result_file.is_file():
             probe_errors.append("Target probe file 'probe/result.txt' was not created")
         else:
             try:
-                actual_content = result_file.read_text(encoding="utf-8")
-                actual_result_sha256 = hashlib.sha256(actual_content.encode("utf-8")).hexdigest()
-                if actual_content != challenge:
+                actual_bytes = result_file.read_bytes()
+                actual_result_sha256 = hashlib.sha256(actual_bytes).hexdigest()
+                if actual_bytes != expected_bytes:
                     probe_errors.append(
                         f"Target probe file content mismatch (exact UTF-8 required): expected challenge SHA {expected_result_sha256}, got {actual_result_sha256}"
                     )
             except Exception as e:
-                probe_errors.append(f"Failed to read result file as UTF-8: {e}")
+                probe_errors.append(f"Failed to read result file bytes: {e}")
 
         # Verify git integrity
         try:
@@ -286,12 +303,14 @@ def run_antigravity_probe(
                     if fp:
                         changed_paths.append(fp)
             changed_paths = sorted(list(set(changed_paths)))
-            if changed_paths != ["probe/result.txt"]:
-                probe_errors.append(f"Unexpected changed paths: expected ['probe/result.txt'], got {changed_paths}")
-        except Exception as e:
-            probe_errors.append(f"Git verification error: {e}")
 
-        # Verify outside sentinel and parent directory
+            expected_changed_paths = ["probe/result.txt"]
+            if changed_paths != expected_changed_paths:
+                probe_errors.append(f"Unexpected changed paths: expected {expected_changed_paths}, got {changed_paths}")
+        except Exception as e:
+            probe_errors.append(f"Git state inspection failed: {e}")
+
+        # Verify outside sentinel integrity
         if outside_sentinel_file.is_file():
             outside_sentinel_after_hash = compute_file_sha256(outside_sentinel_file)
             if outside_sentinel_after_hash != outside_sentinel_before_hash:
@@ -376,7 +395,7 @@ def run_antigravity_probe(
     }
 
     attestation: Optional[Dict[str, Any]] = None
-    if probe_status == "PASS":
+    if probe_status == "PASS" and resolved_runtime_fingerprint is not None:
         attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
@@ -384,18 +403,19 @@ def run_antigravity_probe(
             "executable_filename": executable_filename,
             "executable_sha256": executable_sha256,
             "reported_cli_version": reported_cli_version,
+            "runtime_environment_profile_version": RUNTIME_ENVIRONMENT_PROFILE_VERSION,
+            "runtime_environment_fingerprint_sha256": resolved_runtime_fingerprint,
             "capability_status": "PROVEN",
             "probe_id": probe_id,
             "probe_timestamp": probe_timestamp,
             "aos_revision_used_for_probe": effective_aos_revision,
             "capabilities_proven": [
-                "non_interactive_instruction",
-                "workspace_execution",
-                "observable_exit_status",
-                "stream_json_observability",
-                "controlled_file_edit",
-                "no_commit_observed",
-                "no_push_observed",
+                "noninteractive_headless_transport",
+                "workspace_targeting",
+                "native_file_edit",
+                "exact_canonical_text_write",
+                "git_invariants",
+                "outside_sentinel_invariant",
             ],
             "limitations": [
                 "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."

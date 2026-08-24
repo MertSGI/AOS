@@ -14,13 +14,154 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.6"
+ADAPTER_CONTRACT_VERSION = "0.2.7"
+RUNTIME_ENVIRONMENT_PROFILE_VERSION = "0.1.0"
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
 NORMAL_STEP_STATES = {"ACTIVE", "DONE"}
 OBSERVED_FAILURE_STEP_STATES = {"ERROR"}
 OFFICIAL_STEP_STATES = NORMAL_STEP_STATES | OBSERVED_FAILURE_STEP_STATES
+
+
+def _find_node_executable() -> Optional[str]:
+    """Locate node executable via standard PATH, Windows registry PATH, or standard installation paths."""
+    p = shutil.which("node")
+    if p:
+        return p
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as k:
+                sys_p = winreg.QueryValueEx(k, "Path")[0]
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
+                usr_p = winreg.QueryValueEx(k, "Path")[0]
+            reg_p = f"{os.path.expandvars(sys_p)};{os.path.expandvars(usr_p)}"
+            p = shutil.which("node", path=reg_p)
+            if p:
+                return p
+        except Exception:
+            pass
+
+        std_locs = [
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "node.exe",
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "nodejs" / "node.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "nodejs" / "node.exe",
+        ]
+        for loc in std_locs:
+            if loc.is_file():
+                return str(loc)
+    return None
+
+
+def resolve_runtime_environment_profile(
+    config_root: Optional[Path] = None,
+    node_finder: Optional[Callable[[], Optional[str]]] = None,
+    node_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
+) -> Dict[str, Any]:
+    """Build a deterministic sanitized runtime environment profile from local Antigravity configuration."""
+    root = config_root or (Path.home() / ".gemini")
+    enabled_plugins = set()
+    permissions_config: Dict[str, Any] = {}
+
+    # 1. Discover installed plugins and their baseline hooks status
+    plugins_dir = root / "config" / "plugins"
+    if plugins_dir.is_dir():
+        for item in sorted(plugins_dir.iterdir()):
+            if item.is_dir():
+                p_name = item.name
+                hooks_f = item / "hooks.json"
+                if hooks_f.is_file():
+                    try:
+                        with open(hooks_f, "r", encoding="utf-8") as f:
+                            h_data = json.load(f)
+                        if isinstance(h_data, dict):
+                            p_info = h_data.get(p_name, {})
+                            if isinstance(p_info, dict) and p_info.get("enabled", True) is True:
+                                enabled_plugins.add(p_name)
+                    except Exception as e:
+                        raise ValueError(f"Malformed plugin hooks configuration: {hooks_f} ({e})")
+
+    # 2. Check root / config / config.json for overrides and permissions
+    config_json_f = root / "config" / "config.json"
+    if config_json_f.is_file():
+        try:
+            with open(config_json_f, "r", encoding="utf-8") as f:
+                c_data = json.load(f)
+            if not isinstance(c_data, dict):
+                raise ValueError(f"Malformed config.json at {config_json_f}")
+            plugins_overrides = c_data.get("plugins", {})
+            if isinstance(plugins_overrides, dict):
+                for p_name, p_state in plugins_overrides.items():
+                    if isinstance(p_state, dict):
+                        if p_state.get("enabled") is False:
+                            enabled_plugins.discard(p_name)
+                        elif p_state.get("enabled") is True:
+                            enabled_plugins.add(p_name)
+            for k in [
+                "agentMode",
+                "toolPermission",
+                "artifactReviewPolicy",
+                "enableTerminalSandbox",
+                "allowNonWorkspaceAccess",
+                "permissions",
+            ]:
+                if k in c_data:
+                    permissions_config[k] = c_data[k]
+        except Exception as e:
+            raise ValueError(f"Failed to parse config.json at {config_json_f}: {e}")
+
+    # 3. Check root / antigravity-cli / settings.json
+    settings_json_f = root / "antigravity-cli" / "settings.json"
+    if settings_json_f.is_file():
+        try:
+            with open(settings_json_f, "r", encoding="utf-8") as f:
+                s_data = json.load(f)
+            if not isinstance(s_data, dict):
+                raise ValueError(f"Malformed settings.json at {settings_json_f}")
+            for k in [
+                "agentMode",
+                "toolPermission",
+                "artifactReviewPolicy",
+                "enableTerminalSandbox",
+                "allowNonWorkspaceAccess",
+                "permissions",
+            ]:
+                if k in s_data and k not in permissions_config:
+                    permissions_config[k] = s_data[k]
+        except Exception as e:
+            raise ValueError(f"Failed to parse settings.json at {settings_json_f}: {e}")
+
+    # 4. Check Node availability
+    finder = node_finder or _find_node_executable
+    node_exe = finder()
+    node_available = False
+    node_version = None
+    if node_exe:
+        try:
+            if node_runner:
+                res = node_runner([node_exe, "--version"])
+            else:
+                res = subprocess.run([node_exe, "--version"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                node_available = True
+                node_version = (res.stdout or "").strip()
+        except Exception:
+            pass
+
+    return {
+        "schema_version": RUNTIME_ENVIRONMENT_PROFILE_VERSION,
+        "enabled_plugins": sorted(list(enabled_plugins)),
+        "permissions_config": permissions_config,
+        "node_available": node_available,
+        "node_version": node_version,
+    }
+
+
+def compute_runtime_environment_fingerprint(profile: Dict[str, Any]) -> str:
+    """Compute deterministic SHA-256 fingerprint for runtime environment profile."""
+    canon_bytes = json.dumps(profile, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canon_bytes).hexdigest()
 
 
 def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
@@ -107,6 +248,9 @@ def resolve_capability_status(
     store_path: Optional[Path] = None,
     version_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
     identity: Optional[Dict[str, str]] = None,
+    runtime_profile: Optional[Dict[str, Any]] = None,
+    runtime_fingerprint: Optional[str] = None,
+    config_root: Optional[Path] = None,
 ) -> str:
     """Dynamically resolve machine-local capability status for the Antigravity CLI."""
     target_store = store_path or get_local_capability_store_path("antigravity")
@@ -115,6 +259,15 @@ def resolve_capability_status(
 
     current_identity = identity or resolve_executable_identity(cli_command, version_runner=version_runner)
     if not current_identity:
+        return "UNPROVEN"
+
+    try:
+        if runtime_fingerprint is not None:
+            current_fp = runtime_fingerprint
+        else:
+            prof = runtime_profile or resolve_runtime_environment_profile(config_root=config_root)
+            current_fp = compute_runtime_environment_fingerprint(prof)
+    except Exception:
         return "UNPROVEN"
 
     try:
@@ -130,6 +283,8 @@ def resolve_capability_status(
             and attestation.get("adapter_contract_version") == ADAPTER_CONTRACT_VERSION
             and attestation.get("executable_sha256") == current_identity["sha256"]
             and attestation.get("reported_cli_version") == current_identity["version"]
+            and attestation.get("runtime_environment_profile_version") == RUNTIME_ENVIRONMENT_PROFILE_VERSION
+            and attestation.get("runtime_environment_fingerprint_sha256") == current_fp
             and attestation.get("capability_status") == "PROVEN"
         ):
             return "PROVEN"

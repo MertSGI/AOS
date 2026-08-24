@@ -1,5 +1,6 @@
 """Offline tests for Antigravity machine-local capability attestation and probe."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -17,14 +18,17 @@ from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
     AntigravityWorkerAdapter,
+    RUNTIME_ENVIRONMENT_PROFILE_VERSION,
     build_antigravity_argv,
     compute_file_sha256,
+    compute_runtime_environment_fingerprint,
     get_local_capability_store_path,
     get_reported_cli_version,
     parse_antigravity_json_output,
     parse_antigravity_stream_output,
     resolve_capability_status,
     resolve_executable_identity,
+    resolve_runtime_environment_profile,
     sanitize_tool_error,
 )
 from aos.workers.antigravity_probe import (
@@ -167,7 +171,7 @@ def make_generic_task(
         "branch_name": branch_name,
         "allowed_scope": {
             "paths": paths or ["src/"],
-            "forbidden_paths": forbidden_paths or [],
+            "forbidden_paths": forbidden_paths or ["docs/CHARTER.md"],
         },
         "worker_requirements": {
             "adapter": adapter,
@@ -189,7 +193,11 @@ def make_valid_attestation(
     contract_ver=ADAPTER_CONTRACT_VERSION,
     status="PROVEN",
     exe_name=None,
+    profile_version=RUNTIME_ENVIRONMENT_PROFILE_VERSION,
+    fingerprint=None,
 ):
+    default_prof = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
+    default_fp = compute_runtime_environment_fingerprint(default_prof)
     return {
         "schema_version": "0.1.0",
         "worker_adapter": "antigravity",
@@ -197,18 +205,19 @@ def make_valid_attestation(
         "executable_filename": exe_name or "agy.exe",
         "executable_sha256": exe_sha or "550863e77436c18d4b2e3a60cbf6e33b39c33dbf68058294dd6e34a878c9ccaf",
         "reported_cli_version": cli_ver or "1.1.17",
+        "runtime_environment_profile_version": profile_version,
+        "runtime_environment_fingerprint_sha256": fingerprint or default_fp,
         "capability_status": status,
         "probe_id": "PROBE-20260821-123456-abcdef12",
         "probe_timestamp": "2026-08-21T19:00:00Z",
         "aos_revision_used_for_probe": "fce499bb3c1449a0b2048d7be779116da615f698",
         "capabilities_proven": [
-            "non_interactive_instruction",
-            "workspace_execution",
-            "observable_exit_status",
-            "stream_json_observability",
-            "controlled_file_edit",
-            "no_commit_observed",
-            "no_push_observed",
+            "noninteractive_headless_transport",
+            "workspace_targeting",
+            "native_file_edit",
+            "exact_canonical_text_write",
+            "git_invariants",
+            "outside_sentinel_invariant",
         ],
         "limitations": [
             "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
@@ -450,7 +459,7 @@ class TestAntigravityCapabilityResolution:
             prompt_str = cmd[p_idx + 1]
 
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream_out = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream_out, stderr="")
 
@@ -465,7 +474,7 @@ class TestAntigravityCapabilityResolution:
 
         assert res["status"] == "PASS"
         assert res["attestation"] is not None
-        assert res["attestation"]["adapter_contract_version"] == "0.2.6"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.7"
         assert res["proof"]["result"] == "PASS"
         assert res["proof"]["changed_paths"] == ["probe/result.txt"]
         assert res["proof"]["output_format"] == "stream-json"
@@ -534,7 +543,7 @@ class TestAntigravityCapabilityResolution:
             prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         os.environ["OPENAI_API_KEY"] = "sk-fake-openai"
@@ -598,7 +607,7 @@ class TestAntigravityCapabilityResolution:
 
 class TestAntigravityExactContentAndStreamObservability:
     def test_exact_challenge_semantics_variations(self, temp_capability_env):
-        """Exact UTF-8 challenge content passes; whitespace or newlines fail."""
+        """Exact UTF-8 challenge + LF content passes; missing LF, whitespace or extra newlines fail."""
         temp_dir, store_file, fake_exe = temp_capability_env
         fake_id = {
             "path": fake_exe,
@@ -607,16 +616,16 @@ class TestAntigravityExactContentAndStreamObservability:
             "version": "1.1.17",
         }
 
-        # 1. Challenge + \n fails
-        def _runner_trailing_newline(cmd, cwd, timeout, env):
+        # 1. Challenge without trailing LF fails
+        def _runner_no_newline(cmd, cwd, timeout, env):
             p_idx = cmd.index("-p")
             prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line + "\n", encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes(challenge_line.encode("utf-8"))
             return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
-        res1 = run_antigravity_probe(fake_exe, runner=_runner_trailing_newline, store_path=store_file, injected_identity=fake_id)
+        res1 = run_antigravity_probe(fake_exe, runner=_runner_no_newline, store_path=store_file, injected_identity=fake_id)
         assert res1["status"] == "HOLD"
         assert any("exact UTF-8 required" in e for e in res1["errors"])
 
@@ -626,7 +635,7 @@ class TestAntigravityExactContentAndStreamObservability:
             prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(" " + challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((" " + challenge_line + "\n").encode("utf-8"))
             return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         res2 = run_antigravity_probe(fake_exe, runner=_runner_leading_space, store_path=store_file, injected_identity=fake_id)
@@ -639,7 +648,7 @@ class TestAntigravityExactContentAndStreamObservability:
             prompt_str = cmd[p_idx + 1]
             challenge_line = [l for l in prompt_str.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line + " ", encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + " \n").encode("utf-8"))
             return subprocess.CompletedProcess(cmd, 0, stdout=make_valid_stream_ndjson(cwd=cwd), stderr="")
 
         res3 = run_antigravity_probe(fake_exe, runner=_runner_trailing_space, store_path=store_file, injected_identity=fake_id)
@@ -764,7 +773,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
@@ -787,7 +796,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             # Stream with ACTIVE write tool step only (no DONE step)
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"]}}) + "\n"
@@ -815,7 +824,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd, active_step=True)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
@@ -837,7 +846,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd, tool_error=True)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
@@ -860,7 +869,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_something_custom"]}}) + "\n"
                 + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_something_custom", "state": "DONE", "tool_info": {}}}) + "\n"
@@ -888,7 +897,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             # Init does not advertise write_to_file, but step uses it
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["read_file"]}}) + "\n"
@@ -917,7 +926,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             # Init advertises write_to_file, but step only has agent_response
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n"
@@ -946,7 +955,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = make_valid_stream_ndjson(include_write_tool=True, status="SUCCESS", cwd=cwd)
             return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
 
@@ -1256,7 +1265,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"], "permission_mode": "request-review"}}) + "\n"
                 + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
@@ -1286,7 +1295,7 @@ class TestAntigravityExactContentAndStreamObservability:
             p_idx = cmd.index("-p")
             challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
             probe_dir = Path(cwd) / "probe"
-            (probe_dir / "result.txt").write_text(challenge_line, encoding="utf-8")
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
             stream = (
                 json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_file"], "permission_mode": "request-review"}}) + "\n"
                 + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_file", "state": "DONE", "tool_info": {"error": {"type": "FileError", "message": "Failed to write file"}}}}) + "\n"
@@ -1372,3 +1381,381 @@ class TestAntigravityExactContentAndStreamObservability:
         assert parsed["is_valid_stream"] is True
         assert parsed["permission_mode"] == "request-review"
         assert parsed["permission_soft_denial_observed"] is False
+
+
+class TestAntigravityCapabilityV027:
+    """Offline test suite for Antigravity capability contract v0.2.7."""
+
+    def test_canonical_challenge_exact_lf_pass(self, temp_capability_env):
+        """A. Canonical challenge: challenge_line + LF => exact PASS candidate."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {
+            "path": fake_exe,
+            "filename": Path(fake_exe).name,
+            "sha256": compute_file_sha256(fake_exe),
+            "version": "1.1.19",
+        }
+        prof = {
+            "schema_version": "0.1.0",
+            "enabled_plugins": [],
+            "permissions_config": {},
+            "node_available": True,
+            "node_version": "v24.19.0",
+        }
+        fp = hashlib.sha256(json.dumps(prof, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            prompt_text = cmd[p_idx + 1]
+            challenge_line = [l for l in prompt_text.splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(
+            fake_exe,
+            runner=_runner,
+            store_path=store_file,
+            injected_identity=fake_id,
+            runtime_profile=prof,
+            runtime_fingerprint=fp,
+        )
+        assert res["status"] == "PASS"
+        assert res["attestation"] is not None
+        assert res["attestation"]["capability_status"] == "PROVEN"
+        assert res["attestation"]["runtime_environment_fingerprint_sha256"] == fp
+        assert res["attestation"]["adapter_contract_version"] == "0.2.7"
+
+    def test_challenge_no_trailing_lf_fails(self, temp_capability_env):
+        """B. No trailing LF: exact mismatch HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes(challenge_line.encode("utf-8"))  # no \n
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert any("Target probe file content mismatch" in e for e in res["errors"])
+
+    def test_challenge_crlf_fails(self, temp_capability_env):
+        """C. CRLF: exact mismatch HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\r\n").encode("utf-8"))  # CRLF
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert any("Target probe file content mismatch" in e for e in res["errors"])
+
+    def test_challenge_double_lf_fails(self, temp_capability_env):
+        """D. Double LF: exact mismatch HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n\n").encode("utf-8"))  # double LF
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert any("Target probe file content mismatch" in e for e in res["errors"])
+
+    def test_challenge_trailing_space_before_lf_fails(self, temp_capability_env):
+        """E. Trailing space before LF: exact mismatch HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + " \n").encode("utf-8"))  # space before LF
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert any("Target probe file content mismatch" in e for e in res["errors"])
+
+    def test_mock_native_write_success_pass(self, temp_capability_env):
+        """F. Mock native path: write_to_file ACTIVE->DONE, terminal SUCCESS, exact canonical bytes, no shell => PASS."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        prof = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
+        fp = compute_runtime_environment_fingerprint(prof)
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id, runtime_profile=prof, runtime_fingerprint=fp)
+        assert res["status"] == "PASS"
+        assert res["proof"]["completed_write_tool_observed"] is True
+        assert res["proof"]["failed_native_write_tool_observed"] is False
+        assert res["proof"]["permission_soft_denial_observed"] is False
+
+    def test_native_write_followed_by_run_command_denial_holds(self, temp_capability_env):
+        """G. Native write success followed by run_command permission denial => HOLD."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            challenge_line = [l for l in cmd[p_idx + 1].splitlines() if "AOS-CAPABILITY-CHALLENGE-" in l][0].strip()
+            probe_dir = Path(cwd) / "probe"
+            (probe_dir / "result.txt").write_bytes((challenge_line + "\n").encode("utf-8"))
+            stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file", "run_command"], "permission_mode": "request-review"}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "run_command", "state": "ACTIVE", "tool_info": {}}}) + "\n"
+                + json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "run_command", "state": "ERROR", "tool_info": {"error": {"type": "PermissionDenied", "message": "user denied permission to run command"}}}}) + "\n"
+                + json.dumps({"event": "result", "result": {"status": "ERROR"}})
+            )
+            return subprocess.CompletedProcess(cmd, 1, stdout=stream, stderr="")
+
+        res = run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert res["status"] == "HOLD"
+        assert res["proof"]["permission_soft_denial_observed"] is True
+        assert any("Permission soft-denial observed" in e for e in res["errors"])
+
+    def test_probe_prompt_restrictions(self, temp_capability_env):
+        """H & I. Probe prompt explicitly prohibits run_command/shell/etc and defines exact LF byte format."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        captured_prompt = []
+
+        def _runner(cmd, cwd, timeout, env):
+            p_idx = cmd.index("-p")
+            captured_prompt.append(cmd[p_idx + 1])
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        run_antigravity_probe(fake_exe, runner=_runner, store_path=store_file, injected_identity=fake_id)
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        # H. Prohibits shell
+        assert "DO NOT use run_command" in prompt
+        assert "shell" in prompt
+        assert "PowerShell" in prompt
+        assert "cmd" in prompt
+        assert "invoke_subagent" in prompt
+        # I. Exact LF definition
+        assert "exactly ONE LF character" in prompt
+        assert "No CR" in prompt
+        assert "No blank second line" in prompt
+
+    def test_old_026_attestation_resolves_unproven(self, temp_capability_env):
+        """J. Old 0.2.6 attestation resolves UNPROVEN under contract 0.2.7."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        old_attestation = {
+            "schema_version": "0.1.0",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.6",
+            "executable_filename": fake_id["filename"],
+            "executable_sha256": fake_id["sha256"],
+            "reported_cli_version": fake_id["version"],
+            "runtime_environment_profile_version": "0.1.0",
+            "runtime_environment_fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "capability_status": "PROVEN",
+            "probe_id": "PROBE-OLD-026",
+            "probe_timestamp": "2026-08-24T00:00:00Z",
+            "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
+            "capabilities_proven": ["noninteractive_headless_transport"],
+            "limitations": ["Mock limitation"],
+        }
+        store_file.write_text(json.dumps(old_attestation, indent=2), encoding="utf-8")
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint="0000000000000000000000000000000000000000000000000000000000000000")
+        assert status == "UNPROVEN"
+
+    def test_matching_027_identity_and_fingerprint_resolves_proven(self, temp_capability_env):
+        """K. Matching 0.2.7 identity and runtime fingerprint resolves PROVEN."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        prof = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
+        fp = compute_runtime_environment_fingerprint(prof)
+
+        valid_attestation = {
+            "schema_version": "0.1.0",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.7",
+            "executable_filename": fake_id["filename"],
+            "executable_sha256": fake_id["sha256"],
+            "reported_cli_version": fake_id["version"],
+            "runtime_environment_profile_version": "0.1.0",
+            "runtime_environment_fingerprint_sha256": fp,
+            "capability_status": "PROVEN",
+            "probe_id": "PROBE-NEW-027",
+            "probe_timestamp": "2026-08-24T00:00:00Z",
+            "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
+            "capabilities_proven": ["noninteractive_headless_transport"],
+            "limitations": ["Mock limitation"],
+        }
+        store_file.write_text(json.dumps(valid_attestation, indent=2), encoding="utf-8")
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint=fp)
+        assert status == "PROVEN"
+
+    def test_plugin_state_change_invalidates_attestation(self, temp_capability_env):
+        """L. Same executable but plugin enabled-state change resolves UNPROVEN."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        prof_before = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
+        fp_before = compute_runtime_environment_fingerprint(prof_before)
+
+        prof_after = {"schema_version": "0.1.0", "enabled_plugins": ["googlecloudtools.datacloud_telemetry"], "permissions_config": {}, "node_available": True, "node_version": "v24.19.0"}
+        fp_after = compute_runtime_environment_fingerprint(prof_after)
+
+        attestation = {
+            "schema_version": "0.1.0",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.7",
+            "executable_filename": fake_id["filename"],
+            "executable_sha256": fake_id["sha256"],
+            "reported_cli_version": fake_id["version"],
+            "runtime_environment_profile_version": "0.1.0",
+            "runtime_environment_fingerprint_sha256": fp_before,
+            "capability_status": "PROVEN",
+            "probe_id": "PROBE-PLUGIN-TEST",
+            "probe_timestamp": "2026-08-24T00:00:00Z",
+            "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
+            "capabilities_proven": ["noninteractive_headless_transport"],
+            "limitations": ["Mock limitation"],
+        }
+        store_file.write_text(json.dumps(attestation, indent=2), encoding="utf-8")
+        # When checking against updated profile (with enabled plugin), status must be UNPROVEN
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint=fp_after)
+        assert status == "UNPROVEN"
+
+    def test_permission_config_change_invalidates_attestation(self, temp_capability_env):
+        """M. Permission configuration change resolves UNPROVEN."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        prof_before = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {"agentMode": "safe"}, "node_available": True, "node_version": "v24.19.0"}
+        fp_before = compute_runtime_environment_fingerprint(prof_before)
+
+        prof_after = {"schema_version": "0.1.0", "enabled_plugins": [], "permissions_config": {"agentMode": "dangerously-skip-permissions"}, "node_available": True, "node_version": "v24.19.0"}
+        fp_after = compute_runtime_environment_fingerprint(prof_after)
+
+        attestation = {
+            "schema_version": "0.1.0",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.7",
+            "executable_filename": fake_id["filename"],
+            "executable_sha256": fake_id["sha256"],
+            "reported_cli_version": fake_id["version"],
+            "runtime_environment_profile_version": "0.1.0",
+            "runtime_environment_fingerprint_sha256": fp_before,
+            "capability_status": "PROVEN",
+            "probe_id": "PROBE-PERM-TEST",
+            "probe_timestamp": "2026-08-24T00:00:00Z",
+            "aos_revision_used_for_probe": "0000000000000000000000000000000000000000",
+            "capabilities_proven": ["noninteractive_headless_transport"],
+            "limitations": ["Mock limitation"],
+        }
+        store_file.write_text(json.dumps(attestation, indent=2), encoding="utf-8")
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, runtime_fingerprint=fp_after)
+        assert status == "UNPROVEN"
+
+    def test_malformed_runtime_config_resolves_unproven(self, temp_capability_env):
+        """N. Malformed runtime config resolves UNPROVEN."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        mock_root = Path(temp_dir) / "bad_config_root"
+        config_f = mock_root / "config" / "config.json"
+        config_f.parent.mkdir(parents=True, exist_ok=True)
+        config_f.write_text("NOT VALID JSON", encoding="utf-8")
+
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, config_root=mock_root)
+        assert status == "UNPROVEN"
+
+    def test_trusted_workspaces_not_leaked_into_profile_or_fingerprint(self):
+        """O & P. trustedWorkspaces paths, usernames, home paths do NOT leak into profile or fingerprint."""
+        mock_root = Path(tempfile.mkdtemp(prefix="aos_prof_leak_test_"))
+        try:
+            settings_f = mock_root / "antigravity-cli" / "settings.json"
+            settings_f.parent.mkdir(parents=True, exist_ok=True)
+            settings_f.write_text(
+                json.dumps({
+                    "trustedWorkspaces": ["C:\\Users\\secret_user\\top_secret_repo", "/home/another_secret/repo"],
+                    "apiToken": "secret-token-xyz-12345",
+                    "permissions": {"allow": ["read"]}
+                }),
+                encoding="utf-8"
+            )
+            prof = resolve_runtime_environment_profile(config_root=mock_root, node_finder=lambda: None)
+            prof_str = json.dumps(prof)
+            assert "secret_user" not in prof_str
+            assert "top_secret_repo" not in prof_str
+            assert "secret-token-xyz-12345" not in prof_str
+            assert prof["permissions_config"] == {"permissions": {"allow": ["read"]}}
+        finally:
+            shutil.rmtree(mock_root, ignore_errors=True)
+
+    def test_telemetry_disabled_host_profile_generic_representation(self):
+        """Q. Current telemetry-disabled host profile is represented generically without hardcoding."""
+        mock_root = Path(tempfile.mkdtemp(prefix="aos_prof_gen_test_"))
+        try:
+            plugin_dir = mock_root / "config" / "plugins" / "googlecloudtools.datacloud_telemetry"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+            (plugin_dir / "hooks.json").write_text(json.dumps({"googlecloudtools.datacloud_telemetry": {"enabled": True}}), encoding="utf-8")
+            config_f = mock_root / "config" / "config.json"
+            config_f.write_text(json.dumps({"plugins": {"googlecloudtools.datacloud_telemetry": {"enabled": False}}}), encoding="utf-8")
+
+            prof = resolve_runtime_environment_profile(config_root=mock_root, node_finder=lambda: "fake_node", node_runner=lambda cmd: subprocess.CompletedProcess(cmd, 0, stdout="v24.19.0", stderr=""))
+            assert prof["enabled_plugins"] == []
+            assert prof["node_available"] is True
+            assert prof["node_version"] == "v24.19.0"
+        finally:
+            shutil.rmtree(mock_root, ignore_errors=True)
