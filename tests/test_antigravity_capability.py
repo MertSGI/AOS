@@ -1868,3 +1868,277 @@ class TestAntigravityCapabilityV028:
         std_p = get_local_capability_store_path("antigravity")
         assert "antigravity.json" in str(std_p)
         assert str(override_dir) not in str(std_p)
+
+    def test_production_execute_argv_contains_stream_json(self):
+        """J. production execute argv explicitly includes --output-format=stream-json."""
+        captured_cmd = []
+
+        def mock_runner(cmd, cwd, timeout, env):
+            captured_cmd.extend(cmd)
+            valid_stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+                json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+                json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=valid_stream, stderr="")
+
+        adapter = AntigravityWorkerAdapter(capability_status_override="TEST_DOUBLE", runner=mock_runner)
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path="/tmp/test_ws",
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert "--output-format=stream-json" in captured_cmd
+        assert res.exit_code == 0
+        assert res.timed_out is False
+
+    def test_worker_result_success_clean_stream(self):
+        """A. Returncode 0 + valid stream + terminal SUCCESS + clean tools + cwd match -> success."""
+        ws_path = "/tmp/test_ws"
+        valid_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=valid_stream, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code == 0
+        assert res.timed_out is False
+        summary = json.loads(res.stdout_summary)
+        assert summary["stream_valid"] is True
+        assert summary["terminal_status"] == "SUCCESS"
+        assert summary["failed_tool_observed"] is False
+        assert summary["reported_cwd_matches_workspace"] is True
+
+    def test_worker_result_failure_terminal_error(self):
+        """B. Returncode 0 + terminal ERROR -> failure (exit_code non-zero)."""
+        ws_path = "/tmp/test_ws"
+        error_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "ERROR"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=error_stream, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Terminal status is not SUCCESS" in res.stderr_summary
+
+    def test_worker_result_failure_tool_error_before_done(self):
+        """C. Returncode 0 + ERROR -> DONE sequence -> failure."""
+        ws_path = "/tmp/test_ws"
+        error_done_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ERROR", "tool_info": {"error": {"type": "PermissionDenied"}}}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=error_done_stream, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Failed tool observed" in res.stderr_summary
+
+    def test_worker_result_failure_permission_soft_denial(self):
+        """D. Returncode 0 + permission soft-denial -> failure."""
+        ws_path = "/tmp/test_ws"
+        denial_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ACTIVE"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "ERROR", "tool_info": {"error": {"message": "Permission denied for artifact review"}}}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=denial_stream, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Permission soft denial observed" in res.stderr_summary
+
+    def test_worker_result_failure_malformed_stream(self):
+        """E. Returncode 0 + malformed stream -> failure."""
+        ws_path = "/tmp/test_ws"
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout="THIS IS NOT JSON\n", stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Invalid stream" in res.stderr_summary
+
+    def test_worker_result_failure_missing_terminal_result(self):
+        """F. Returncode 0 + missing terminal result -> failure."""
+        ws_path = "/tmp/test_ws"
+        stream_no_result = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=stream_no_result, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Invalid stream" in res.stderr_summary
+
+    def test_worker_result_failure_cwd_mismatch(self):
+        """G. Returncode 0 + cwd mismatch -> failure."""
+        ws_path = "/tmp/expected_ws"
+        stream_wrong_cwd = (
+            json.dumps({"event": "init", "init": {"cwd": "/tmp/unexpected_other_ws", "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=stream_wrong_cwd, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code != 0
+        assert "Reported cwd does not match workspace" in res.stderr_summary
+
+    def test_worker_result_failure_nonzero_subprocess_exit(self):
+        """H. Process returncode non-zero even with superficially successful stream -> failure."""
+        ws_path = "/tmp/test_ws"
+        valid_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 1, stdout=valid_stream, stderr="fatal host error"),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert res.exit_code == 1
+        assert "Subprocess non-zero exit" in res.stderr_summary
+
+    def test_safe_stdout_summary_no_leaks(self):
+        """I. stdout_summary is compact JSON with zero raw agent responses or tool parameters."""
+        ws_path = "/tmp/test_ws"
+        rich_stream = (
+            json.dumps({"event": "init", "init": {"cwd": ws_path, "tools": ["write_to_file"]}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "state": "DONE", "text_delta": "SECRET_THOUGHTS_AND_REASONING"}}) + "\n" +
+            json.dumps({"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "write_to_file", "state": "DONE", "tool_info": {"args": {"secret_param": "SECRET_KEY_VAL"}}}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n"
+        )
+        adapter = AntigravityWorkerAdapter(
+            capability_status_override="TEST_DOUBLE",
+            runner=lambda cmd, cwd, t, env: subprocess.CompletedProcess(cmd, 0, stdout=rich_stream, stderr=""),
+        )
+        res = adapter.execute(
+            task={"task_id": "TEST-1", "title": "Test", "description": "Desc"},
+            workspace_path=ws_path,
+            allowed_scope={"paths": ["file.txt"]},
+            base_sha="0"*40,
+        )
+        assert "SECRET_THOUGHTS_AND_REASONING" not in res.stdout_summary
+        assert "SECRET_KEY_VAL" not in res.stdout_summary
+        summary = json.loads(res.stdout_summary)
+        assert summary["stream_valid"] is True
+        assert summary["terminal_status"] == "SUCCESS"
+
+    def test_controlled_execution_rejects_worker_with_terminal_error(self, tmp_path):
+        """M. ControlledExecutionEngine with runner returning exit 0 but terminal ERROR yields WORKER_FAILED with 0 verification calls."""
+        task = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "task_id": "TEST-R1-FAIL",
+            "gate": "AOS-3",
+            "risk_class": "R1",
+            "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
+            "branch_name": "aos/test-r1-fail",
+            "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
+            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
+            "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
+        }
+        descriptor = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "repository": "MertSGI/AOS",
+            "control_ref": "feature/aos-3-execution-base-authority",
+            "control": {"state": "docs/project-control/STATE.json", "decisions": "DECISIONS.md", "evidence": "EVIDENCE.jsonl", "roadmap": "ROADMAP.md"},
+            "authority": {"production_mutation": "human_required", "roadmap_change": "human_required", "destructive_data": "human_required"},
+            "verification": {"checks": {"chk1": {"argv": ["python", "-c", "import sys; sys.exit(0)"]}}},
+        }
+
+        verif_call_count = 0
+
+        def mock_verif_runner(argv, cwd, timeout_seconds, env):
+            nonlocal verif_call_count
+            verif_call_count += 1
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        def mock_worker_runner(cmd, cwd, timeout, env):
+            err_stream = (
+                json.dumps({"event": "init", "init": {"cwd": cwd, "tools": ["write_to_file"]}}) + "\n" +
+                json.dumps({"event": "result", "result": {"status": "ERROR"}}) + "\n"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=err_stream, stderr="")
+
+        adapter_instance = AntigravityWorkerAdapter(capability_status_override="TEST_DOUBLE", runner=mock_worker_runner)
+
+        engine = ControlledExecutionEngine(
+            project_descriptor=descriptor,
+            canonical_task=task,
+            source_adapter_factory=lambda repo, ref: MockSourceAdapter(repo, ref),
+            git_workspace_factory=lambda repo, base, tid, bname: MockGitWorkspace(repo, base, tid, bname),
+            worker_adapter_factory=lambda: adapter_instance,
+            verification_runner=mock_verif_runner,
+            repo_identity_inspector=lambda path: "MertSGI/AOS",
+        )
+
+        res = engine.execute(local_target_repo_path=str(tmp_path))
+        assert res["disposition"] == "WORKER_FAILED"
+        assert verif_call_count == 0

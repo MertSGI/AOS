@@ -810,6 +810,7 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             workspace_path=str(workspace_dir),
             prompt=prompt,
             timeout_seconds=min(timeout_seconds, 180),
+            output_format="stream-json",
         )
 
         # Scrub sensitive environment variables
@@ -823,20 +824,99 @@ class AntigravityWorkerAdapter(WorkerAdapter):
 
         try:
             res = self.runner(cmd, workspace_path, timeout_seconds, env)
-            exit_code = res.returncode
-            parsed_json = parse_antigravity_json_output(res.stdout or "")
-            stdout_summary = (res.stdout or "")[:1000]
-            stderr_summary = (res.stderr or "")[:1000]
+            raw_stdout = res.stdout or ""
+            raw_stderr = res.stderr or ""
+            proc_exit_code = res.returncode
             mutation_attempted = True
+
+            # Parse stream-json output using proven fail-closed parser
+            stream_res = parse_antigravity_stream_output(raw_stdout, workspace_path=workspace_path)
+
+            # Compact, sanitized summary with NO raw agent responses, reasoning, tool parameters, or absolute paths
+            summary_dict = {
+                "stream_valid": stream_res.get("is_valid_stream", False),
+                "terminal_status": stream_res.get("terminal_status"),
+                "failed_step_observed": stream_res.get("failed_step_observed", False),
+                "failed_tool_observed": stream_res.get("failed_tool_observed", False),
+                "failed_tool_name": stream_res.get("failed_tool_name"),
+                "failed_tool_error_type": stream_res.get("failed_tool_error_type"),
+                "permission_soft_denial_observed": stream_res.get("permission_soft_denial_observed", False),
+                "reported_cwd_matches_workspace": stream_res.get("reported_cwd_matches_workspace", False),
+            }
+            stdout_summary = json.dumps(summary_dict, sort_keys=True)
+
+            # Check stderr for permission or approval denial signals
+            stderr_perm_denial = False
+            if raw_stderr:
+                low_stderr = raw_stderr.lower()
+                stderr_perm_denial = any(
+                    kw in low_stderr
+                    for kw in ("permission", "approval", "denied", "denial", "interactive review", "interactive approval")
+                )
+
+            # Structured fail-closed success contract
+            semantic_success = (
+                proc_exit_code == 0
+                and stream_res.get("is_valid_stream") is True
+                and stream_res.get("terminal_status") == "SUCCESS"
+                and stream_res.get("terminal_error_present") is False
+                and stream_res.get("failed_step_observed") is False
+                and stream_res.get("failed_tool_observed") is False
+                and stream_res.get("permission_soft_denial_observed") is False
+                and stream_res.get("reported_cwd_matches_workspace") is True
+                and not stderr_perm_denial
+            )
+
+            if semantic_success:
+                exit_code = 0
+                stderr_summary = sanitize_stderr_summary(raw_stderr) if raw_stderr else ""
+            else:
+                exit_code = proc_exit_code if proc_exit_code != 0 else 1
+                failure_reasons = []
+                if proc_exit_code != 0:
+                    failure_reasons.append(f"Subprocess non-zero exit ({proc_exit_code})")
+                if not stream_res.get("is_valid_stream"):
+                    errs_str = "; ".join(stream_res.get("parser_errors", [])) or "invalid stream structure"
+                    failure_reasons.append(f"Invalid stream: {errs_str}")
+                if stream_res.get("terminal_status") != "SUCCESS":
+                    failure_reasons.append(f"Terminal status is not SUCCESS (got '{stream_res.get('terminal_status')}')")
+                if stream_res.get("terminal_error_present"):
+                    failure_reasons.append("Terminal error present in stream")
+                if stream_res.get("failed_step_observed"):
+                    failure_reasons.append(f"Failed step observed (type: {stream_res.get('failed_step_type')})")
+                if stream_res.get("failed_tool_observed"):
+                    failure_reasons.append(
+                        f"Failed tool observed (tool: {stream_res.get('failed_tool_name')}, error: {stream_res.get('failed_tool_error_type')})"
+                    )
+                if stream_res.get("permission_soft_denial_observed"):
+                    failure_reasons.append("Permission soft denial observed in stream")
+                if stream_res.get("reported_cwd_matches_workspace") is not True:
+                    failure_reasons.append("Reported cwd does not match workspace")
+                if stderr_perm_denial:
+                    failure_reasons.append("Permission/approval denial signal detected in stderr")
+
+                reason_summary = "; ".join(failure_reasons)
+                stderr_summary = f"Worker semantic failure: {reason_summary}"
         except subprocess.TimeoutExpired as te:
             timed_out = True
             exit_code = None
-            stdout_summary = (te.stdout or "")[:1000] if isinstance(te.stdout, str) else ""
-            stderr_summary = (te.stderr or "")[:1000] if isinstance(te.stderr, str) else "Command timed out"
+            raw_out = (te.stdout or "") if isinstance(te.stdout, str) else ""
+            stream_res = parse_antigravity_stream_output(raw_out, workspace_path=workspace_path)
+            stdout_summary = json.dumps({
+                "stream_valid": stream_res.get("is_valid_stream", False),
+                "terminal_status": stream_res.get("terminal_status"),
+                "failed_step_observed": stream_res.get("failed_step_observed", False),
+                "failed_tool_observed": stream_res.get("failed_tool_observed", False),
+                "failed_tool_name": stream_res.get("failed_tool_name"),
+                "failed_tool_error_type": stream_res.get("failed_tool_error_type"),
+                "permission_soft_denial_observed": stream_res.get("permission_soft_denial_observed", False),
+                "reported_cwd_matches_workspace": stream_res.get("reported_cwd_matches_workspace", False),
+            }, sort_keys=True)
+            stderr_summary = "Command timed out"
             mutation_attempted = True
         except Exception as e:
             exit_code = 1
-            stderr_summary = str(e)[:1000]
+            stderr_summary = f"Worker execution exception: {type(e).__name__}"
 
         finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
