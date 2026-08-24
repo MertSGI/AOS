@@ -1,4 +1,4 @@
-"""Generic Controlled Single-Worker Execution Engine for AOS-3."""
+"""Generic Controlled Single-Worker Execution Engine."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TO
 
 
 class ControlledExecutionEngine:
-    """Project-agnostic deterministic controlled execution engine for AOS-3."""
+    """Project-agnostic deterministic controlled execution engine."""
 
     def __init__(
         self,
@@ -85,6 +85,7 @@ class ControlledExecutionEngine:
             "git_integrity_final",
             "scope_guard_final",
             "live_guard_final",
+            "candidate_persistence",
         ])
 
         pipeline_status: Dict[str, Dict[str, Any]] = {
@@ -218,7 +219,7 @@ class ControlledExecutionEngine:
         worker_reqs = self.task.get("worker_requirements", {})
         if not worker_reqs.get("isolated_worktree") or worker_reqs.get("adapter") != "antigravity":
             _record_check("worker_requirements", "FAIL", "Invalid worker requirements")
-            return _build_and_validate_result("HOLD", err_list=["AOS-3 requires isolated_worktree = true and adapter = 'antigravity'"])
+            return _build_and_validate_result("HOLD", err_list=["Controlled execution requires isolated_worktree = true and adapter = 'antigravity'"])
         _record_check("worker_requirements", "PASS")
 
         # 5. Check worker capability status (Fail closed on UNPROVEN)
@@ -241,7 +242,7 @@ class ControlledExecutionEngine:
         # 7. Check required verification checks in evidence requirements
         if not req_checks:
             _record_check("required_checks_contract", "FAIL", "No declared required verification checks")
-            return _build_and_validate_result("HOLD", err_list=["Initial AOS-3 R1 controlled execution requires at least one declared verification check"])
+            return _build_and_validate_result("HOLD", err_list=["Controlled execution requires at least one declared verification check"])
 
         desc_verification_checks = self.descriptor.get("verification", {}).get("checks", {})
         for check_id in req_checks:

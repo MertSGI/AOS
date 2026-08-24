@@ -610,6 +610,155 @@ class TestControlledExecutionEngineFinalHardened:
             os.environ.pop("GEMINI_API_KEY", None)
             os.environ.pop("GH_TOKEN", None)
 
+    def test_successful_engine_result_contains_candidate_persistence_pass(self):
+        """J & O & P & Q & R. Successful engine result contains candidate_persistence == PASS, PERSISTED status, no absolute path, untouched source."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFIED_CANDIDATE"
+
+        # Check candidate_persistence check exists and is PASS
+        cand_check = next((c for c in res["verification_checks"] if c["check_id"] == "candidate_persistence"), None)
+        assert cand_check is not None
+        assert cand_check["status"] == "PASS"
+
+        # Check extensions
+        assert "candidate" in res.get("extensions", {})
+        cand_ext = res["extensions"]["candidate"]
+        assert cand_ext["status"] == "PERSISTED"
+        assert cand_ext["candidate_store_contract_version"] == "0.1.0"
+        assert "candidate_id" in cand_ext
+        assert "manifest_sha256" in cand_ext
+
+        # Verify no candidate absolute path in result
+        res_json_str = json.dumps(res)
+        assert "/workspace" not in cand_ext.get("candidate_id", "")
+        assert "\\" not in cand_ext.get("candidate_id", "")
+
+    def test_candidate_persistence_injected_failure_returns_verification_failed_and_cand_fail(self, monkeypatch):
+        """K. Candidate persistence failure returns disposition != VERIFIED_CANDIDATE and candidate_persistence == FAIL."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        import aos.controlled_execution as ce_mod
+
+        def _bad_persist(*args, **kwargs):
+            raise CandidateStoreError("Injected persistence failure disk full")
+
+        monkeypatch.setattr(ce_mod, "persist_verified_candidate", _bad_persist)
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert res["disposition"] != "VERIFIED_CANDIDATE"
+
+        cand_check = next((c for c in res["verification_checks"] if c["check_id"] == "candidate_persistence"), None)
+        assert cand_check is not None
+        assert cand_check["status"] == "FAIL"
+
+    def test_worker_failure_before_persistence_leaves_persistence_not_run(self):
+        """L. Worker failure before persistence leaves candidate_persistence == NOT_RUN."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter(exit_code=1)
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "WORKER_FAILED"
+
+        cand_check = next((c for c in res["verification_checks"] if c["check_id"] == "candidate_persistence"), None)
+        assert cand_check is not None
+        assert cand_check["status"] == "NOT_RUN"
+
+    def test_verification_failure_before_persistence_leaves_persistence_not_run(self):
+        """M. Verification failure before persistence leaves candidate_persistence == NOT_RUN."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_fail_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+
+        cand_check = next((c for c in res["verification_checks"] if c["check_id"] == "candidate_persistence"), None)
+        assert cand_check is not None
+        assert cand_check["status"] == "NOT_RUN"
+
+    def test_stale_final_live_guard_leaves_persistence_not_run(self):
+        """N. Stale final LIVE_GUARD leaves candidate_persistence == NOT_RUN."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter(
+            "GenericOrg/GenericRepo", "control/main",
+            control_sha="4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            second_control_sha="9999999999999999999999999999999999999999",
+            stale_on_call=4,
+        )
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "HOLD"
+        assert any("STALE_CONTROL_REVISION_FINAL" in e for e in res["errors"])
+
+        cand_check = next((c for c in res["verification_checks"] if c["check_id"] == "candidate_persistence"), None)
+        assert cand_check is not None
+        assert cand_check["status"] == "NOT_RUN"
+
+
 
 class TestRealGitControlledWorkspace:
     """Real Git integration tests on temporary repositories."""

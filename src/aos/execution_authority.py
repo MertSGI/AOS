@@ -1,4 +1,4 @@
-"""Deterministic execution authority validator for AOS-3."""
+"""Deterministic execution authority validator for controlled execution."""
 
 from __future__ import annotations
 

@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_BOOTSTRAP_CONTROLLER_PREREQUISITE_REVIEW_PENDING",
+    "status": "AOS_4_CANDIDATE_HANDOFF_INTEGRITY_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently verify generic execution authority, mandatory AOS4 verification checks, and durable verified-candidate handoff; then execute canonical AOS4-REF-001 through ControlledExecutionEngine from execution base 1dfd59f850383dc4f40a59fd42462facb2b89315.",
+    "next_action": "Independently verify durable candidate pipeline serialization, zero-symlink candidate persistence, and zero-remote candidate integrity before executing canonical AOS4-REF-001.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,11 +114,11 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "BLOCKED_CONTROLLER_PREREQUISITE_REVIEW",
+            "reference_status": "BLOCKED_CANDIDATE_HANDOFF_INTEGRITY_REVIEW",
             "controller_prerequisites": {
-                "generic_execution_authority": "IMPLEMENTED_REVIEW_PENDING",
-                "required_checks_contract": "IMPLEMENTED_REVIEW_PENDING",
-                "durable_candidate_handoff": "IMPLEMENTED_REVIEW_PENDING"
+                "generic_execution_authority": "INDEPENDENTLY_ACCEPTED",
+                "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
+                "durable_candidate_handoff": "HARDENED_REVIEW_PENDING"
             }
         }
     },

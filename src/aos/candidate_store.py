@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,51 @@ def compute_file_sha256(file_path: Path) -> str:
 def canonical_json_bytes(data: Dict[str, Any]) -> bytes:
     """Produce deterministic canonical UTF-8 JSON bytes."""
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _scan_tree_for_symlinks(root: Path, label: str = "workspace") -> None:
+    """Recursively scan a directory tree using safe non-following traversal to ensure zero symlinks exist."""
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dir_p = Path(dirpath)
+        # Check if current directory entry itself is a symlink
+        if dir_p.is_symlink():
+            raise CandidateStoreError(f"Symlinks are not permitted in {label}: directory symlink found at '{dir_p.relative_to(root)}'")
+
+        for d in dirnames:
+            p = dir_p / d
+            if p.is_symlink():
+                raise CandidateStoreError(f"Symlinks are not permitted in {label}: directory symlink found at '{p.relative_to(root)}'")
+
+        for f in filenames:
+            p = dir_p / f
+            if p.is_symlink():
+                raise CandidateStoreError(f"Symlinks are not permitted in {label}: file symlink found at '{p.relative_to(root)}'")
+
+
+def _verify_candidate_zero_remotes(target_ws: Path) -> None:
+    """Verify that the persisted candidate workspace has zero Git remotes via read-only git inspection."""
+    git_dir = target_ws / ".git"
+    if not git_dir.exists():
+        return
+
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(target_ws), "remote"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if res.returncode != 0:
+            raise CandidateStoreError(f"Failed to inspect candidate workspace git remotes: {res.stderr.strip() or res.stdout.strip()}")
+        remotes = res.stdout.strip()
+        if remotes:
+            raise CandidateStoreError("Candidate workspace contains git remotes after persistence")
+    except subprocess.TimeoutExpired as te:
+        raise CandidateStoreError(f"Git remote inspection timed out: {te}") from te
+    except Exception as e:
+        if isinstance(e, CandidateStoreError):
+            raise
+        raise CandidateStoreError(f"Git remote verification failed: {e}") from e
 
 
 def persist_verified_candidate(
@@ -100,28 +146,60 @@ def persist_verified_candidate(
     target_ws = target_dir / "workspace"
 
     try:
+        # Pre-copy scan: Ensure source workspace contains zero symlinks anywhere
+        _scan_tree_for_symlinks(ws_path, label="source workspace")
+
         target_dir.mkdir(parents=True, exist_ok=False)
 
-        # Copy workspace directory contents
-        shutil.copytree(ws_path, target_ws, symlinks=False, ignore_dangling_symlinks=False)
+        # Copy workspace directory contents without dereferencing symlinks
+        shutil.copytree(ws_path, target_ws, symlinks=True, ignore_dangling_symlinks=False)
 
-        # Inspect changed paths to build manifest
+        # Post-copy scan: Ensure persisted candidate workspace contains zero symlinks
+        _scan_tree_for_symlinks(target_ws, label="persisted candidate workspace")
+
+        # Verify candidate git repository has zero remotes
+        _verify_candidate_zero_remotes(target_ws)
+
+        # Validate and inspect changed paths to build manifest
         paths_manifest: List[Dict[str, Any]] = []
-        for rel_path in sorted(changed_paths):
-            f_target = target_ws / rel_path
-            if f_target.is_symlink():
+        for raw_path in sorted(changed_paths):
+            if not raw_path or not isinstance(raw_path, str):
+                raise CandidateStoreError(f"Invalid changed path: empty or non-string value '{raw_path}'")
+
+            # Reject drive-qualified or absolute paths
+            p_obj = Path(raw_path)
+            if p_obj.is_absolute() or p_obj.drive or raw_path.startswith("/") or raw_path.startswith("\\"):
+                raise CandidateStoreError(f"Changed path must be repository-relative and not absolute: '{raw_path}'")
+
+            # Reject parent traversal components
+            parts = p_obj.parts
+            if ".." in parts or "." in parts:
+                raise CandidateStoreError(f"Changed path contains traversal components: '{raw_path}'")
+
+            # Normalized relative path
+            rel_path = p_obj.as_posix()
+
+            # Ensure resolution does not escape target_ws
+            f_target = (target_ws / p_obj).resolve()
+            try:
+                f_target.relative_to(target_ws.resolve())
+            except ValueError:
+                raise CandidateStoreError(f"Changed path escapes candidate workspace: '{raw_path}'")
+
+            target_direct = target_ws / rel_path
+            if target_direct.is_symlink():
                 raise CandidateStoreError(f"Symlinks are not permitted in candidate workspace: '{rel_path}'")
 
-            if f_target.is_file():
-                sz = f_target.stat().st_size
-                sha = compute_file_sha256(f_target)
+            if target_direct.is_file():
+                sz = target_direct.stat().st_size
+                sha = compute_file_sha256(target_direct)
                 paths_manifest.append({
                     "path": rel_path,
                     "state": "PRESENT",
                     "size_bytes": sz,
                     "sha256": sha,
                 })
-            elif not f_target.exists():
+            elif not target_direct.exists():
                 paths_manifest.append({
                     "path": rel_path,
                     "state": "DELETED",
