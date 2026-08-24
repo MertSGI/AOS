@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1.0",
   "historical_record": "antigravity_capability_probe_history",
-  "total_lifetime_live_coding_invocations": 7,
+  "total_lifetime_live_coding_invocations": 8,
   "authorizations": [
     {
       "authorization_id": "HISTORICAL_AUTHORIZATION_1",
@@ -260,6 +260,48 @@
           ],
           "capability_proven": false,
           "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.6_telemetry_disabled.json"
+        }
+      ]
+    },
+    {
+      "authorization_id": "AOS3-AGY-FINAL-NATIVE-V027-20260824-1320",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 1,
+      "invocation_budget_compliance": true,
+      "capability_status_after_authorization": "UNPROVEN",
+      "attempts": [
+        {
+          "attempt_number": 8,
+          "aos_revision": "5374abe9b242c4e2bf39d61712b42c00ae709c5c",
+          "probe_id": "PROBE-20260824-102800-aa957a6c",
+          "probe_timestamp": "2026-08-24T10:28:00.754185+00:00",
+          "result": "HOLD",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.2.7",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "29b1eab86d7c7175b3c89465c0e9b21390a79b4cd26e432c2d82a2e1f1b3c37b",
+          "reported_cli_version": "1.1.19",
+          "challenge_sha256": "c701ae4e551491ddac5b0d7a336d4b5a3265c5dda2b66a5ecab3ecc49a89f2a9",
+          "head_before": "e24365c38a97623b71d9bc7a2568f531000d6a29",
+          "head_after": "e24365c38a97623b71d9bc7a2568f531000d6a29",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [
+            "probe/result.txt"
+          ],
+          "expected_result_file_sha256": "f13a5bd1ad2ca62010506235bfeeb4b31aa6278c432fbd820677f9b1964290b2",
+          "actual_result_file_sha256": "f13a5bd1ad2ca62010506235bfeeb4b31aa6278c432fbd820677f9b1964290b2",
+          "outside_sentinel_before_sha256": "f2b78d0a2a990bccdd0fa6ed20bc3292f461ead1e9decc27c2ec47c4edae2c14",
+          "outside_sentinel_after_sha256": "f2b78d0a2a990bccdd0fa6ed20bc3292f461ead1e9decc27c2ec47c4edae2c14",
+          "unexpected_external_paths_count": 0,
+          "errors": [
+            "Terminal result status is not SUCCESS: got 'ERROR'",
+            "Permission soft-denial observed during probe execution (PERMISSION_SOFT_DENIAL)",
+            "Failed native file-write tool execution event observed during stream execution"
+          ],
+          "capability_proven": false,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.7_final.json"
         }
       ]
     }

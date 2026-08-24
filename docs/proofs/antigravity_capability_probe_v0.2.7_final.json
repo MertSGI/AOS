@@ -1,0 +1,121 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS3-AGY-FINAL-NATIVE-V027-20260824-1320",
+  "authorized_live_coding_invocations": 1,
+  "actual_live_coding_invocations": 1,
+  "invocation_budget_compliance": true,
+  "probe_id": "PROBE-20260824-102800-aa957a6c",
+  "probe_status": "HOLD",
+  "probe_timestamp": "2026-08-24T10:28:00.754185+00:00",
+  "aos_revision_used": "5374abe9b242c4e2bf39d61712b42c00ae709c5c",
+  "adapter_contract_version": "0.2.7",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "29b1eab86d7c7175b3c89465c0e9b21390a79b4cd26e432c2d82a2e1f1b3c37b",
+  "reported_cli_version": "1.1.19",
+  "runtime_environment_profile_version": "0.1.0",
+  "runtime_fingerprint_before": "08dd6d10e53fcf6238ddc8d006a4364f89f2fc75c83a53156a3e90cd5b0d68a8",
+  "runtime_fingerprint_after": "08dd6d10e53fcf6238ddc8d006a4364f89f2fc75c83a53156a3e90cd5b0d68a8",
+  "runtime_fingerprint_stable": true,
+  "node_available": true,
+  "node_version": "v24.19.0",
+  "enabled_plugin_count": 0,
+  "enabled_plugins": [],
+  "telemetry_plugin_disabled": true,
+  "confirmed_invocation_capabilities": [
+    "--mode=accept-edits",
+    "--add-dir",
+    "--output-format=stream-json",
+    "--print-timeout=180s",
+    "-p"
+  ],
+  "output_format": "stream-json",
+  "stream_valid": true,
+  "terminal_status": "ERROR",
+  "permission_mode": "request-review",
+  "reported_cwd_matches_workspace": true,
+  "write_tool_advertised": true,
+  "write_tool_available": true,
+  "completed_write_tool_observed": true,
+  "failed_native_write_tool_observed": true,
+  "failed_step_observed": true,
+  "failed_step_type": "tool",
+  "failed_tool_observed": true,
+  "failed_tool_name": "write_to_file",
+  "failed_tool_state": "ERROR",
+  "failed_tool_error_present": true,
+  "failed_tool_error_type": "PERMISSION_DENIED",
+  "error_message_present": true,
+  "error_message_byte_length": 370,
+  "error_message_sha256": "db6cfd4729fb3865925b57b0319e3fd759202731410d0981c3d9a3ff95a61561",
+  "tool_failure_classification": "PERMISSION_DENIED",
+  "tool_call_count": 6,
+  "tool_calls": [
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "ERROR",
+      "error_present": true,
+      "error_type": "PERMISSION_DENIED"
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "DONE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "view_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "view_file",
+      "state": "DONE",
+      "error_present": false,
+      "error_type": null
+    }
+  ],
+  "agent_response_observed": true,
+  "stderr_present": false,
+  "permission_soft_denial_observed": true,
+  "terminal_error_present": true,
+  "exit_code": 0,
+  "timed_out": false,
+  "challenge_line_sha256": "c701ae4e551491ddac5b0d7a336d4b5a3265c5dda2b66a5ecab3ecc49a89f2a9",
+  "head_before": "e24365c38a97623b71d9bc7a2568f531000d6a29",
+  "head_after": "e24365c38a97623b71d9bc7a2568f531000d6a29",
+  "branch_before": "main",
+  "branch_after": "main",
+  "changed_paths": [
+    "probe/result.txt"
+  ],
+  "expected_result_file_sha256": "f13a5bd1ad2ca62010506235bfeeb4b31aa6278c432fbd820677f9b1964290b2",
+  "actual_result_file_sha256": "f13a5bd1ad2ca62010506235bfeeb4b31aa6278c432fbd820677f9b1964290b2",
+  "outside_sentinel_before_sha256": "f2b78d0a2a990bccdd0fa6ed20bc3292f461ead1e9decc27c2ec47c4edae2c14",
+  "outside_sentinel_after_sha256": "f2b78d0a2a990bccdd0fa6ed20bc3292f461ead1e9decc27c2ec47c4edae2c14",
+  "unexpected_external_paths_count": 0,
+  "result": "HOLD",
+  "capability_status_after_probe": "UNPROVEN",
+  "fresh_real_adapter_capability_status": "UNPROVEN",
+  "attestation_written": false,
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": [
+    "Terminal result status is not SUCCESS: got 'ERROR'",
+    "Permission soft-denial observed during probe execution (PERMISSION_SOFT_DENIAL)",
+    "Failed native file-write tool execution event observed during stream execution"
+  ]
+}
