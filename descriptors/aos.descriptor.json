@@ -1,0 +1,47 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "repository": "MertSGI/AOS",
+  "control_ref": "feature/aos-3-execution-base-authority",
+  "description": "AOS self-reference descriptor for generic AOS-3 R1 controlled execution proof",
+  "control": {
+    "state": "docs/project-control/STATE.json",
+    "decisions": "docs/project-control/DECISIONS.md",
+    "evidence": "docs/project-control/EVIDENCE.jsonl",
+    "roadmap": "docs/project-control/ROADMAP.md",
+    "charter": "docs/project-control/CHARTER.md",
+    "autonomy_policy": "docs/project-control/AUTONOMY_POLICY.md",
+    "update_protocol": "docs/project-control/UPDATE_PROTOCOL.md"
+  },
+  "projection": {
+    "current_status_pointer": "/status",
+    "current_milestone_pointer": "/current_gate",
+    "canonical_next_action_pointer": "/next_action",
+    "next_action_execution_base_sha_pointer": "/extensions/aos3_controlled_execution/next_action_execution_base_sha",
+    "next_action_execution_base_sha_required": true
+  },
+  "authority": {
+    "production_mutation": "human_required",
+    "roadmap_change": "human_required",
+    "destructive_data": "human_required",
+    "security_boundary_change": "human_required",
+    "payment_activation": "human_required"
+  },
+  "workers": {
+    "branch_prefix": "aos/",
+    "isolated_worktree_required": true,
+    "max_concurrent_workers": 1
+  },
+  "verification": {
+    "checks": {
+      "reference_exact_file": {
+        "argv": [
+          "python",
+          "-c",
+          "from pathlib import Path; import sys; p=Path('docs/proofs/aos3_e2e_worker_result.txt'); sys.exit(0 if p.is_file() and p.read_bytes()==b'AOS-3-R1-E2E-REFERENCE\\n' else 1)"
+        ],
+        "timeout_seconds": 30
+      }
+    }
+  }
+}

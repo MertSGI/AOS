@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-21T17:15:10+03:00",
+    "updated_at": "2026-08-24T14:54:37+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_2_CLOSED_PROVEN_AOS_3_PREREQUISITE_PENDING",
+    "status": "AOS_3_MACHINE_CAPABILITY_PROVEN_E2E_REFERENCE_PENDING",
     "current_gate": "AOS-3",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,8 +68,22 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Establish and verify the generic machine-readable execution-base authority required by AOS-3, then prepare controlled single-worker R1 execution under LIVE_GUARD.",
+    "next_action": "Execute canonical generic R1 task AOS3-REF-001 through ControlledExecutionEngine under LIVE_GUARD from exact execution base be12aa492ce3d8e3e9d447a8e8845ab8c7018dde and require VERIFIED_CANDIDATE before AOS-3 closure.",
     "implementation_started": true,
+    "extensions": {
+        "aos3_controlled_execution": {
+            "machine_capability_status": "PROVEN",
+            "worker_adapter": "antigravity",
+            "adapter_contract_version": "0.2.8",
+            "capability_probe_id": "PROBE-20260824-112913-88edd2a4",
+            "capability_implementation_sha": "d44b30c30c0b6a9d143c94f58fddaafe9cebe4a1",
+            "capability_proof_commit_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+            "next_action_execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+            "reference_descriptor": "descriptors/aos.descriptor.json",
+            "reference_task": "tasks/aos3-reference-task.json",
+            "e2e_reference_status": "PENDING"
+        }
+    },
     "accepted_gates": [
         {
             "gate": "AOS-0",
