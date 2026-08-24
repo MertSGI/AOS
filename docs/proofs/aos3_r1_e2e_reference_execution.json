@@ -1,0 +1,145 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS3-R1-E2E-REF-001-20260824-1650",
+  "controller_authorization_sha": "a2c6122f3770b91f890d785e39fde10428ea132f",
+  "execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+  "task_id": "AOS3-REF-001",
+  "controlled_execution_max": 1,
+  "controlled_execution_actual": 1,
+  "direct_agy_invocations": 0,
+  "nested_worker_invocation_max": 1,
+  "nested_worker_invocation_actual": 1,
+  "provider_calls": 0,
+  "lari_mutations": 0,
+  "external_product_mutations": 0,
+  "production_mutations": 0,
+  "execution_result": {
+    "schema_version": "0.1.0",
+    "project_id": "aos",
+    "task_id": "AOS3-REF-001",
+    "gate": "AOS-3",
+    "disposition": "WORKER_FAILED",
+    "control_source_sha": "a2c6122f3770b91f890d785e39fde10428ea132f",
+    "execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+    "worker_branch": "aos/aos3-ref-001",
+    "initial_head_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+    "final_head_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
+    "changed_paths": [
+      "docs/proofs/aos3_e2e_worker_result.txt"
+    ],
+    "scope_validation": {
+      "is_valid": false,
+      "allowed_paths": [
+        "docs/proofs/aos3_e2e_worker_result.txt"
+      ],
+      "forbidden_paths": [
+        "docs/project-control/",
+        "src/",
+        "schemas/",
+        ".github/",
+        "descriptors/",
+        "tasks/"
+      ],
+      "violations": []
+    },
+    "worker_adapter": "antigravity",
+    "worker_identity": "antigravity-cli (PROVEN)",
+    "worker_capability_status": "PROVEN",
+    "worker_mutation_attempted": true,
+    "worker_exit_code": 1,
+    "worker_timed_out": false,
+    "verification_checks": [
+      {
+        "check_id": "descriptor_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "target_repository_identity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "task_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_requirements",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_capability",
+        "status": "PASS"
+      },
+      {
+        "check_id": "retry_policy",
+        "status": "PASS"
+      },
+      {
+        "check_id": "required_checks_contract",
+        "status": "PASS"
+      },
+      {
+        "check_id": "canonical_snapshot",
+        "status": "PASS"
+      },
+      {
+        "check_id": "execution_authority",
+        "status": "PASS"
+      },
+      {
+        "check_id": "live_guard_pre_execution",
+        "status": "PASS"
+      },
+      {
+        "check_id": "workspace_initial_integrity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_execution",
+        "status": "FAIL",
+        "message": "Worker exited with code 1"
+      },
+      {
+        "check_id": "git_integrity_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "scope_guard_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "live_guard_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "project:reference_exact_file",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "git_integrity_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "scope_guard_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "live_guard_final",
+        "status": "NOT_RUN"
+      }
+    ],
+    "mutation_performed": true,
+    "retry_count": 0,
+    "started_at": "2026-08-24T14:00:14.877412+00:00",
+    "finished_at": "2026-08-24T14:00:35.088689+00:00",
+    "errors": [
+      "Worker exited with code 1"
+    ]
+  },
+  "limitations": [
+    "Disposable isolated R1 execution only.",
+    "No OS-level sandbox containment claim.",
+    "No production mutation.",
+    "VERIFIED_CANDIDATE was not achieved; worker failed semantic result gate.",
+    "Independent review is required."
+  ]
+}
