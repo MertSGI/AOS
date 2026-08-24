@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-24T18:59:53+03:00",
+    "updated_at": "2026-08-24T20:26:03+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_3_CLOSED_PROVEN_AOS_4_READY",
+    "status": "AOS_4_BOOTSTRAP_FIRST_R1_TASK_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Integrate the independently accepted AOS-3 CLOSED_PROVEN transaction into main, then begin AOS-4 Independent Verification & HOLD without executing any new product mutation until AOS-4 control authority is prepared.",
+    "next_action": "Execute canonical AOS-4 foundation task AOS4-REF-001 through ControlledExecutionEngine from the exact bootstrap execution base after independent review of this control transaction.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -102,6 +102,19 @@
             "aos3_closure_status": "CLOSED_PROVEN",
             "current_e2e_controlled_execution_max": 1,
             "current_e2e_retry_max": 0
+        },
+        "aos4_independent_verification": {
+            "status": "BOOTSTRAP",
+            "control_branch": "feature/aos-4-independent-verification-hold",
+            "bootstrap_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+            "next_action_execution_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+            "goal": "Independent verification and deterministic HOLD authority",
+            "executor_may_self_close": false,
+            "independent_verifier_required": true,
+            "contradiction_must_hold": true,
+            "evidence_exact_revision_required": true,
+            "reference_task": "tasks/aos4-reference-task.json",
+            "reference_status": "PENDING"
         }
     },
     "accepted_gates": [
