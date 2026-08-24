@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-24T16:45:40+03:00",
+    "updated_at": "2026-08-24T16:58:26+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_3_E2E_CONTROLLER_RESULT_GATE_HARDENING_REVIEW_PENDING",
+    "status": "AOS_3_R1_E2E_LIVE_EXECUTION_AUTHORIZED",
     "current_gate": "AOS-3",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently verify fail-closed production Antigravity stream-result enforcement, then execute existing canonical R1 task AOS3-REF-001 through ControlledExecutionEngine.",
+    "next_action": "Execute canonical generic R1 task AOS3-REF-001 exactly once through ControlledExecutionEngine under LIVE_GUARD from execution base be12aa492ce3d8e3e9d447a8e8845ab8c7018dde and require VERIFIED_CANDIDATE before AOS-3 closure.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -81,7 +81,9 @@
             "next_action_execution_base_sha": "be12aa492ce3d8e3e9d447a8e8845ab8c7018dde",
             "reference_descriptor": "descriptors/aos.descriptor.json",
             "reference_task": "tasks/aos3-reference-task.json",
-            "e2e_reference_status": "BLOCKED_CONTROLLER_RESULT_GATE_REVIEW"
+            "e2e_reference_status": "AUTHORIZED_SINGLE_LIVE_EXECUTION",
+            "result_gate_hardening_sha": "45b64fc77ec287bbd12daf4f4a9bfb9d4d642c90",
+            "result_gate_hardening_review": "INDEPENDENTLY_ACCEPTED"
         }
     },
     "accepted_gates": [
