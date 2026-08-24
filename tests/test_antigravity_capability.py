@@ -1838,3 +1838,33 @@ class TestAntigravityCapabilityV028:
             assert prof["node_version"] == "v24.19.0"
         finally:
             shutil.rmtree(mock_root, ignore_errors=True)
+
+    def test_malformed_plugin_hooks_fails_closed(self, temp_capability_env):
+        """R. Malformed plugin hooks.json causes resolve_runtime_environment_profile to fail closed / resolve UNPROVEN."""
+        temp_dir, store_file, fake_exe = temp_capability_env
+        fake_id = {"path": fake_exe, "filename": Path(fake_exe).name, "sha256": compute_file_sha256(fake_exe), "version": "1.1.19"}
+        mock_root = Path(temp_dir) / "bad_plugin_root"
+        plugin_dir = mock_root / "config" / "plugins" / "broken_plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "hooks.json").write_text("INVALID JSON", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Malformed plugin hooks configuration"):
+            resolve_runtime_environment_profile(config_root=mock_root)
+
+        status = resolve_capability_status(fake_exe, store_path=store_file, identity=fake_id, config_root=mock_root)
+        assert status == "UNPROVEN"
+
+    def test_capability_store_env_override(self, monkeypatch, tmp_path):
+        """S. get_local_capability_store_path honors AOS_CAPABILITY_STORE_DIR environment variable."""
+        override_dir = tmp_path / "custom_cap_store"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("AOS_CAPABILITY_STORE_DIR", str(override_dir))
+
+        store_p = get_local_capability_store_path("antigravity")
+        assert store_p == override_dir / "antigravity.json"
+
+        # Without AOS_CAPABILITY_STORE_DIR, standard path is returned
+        monkeypatch.delenv("AOS_CAPABILITY_STORE_DIR", raising=False)
+        std_p = get_local_capability_store_path("antigravity")
+        assert "antigravity.json" in str(std_p)
+        assert str(override_dir) not in str(std_p)

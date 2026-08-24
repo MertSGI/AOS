@@ -59,37 +59,30 @@ def resolve_runtime_environment_profile(
     node_finder: Optional[Callable[[], Optional[str]]] = None,
     node_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
 ) -> Dict[str, Any]:
-    """Resolve generic, sanitized host runtime environment profile for Antigravity execution."""
+    """Build a deterministic sanitized runtime environment profile from local Antigravity configuration."""
     root = config_root or (Path.home() / ".gemini")
-
-    # 1. Inspect installed plugins under root / config / plugins
-    plugins_dir = root / "config" / "plugins"
     enabled_plugins = set()
-    if plugins_dir.is_dir():
-        for item in plugins_dir.iterdir():
-            if item.is_dir():
-                hooks_file = item / "hooks.json"
-                if hooks_file.is_file():
-                    try:
-                        with open(hooks_file, "r", encoding="utf-8") as f:
-                            hooks_data = json.load(f)
-                        if isinstance(hooks_data, dict):
-                            for p_name, p_val in hooks_data.items():
-                                if isinstance(p_val, dict) and p_val.get("enabled", True):
-                                    enabled_plugins.add(p_name)
-                                elif isinstance(p_val, dict):
-                                    enabled_plugins.add(p_name)
-                                else:
-                                    enabled_plugins.add(item.name)
-                        else:
-                            enabled_plugins.add(item.name)
-                    except Exception:
-                        enabled_plugins.add(item.name)
-                else:
-                    enabled_plugins.add(item.name)
-
-    # 2. Check root / config / config.json for disabled plugins and permission settings
     permissions_config: Dict[str, Any] = {}
+
+    # 1. Discover installed plugins and their baseline hooks status
+    plugins_dir = root / "config" / "plugins"
+    if plugins_dir.is_dir():
+        for item in sorted(plugins_dir.iterdir()):
+            if item.is_dir():
+                p_name = item.name
+                hooks_f = item / "hooks.json"
+                if hooks_f.is_file():
+                    try:
+                        with open(hooks_f, "r", encoding="utf-8") as f:
+                            h_data = json.load(f)
+                        if isinstance(h_data, dict):
+                            p_info = h_data.get(p_name, {})
+                            if isinstance(p_info, dict) and p_info.get("enabled", True) is True:
+                                enabled_plugins.add(p_name)
+                    except Exception as e:
+                        raise ValueError(f"Malformed plugin hooks configuration: {hooks_f} ({e})")
+
+    # 2. Check root / config / config.json for overrides and permissions
     config_json_f = root / "config" / "config.json"
     if config_json_f.is_file():
         try:
@@ -97,12 +90,14 @@ def resolve_runtime_environment_profile(
                 c_data = json.load(f)
             if not isinstance(c_data, dict):
                 raise ValueError(f"Malformed config.json at {config_json_f}")
-            if "plugins" in c_data and isinstance(c_data["plugins"], dict):
-                for p_name, p_info in c_data["plugins"].items():
-                    if isinstance(p_info, dict) and p_info.get("enabled") is False:
-                        enabled_plugins.discard(p_name)
-                    elif isinstance(p_info, dict) and p_info.get("enabled") is True:
-                        enabled_plugins.add(p_name)
+            plugins_overrides = c_data.get("plugins", {})
+            if isinstance(plugins_overrides, dict):
+                for p_name, p_state in plugins_overrides.items():
+                    if isinstance(p_state, dict):
+                        if p_state.get("enabled") is False:
+                            enabled_plugins.discard(p_name)
+                        elif p_state.get("enabled") is True:
+                            enabled_plugins.add(p_name)
             for k in [
                 "agentMode",
                 "toolPermission",
@@ -169,8 +164,9 @@ def compute_runtime_environment_fingerprint(profile: Dict[str, Any]) -> str:
     return hashlib.sha256(canon_bytes).hexdigest()
 
 
-def get_local_capability_store_path(adapter_name: str = "antigravity", custom_dir: Optional[str] = None) -> Path:
-    """Resolve standard machine-local capability store path."""
+def get_local_capability_store_path(adapter_name: str = "antigravity") -> Path:
+    """Get machine-local OS-appropriate path for capability attestation storage."""
+    custom_dir = os.environ.get("AOS_CAPABILITY_STORE_DIR")
     if custom_dir:
         return Path(custom_dir) / f"{adapter_name}.json"
 
