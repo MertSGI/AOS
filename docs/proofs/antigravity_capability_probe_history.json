@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1.0",
   "historical_record": "antigravity_capability_probe_history",
-  "total_lifetime_live_coding_invocations": 8,
+  "total_lifetime_live_coding_invocations": 9,
   "authorizations": [
     {
       "authorization_id": "HISTORICAL_AUTHORIZATION_1",
@@ -302,6 +302,44 @@
           ],
           "capability_proven": false,
           "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.7_final.json"
+        }
+      ]
+    },
+    {
+      "authorization_id": "AOS3-AGY-FINAL-ORDINARY-V028-20260824-1425",
+      "authorized_invocation_budget": 1,
+      "actual_live_coding_invocations": 1,
+      "invocation_budget_compliance": true,
+      "capability_status_after_authorization": "PROVEN",
+      "attempts": [
+        {
+          "attempt_number": 9,
+          "aos_revision": "d44b30c30c0b6a9d143c94f58fddaafe9cebe4a1",
+          "probe_id": "PROBE-20260824-112913-88edd2a4",
+          "probe_timestamp": "2026-08-24T11:29:13.869887+00:00",
+          "result": "PASS",
+          "exit_code": 0,
+          "timed_out": false,
+          "adapter_contract_version": "0.2.8",
+          "executable_filename": "agy.EXE",
+          "executable_sha256": "29b1eab86d7c7175b3c89465c0e9b21390a79b4cd26e432c2d82a2e1f1b3c37b",
+          "reported_cli_version": "1.1.19",
+          "challenge_sha256": "b9a79d51846d11d2cbe05842d370e602db03cb95be6b2b13fffd57ed88f91c19",
+          "head_before": "66831920cfc13516b80962c66f0266b748c8d557",
+          "head_after": "66831920cfc13516b80962c66f0266b748c8d557",
+          "branch_before": "main",
+          "branch_after": "main",
+          "changed_paths": [
+            "probe/result.txt"
+          ],
+          "expected_result_file_sha256": "f727a84ffda8d23cc19ba3828bcf20b6e31c4c884224e76b2fdb50e4a5803f6e",
+          "actual_result_file_sha256": "f727a84ffda8d23cc19ba3828bcf20b6e31c4c884224e76b2fdb50e4a5803f6e",
+          "outside_sentinel_before_sha256": "af4e59915d0f523ef7b48d4f74e30390a32a9ba53f0ae4cced57e8af1c633ad7",
+          "outside_sentinel_after_sha256": "af4e59915d0f523ef7b48d4f74e30390a32a9ba53f0ae4cced57e8af1c633ad7",
+          "unexpected_external_paths_count": 0,
+          "errors": [],
+          "capability_proven": true,
+          "proof_artifact_ref": "docs/proofs/antigravity_capability_probe_v0.2.8_final.json"
         }
       ]
     }
