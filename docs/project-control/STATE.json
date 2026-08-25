@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-25T11:42:48+03:00",
+    "updated_at": "2026-08-25T13:20:27+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_ATTEMPT_2_AUTHORIZATION_PENDING",
+    "status": "AOS_4_REF_001_ATTEMPT_2_SINGLE_R1_EXECUTION_AUTHORIZED",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Await explicit human authorization for exactly one AOS4-REF-001 R1 attempt #2 from independently accepted execution base 3779c0a195301ec585a59537db5baa8df86228cf. No execution is authorized by this review-acceptance transaction.",
+    "next_action": "Execute AOS4-REF-001 attempt #2 exactly once through production ControlledExecutionEngine under human authorization AOS4-REF-001-R1-ATTEMPT2-20260825-1315 from exact execution base 3779c0a195301ec585a59537db5baa8df86228cf, then consume the authorization and require independent review of the resulting verified or quarantined candidate evidence.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "FINAL_BASE_INDEPENDENTLY_ACCEPTED",
+            "reference_status": "ATTEMPT_2_SINGLE_R1_EXECUTION_AUTHORIZED",
             "controller_prerequisites": {
                 "generic_execution_authority": "INDEPENDENTLY_ACCEPTED",
                 "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
@@ -131,7 +131,15 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 2,
-            "next_execution_authorization_status": "HUMAN_REQUIRED",
+            "next_execution_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "attempt_2_authorization_id": "AOS4-REF-001-R1-ATTEMPT2-20260825-1315",
+            "attempt_2_authorization_type": "EXPLICIT_HUMAN_R1_REAUTHORIZATION",
+            "attempt_2_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "attempt_2_controlled_execution_max": 1,
+            "attempt_2_nested_worker_max": 1,
+            "attempt_2_direct_agy_max": 0,
+            "attempt_2_retry_max": 0,
+            "attempt_2_execution_actual": 0,
             "current_execution_authorization_id": "AOS4-REF-001-R1-20260824-2134",
             "current_execution_authorization_type": "R1_POLICY_AUTHORIZED_AFTER_INDEPENDENT_REVIEW",
             "current_execution_authorization_status": "CONSUMED",
