@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-25T14:02:08+03:00",
+    "updated_at": "2026-08-25T14:04:00+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_RUNTIME_TRUST_REPROVEN_RETARGET_PENDING",
+    "status": "AOS_4_REF_001_ATTEMPT_3_BASE_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Perform the explicitly human-authorized AOS-4 runtime-trust remediation: restore the staged pre-attempt-2 Antigravity executable, implement bounded worker timeout contract v0.2.9 and worker-failure partial quarantine, run exactly one fresh capability probe, retarget AOS4-REF-001 to the resulting CI-proven controller revision, and stop for independent review.",
+    "next_action": "Independent verification and review of AOS4-REF-001 retarget to runtime-hardened capability-proven controller base d8ed009da7c26ceff153ada29ab9e78526d925c7 before any attempt #3 authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -107,14 +107,14 @@
             "status": "BOOTSTRAP",
             "control_branch": "feature/aos-4-independent-verification-hold",
             "bootstrap_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
-            "next_action_execution_base_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
+            "next_action_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
             "goal": "Independent verification and deterministic HOLD authority",
             "executor_may_self_close": false,
             "independent_verifier_required": true,
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "RUNTIME_TRUST_REPROVEN_RETARGET_PENDING",
+            "reference_status": "ATTEMPT_3_BASE_INDEPENDENT_REVIEW_PENDING",
             "runtime_trust_remediation_authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
             "runtime_trust_remediation_authorization_type": "EXPLICIT_HUMAN_RUNTIME_TRUST_REMEDIATION",
             "runtime_trust_remediation_authorization_status": "CONSUMED",
