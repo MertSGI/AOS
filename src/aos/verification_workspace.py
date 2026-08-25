@@ -151,7 +151,10 @@ class VerificationWorkspaceCopy:
             )
 
         # 1. Pre-copy scan on original workspace: zero symlinks
-        _scan_tree_for_symlinks(self.original_ws_path, label="original worker workspace")
+        try:
+            _scan_tree_for_symlinks(self.original_ws_path, label="original worker workspace")
+        except Exception as e:
+            raise VerificationWorkspaceError(f"Symlinks are not permitted in original worker workspace: {e}") from e
 
         # 2. Inspect original boundary state
         orig_state = inspect_workspace_boundary_state(self.original_ws_path)
@@ -163,6 +166,7 @@ class VerificationWorkspaceCopy:
         try:
             # 4. Copy workspace directory contents without dereferencing symlinks
             shutil.copytree(self.original_ws_path, temp_dir, symlinks=True, ignore_dangling_symlinks=False, dirs_exist_ok=True)
+
 
             # 5. Post-copy scan on verification copy: zero symlinks
             _scan_tree_for_symlinks(temp_dir, label="verification copy workspace")
