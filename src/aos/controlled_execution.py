@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from aos.candidate_store import CandidateStoreError, persist_verified_candidate
+from aos.candidate_store import (
+    CandidateStoreError,
+    persist_quarantine_candidate,
+    persist_verified_candidate,
+)
 from aos.execution_authority import validate_execution_authority
 from aos.git_workspace import (
     GitWorkspace,
@@ -17,11 +23,57 @@ from aos.git_workspace import (
 from aos.scope_guard import validate_scope
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document
+from aos.verification_workspace import (
+    VerificationWorkspaceCopy,
+    VerificationWorkspaceError,
+    inspect_workspace_boundary_state,
+)
 from aos.workers.antigravity import AntigravityWorkerAdapter
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
 GLOBAL_MAX_RETRY_CEILING = 2
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
+DIAGNOSTIC_TAIL_MAX_CHARS = 4096
+
+
+def sanitize_diagnostic_text(
+    text: str,
+    worker_ws_path: Optional[str] = None,
+    verify_ws_path: Optional[str] = None,
+    source_repo_path: Optional[str] = None,
+) -> str:
+    """Sanitize diagnostic text by redacting absolute filesystem paths and sensitive environment variable values."""
+    if not text:
+        return ""
+
+    sanitized = text
+
+    # Redact sensitive environment variables values if present
+    for var_name in SENSITIVE_ENV_VARS:
+        val = os.environ.get(var_name)
+        if val and len(val.strip()) > 3 and val in sanitized:
+            sanitized = sanitized.replace(val, f"<{var_name}_REDACTED>")
+
+    # Redact absolute paths
+    # Note: Replace longest matching paths first
+    path_replacements: List[Tuple[str, str]] = []
+    if verify_ws_path:
+        path_replacements.append((verify_ws_path, "<VERIFY_WORKSPACE>"))
+        path_replacements.append((str(Path(verify_ws_path).as_posix()), "<VERIFY_WORKSPACE>"))
+    if worker_ws_path:
+        path_replacements.append((worker_ws_path, "<WORKSPACE>"))
+        path_replacements.append((str(Path(worker_ws_path).as_posix()), "<WORKSPACE>"))
+    if source_repo_path:
+        path_replacements.append((source_repo_path, "<SOURCE_REPO>"))
+        path_replacements.append((str(Path(source_repo_path).as_posix()), "<SOURCE_REPO>"))
+
+    # Sort replacements by length descending
+    path_replacements.sort(key=lambda x: len(x[0]), reverse=True)
+    for p_orig, p_rep in path_replacements:
+        if p_orig and p_orig in sanitized:
+            sanitized = sanitized.replace(p_orig, p_rep)
+
+    return sanitized
 
 
 class ControlledExecutionEngine:
@@ -85,6 +137,7 @@ class ControlledExecutionEngine:
             "git_integrity_final",
             "scope_guard_final",
             "live_guard_final",
+            "failure_candidate_quarantine",
             "candidate_persistence",
         ])
 
@@ -466,6 +519,11 @@ class ControlledExecutionEngine:
             )
         _record_check("scope_guard_post_worker", "PASS")
 
+        # Capture post-worker clean workspace baseline state for immutability verification & quarantine eligibility
+        ws_path_obj = Path(workspace_dir).resolve()
+        post_worker_boundary_state = inspect_workspace_boundary_state(ws_path_obj)
+        worker_clean_for_quarantine = True
+
         # 14. Checkpoint C: Post-Worker LIVE_GUARD (Before Project Verification)
         try:
             post_worker_control_sha = source_adapter.resolve_ref_to_sha()
@@ -494,36 +552,131 @@ class ControlledExecutionEngine:
             workspace.cleanup()
             return _build_and_validate_result("HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha, err_list=[f"Post-worker LIVE_GUARD check failed: {e}"])
 
-        # 15. Execute Required Project Verification Checks with Sanitized Environment
+        # 15. Execute Required Project Verification Checks with Isolated Verification Workspaces & Sanitized Diagnostics
         sanitized_env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
         verification_failed = False
         verification_err_msgs: List[str] = []
+        verification_diagnostics: List[Dict[str, Any]] = []
 
         for check_id in req_checks:
             check_def = desc_verification_checks[check_id]
             argv = check_def["argv"]
             timeout = check_def.get("timeout_seconds", 300)
             check_key = f"project:{check_id}"
+
+            # Create fresh, verified disposable copy of worker workspace for this check
+            copy_manager = VerificationWorkspaceCopy(ws_path_obj, check_id=check_id)
             try:
-                c_res = self.verification_runner(argv, workspace_dir, timeout, sanitized_env)
-                if c_res.returncode == 0:
-                    _record_check(check_key, "PASS", "Exit code 0")
-                else:
-                    verification_failed = True
-                    msg = f"Check '{check_id}' failed with exit code {c_res.returncode}"
-                    verification_err_msgs.append(msg)
-                    _record_check(check_key, "FAIL", msg)
-            except Exception as e:
+                with copy_manager as verify_copy_dir:
+                    c_res = self.verification_runner(argv, str(verify_copy_dir), timeout, sanitized_env)
+
+                    stdout_str = c_res.stdout if isinstance(c_res.stdout, str) else (c_res.stdout or b"").decode("utf-8", errors="replace")
+                    stderr_str = c_res.stderr if isinstance(c_res.stderr, str) else (c_res.stderr or b"").decode("utf-8", errors="replace")
+
+                    stdout_bytes = stdout_str.encode("utf-8")
+                    stderr_bytes = stderr_str.encode("utf-8")
+
+                    stdout_sha = hashlib.sha256(stdout_bytes).hexdigest()
+                    stderr_sha = hashlib.sha256(stderr_bytes).hexdigest()
+
+                    # Sanitize tails
+                    sanitized_stdout = sanitize_diagnostic_text(
+                        stdout_str,
+                        worker_ws_path=str(ws_path_obj),
+                        verify_ws_path=str(verify_copy_dir),
+                        source_repo_path=local_target_repo_path,
+                    )
+                    sanitized_stderr = sanitize_diagnostic_text(
+                        stderr_str,
+                        worker_ws_path=str(ws_path_obj),
+                        verify_ws_path=str(verify_copy_dir),
+                        source_repo_path=local_target_repo_path,
+                    )
+
+                    diag_entry = {
+                        "check_id": check_id,
+                        "exit_code": c_res.returncode,
+                        "timed_out": False,
+                        "stdout_present": len(stdout_str) > 0,
+                        "stdout_len": len(stdout_str),
+                        "stdout_sha256": stdout_sha,
+                        "stderr_present": len(stderr_str) > 0,
+                        "stderr_len": len(stderr_str),
+                        "stderr_sha256": stderr_sha,
+                        "sanitized_stdout_tail": sanitized_stdout[-DIAGNOSTIC_TAIL_MAX_CHARS:] if sanitized_stdout else "",
+                        "sanitized_stderr_tail": sanitized_stderr[-DIAGNOSTIC_TAIL_MAX_CHARS:] if sanitized_stderr else "",
+                    }
+                    verification_diagnostics.append(diag_entry)
+
+                    if c_res.returncode == 0:
+                        _record_check(check_key, "PASS", "Exit code 0")
+                    else:
+                        verification_failed = True
+                        msg = f"Check '{check_id}' failed with exit code {c_res.returncode}"
+                        verification_err_msgs.append(msg)
+                        _record_check(check_key, "FAIL", msg)
+
+            except subprocess.TimeoutExpired as te:
                 verification_failed = True
-                msg = f"Check '{check_id}' error or timeout: {e}"
+                msg = f"Check '{check_id}' timed out after {timeout}s"
                 verification_err_msgs.append(msg)
                 _record_check(check_key, "FAIL", msg)
+                verification_diagnostics.append({
+                    "check_id": check_id,
+                    "exit_code": None,
+                    "timed_out": True,
+                    "stdout_present": False,
+                    "stdout_len": 0,
+                    "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+                    "stderr_present": False,
+                    "stderr_len": 0,
+                    "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+                    "sanitized_stdout_tail": "",
+                    "sanitized_stderr_tail": f"Timeout expired after {timeout}s",
+                })
+            except Exception as e:
+                verification_failed = True
+                msg = f"Check '{check_id}' error: {e}"
+                verification_err_msgs.append(msg)
+                _record_check(check_key, "FAIL", msg)
+                verification_diagnostics.append({
+                    "check_id": check_id,
+                    "exit_code": None,
+                    "timed_out": False,
+                    "stdout_present": False,
+                    "stdout_len": 0,
+                    "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+                    "stderr_present": True,
+                    "stderr_len": len(str(e)),
+                    "stderr_sha256": hashlib.sha256(str(e).encode("utf-8")).hexdigest(),
+                    "sanitized_stdout_tail": "",
+                    "sanitized_stderr_tail": sanitize_diagnostic_text(
+                        str(e),
+                        worker_ws_path=str(ws_path_obj),
+                        source_repo_path=local_target_repo_path,
+                    )[-DIAGNOSTIC_TAIL_MAX_CHARS:],
+                })
 
-        # 16. Post-Verification Final State Inspection (Capture forensics before cleanup!)
+        # 16. Post-Verification Original Workspace Immutability & Final State Inspection
         try:
+            current_boundary_state = inspect_workspace_boundary_state(ws_path_obj)
             final_head = workspace.get_current_head()
             final_branch = workspace.get_current_branch()
             final_changed_paths = workspace.get_changed_files()
+
+            # Verify original worker workspace was not altered by verification checks
+            if current_boundary_state["head"] != post_worker_boundary_state["head"]:
+                verification_failed = True
+                verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: HEAD moved from '{post_worker_boundary_state['head']}' to '{current_boundary_state['head']}'")
+            if current_boundary_state["branch"] != post_worker_boundary_state["branch"]:
+                verification_failed = True
+                verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: Branch changed from '{post_worker_boundary_state['branch']}' to '{current_boundary_state['branch']}'")
+            if current_boundary_state["changed_paths"] != post_worker_boundary_state["changed_paths"]:
+                verification_failed = True
+                verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: Changed paths modified ({post_worker_boundary_state['changed_paths']} -> {current_boundary_state['changed_paths']})")
+            if current_boundary_state["file_states"] != post_worker_boundary_state["file_states"]:
+                verification_failed = True
+                verification_err_msgs.append("ORIGINAL_WORKSPACE_MUTATION: File states or hashes were modified in original worker workspace")
         except Exception as e:
             final_head = post_worker_head
             final_branch = post_worker_branch
@@ -554,8 +707,41 @@ class ControlledExecutionEngine:
         else:
             _record_check("scope_guard_final", "PASS")
 
+        # Failure handling with Quarantine Persistence
         if verification_failed:
+            quarantine_meta: Optional[Dict[str, Any]] = None
+            if worker_clean_for_quarantine and post_worker_scope.is_valid:
+                try:
+                    quarantine_meta = persist_quarantine_candidate(
+                        workspace_path=workspace_dir,
+                        project_id=str(project_id) if project_id else "unknown",
+                        task_id=str(task_id) if task_id else "unknown",
+                        gate=str(gate) if gate else "unknown",
+                        control_source_sha=live_control_sha,
+                        execution_base_sha=exec_base_sha,
+                        worker_branch=worker_branch,
+                        initial_head_sha=initial_head,
+                        final_head_sha=final_head,
+                        worker_changed_paths=post_worker_changed_paths,
+                        source_repo_path=local_target_repo_path,
+                    )
+                    _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
+                except Exception as qe:
+                    _record_check("failure_candidate_quarantine", "FAIL", str(qe))
+                    verification_err_msgs.append(f"Failed candidate quarantine persistence failed: {qe}")
+            else:
+                _record_check("failure_candidate_quarantine", "NOT_RUN")
+
+            _record_check("candidate_persistence", "NOT_RUN")
+
             workspace.cleanup()
+
+            ext_dict: Dict[str, Any] = {}
+            if verification_diagnostics:
+                ext_dict["verification_diagnostics"] = verification_diagnostics
+            if quarantine_meta:
+                ext_dict["quarantine_candidate"] = quarantine_meta
+
             return _build_and_validate_result(
                 "VERIFICATION_FAILED",
                 control_sha=live_control_sha,
@@ -571,6 +757,7 @@ class ControlledExecutionEngine:
                 mutation_performed=len(final_changed_paths) > 0,
                 mutation_attempted=worker_mutation_attempted,
                 err_list=verification_err_msgs,
+                extensions=ext_dict if ext_dict else None,
             )
 
         # 19. Checkpoint D: Final LIVE_GUARD (Before Candidate Persistence)
@@ -578,7 +765,37 @@ class ControlledExecutionEngine:
             final_control_sha = source_adapter.resolve_ref_to_sha()
             if final_control_sha != live_control_sha:
                 _record_check("live_guard_final", "FAIL", f"Control moved to '{final_control_sha}'")
+
+                # Quarantining candidate on final LIVE_GUARD failure if scope clean
+                quarantine_meta = None
+                if worker_clean_for_quarantine and post_worker_scope.is_valid:
+                    try:
+                        quarantine_meta = persist_quarantine_candidate(
+                            workspace_path=workspace_dir,
+                            project_id=str(project_id) if project_id else "unknown",
+                            task_id=str(task_id) if task_id else "unknown",
+                            gate=str(gate) if gate else "unknown",
+                            control_source_sha=live_control_sha,
+                            execution_base_sha=exec_base_sha,
+                            worker_branch=worker_branch,
+                            initial_head_sha=initial_head,
+                            final_head_sha=final_head,
+                            worker_changed_paths=post_worker_changed_paths,
+                            source_repo_path=local_target_repo_path,
+                        )
+                        _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
+                    except Exception as qe:
+                        _record_check("failure_candidate_quarantine", "FAIL", str(qe))
+                else:
+                    _record_check("failure_candidate_quarantine", "NOT_RUN")
+
                 workspace.cleanup()
+                ext_dict = {}
+                if verification_diagnostics:
+                    ext_dict["verification_diagnostics"] = verification_diagnostics
+                if quarantine_meta:
+                    ext_dict["quarantine_candidate"] = quarantine_meta
+
                 return _build_and_validate_result(
                     "HOLD",
                     control_sha=live_control_sha,
@@ -594,12 +811,16 @@ class ControlledExecutionEngine:
                     mutation_performed=len(final_changed_paths) > 0,
                     mutation_attempted=worker_mutation_attempted,
                     err_list=[f"STALE_CONTROL_REVISION_FINAL: Control ref moved from '{live_control_sha}' to '{final_control_sha}' after verification"],
+                    extensions=ext_dict if ext_dict else None,
                 )
             _record_check("live_guard_final", "PASS")
         except Exception as e:
             _record_check("live_guard_final", "FAIL", str(e))
             workspace.cleanup()
             return _build_and_validate_result("HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha, err_list=[f"Final LIVE_GUARD check failed: {e}"])
+
+        # Failure candidate quarantine is NOT_RUN on successful path
+        _record_check("failure_candidate_quarantine", "NOT_RUN")
 
         # 20. Candidate Persistence: Persist verified candidate workspace to machine-local store
         try:
@@ -640,7 +861,11 @@ class ControlledExecutionEngine:
         # 21. Cleanup disposable workspace now that candidate is persisted
         workspace.cleanup()
 
-        # 22. All checks passed -> VERIFIED_CANDIDATE with candidate extension
+        # 22. All checks passed -> VERIFIED_CANDIDATE with candidate extension & diagnostics
+        res_extensions: Dict[str, Any] = {"candidate": candidate_metadata}
+        if verification_diagnostics:
+            res_extensions["verification_diagnostics"] = verification_diagnostics
+
         return _build_and_validate_result(
             "VERIFIED_CANDIDATE",
             control_sha=live_control_sha,
@@ -655,5 +880,5 @@ class ControlledExecutionEngine:
             timed_out=w_res.timed_out if w_res else False,
             mutation_performed=len(final_changed_paths) > 0,
             mutation_attempted=worker_mutation_attempted,
-            extensions={"candidate": candidate_metadata},
+            extensions=res_extensions,
         )

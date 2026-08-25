@@ -517,3 +517,69 @@ class TestCandidateStore:
                 changed_paths=["../escaped.txt"],
                 candidate_store_dir=str(fake_candidate_store),
             )
+
+    def test_quarantine_candidate_persistence_creates_unverified_snapshot(self, fake_workspace, fake_candidate_store):
+        """L, M, N, O: Quarantine candidate persistence returns QUARANTINED_UNVERIFIED and contract 0.1.0."""
+        from aos.candidate_store import QUARANTINE_STORE_CONTRACT_VERSION, persist_quarantine_candidate
+
+        res = persist_quarantine_candidate(
+            workspace_path=str(fake_workspace),
+            project_id="aos",
+            task_id="AOS4-REF-001",
+            gate="AOS-4",
+            control_source_sha="c95dcd7638138b86f26889b474cc1f303d7a15b7",
+            execution_base_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            worker_branch="aos/aos4-ref-001",
+            initial_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            final_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            worker_changed_paths=["src/sample.py"],
+            quarantine_store_dir=str(fake_candidate_store),
+        )
+
+        assert res["status"] == "QUARANTINED_UNVERIFIED"
+        assert res["quarantine_store_contract_version"] == QUARANTINE_STORE_CONTRACT_VERSION
+        quar_id = res["quarantine_id"]
+        assert quar_id.startswith("quar_")
+        assert len(quar_id) == 21
+        assert "manifest_sha256" in res
+        assert res["worker_changed_paths"] == ["src/sample.py"]
+
+        quar_dir = fake_candidate_store / quar_id
+        assert quar_dir.exists()
+        manifest_file = quar_dir / "manifest.json"
+        assert manifest_file.exists()
+        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+        assert manifest_data["quarantine_id"] == quar_id
+        assert manifest_data["quarantine_store_contract_version"] == "0.1.0"
+        assert len(manifest_data["changed_paths"]) == 1
+        assert manifest_data["changed_paths"][0]["path"] == "src/sample.py"
+        assert manifest_data["changed_paths"][0]["state"] == "PRESENT"
+
+    def test_quarantine_store_collision_fails_closed(self, fake_workspace, fake_candidate_store, monkeypatch):
+        """P. quarantine store collision fails closed."""
+        from aos.candidate_store import persist_quarantine_candidate
+        import uuid
+
+        class MockUUID:
+            hex = "11112222333344445555666677778888"
+
+        monkeypatch.setattr(uuid, "uuid4", lambda: MockUUID())
+
+        # Pre-create colliding directory
+        colliding_dir = fake_candidate_store / "quar_1111222233334444"
+        colliding_dir.mkdir(parents=True, exist_ok=True)
+
+        with pytest.raises(CandidateStoreError, match="Quarantine directory collision"):
+            persist_quarantine_candidate(
+                workspace_path=str(fake_workspace),
+                project_id="aos",
+                task_id="AOS4-REF-001",
+                gate="AOS-4",
+                control_source_sha="c95dcd7638138b86f26889b474cc1f303d7a15b7",
+                execution_base_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                worker_branch="aos/aos4-ref-001",
+                initial_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                final_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                worker_changed_paths=["src/sample.py"],
+                quarantine_store_dir=str(fake_candidate_store),
+            )

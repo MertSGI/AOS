@@ -96,8 +96,17 @@ class MockGitWorkspace(GitWorkspace):
 
     def setup(self) -> str:
         self.workspace_dir = tempfile.mkdtemp(prefix="mock_cap_ws_")
+        subprocess.run(["git", "init"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "AOS Tester"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "tester@aos.test"], cwd=self.workspace_dir, check=True, capture_output=True)
+        base_f = Path(self.workspace_dir) / "README.md"
+        base_f.write_text("# Mock base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "base commit"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "checkout", "-b", self.worker_branch], cwd=self.workspace_dir, check=True, capture_output=True)
         self.initial_head_sha = self.base_sha
         return self.workspace_dir
+
 
     def get_current_head(self) -> str:
         return self.base_sha

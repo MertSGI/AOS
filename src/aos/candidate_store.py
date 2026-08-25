@@ -1,4 +1,4 @@
-"""Generic machine-local candidate store for verified controlled execution results."""
+"""Generic machine-local candidate store for verified controlled execution results and failed candidate quarantine."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 CANDIDATE_STORE_CONTRACT_VERSION = "0.1.0"
+QUARANTINE_STORE_CONTRACT_VERSION = "0.1.0"
 
 
 class CandidateStoreError(Exception):
@@ -26,6 +27,16 @@ def get_default_candidate_store_dir() -> Path:
         return Path(env_dir).expanduser().resolve()
     # Default to user-local data directory ~/.aos/candidate_store
     return (Path.home() / ".aos" / "candidate_store").resolve()
+
+
+def get_default_quarantine_store_dir() -> Path:
+    """Get the default quarantine store base directory."""
+    env_dir = os.environ.get("AOS_QUARANTINE_STORE_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    # Default to candidate store dir parent or ~/.aos/quarantine_store
+    base_cand = get_default_candidate_store_dir()
+    return (base_cand.parent / "quarantine_store").resolve()
 
 
 def compute_file_sha256(file_path: Path) -> str:
@@ -85,6 +96,56 @@ def _verify_candidate_zero_remotes(target_ws: Path) -> None:
         if isinstance(e, CandidateStoreError):
             raise
         raise CandidateStoreError(f"Git remote verification failed: {e}") from e
+
+
+def _build_paths_manifest(target_ws: Path, changed_paths: List[str]) -> List[Dict[str, Any]]:
+    """Validate relative changed paths and construct deterministic paths manifest."""
+    paths_manifest: List[Dict[str, Any]] = []
+    for raw_path in sorted(changed_paths):
+        if not raw_path or not isinstance(raw_path, str):
+            raise CandidateStoreError(f"Invalid changed path: empty or non-string value '{raw_path}'")
+
+        # Reject drive-qualified or absolute paths
+        p_obj = Path(raw_path)
+        if p_obj.is_absolute() or p_obj.drive or raw_path.startswith("/") or raw_path.startswith("\\"):
+            raise CandidateStoreError(f"Changed path must be repository-relative and not absolute: '{raw_path}'")
+
+        # Reject parent traversal components
+        parts = p_obj.parts
+        if ".." in parts or "." in parts:
+            raise CandidateStoreError(f"Changed path contains traversal components: '{raw_path}'")
+
+        # Normalized relative path
+        rel_path = p_obj.as_posix()
+
+        # Ensure resolution does not escape target_ws
+        f_target = (target_ws / p_obj).resolve()
+        try:
+            f_target.relative_to(target_ws.resolve())
+        except ValueError:
+            raise CandidateStoreError(f"Changed path escapes candidate workspace: '{raw_path}'")
+
+        target_direct = target_ws / rel_path
+        if target_direct.is_symlink():
+            raise CandidateStoreError(f"Symlinks are not permitted in candidate workspace: '{rel_path}'")
+
+        if target_direct.is_file():
+            sz = target_direct.stat().st_size
+            sha = compute_file_sha256(target_direct)
+            paths_manifest.append({
+                "path": rel_path,
+                "state": "PRESENT",
+                "size_bytes": sz,
+                "sha256": sha,
+            })
+        elif not target_direct.exists():
+            paths_manifest.append({
+                "path": rel_path,
+                "state": "DELETED",
+            })
+        else:
+            raise CandidateStoreError(f"Unsupported filesystem object at '{rel_path}'")
+    return paths_manifest
 
 
 def persist_verified_candidate(
@@ -161,51 +222,7 @@ def persist_verified_candidate(
         _verify_candidate_zero_remotes(target_ws)
 
         # Validate and inspect changed paths to build manifest
-        paths_manifest: List[Dict[str, Any]] = []
-        for raw_path in sorted(changed_paths):
-            if not raw_path or not isinstance(raw_path, str):
-                raise CandidateStoreError(f"Invalid changed path: empty or non-string value '{raw_path}'")
-
-            # Reject drive-qualified or absolute paths
-            p_obj = Path(raw_path)
-            if p_obj.is_absolute() or p_obj.drive or raw_path.startswith("/") or raw_path.startswith("\\"):
-                raise CandidateStoreError(f"Changed path must be repository-relative and not absolute: '{raw_path}'")
-
-            # Reject parent traversal components
-            parts = p_obj.parts
-            if ".." in parts or "." in parts:
-                raise CandidateStoreError(f"Changed path contains traversal components: '{raw_path}'")
-
-            # Normalized relative path
-            rel_path = p_obj.as_posix()
-
-            # Ensure resolution does not escape target_ws
-            f_target = (target_ws / p_obj).resolve()
-            try:
-                f_target.relative_to(target_ws.resolve())
-            except ValueError:
-                raise CandidateStoreError(f"Changed path escapes candidate workspace: '{raw_path}'")
-
-            target_direct = target_ws / rel_path
-            if target_direct.is_symlink():
-                raise CandidateStoreError(f"Symlinks are not permitted in candidate workspace: '{rel_path}'")
-
-            if target_direct.is_file():
-                sz = target_direct.stat().st_size
-                sha = compute_file_sha256(target_direct)
-                paths_manifest.append({
-                    "path": rel_path,
-                    "state": "PRESENT",
-                    "size_bytes": sz,
-                    "sha256": sha,
-                })
-            elif not target_direct.exists():
-                paths_manifest.append({
-                    "path": rel_path,
-                    "state": "DELETED",
-                })
-            else:
-                raise CandidateStoreError(f"Unsupported filesystem object at '{rel_path}'")
+        paths_manifest = _build_paths_manifest(target_ws, changed_paths)
 
         now_iso = datetime.now(timezone.utc).isoformat()
         manifest_data = {
@@ -248,3 +265,123 @@ def persist_verified_candidate(
         if isinstance(e, CandidateStoreError):
             raise
         raise CandidateStoreError(f"Failed to persist candidate: {e}") from e
+
+
+def persist_quarantine_candidate(
+    workspace_path: str,
+    project_id: str,
+    task_id: str,
+    gate: str,
+    control_source_sha: str,
+    execution_base_sha: str,
+    worker_branch: str,
+    initial_head_sha: str,
+    final_head_sha: str,
+    worker_changed_paths: List[str],
+    source_repo_path: Optional[str] = None,
+    quarantine_store_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist unverified scope-clean failed candidate workspace to machine-local quarantine store.
+
+    This snapshot is UNTRUSTED and exists strictly for forensic diagnosis/review.
+    It does NOT satisfy candidate_persistence, cannot authorize promotion, and returns
+    status='QUARANTINED_UNVERIFIED'.
+    """
+    ws_path = Path(workspace_path).resolve()
+    if not ws_path.is_dir():
+        raise CandidateStoreError(f"Workspace path does not exist or is not a directory: {ws_path}")
+
+    # Determine quarantine store base directory
+    if quarantine_store_dir:
+        base_store = Path(quarantine_store_dir).expanduser().resolve()
+    else:
+        base_store = get_default_quarantine_store_dir()
+
+    # Safety checks: ensure quarantine store is not inside source repository
+    if source_repo_path:
+        src_repo = Path(source_repo_path).resolve()
+        try:
+            base_store.relative_to(src_repo)
+            raise CandidateStoreError(f"Quarantine store directory cannot reside inside source repository: {base_store}")
+        except ValueError:
+            pass  # Not inside source repository
+
+    # Ensure quarantine store is not inside the disposable workspace
+    try:
+        base_store.relative_to(ws_path)
+        raise CandidateStoreError(f"Quarantine store directory cannot reside inside disposable workspace: {base_store}")
+    except ValueError:
+        pass
+
+    try:
+        base_store.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise CandidateStoreError(f"Cannot create or access quarantine store directory '{base_store}': {e}") from e
+
+    quarantine_id = f"quar_{uuid.uuid4().hex[:16]}"
+    target_dir = base_store / quarantine_id
+
+    if target_dir.exists():
+        raise CandidateStoreError(f"Quarantine directory collision: destination '{target_dir}' already exists")
+
+    target_ws = target_dir / "workspace"
+
+    try:
+        # Pre-copy scan: Ensure source workspace contains zero symlinks anywhere
+        _scan_tree_for_symlinks(ws_path, label="source workspace for quarantine")
+
+        target_dir.mkdir(parents=True, exist_ok=False)
+
+        # Copy workspace directory contents without dereferencing symlinks
+        shutil.copytree(ws_path, target_ws, symlinks=True, ignore_dangling_symlinks=False)
+
+        # Post-copy scan: Ensure persisted quarantine workspace contains zero symlinks
+        _scan_tree_for_symlinks(target_ws, label="quarantined candidate workspace")
+
+        # Verify quarantine git repository has zero remotes
+        _verify_candidate_zero_remotes(target_ws)
+
+        # Validate and inspect changed paths to build manifest
+        paths_manifest = _build_paths_manifest(target_ws, worker_changed_paths)
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        manifest_data = {
+            "schema_version": "0.1.0",
+            "quarantine_store_contract_version": QUARANTINE_STORE_CONTRACT_VERSION,
+            "quarantine_id": quarantine_id,
+            "project_id": project_id,
+            "task_id": task_id,
+            "gate": gate,
+            "control_source_sha": control_source_sha,
+            "execution_base_sha": execution_base_sha,
+            "worker_branch": worker_branch,
+            "initial_head_sha": initial_head_sha,
+            "final_head_sha": final_head_sha,
+            "changed_paths": paths_manifest,
+            "created_at": now_iso,
+        }
+
+        # Calculate manifest_sha256
+        canon_bytes = canonical_json_bytes(manifest_data)
+        manifest_sha256 = hashlib.sha256(canon_bytes).hexdigest()
+
+        # Write manifest.json
+        manifest_file = target_dir / "manifest.json"
+        manifest_file.write_bytes(canon_bytes)
+
+        return {
+            "status": "QUARANTINED_UNVERIFIED",
+            "quarantine_store_contract_version": QUARANTINE_STORE_CONTRACT_VERSION,
+            "quarantine_id": quarantine_id,
+            "manifest_sha256": manifest_sha256,
+            "worker_changed_paths": worker_changed_paths,
+            "execution_base_sha": execution_base_sha,
+            "control_source_sha": control_source_sha,
+        }
+    except Exception as e:
+        # Partial failure cleanup
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        if isinstance(e, CandidateStoreError):
+            raise
+        raise CandidateStoreError(f"Failed to persist quarantine candidate: {e}") from e
