@@ -6,7 +6,7 @@
   "title": "AOS-4 Independent Verification Foundation",
   "description": "Implement the generic deterministic independent-verification foundation. Introduce a verification-result contract and verifier boundary that consumes an existing ControlledExecutionResult and evidence metadata without executing or mutating the worker task. The verifier must produce PASS or HOLD-style verification output, must fail closed on malformed or contradictory evidence, and must not permit the executor result alone to authorize canonical closure.",
   "risk_class": "R1",
-  "base_sha": "c5cc9bd872b226bc2a8db421a64939a77b311fc9",
+  "base_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
   "branch_name": "aos/aos4-ref-001",
   "allowed_scope": {
     "paths": [

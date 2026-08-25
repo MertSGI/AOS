@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_FINAL_CONTROLLER_AUTHORITY_REVIEW_PENDING",
+    "status": "AOS_4_REF_001_FINAL_BASE_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently verify exact execution-base resolvability and quarantine boundary integrity, then retarget AOS4-REF-001 to the resulting CI-proven controller revision before any new execution authorization.",
+    "next_action": "Independent verification and acceptance of final controller base 3779c0a195301ec585a59537db5baa8df86228cf before any new execution authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -107,7 +107,7 @@
             "status": "BOOTSTRAP",
             "control_branch": "feature/aos-4-independent-verification-hold",
             "bootstrap_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
-            "next_action_execution_base_sha": "c5cc9bdf2ad568f3f16af5056ca3391f8a4631d1",
+            "next_action_execution_base_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
             "goal": "Independent verification and deterministic HOLD authority",
             "executor_may_self_close": false,
             "independent_verifier_required": true,
@@ -116,6 +116,7 @@
             "reference_task": "tasks/aos4-reference-task.json",
             "reference_status": "BLOCKED_NEW_EXECUTION_BASE_REVIEW",
             "controller_prerequisites": {
+
                 "generic_execution_authority": "INDEPENDENTLY_ACCEPTED",
                 "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
                 "durable_candidate_handoff": "INDEPENDENTLY_ACCEPTED",
