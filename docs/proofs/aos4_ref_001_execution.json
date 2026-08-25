@@ -1,0 +1,187 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS4-REF-001-R1-20260824-2134",
+  "authorization_type": "R1_POLICY_AUTHORIZED_AFTER_INDEPENDENT_REVIEW",
+  "control_authorization_sha": "baeed4b78b20fa22a87740641cc8898f385f58cb",
+  "execution_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+  "task_id": "AOS4-REF-001",
+  "controlled_execution_max": 1,
+  "controlled_execution_actual": 1,
+  "direct_agy_invocations": 0,
+  "nested_worker_invocation_max": 1,
+  "nested_worker_invocation_actual": 1,
+  "retry_max": 0,
+  "retry_actual": 0,
+  "provider_calls": 0,
+  "lari_mutations": 0,
+  "external_product_mutations": 0,
+  "production_mutations": 0,
+  "execution_result": {
+    "schema_version": "0.1.0",
+    "project_id": "aos",
+    "task_id": "AOS4-REF-001",
+    "gate": "AOS-4",
+    "disposition": "VERIFICATION_FAILED",
+    "control_source_sha": "baeed4b78b20fa22a87740641cc8898f385f58cb",
+    "execution_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+    "worker_branch": "aos/aos4-ref-001",
+    "initial_head_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+    "final_head_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
+    "changed_paths": [
+      ".aos-runtime/live-proof/manifest-20260825045633-173ae7.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-1451b2.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-77d399.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-9289dd.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-931924.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-b6cba5.json",
+      ".aos-runtime/live-proof/manifest-20260825045634-cf30ef.json",
+      "schemas/v0.1/verification_result.schema.json",
+      "src/aos/validate.py",
+      "src/aos/verification.py",
+      "tests/test_verification.py"
+    ],
+    "scope_validation": {
+      "is_valid": false,
+      "allowed_paths": [
+        "src/aos/verification.py",
+        "src/aos/validate.py",
+        "schemas/v0.1/verification_result.schema.json",
+        "tests/test_verification.py"
+      ],
+      "forbidden_paths": [
+        "docs/project-control/",
+        "descriptors/",
+        "tasks/",
+        ".github/"
+      ],
+      "violations": [
+        "Path '.aos-runtime/live-proof/manifest-20260825045633-173ae7.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-1451b2.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-77d399.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-9289dd.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-931924.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-b6cba5.json' is outside permitted allowed_scope.paths",
+        "Path '.aos-runtime/live-proof/manifest-20260825045634-cf30ef.json' is outside permitted allowed_scope.paths"
+      ]
+    },
+    "worker_adapter": "antigravity",
+    "worker_identity": "antigravity-cli (PROVEN)",
+    "worker_capability_status": "PROVEN",
+    "worker_mutation_attempted": true,
+    "worker_exit_code": 0,
+    "worker_timed_out": false,
+    "verification_checks": [
+      {
+        "check_id": "descriptor_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "target_repository_identity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "task_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_requirements",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_capability",
+        "status": "PASS"
+      },
+      {
+        "check_id": "retry_policy",
+        "status": "PASS"
+      },
+      {
+        "check_id": "required_checks_contract",
+        "status": "PASS"
+      },
+      {
+        "check_id": "canonical_snapshot",
+        "status": "PASS"
+      },
+      {
+        "check_id": "execution_authority",
+        "status": "PASS"
+      },
+      {
+        "check_id": "live_guard_pre_execution",
+        "status": "PASS"
+      },
+      {
+        "check_id": "workspace_initial_integrity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_execution",
+        "status": "PASS"
+      },
+      {
+        "check_id": "git_integrity_post_worker",
+        "status": "PASS"
+      },
+      {
+        "check_id": "scope_guard_post_worker",
+        "status": "PASS"
+      },
+      {
+        "check_id": "live_guard_post_worker",
+        "status": "PASS"
+      },
+      {
+        "check_id": "project:aos4_verification_foundation_tests",
+        "status": "FAIL",
+        "message": "Check 'aos4_verification_foundation_tests' failed with exit code 1"
+      },
+      {
+        "check_id": "project:aos_full_regression",
+        "status": "FAIL",
+        "message": "Check 'aos_full_regression' failed with exit code 1"
+      },
+      {
+        "check_id": "git_integrity_final",
+        "status": "PASS"
+      },
+      {
+        "check_id": "scope_guard_final",
+        "status": "FAIL",
+        "message": "Path '.aos-runtime/live-proof/manifest-20260825045633-173ae7.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-1451b2.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-77d399.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-9289dd.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-931924.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-b6cba5.json' is outside permitted allowed_scope.paths; Path '.aos-runtime/live-proof/manifest-20260825045634-cf30ef.json' is outside permitted allowed_scope.paths"
+      },
+      {
+        "check_id": "live_guard_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "candidate_persistence",
+        "status": "NOT_RUN"
+      }
+    ],
+    "mutation_performed": true,
+    "retry_count": 0,
+    "started_at": "2026-08-25T04:54:03.430859+00:00",
+    "finished_at": "2026-08-25T04:56:36.361811+00:00",
+    "errors": [
+      "Check 'aos4_verification_foundation_tests' failed with exit code 1",
+      "Check 'aos_full_regression' failed with exit code 1",
+      "Path '.aos-runtime/live-proof/manifest-20260825045633-173ae7.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-1451b2.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-77d399.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-9289dd.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-931924.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-b6cba5.json' is outside permitted allowed_scope.paths",
+      "Path '.aos-runtime/live-proof/manifest-20260825045634-cf30ef.json' is outside permitted allowed_scope.paths"
+    ]
+  },
+  "limitations": [
+    "Isolated R1 execution only.",
+    "Executor candidate is NOT independently accepted yet.",
+    "VERIFIED_CANDIDATE does NOT authorize canonical closure.",
+    "No OS-level sandbox containment claim.",
+    "No unrestricted shell capability claim.",
+    "Provider semantic review not yet implemented.",
+    "Candidate promotion not performed."
+  ]
+}

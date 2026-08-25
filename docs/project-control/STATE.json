@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_SINGLE_R1_EXECUTION_AUTHORIZED",
+    "status": "AOS_4_REF_001_CANDIDATE_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Execute canonical AOS4-REF-001 exactly once through production ControlledExecutionEngine under authorization AOS4-REF-001-R1-20260824-2134 from exact execution base 1dfd59f850383dc4f40a59fd42462facb2b89315, persist any fully verified candidate, then require independent semantic review before promotion.",
+    "next_action": "Independently review the persisted AOS4-REF-001 candidate, exact manifest, execution proof, and candidate patch before any promotion or AOS-4 closure.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "AUTHORIZED_SINGLE_R1_EXECUTION",
+            "reference_status": "CANDIDATE_INDEPENDENT_REVIEW_PENDING",
             "controller_prerequisites": {
                 "generic_execution_authority": "INDEPENDENTLY_ACCEPTED",
                 "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
@@ -122,7 +122,10 @@
             },
             "current_execution_authorization_id": "AOS4-REF-001-R1-20260824-2134",
             "current_execution_authorization_type": "R1_POLICY_AUTHORIZED_AFTER_INDEPENDENT_REVIEW",
-            "current_execution_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "current_execution_authorization_status": "CONSUMED",
+            "current_execution_authorization_consumed": true,
+            "current_execution_unreviewed_disposition": "VERIFICATION_FAILED",
+            "current_execution_proof": "docs/proofs/aos4_ref_001_execution.json",
             "current_execution_max": 1,
             "current_execution_retry_max": 0
         }
