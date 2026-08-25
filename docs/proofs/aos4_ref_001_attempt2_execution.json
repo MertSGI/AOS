@@ -1,0 +1,171 @@
+{
+  "schema_version": "0.1.0",
+  "attempt_number": 2,
+  "authorization_id": "AOS4-REF-001-R1-ATTEMPT2-20260825-1315",
+  "authorization_type": "EXPLICIT_HUMAN_R1_REAUTHORIZATION",
+  "control_authorization_sha": "ecca376a45ebf906f742400f50c2d01ef9f8fbba",
+  "execution_base_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
+  "controlled_execution_max": 1,
+  "controlled_execution_actual": 1,
+  "nested_worker_max": 1,
+  "nested_worker_actual": 1,
+  "direct_agy_invocations": 0,
+  "retry_max": 0,
+  "retry_actual": 0,
+  "execution_result": {
+    "schema_version": "0.1.0",
+    "project_id": "aos",
+    "task_id": "AOS4-REF-001",
+    "gate": "AOS-4",
+    "disposition": "WORKER_FAILED",
+    "control_source_sha": "ecca376a45ebf906f742400f50c2d01ef9f8fbba",
+    "execution_base_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
+    "worker_branch": "aos/aos4-ref-001",
+    "initial_head_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
+    "final_head_sha": "3779c0a195301ec585a59537db5baa8df86228cf",
+    "changed_paths": [
+      "schemas/v0.1/verification_result.schema.json",
+      "src/aos/validate.py",
+      "src/aos/verification.py"
+    ],
+    "scope_validation": {
+      "is_valid": false,
+      "allowed_paths": [
+        "src/aos/verification.py",
+        "src/aos/validate.py",
+        "schemas/v0.1/verification_result.schema.json",
+        "tests/test_verification.py"
+      ],
+      "forbidden_paths": [
+        "docs/project-control/",
+        "descriptors/",
+        "tasks/",
+        ".github/"
+      ],
+      "violations": []
+    },
+    "worker_adapter": "antigravity",
+    "worker_identity": "antigravity-cli (PROVEN)",
+    "worker_capability_status": "PROVEN",
+    "worker_mutation_attempted": true,
+    "worker_exit_code": null,
+    "worker_timed_out": true,
+    "verification_checks": [
+      {
+        "check_id": "descriptor_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "target_repository_identity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "task_schema",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_requirements",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_capability",
+        "status": "PASS"
+      },
+      {
+        "check_id": "retry_policy",
+        "status": "PASS"
+      },
+      {
+        "check_id": "required_checks_contract",
+        "status": "PASS"
+      },
+      {
+        "check_id": "canonical_snapshot",
+        "status": "PASS"
+      },
+      {
+        "check_id": "execution_authority",
+        "status": "PASS"
+      },
+      {
+        "check_id": "execution_base_resolvability",
+        "status": "PASS"
+      },
+      {
+        "check_id": "live_guard_pre_execution",
+        "status": "PASS"
+      },
+      {
+        "check_id": "workspace_initial_integrity",
+        "status": "PASS"
+      },
+      {
+        "check_id": "worker_execution",
+        "status": "FAIL",
+        "message": "Worker timed out after 180s"
+      },
+      {
+        "check_id": "git_integrity_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "scope_guard_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "live_guard_post_worker",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "project:aos4_verification_foundation_tests",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "project:aos_full_regression",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "git_integrity_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "scope_guard_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "live_guard_final",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "failure_candidate_quarantine",
+        "status": "NOT_RUN"
+      },
+      {
+        "check_id": "candidate_persistence",
+        "status": "NOT_RUN"
+      }
+    ],
+    "mutation_performed": true,
+    "retry_count": 0,
+    "started_at": "2026-08-25T10:25:05.178171+00:00",
+    "finished_at": "2026-08-25T10:28:10.666976+00:00",
+    "errors": [
+      "Worker timed out after 180s"
+    ]
+  },
+  "provider_calls": 0,
+  "lari_mutations": 0,
+  "external_product_mutations": 0,
+  "production_mutations": 0,
+  "candidate_promotions": 0,
+  "limitations": [
+    "isolated R1 execution only",
+    "executor output is not independently accepted",
+    "VERIFIED_CANDIDATE does not authorize canonical closure",
+    "quarantine is unverified forensic material only",
+    "no OS-level sandbox containment claim",
+    "no unrestricted shell capability claim",
+    "provider/model semantic verification not implemented",
+    "candidate promotion not performed"
+  ]
+}
