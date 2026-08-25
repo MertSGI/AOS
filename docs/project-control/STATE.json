@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-25T13:48:00+03:00",
+    "updated_at": "2026-08-25T14:02:08+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_RUNTIME_TRUST_REMEDIATION_AUTHORIZED",
+    "status": "AOS_4_RUNTIME_TRUST_REPROVEN_RETARGET_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -114,10 +114,10 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "RUNTIME_TRUST_REMEDIATION_AUTHORIZED",
+            "reference_status": "RUNTIME_TRUST_REPROVEN_RETARGET_PENDING",
             "runtime_trust_remediation_authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
             "runtime_trust_remediation_authorization_type": "EXPLICIT_HUMAN_RUNTIME_TRUST_REMEDIATION",
-            "runtime_trust_remediation_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "runtime_trust_remediation_authorization_status": "CONSUMED",
             "runtime_trust_host_mutation_max": 1,
             "runtime_trust_live_probe_max": 1,
             "runtime_trust_worker_execution_max": 0,
