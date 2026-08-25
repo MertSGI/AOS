@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-25T13:28:10+03:00",
+    "updated_at": "2026-08-25T13:48:00+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_ATTEMPT_2_HOLD_INDEPENDENT_REVIEW_PENDING",
+    "status": "AOS_4_RUNTIME_TRUST_REMEDIATION_AUTHORIZED",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independent verification and review of AOS4-REF-001 attempt #2 WORKER_FAILED (timeout) execution evidence in docs/proofs/aos4_ref_001_attempt2_execution.json before any further authorization or action.",
+    "next_action": "Perform the explicitly human-authorized AOS-4 runtime-trust remediation: restore the staged pre-attempt-2 Antigravity executable, implement bounded worker timeout contract v0.2.9 and worker-failure partial quarantine, run exactly one fresh capability probe, retarget AOS4-REF-001 to the resulting CI-proven controller revision, and stop for independent review.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,14 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_2_HOLD_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "RUNTIME_TRUST_REMEDIATION_AUTHORIZED",
+            "runtime_trust_remediation_authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
+            "runtime_trust_remediation_authorization_type": "EXPLICIT_HUMAN_RUNTIME_TRUST_REMEDIATION",
+            "runtime_trust_remediation_authorization_status": "AUTHORIZED_NOT_CONSUMED",
+            "runtime_trust_host_mutation_max": 1,
+            "runtime_trust_live_probe_max": 1,
+            "runtime_trust_worker_execution_max": 0,
+            "runtime_trust_attempt_3_authorized": false,
             "controller_prerequisites": {
                 "generic_execution_authority": "INDEPENDENTLY_ACCEPTED",
                 "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
