@@ -1449,7 +1449,8 @@ class TestAntigravityCapabilityV028:
         assert res["attestation"] is not None
         assert res["attestation"]["capability_status"] == "PROVEN"
         assert res["attestation"]["runtime_environment_fingerprint_sha256"] == fp
-        assert res["attestation"]["adapter_contract_version"] == "0.2.8"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.9"
+
 
     def test_challenge_no_trailing_lf_fails(self, temp_capability_env):
         """B. No trailing LF: exact mismatch HOLD."""
@@ -1632,10 +1633,11 @@ class TestAntigravityCapabilityV028:
         valid_attestation = make_valid_attestation(
             exe_sha=fake_id["sha256"],
             cli_ver=fake_id["version"],
-            contract_ver="0.2.8",
+            contract_ver="0.2.9",
             exe_name=fake_id["filename"],
             fingerprint=fp,
         )
+
         store_file.write_text(json.dumps(valid_attestation, indent=2), encoding="utf-8")
 
         captured_cmd = []
@@ -1726,8 +1728,9 @@ class TestAntigravityCapabilityV028:
         valid_attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.8",
+            "adapter_contract_version": "0.2.9",
             "executable_filename": fake_id["filename"],
+
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],
             "runtime_environment_profile_version": "0.1.0",

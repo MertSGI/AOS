@@ -318,10 +318,16 @@ class TestControlledExecutionEngineFinalHardened:
 
         # Verify check statuses
         for c in res["verification_checks"]:
-            if c["check_id"] == "failure_candidate_quarantine":
+            if c["check_id"] in (
+                "failure_candidate_quarantine",
+                "worker_failure_forensic_integrity",
+                "worker_failure_scope_guard",
+                "worker_failure_quarantine",
+            ):
                 assert c["status"] == "NOT_RUN"
             else:
                 assert c["status"] == "PASS"
+
 
 
     def test_missing_unreadable_origin_holds_zero_worker(self):
@@ -1216,3 +1222,66 @@ class TestRealGitControlledWorkspace:
         d = diags[0]
         assert d["stdout_len"] == expected_bytes_len
         assert d["stdout_sha256"] == hashlib.sha256(non_ascii_stdout.encode("utf-8")).hexdigest()
+
+    def test_worker_timeout_with_partial_mutations_quarantines_workspace(self):
+        """Worker failure with partial mutations inside scope triggers partial quarantine."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], changed_files=["src/app.py"])
+
+        class TimeoutWorker(WorkerAdapter):
+            capability_status = "TEST_DOUBLE"
+
+            def execute(self, task, workspace_path, allowed_scope, base_sha, timeout_seconds=180):
+                stream_res = {
+                    "is_valid_stream": True,
+                    "terminal_status": "TIMEOUT",
+                    "failed_step_observed": False,
+                    "failed_tool_observed": False,
+                    "permission_soft_denial_observed": False,
+                    "reported_cwd_matches_workspace": True,
+                }
+                return WorkerExecutionResult(
+                    worker_identity="test-worker",
+                    workspace_path=workspace_path,
+                    exit_code=None,
+                    timed_out=True,
+                    stdout_summary=json.dumps(stream_res),
+                    stderr_summary="Worker timed out after 180s",
+                    mutation_attempted=True,
+                )
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: TimeoutWorker(),
+            verification_runner=lambda argv, cwd, t, env: subprocess.CompletedProcess(argv, 0, stdout="", stderr=""),
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "WORKER_FAILED"
+        assert res["worker_timed_out"] is True
+        assert res["mutation_performed"] is True
+
+
+        # Verify worker_failure checks ran
+        forensic_check = next((c for c in res["verification_checks"] if c["check_id"] == "worker_failure_forensic_integrity"), None)
+        assert forensic_check is not None
+        assert forensic_check["status"] == "PASS"
+
+        scope_check = next((c for c in res["verification_checks"] if c["check_id"] == "worker_failure_scope_guard"), None)
+        assert scope_check is not None
+        assert scope_check["status"] == "PASS"
+
+        q_check = next((c for c in res["verification_checks"] if c["check_id"] == "worker_failure_quarantine"), None)
+        assert q_check is not None
+        assert q_check["status"] == "PASS"
+
+        exts = res.get("extensions", {})
+        assert "partial_worker_quarantine" in exts
+        assert exts["partial_worker_quarantine"]["status"] == "QUARANTINED_PARTIAL_UNVERIFIED"
+        assert "worker_failure_diagnostics" in exts
+        assert exts["worker_failure_diagnostics"]["timed_out"] is True

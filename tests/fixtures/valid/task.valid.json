@@ -17,7 +17,8 @@
     "environment": "windows-x64",
     "capabilities": ["python3.12", "git"],
     "isolated_worktree": true,
-    "timeout_seconds": 3600
+    "timeout_seconds": 600
+
   },
   "evidence_requirements": {
     "minimum_level": "E2_EXECUTABLE_EXACT_REVISION_PROVEN",

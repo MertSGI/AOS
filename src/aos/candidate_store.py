@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 
 CANDIDATE_STORE_CONTRACT_VERSION = "0.1.0"
 QUARANTINE_STORE_CONTRACT_VERSION = "0.1.0"
+WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION = "0.1.0"
+
 
 
 class CandidateStoreError(Exception):
@@ -425,3 +427,168 @@ def persist_quarantine_candidate(
         if isinstance(e, CandidateStoreError):
             raise
         raise CandidateStoreError(f"Failed to persist quarantine candidate: {e}") from e
+
+
+def persist_worker_failure_quarantine_candidate(
+    workspace_path: str,
+    project_id: str,
+    task_id: str,
+    gate: str,
+    control_source_sha: str,
+    execution_base_sha: str,
+    worker_branch: str,
+    initial_head_sha: str,
+    final_head_sha: str,
+    worker_changed_paths: List[str],
+    worker_timed_out: bool = False,
+    worker_exit_code: Optional[int] = None,
+    source_repo_path: Optional[str] = None,
+    quarantine_store_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist partial unverified worker-failure candidate workspace to machine-local quarantine store.
+
+    This snapshot is strictly for forensic inspection of partial mutations produced before worker timeout or failure.
+    It does NOT satisfy candidate_persistence, cannot authorize promotion, and returns
+    status='QUARANTINED_PARTIAL_UNVERIFIED'.
+    """
+    ws_path = Path(workspace_path).resolve()
+    if not ws_path.is_dir():
+        raise CandidateStoreError(f"Workspace path does not exist or is not a directory: {ws_path}")
+
+    # Determine quarantine store base directory
+    if quarantine_store_dir:
+        base_store = Path(quarantine_store_dir).expanduser().resolve()
+    else:
+        base_store = get_default_quarantine_store_dir()
+
+    # Safety checks: ensure quarantine store is not inside source repository
+    if source_repo_path:
+        src_repo = Path(source_repo_path).resolve()
+        try:
+            base_store.relative_to(src_repo)
+            raise CandidateStoreError(f"Quarantine store directory cannot reside inside source repository: {base_store}")
+        except ValueError:
+            pass
+
+    # Ensure quarantine store is not inside the disposable workspace
+    try:
+        base_store.relative_to(ws_path)
+        raise CandidateStoreError(f"Quarantine store directory cannot reside inside disposable workspace: {base_store}")
+    except ValueError:
+        pass
+
+    try:
+        base_store.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise CandidateStoreError(f"Cannot create or access quarantine store directory '{base_store}': {e}") from e
+
+    quarantine_id = f"wfail_{uuid.uuid4().hex[:16]}"
+    target_dir = base_store / quarantine_id
+
+    if target_dir.exists():
+        raise CandidateStoreError(f"Worker failure quarantine directory collision: destination '{target_dir}' already exists")
+
+    target_ws = target_dir / "workspace"
+
+    try:
+        # Pre-copy scan: Ensure source workspace contains zero symlinks anywhere
+        _scan_tree_for_symlinks(ws_path, label="source workspace for worker failure quarantine")
+
+        target_dir.mkdir(parents=True, exist_ok=False)
+
+        # Copy workspace directory contents without dereferencing symlinks
+        shutil.copytree(ws_path, target_ws, symlinks=True, ignore_dangling_symlinks=False)
+
+        # Post-copy scan: Ensure persisted quarantine workspace contains zero symlinks
+        _scan_tree_for_symlinks(target_ws, label="quarantined worker failure workspace")
+
+        # Verify quarantine git repository has zero remotes
+        _verify_candidate_zero_remotes(target_ws)
+
+        # Defense-in-depth: If target_ws is a Git repository, verify all currently changed paths match worker_changed_paths exactly
+        if (target_ws / ".git").exists():
+            try:
+                status_res = subprocess.run(
+                    ["git", "status", "-z", "--porcelain", "-uall"],
+                    cwd=str(target_ws),
+                    capture_output=True,
+                    check=True,
+                )
+                raw_items = status_res.stdout.split(b"\x00")
+                current_target_changed = set()
+                idx = 0
+                while idx < len(raw_items):
+                    item = raw_items[idx]
+                    if not item:
+                        idx += 1
+                        continue
+                    if len(item) >= 3:
+                        status_code = item[:2].decode("utf-8", errors="replace")
+                        filepath = item[3:].decode("utf-8", errors="replace").replace("\\", "/")
+                        if filepath:
+                            current_target_changed.add(filepath)
+                        if any(c in status_code for c in ("R", "C")) and (idx + 1) < len(raw_items):
+                            idx += 1
+                            orig_path = raw_items[idx].decode("utf-8", errors="replace").replace("\\", "/")
+                            if orig_path:
+                                current_target_changed.add(orig_path)
+                    idx += 1
+
+                if sorted(list(current_target_changed)) != sorted(worker_changed_paths):
+                    raise CandidateStoreError(
+                        f"Worker failure quarantine changed paths mismatch: workspace has {sorted(list(current_target_changed))} but manifest was given {sorted(worker_changed_paths)}"
+                    )
+            except Exception as e:
+                if isinstance(e, CandidateStoreError):
+                    raise
+                raise CandidateStoreError(f"Failed to verify worker failure quarantine workspace changed paths completeness: {e}") from e
+
+        # Validate and inspect changed paths to build manifest
+        paths_manifest = _build_paths_manifest(target_ws, worker_changed_paths)
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        manifest_data = {
+            "schema_version": "0.1.0",
+            "worker_failure_quarantine_contract_version": WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION,
+            "quarantine_id": quarantine_id,
+            "trust_status": "QUARANTINED_PARTIAL_UNVERIFIED",
+            "project_id": project_id,
+            "task_id": task_id,
+            "gate": gate,
+            "control_source_sha": control_source_sha,
+            "execution_base_sha": execution_base_sha,
+            "worker_branch": worker_branch,
+            "initial_head_sha": initial_head_sha,
+            "final_head_sha": final_head_sha,
+            "worker_timed_out": worker_timed_out,
+            "worker_exit_code": worker_exit_code,
+            "changed_paths": paths_manifest,
+            "created_at": now_iso,
+        }
+
+        # Calculate manifest_sha256
+        canon_bytes = canonical_json_bytes(manifest_data)
+        manifest_sha256 = hashlib.sha256(canon_bytes).hexdigest()
+
+        # Write manifest.json
+        manifest_file = target_dir / "manifest.json"
+        manifest_file.write_bytes(canon_bytes)
+
+        return {
+            "status": "QUARANTINED_PARTIAL_UNVERIFIED",
+            "worker_failure_quarantine_contract_version": WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION,
+            "quarantine_id": quarantine_id,
+            "manifest_sha256": manifest_sha256,
+            "worker_changed_paths": worker_changed_paths,
+            "execution_base_sha": execution_base_sha,
+            "control_source_sha": control_source_sha,
+            "worker_timed_out": worker_timed_out,
+        }
+    except Exception as e:
+        # Partial failure cleanup
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        if isinstance(e, CandidateStoreError):
+            raise
+        raise CandidateStoreError(f"Failed to persist worker failure quarantine candidate: {e}") from e

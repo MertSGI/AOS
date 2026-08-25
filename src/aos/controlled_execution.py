@@ -13,7 +13,9 @@ from aos.candidate_store import (
     CandidateStoreError,
     persist_quarantine_candidate,
     persist_verified_candidate,
+    persist_worker_failure_quarantine_candidate,
 )
+
 from aos.execution_authority import validate_execution_authority
 from aos.git_workspace import (
     GitWorkspace,
@@ -128,10 +130,14 @@ class ControlledExecutionEngine:
             "live_guard_pre_execution",
             "workspace_initial_integrity",
             "worker_execution",
+            "worker_failure_forensic_integrity",
+            "worker_failure_scope_guard",
+            "worker_failure_quarantine",
             "git_integrity_post_worker",
             "scope_guard_post_worker",
             "live_guard_post_worker",
         ]
+
 
         for rc in req_checks:
             pipeline_check_ids.append(f"project:{rc}")
@@ -455,6 +461,97 @@ class ControlledExecutionEngine:
             errs = [worker_err_msg]
             if inspection_error:
                 errs.append(inspection_error)
+
+            # Build sanitized worker_failure_diagnostics from adapter stdout_summary
+            worker_failure_diag = {}
+            if w_res and w_res.stdout_summary:
+                try:
+                    raw_summary = json.loads(w_res.stdout_summary)
+                    if isinstance(raw_summary, dict):
+                        for k in [
+                            "stream_valid",
+                            "terminal_status",
+                            "failed_step_observed",
+                            "failed_tool_observed",
+                            "failed_tool_name",
+                            "failed_tool_error_type",
+                            "permission_soft_denial_observed",
+                            "reported_cwd_matches_workspace",
+                        ]:
+                            if k in raw_summary:
+                                worker_failure_diag[k] = raw_summary[k]
+                except Exception:
+                    pass
+            if w_res:
+                worker_failure_diag["timed_out"] = w_res.timed_out
+                worker_failure_diag["exit_code"] = w_res.exit_code
+
+            # Forensic inspection for partial worker failure quarantine
+            scope_res_forensic = None
+            forensic_scope_valid = False
+            forensic_violations = []
+            partial_quarantine_res = None
+            extensions_dict = {}
+
+            if worker_failure_diag:
+                extensions_dict["worker_failure_diagnostics"] = worker_failure_diag
+
+            # Worker failure quarantine eligibility:
+            # 1. mutation attempted and changed_paths non-empty
+            # 2. no inspection error
+            # 3. head unchanged and branch unchanged
+            # 4. scope guard valid
+            # 5. zero symlinks / zero remotes in workspace
+            if (
+                worker_mutation_attempted
+                and len(post_worker_changed_paths) > 0
+                and not inspection_error
+            ):
+                # Check Git forensic integrity (HEAD and branch unchanged)
+                if post_worker_head == initial_head and post_worker_branch == worker_branch:
+                    _record_check("worker_failure_forensic_integrity", "PASS")
+
+                    # Check forensic scope guard
+                    scope_res_forensic = validate_scope(
+                        changed_paths=post_worker_changed_paths,
+                        allowed_scope=allowed_scope,
+                    )
+                    forensic_scope_valid = scope_res_forensic.is_valid
+                    forensic_violations = scope_res_forensic.violations
+
+                    if forensic_scope_valid:
+                        _record_check("worker_failure_scope_guard", "PASS")
+
+                        # Attempt to persist partial worker failure quarantine
+                        try:
+                            q_res = persist_worker_failure_quarantine_candidate(
+                                workspace_path=workspace_dir,
+                                project_id=project_id,
+                                task_id=task_id,
+                                gate=gate,
+                                control_source_sha=live_control_sha,
+                                execution_base_sha=exec_base_sha,
+                                worker_branch=worker_branch,
+                                initial_head_sha=initial_head,
+                                final_head_sha=post_worker_head,
+                                worker_changed_paths=post_worker_changed_paths,
+                                worker_timed_out=w_res.timed_out if w_res else False,
+                                worker_exit_code=w_res.exit_code if w_res else None,
+                                source_repo_path=local_target_repo_path,
+                            )
+                            _record_check("worker_failure_quarantine", "PASS")
+                            partial_quarantine_res = q_res
+                            extensions_dict["partial_worker_quarantine"] = q_res
+                        except Exception as q_err:
+                            _record_check("worker_failure_quarantine", "FAIL", str(q_err))
+                            errs.append(f"Worker failure partial quarantine failed: {q_err}")
+                    else:
+                        _record_check("worker_failure_scope_guard", "FAIL", f"Scope violations: {'; '.join(forensic_violations)}")
+                        errs.append(f"Worker failure partial scope violation: {'; '.join(forensic_violations)}")
+                else:
+                    _record_check("worker_failure_forensic_integrity", "FAIL", "Worker modified HEAD or branch")
+                    errs.append("Worker failure forensic integrity failed: HEAD or branch modified")
+
             workspace.cleanup()
             return _build_and_validate_result(
                 "WORKER_FAILED",
@@ -464,12 +561,16 @@ class ControlledExecutionEngine:
                 initial_head=initial_head,
                 final_head=post_worker_head,
                 changed_paths=post_worker_changed_paths,
+                scope_valid=forensic_scope_valid,
+                violations=forensic_violations,
                 exit_code=w_res.exit_code if w_res else None,
                 timed_out=w_res.timed_out if w_res else False,
                 mutation_performed=len(post_worker_changed_paths) > 0,
                 mutation_attempted=worker_mutation_attempted,
                 err_list=errs,
+                extensions=extensions_dict if extensions_dict else None,
             )
+
 
         if inspection_error:
             _record_check("git_integrity_post_worker", "FAIL", inspection_error)

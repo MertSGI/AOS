@@ -615,3 +615,39 @@ class TestCandidateStore:
                 worker_changed_paths=["src/sample.py"],  # docs/readme.txt is omitted!
                 quarantine_store_dir=str(fake_candidate_store),
             )
+
+    def test_worker_failure_quarantine_persistence(self, fake_workspace, fake_candidate_store):
+        """Worker failure quarantine: creates wfail_ ID and contract 0.1.0 manifest with failure metadata."""
+        from aos.candidate_store import (
+            WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION,
+            persist_worker_failure_quarantine_candidate,
+        )
+
+        res = persist_worker_failure_quarantine_candidate(
+            workspace_path=str(fake_workspace),
+            project_id="aos",
+            task_id="AOS4-REF-001",
+            gate="AOS-4",
+            control_source_sha="c95dcd7638138b86f26889b474cc1f303d7a15b7",
+            execution_base_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            worker_branch="aos/aos4-ref-001",
+            initial_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            final_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+            worker_changed_paths=["src/sample.py", "docs/readme.txt"],
+            worker_timed_out=True,
+            worker_exit_code=None,
+            quarantine_store_dir=str(fake_candidate_store),
+        )
+
+        assert res["status"] == "QUARANTINED_PARTIAL_UNVERIFIED"
+        assert res["worker_failure_quarantine_contract_version"] == WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION
+        assert res["quarantine_id"].startswith("wfail_")
+        assert res["worker_timed_out"] is True
+
+        manifest_file = fake_candidate_store / res["quarantine_id"] / "manifest.json"
+        assert manifest_file.exists()
+        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+        assert manifest_data["trust_status"] == "QUARANTINED_PARTIAL_UNVERIFIED"
+        assert manifest_data["worker_timed_out"] is True
+        assert manifest_data["worker_exit_code"] is None
+        assert len(manifest_data["changed_paths"]) == 2

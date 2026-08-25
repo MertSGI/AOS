@@ -14,14 +14,18 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
 
-ADAPTER_CONTRACT_VERSION = "0.2.8"
+ADAPTER_CONTRACT_VERSION = "0.2.9"
 RUNTIME_ENVIRONMENT_PROFILE_VERSION = "0.1.0"
+MAX_WORKER_TIMEOUT_SECONDS = 600
+MIN_WORKER_TIMEOUT_SECONDS = 1
+WORKER_PROCESS_GRACE_SECONDS = 15
 SENSITIVE_ENV_VARS = {"OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
 SUPPORTED_OUTPUT_FORMATS = {"json", "stream-json"}
 NATIVE_FILE_EDIT_TOOLS = {"write_file", "write_to_file", "edit_file", "replace_file_content", "multi_replace_file_content"}
 NORMAL_STEP_STATES = {"ACTIVE", "DONE"}
 OBSERVED_FAILURE_STEP_STATES = {"ERROR"}
 OFFICIAL_STEP_STATES = NORMAL_STEP_STATES | OBSERVED_FAILURE_STEP_STATES
+
 
 
 def _find_node_executable() -> Optional[str]:
@@ -732,8 +736,9 @@ class AntigravityWorkerAdapter(WorkerAdapter):
         workspace_path: str,
         allowed_scope: Dict[str, Any],
         base_sha: str,
-        timeout_seconds: int = 3600,
+        timeout_seconds: int = 180,
     ) -> WorkerExecutionResult:
+
         """Execute task inside isolated workspace using agy CLI with scrubbed environment."""
         started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         task_id = task.get("task_id", "UNKNOWN_TASK")
@@ -810,6 +815,21 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             "- Stop on ambiguity."
         )
 
+        # Validate worker timeout bounds
+        if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds < MIN_WORKER_TIMEOUT_SECONDS or timeout_seconds > MAX_WORKER_TIMEOUT_SECONDS:
+            finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            return WorkerExecutionResult(
+                worker_identity=f"antigravity-cli ({self.capability_status})",
+                workspace_path=workspace_path,
+                exit_code=1,
+                timed_out=False,
+                stdout_summary="",
+                stderr_summary=f"Invalid worker timeout_seconds '{timeout_seconds}': must be integer between {MIN_WORKER_TIMEOUT_SECONDS} and {MAX_WORKER_TIMEOUT_SECONDS}",
+                mutation_attempted=False,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+
         resolved_exe = (self.pinned_identity or {}).get("path") or shutil.which(self.cli_command) or self.cli_command
         workspace_dir = Path(workspace_path)
 
@@ -817,7 +837,7 @@ class AntigravityWorkerAdapter(WorkerAdapter):
             executable_path=str(resolved_exe),
             workspace_path=str(workspace_dir),
             prompt=prompt,
-            timeout_seconds=min(timeout_seconds, 180),
+            timeout_seconds=timeout_seconds,
             output_format="stream-json",
         )
 
@@ -830,8 +850,11 @@ class AntigravityWorkerAdapter(WorkerAdapter):
         stderr_summary = ""
         mutation_attempted = False
 
+        subprocess_timeout = timeout_seconds + WORKER_PROCESS_GRACE_SECONDS
+
         try:
-            res = self.runner(cmd, workspace_path, timeout_seconds, env)
+            res = self.runner(cmd, workspace_path, subprocess_timeout, env)
+
             raw_stdout = res.stdout or ""
             raw_stderr = res.stderr or ""
             proc_exit_code = res.returncode
