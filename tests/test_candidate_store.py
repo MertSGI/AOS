@@ -583,3 +583,35 @@ class TestCandidateStore:
                 worker_changed_paths=["src/sample.py"],
                 quarantine_store_dir=str(fake_candidate_store),
             )
+
+    def test_quarantine_manifest_completeness_mismatch_fails_closed(self, fake_workspace, fake_candidate_store):
+        """Quarantine F: No quarantine manifest can omit a current changed path."""
+        from aos.candidate_store import persist_quarantine_candidate
+
+        # fake_workspace has src/sample.py and docs/readme.txt
+        # If we pass only ["src/sample.py"] as changed paths while git sees both or different, fails closed
+        subprocess.run(["git", "init"], cwd=str(fake_workspace), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "AOS Tester"], cwd=str(fake_workspace), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "tester@aos.test"], cwd=str(fake_workspace), check=True, capture_output=True)
+
+        base_f = fake_workspace / "base.txt"
+        base_f.write_text("base", encoding="utf-8")
+        subprocess.run(["git", "add", "base.txt"], cwd=str(fake_workspace), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(fake_workspace), check=True, capture_output=True)
+
+        # Now fake_workspace has untracked src/sample.py and docs/readme.txt
+        # Pass only one path in worker_changed_paths
+        with pytest.raises(CandidateStoreError, match="Quarantine changed paths mismatch"):
+            persist_quarantine_candidate(
+                workspace_path=str(fake_workspace),
+                project_id="aos",
+                task_id="AOS4-REF-001",
+                gate="AOS-4",
+                control_source_sha="c95dcd7638138b86f26889b474cc1f303d7a15b7",
+                execution_base_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                worker_branch="aos/aos4-ref-001",
+                initial_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                final_head_sha="1dfd59f850383dc4f40a59fd42462facb2b89315",
+                worker_changed_paths=["src/sample.py"],  # docs/readme.txt is omitted!
+                quarantine_store_dir=str(fake_candidate_store),
+            )

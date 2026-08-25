@@ -56,8 +56,13 @@ class MockSourceAdapter(ProjectSourceAdapter):
     def resolve_ref_to_sha(self) -> str:
         return "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
 
+    def resolve_exact_revision(self, exact_sha: str) -> str:
+        return exact_sha.lower()
+
+
     def fetch_canonical_context(self, exact_sha: str, paths: Dict[str, str]):
         contents = {
+
             "state": json.dumps({
                 "schema_version": "0.1.0",
                 "current_status": "READY",

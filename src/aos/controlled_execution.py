@@ -124,6 +124,7 @@ class ControlledExecutionEngine:
             "required_checks_contract",
             "canonical_snapshot",
             "execution_authority",
+            "execution_base_resolvability",
             "live_guard_pre_execution",
             "workspace_initial_integrity",
             "worker_execution",
@@ -131,6 +132,7 @@ class ControlledExecutionEngine:
             "scope_guard_post_worker",
             "live_guard_post_worker",
         ]
+
         for rc in req_checks:
             pipeline_check_ids.append(f"project:{rc}")
         pipeline_check_ids.extend([
@@ -351,7 +353,24 @@ class ControlledExecutionEngine:
 
         exec_base_sha = snapshot.get("next_action_execution_base_sha")
 
+        # 8b. Execution-Base Revision Resolvability (Verify commit exists in canonical repository)
+        try:
+            resolved_base_sha = source_adapter.resolve_exact_revision(str(exec_base_sha))
+            if resolved_base_sha.lower() != str(exec_base_sha).lower():
+                raise ValueError(f"Resolved base SHA '{resolved_base_sha}' does not match expected '{exec_base_sha}'")
+            _record_check("execution_base_resolvability", "PASS")
+        except Exception as e:
+            _record_check("execution_base_resolvability", "FAIL", str(e))
+            return _build_and_validate_result(
+                "HOLD",
+                control_sha=live_control_sha,
+                exec_base_sha=exec_base_sha,
+                err_list=[f"Execution base commit '{exec_base_sha}' does not exist or cannot be resolved in repository '{repo}': {e}"],
+            )
+
+
         # 9. Checkpoint B: Immediately before worker (live_guard_pre_execution)
+
         try:
             pre_exec_control_sha = source_adapter.resolve_ref_to_sha()
             if pre_exec_control_sha != live_control_sha:
@@ -598,14 +617,15 @@ class ControlledExecutionEngine:
                         "exit_code": c_res.returncode,
                         "timed_out": False,
                         "stdout_present": len(stdout_str) > 0,
-                        "stdout_len": len(stdout_str),
+                        "stdout_len": len(stdout_bytes),
                         "stdout_sha256": stdout_sha,
                         "stderr_present": len(stderr_str) > 0,
-                        "stderr_len": len(stderr_str),
+                        "stderr_len": len(stderr_bytes),
                         "stderr_sha256": stderr_sha,
                         "sanitized_stdout_tail": sanitized_stdout[-DIAGNOSTIC_TAIL_MAX_CHARS:] if sanitized_stdout else "",
                         "sanitized_stderr_tail": sanitized_stderr[-DIAGNOSTIC_TAIL_MAX_CHARS:] if sanitized_stderr else "",
                     }
+
                     verification_diagnostics.append(diag_entry)
 
                     if c_res.returncode == 0:
@@ -658,6 +678,7 @@ class ControlledExecutionEngine:
                 })
 
         # 16. Post-Verification Original Workspace Immutability & Final State Inspection
+        original_workspace_matches_post_worker_baseline = True
         try:
             current_boundary_state = inspect_workspace_boundary_state(ws_path_obj)
             final_head = workspace.get_current_head()
@@ -667,22 +688,28 @@ class ControlledExecutionEngine:
             # Verify original worker workspace was not altered by verification checks
             if current_boundary_state["head"] != post_worker_boundary_state["head"]:
                 verification_failed = True
+                original_workspace_matches_post_worker_baseline = False
                 verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: HEAD moved from '{post_worker_boundary_state['head']}' to '{current_boundary_state['head']}'")
             if current_boundary_state["branch"] != post_worker_boundary_state["branch"]:
                 verification_failed = True
+                original_workspace_matches_post_worker_baseline = False
                 verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: Branch changed from '{post_worker_boundary_state['branch']}' to '{current_boundary_state['branch']}'")
             if current_boundary_state["changed_paths"] != post_worker_boundary_state["changed_paths"]:
                 verification_failed = True
+                original_workspace_matches_post_worker_baseline = False
                 verification_err_msgs.append(f"ORIGINAL_WORKSPACE_MUTATION: Changed paths modified ({post_worker_boundary_state['changed_paths']} -> {current_boundary_state['changed_paths']})")
             if current_boundary_state["file_states"] != post_worker_boundary_state["file_states"]:
                 verification_failed = True
+                original_workspace_matches_post_worker_baseline = False
                 verification_err_msgs.append("ORIGINAL_WORKSPACE_MUTATION: File states or hashes were modified in original worker workspace")
         except Exception as e:
             final_head = post_worker_head
             final_branch = post_worker_branch
             final_changed_paths = post_worker_changed_paths
             verification_failed = True
+            original_workspace_matches_post_worker_baseline = False
             verification_err_msgs.append(f"Failed to inspect final workspace state: {e}")
+
 
         # 17. Final Git Integrity Check
         git_integrity_final_errors = []
@@ -711,24 +738,27 @@ class ControlledExecutionEngine:
         if verification_failed:
             quarantine_meta: Optional[Dict[str, Any]] = None
             if worker_clean_for_quarantine and post_worker_scope.is_valid:
-                try:
-                    quarantine_meta = persist_quarantine_candidate(
-                        workspace_path=workspace_dir,
-                        project_id=str(project_id) if project_id else "unknown",
-                        task_id=str(task_id) if task_id else "unknown",
-                        gate=str(gate) if gate else "unknown",
-                        control_source_sha=live_control_sha,
-                        execution_base_sha=exec_base_sha,
-                        worker_branch=worker_branch,
-                        initial_head_sha=initial_head,
-                        final_head_sha=final_head,
-                        worker_changed_paths=post_worker_changed_paths,
-                        source_repo_path=local_target_repo_path,
-                    )
-                    _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
-                except Exception as qe:
-                    _record_check("failure_candidate_quarantine", "FAIL", str(qe))
-                    verification_err_msgs.append(f"Failed candidate quarantine persistence failed: {qe}")
+                if original_workspace_matches_post_worker_baseline:
+                    try:
+                        quarantine_meta = persist_quarantine_candidate(
+                            workspace_path=workspace_dir,
+                            project_id=str(project_id) if project_id else "unknown",
+                            task_id=str(task_id) if task_id else "unknown",
+                            gate=str(gate) if gate else "unknown",
+                            control_source_sha=live_control_sha,
+                            execution_base_sha=exec_base_sha,
+                            worker_branch=worker_branch,
+                            initial_head_sha=initial_head,
+                            final_head_sha=final_head,
+                            worker_changed_paths=post_worker_changed_paths,
+                            source_repo_path=local_target_repo_path,
+                        )
+                        _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
+                    except Exception as qe:
+                        _record_check("failure_candidate_quarantine", "FAIL", str(qe))
+                        verification_err_msgs.append(f"Failed candidate quarantine persistence failed: {qe}")
+                else:
+                    _record_check("failure_candidate_quarantine", "FAIL", "Original worker workspace modified during verification; quarantine rejected")
             else:
                 _record_check("failure_candidate_quarantine", "NOT_RUN")
 
@@ -766,28 +796,32 @@ class ControlledExecutionEngine:
             if final_control_sha != live_control_sha:
                 _record_check("live_guard_final", "FAIL", f"Control moved to '{final_control_sha}'")
 
-                # Quarantining candidate on final LIVE_GUARD failure if scope clean
+                # Quarantining candidate on final LIVE_GUARD failure if scope clean and boundary unchanged
                 quarantine_meta = None
                 if worker_clean_for_quarantine and post_worker_scope.is_valid:
-                    try:
-                        quarantine_meta = persist_quarantine_candidate(
-                            workspace_path=workspace_dir,
-                            project_id=str(project_id) if project_id else "unknown",
-                            task_id=str(task_id) if task_id else "unknown",
-                            gate=str(gate) if gate else "unknown",
-                            control_source_sha=live_control_sha,
-                            execution_base_sha=exec_base_sha,
-                            worker_branch=worker_branch,
-                            initial_head_sha=initial_head,
-                            final_head_sha=final_head,
-                            worker_changed_paths=post_worker_changed_paths,
-                            source_repo_path=local_target_repo_path,
-                        )
-                        _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
-                    except Exception as qe:
-                        _record_check("failure_candidate_quarantine", "FAIL", str(qe))
+                    if original_workspace_matches_post_worker_baseline:
+                        try:
+                            quarantine_meta = persist_quarantine_candidate(
+                                workspace_path=workspace_dir,
+                                project_id=str(project_id) if project_id else "unknown",
+                                task_id=str(task_id) if task_id else "unknown",
+                                gate=str(gate) if gate else "unknown",
+                                control_source_sha=live_control_sha,
+                                execution_base_sha=exec_base_sha,
+                                worker_branch=worker_branch,
+                                initial_head_sha=initial_head,
+                                final_head_sha=final_head,
+                                worker_changed_paths=post_worker_changed_paths,
+                                source_repo_path=local_target_repo_path,
+                            )
+                            _record_check("failure_candidate_quarantine", "PASS", f"Quarantined unverified candidate {quarantine_meta.get('quarantine_id')}")
+                        except Exception as qe:
+                            _record_check("failure_candidate_quarantine", "FAIL", str(qe))
+                    else:
+                        _record_check("failure_candidate_quarantine", "FAIL", "Original worker workspace modified during verification; quarantine rejected")
                 else:
                     _record_check("failure_candidate_quarantine", "NOT_RUN")
+
 
                 workspace.cleanup()
                 ext_dict = {}

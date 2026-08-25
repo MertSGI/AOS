@@ -1,5 +1,6 @@
 """Offline regression and real-git tests for AOS-3 Controlled Single-Worker Execution Engine."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -7,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 
 import pytest
 
@@ -43,9 +45,23 @@ class MockSourceAdapter(ProjectSourceAdapter):
         self.exec_base_sha = exec_base_sha
         self.has_exec_base = has_exec_base
         self.has_ambiguity = has_ambiguity
+        self.verify_commit_fails = False
+        self.verify_commit_returned_sha = None
+
+    def resolve_exact_revision(self, exact_sha: str) -> str:
+        if self.verify_commit_fails:
+            raise RuntimeError(f"Mock commit '{exact_sha}' not found in repository")
+        if self.verify_commit_returned_sha:
+            return self.verify_commit_returned_sha
+        import re
+        if not isinstance(exact_sha, str) or not re.match(r"^[0-9a-f]{40}$", exact_sha):
+            raise ValueError(f"Invalid exact SHA format: {exact_sha}")
+        return exact_sha.lower()
+
 
     def resolve_ref_to_sha(self) -> str:
         self.resolve_call_count += 1
+
         if self.stale_on_call is not None and self.resolve_call_count >= self.stale_on_call:
             return self.second_control_sha
         return self.control_sha
@@ -1056,3 +1072,147 @@ class TestRealGitControlledWorkspace:
         q_check = next((c for c in res["verification_checks"] if c["check_id"] == "failure_candidate_quarantine"), None)
         assert q_check is not None
         assert q_check["status"] == "NOT_RUN"
+
+    def test_execution_base_resolvability_success(self):
+        """Resolvability A: valid 40-hex SHA confirmed by source adapter => PASS."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFIED_CANDIDATE"
+        res_check = next((c for c in res["verification_checks"] if c["check_id"] == "execution_base_resolvability"), None)
+        assert res_check is not None
+        assert res_check["status"] == "PASS"
+
+    def test_execution_base_resolvability_nonexistent_sha_fails_zero_worker(self):
+        """Resolvability B & F: Nonexistent SHA fails resolvability, returns HOLD, 0 worker calls, 0 ws setup."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_source.verify_commit_fails = True
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "HOLD"
+        assert mock_worker.executed is False
+        assert not hasattr(mock_ws, "workspace_dir") or mock_ws.workspace_dir is None
+
+        res_check = next((c for c in res["verification_checks"] if c["check_id"] == "execution_base_resolvability"), None)
+        assert res_check is not None
+        assert res_check["status"] == "FAIL"
+
+        w_check = next((c for c in res["verification_checks"] if c["check_id"] == "worker_execution"), None)
+        assert w_check is not None
+        assert w_check["status"] == "NOT_RUN"
+
+        q_check = next((c for c in res["verification_checks"] if c["check_id"] == "failure_candidate_quarantine"), None)
+        assert q_check is not None
+        assert q_check["status"] == "NOT_RUN"
+
+    def test_execution_base_resolvability_mismatched_sha_returned(self):
+        """Resolvability C: Source adapter returns a different SHA => HOLD."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_source.verify_commit_returned_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "HOLD"
+        assert mock_worker.executed is False
+
+    def test_quarantine_rejected_when_original_workspace_modified_during_verification(self):
+        """Quarantine B & C: Original worker workspace modified during verification => quarantine rejected, FAIL."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"], changed_files=["src/app.py"])
+
+        def modifying_verif_runner(argv, cwd, timeout_seconds, env):
+            # Mutate the original workspace directly to simulate breach of isolation
+            ws_dir = mock_ws.workspace_dir
+            untracked = Path(ws_dir) / "leaked_during_verification.txt"
+            untracked.write_text("breach", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 1, stdout="fail", stderr="fail")
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=modifying_verif_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        assert res["disposition"] == "VERIFICATION_FAILED"
+        assert "quarantine_candidate" not in res.get("extensions", {})
+
+        q_check = next((c for c in res["verification_checks"] if c["check_id"] == "failure_candidate_quarantine"), None)
+        assert q_check is not None
+        assert q_check["status"] == "FAIL"
+
+    def test_diagnostic_utf8_byte_length_non_ascii(self):
+        """Diagnostic 8: stdout_len and stderr_len represent exact UTF-8 byte lengths."""
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        mock_source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        mock_worker = MockTestDoubleWorkerAdapter()
+        mock_ws = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+
+        non_ascii_stdout = "Test output: 🚀 🌟 日本語 (10 chars, but many more UTF-8 bytes)\n"
+        expected_bytes_len = len(non_ascii_stdout.encode("utf-8"))
+        assert expected_bytes_len > len(non_ascii_stdout)
+
+        def non_ascii_verif_runner(argv, cwd, timeout_seconds, env):
+            return subprocess.CompletedProcess(argv, 0, stdout=non_ascii_stdout, stderr="")
+
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda r, ref: mock_source,
+            git_workspace_factory=lambda repo, base, tid, branch: mock_ws,
+            worker_adapter_factory=lambda: mock_worker,
+            verification_runner=non_ascii_verif_runner,
+            repo_identity_inspector=lambda path: "GenericOrg/GenericRepo",
+        )
+
+        res = engine.execute(local_target_repo_path="/path/to/repo")
+        diags = res.get("extensions", {}).get("verification_diagnostics")
+        assert diags is not None
+        assert len(diags) == 1
+        d = diags[0]
+        assert d["stdout_len"] == expected_bytes_len
+        assert d["stdout_sha256"] == hashlib.sha256(non_ascii_stdout.encode("utf-8")).hexdigest()

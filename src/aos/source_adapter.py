@@ -57,10 +57,40 @@ class ProjectSourceAdapter:
         except Exception as e:
             raise RuntimeError(f"Failed to resolve ref '{self.control_ref}' for repository '{self.repository}': {e}") from e
 
+    def resolve_exact_revision(self, exact_sha: str) -> str:
+        """Resolve and verify that an exact 40-character revision SHA exists in the canonical repository.
+
+        Requirements:
+        - Accepts only exact 40-character lowercase hex SHA.
+        - Queries the descriptor repository's commit endpoint.
+        - Fails closed on missing commit, format mismatch, network/source error.
+        - Returns the verified exact lowercase SHA.
+        """
+        import re
+        if not isinstance(exact_sha, str) or not re.match(r"^[0-9a-f]{40}$", exact_sha):
+            raise ValueError(f"Invalid exact SHA format for revision existence verification: '{exact_sha}'")
+
+        url = f"https://api.github.com/repos/{self.repository}/commits/{exact_sha}"
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": self.user_agent,
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                returned_sha = data.get("sha")
+                if not isinstance(returned_sha, str) or returned_sha.lower() != exact_sha.lower():
+                    raise ValueError(f"Repository returned commit SHA '{returned_sha}' which does not match requested '{exact_sha}'")
+                return exact_sha.lower()
+        except Exception as e:
+            raise RuntimeError(f"Failed to resolve revision '{exact_sha}' in repository '{self.repository}': {e}") from e
+
     def fetch_file_at_sha(self, path: str, exact_sha: str) -> str:
         """Fetch raw content of a file at exact commit SHA without using branch ref."""
         url = f"https://raw.githubusercontent.com/{self.repository}/{exact_sha}/{path}"
         req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
+
+
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return resp.read().decode("utf-8")

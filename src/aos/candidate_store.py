@@ -341,10 +341,50 @@ def persist_quarantine_candidate(
         # Verify quarantine git repository has zero remotes
         _verify_candidate_zero_remotes(target_ws)
 
+        # Defense-in-depth: If target_ws is a Git repository, verify all currently changed paths match worker_changed_paths exactly
+        if (target_ws / ".git").exists():
+            try:
+                status_res = subprocess.run(
+                    ["git", "status", "-z", "--porcelain", "-uall"],
+                    cwd=str(target_ws),
+                    capture_output=True,
+                    check=True,
+                )
+                raw_items = status_res.stdout.split(b"\x00")
+                current_target_changed = set()
+                idx = 0
+                while idx < len(raw_items):
+                    item = raw_items[idx]
+                    if not item:
+                        idx += 1
+                        continue
+                    if len(item) >= 3:
+                        status_code = item[:2].decode("utf-8", errors="replace")
+                        filepath = item[3:].decode("utf-8", errors="replace").replace("\\", "/")
+                        if filepath:
+                            current_target_changed.add(filepath)
+                        if any(c in status_code for c in ("R", "C")) and (idx + 1) < len(raw_items):
+                            idx += 1
+                            orig_path = raw_items[idx].decode("utf-8", errors="replace").replace("\\", "/")
+                            if orig_path:
+                                current_target_changed.add(orig_path)
+                    idx += 1
+
+                if sorted(list(current_target_changed)) != sorted(worker_changed_paths):
+                    raise CandidateStoreError(
+                        f"Quarantine changed paths mismatch: workspace has {sorted(list(current_target_changed))} but manifest was given {sorted(worker_changed_paths)}"
+                    )
+            except Exception as e:
+                if isinstance(e, CandidateStoreError):
+                    raise
+                raise CandidateStoreError(f"Failed to verify quarantine workspace changed paths completeness: {e}") from e
+
+
         # Validate and inspect changed paths to build manifest
         paths_manifest = _build_paths_manifest(target_ws, worker_changed_paths)
 
         now_iso = datetime.now(timezone.utc).isoformat()
+
         manifest_data = {
             "schema_version": "0.1.0",
             "quarantine_store_contract_version": QUARANTINE_STORE_CONTRACT_VERSION,

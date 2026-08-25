@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_NEW_EXECUTION_BASE_REVIEW_PENDING",
+    "status": "AOS_4_REF_001_FINAL_CONTROLLER_AUTHORITY_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Retarget AOS4-REF-001 execution base to the CI-proven controller recovery revision, verify execution authority read-only, and require independent review before authorizing attempt #2.",
+    "next_action": "Independently verify exact execution-base resolvability and quarantine boundary integrity, then retarget AOS4-REF-001 to the resulting CI-proven controller revision before any new execution authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -107,7 +107,7 @@
             "status": "BOOTSTRAP",
             "control_branch": "feature/aos-4-independent-verification-hold",
             "bootstrap_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
-            "next_action_execution_base_sha": "c5cc9bd872b226bc2a8db421a64939a77b311fc9",
+            "next_action_execution_base_sha": "c5cc9bdf2ad568f3f16af5056ca3391f8a4631d1",
             "goal": "Independent verification and deterministic HOLD authority",
             "executor_may_self_close": false,
             "independent_verifier_required": true,
@@ -120,10 +120,10 @@
                 "required_checks_contract": "INDEPENDENTLY_ACCEPTED",
                 "durable_candidate_handoff": "INDEPENDENTLY_ACCEPTED",
                 "verification_workspace_isolation": "IMPLEMENTED_REVIEW_PENDING",
-                "failed_candidate_quarantine": "IMPLEMENTED_REVIEW_PENDING",
-                "verification_diagnostics": "IMPLEMENTED_REVIEW_PENDING"
+                "failed_candidate_quarantine": "HARDENING_REVIEW_PENDING",
+                "verification_diagnostics": "IMPLEMENTED_REVIEW_PENDING",
+                "execution_base_resolvability": "IMPLEMENTED_REVIEW_PENDING"
             },
-
             "current_execution_authorization_id": "AOS4-REF-001-R1-20260824-2134",
             "current_execution_authorization_type": "R1_POLICY_AUTHORIZED_AFTER_INDEPENDENT_REVIEW",
             "current_execution_authorization_status": "CONSUMED",
