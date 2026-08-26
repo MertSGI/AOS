@@ -174,7 +174,7 @@ class TestHumanGatePolicy:
         state_path = Path("docs/project-control/STATE.json")
         state = json.loads(state_path.read_text(encoding="utf-8"))
         assert state["extensions"]["aos4_independent_verification"]["next_execution_attempt_number"] == 3
-        assert state["extensions"]["aos4_independent_verification"]["next_execution_authorization_status"] == "PENDING_POLICY_EVALUATION"
+        assert state["extensions"]["aos4_independent_verification"]["next_execution_authorization_status"] == "POLICY_AUTHORIZED"
 
     def test_accepted_isolated_nonprod_r2_auto_execute(self):
         task = {"task_id": "T-R2", "project_id": "aos", "gate": "AOS-4", "risk_class": "R2"}
