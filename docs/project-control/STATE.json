@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T14:57:02+03:00",
+    "updated_at": "2026-08-26T16:28:46+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "TRANSPORT_REMEDIATION_EXACT_SHA_RUNTIME_PROOF_REVIEW_PENDING",
+    "status": "TRANSPORT_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_4_POLICY_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independent review of the canonical exact-SHA Windows ProjectSourceAdapter transport proof and remediation commit before DEC-022 attempt #4 authorization.",
+    "next_action": "Deterministic DEC-022 policy evaluation and fresh execution-authority transaction for AOS4-REF-001 attempt #4 under the independently accepted transport remediation and existing proven Antigravity capability.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "TRANSPORT_REMEDIATION_EXACT_SHA_RUNTIME_PROOF_REVIEW_PENDING",
+            "reference_status": "TRANSPORT_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_4_POLICY_PENDING",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -153,7 +153,7 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 4,
-            "next_execution_authorization_status": "BLOCKED_ON_TRANSPORT_REMEDIATION_REVIEW",
+            "next_execution_authorization_status": "PENDING_POLICY_EVALUATION",
             "attempt_3_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-V2-20260826T103700Z",
             "attempt_3_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_3_authorization_decision": "AUTO_EXECUTE",
@@ -177,7 +177,7 @@
             "attempt_3_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical evidence and exact-SHA CI",
             "attempt_3_independent_review_control_sha": "e6de0a8fe1a8ba883461025cf4a8bf45704df186",
             "attempt_3_independent_review_ci_run_id": 32963702293,
-            "transport_remediation_status": "EXACT_SHA_WINDOWS_RUNTIME_PROOF_CANONICALIZED_REVIEW_PENDING",
+            "transport_remediation_status": "INDEPENDENTLY_ACCEPTED",
             "transport_remediation_base_sha": "e6de0a8fe1a8ba883461025cf4a8bf45704df186",
             "transport_remediation_strategy": "EXPLICIT_NATIVE_SYSTEM_TRUSTSTORE_CONTEXT",
             "transport_remediation_truststore_version": "0.10.4",
@@ -188,7 +188,14 @@
             "transport_remediation_runtime_proof_sha256": "4b7ec2771db2b7a923015d80b2e22e5a2652c518bae8bba881f93e25e4ea2d1a",
             "transport_remediation_runtime_proof_source_revision": "17aaf35d902606bccb3d20e712e5b7e37814f2d8",
             "transport_remediation_runtime_proof_result": "PASS",
-            "transport_remediation_independent_review_status": "PENDING",
+            "transport_remediation_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "transport_remediation_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical evidence and exact-SHA CI",
+            "transport_remediation_independent_review_control_sha": "86633b4025d9f8c946e5315d9593f88646293834",
+            "transport_remediation_independent_review_source_sha": "17aaf35d902606bccb3d20e712e5b7e37814f2d8",
+            "transport_remediation_independent_review_proof_id": "PROOF-TRANSPORT-20260826T115740Z-17aaf35d",
+            "transport_remediation_independent_review_proof_sha256": "4b7ec2771db2b7a923015d80b2e22e5a2652c518bae8bba881f93e25e4ea2d1a",
+            "transport_remediation_independent_review_ci_run_id": 32966349146,
+            "transport_remediation_blocker_status": "RESOLVED",
             "attempt_3_authorization_invalidation_reason": "AUTHORIZATION_TRANSACTION_SCOPE_VIOLATION",
             "attempt_3_invalidated_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-20260826T101300Z",
             "attempt_3_invalidated_control_commit_sha": "57231a028157dee813f2d4012d5d3bec7438cdad",
