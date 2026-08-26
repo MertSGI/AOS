@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T20:41:10+03:00",
+    "updated_at": "2026-08-26T21:13:53+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_4_FORENSIC_BUNDLE_COMPLETE_INDEPENDENT_REVIEW_PENDING",
+    "status": "ATTEMPT_4_INDEPENDENTLY_REVIEWED_REMEDIATION_REQUIRED",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independent semantic review of the complete Attempt #4 quarantined file snapshots, raw execution result, verification diagnostics and exact-SHA CI before any remediation or Attempt #5 policy evaluation.",
+    "next_action": "Perform a bounded remediation transaction for the independently classified Attempt #4 failures: repair the schema-invalid valid-descriptor test fixture and harden the full-regression timeout budget before any Attempt #5 policy evaluation.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_4_FORENSIC_BUNDLE_COMPLETE_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "ATTEMPT_4_INDEPENDENTLY_REVIEWED_REMEDIATION_REQUIRED",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -153,7 +153,7 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 5,
-            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT4_INDEPENDENT_REVIEW",
+            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT4_REMEDIATION",
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",
@@ -195,7 +195,22 @@
             "attempt_4_complete_forensic_inventory": "docs/proofs/aos4_ref_001_attempt4_forensic_inventory.json",
             "attempt_4_forensic_bundle_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
             "attempt_4_forensic_snapshot_count": 4,
-            "attempt_4_independent_review_status": "PENDING",
+            "attempt_4_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_4_independent_review_result": "INDEPENDENTLY_ACCEPTED_VERIFICATION_FAILED",
+            "attempt_4_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical forensic evidence and exact-SHA CI",
+            "attempt_4_independent_review_control_sha": "a6194379bf122797561eb773ccfa485e8de5dbf6",
+            "attempt_4_independent_review_proof": "docs/proofs/aos4_ref_001_attempt4_independent_failure_review.json",
+            "attempt_4_authoritative_contradiction": false,
+            "attempt_4_scenario_1_failure_class": "TEST_FIXTURE_CONTRACT_DRIFT",
+            "attempt_4_scenario_1_root_cause": "INVALID_TEST_FIXTURE_DESCRIPTOR",
+            "attempt_4_scenario_1_verifier_behavior": "CORRECT_FAIL_CLOSED",
+            "attempt_4_full_regression_failure_class": "VERIFICATION_TIMEOUT_BUDGET_NOT_ROBUST_ON_OBSERVED_WINDOWS_HOST",
+            "attempt_4_full_regression_candidate_causation_proven": false,
+            "attempt_4_remediation_required": true,
+            "attempt_4_remediation_items": [
+                "TEST_FIXTURE_CONTRACT_DRIFT_INVALID_VALID_DESCRIPTOR_FIXTURE",
+                "FULL_REGRESSION_TIMEOUT_BUDGET_NOT_ROBUST_ON_WINDOWS_HOST"
+            ],
             "attempt_3_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-V2-20260826T103700Z",
             "attempt_3_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_3_authorization_decision": "AUTO_EXECUTE",
