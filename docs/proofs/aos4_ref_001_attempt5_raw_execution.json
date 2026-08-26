@@ -1,0 +1,149 @@
+{
+  "changed_paths": [],
+  "control_source_sha": null,
+  "disposition": "HOLD",
+  "errors": [
+    "Worker adapter capability status is UNPROVEN (live execution disabled until proven)"
+  ],
+  "execution_base_sha": null,
+  "final_head_sha": null,
+  "finished_at": "2026-08-26T20:03:29.565483+00:00",
+  "gate": "AOS-4",
+  "initial_head_sha": null,
+  "mutation_performed": false,
+  "project_id": "aos",
+  "retry_count": 0,
+  "schema_version": "0.1.0",
+  "scope_validation": {
+    "allowed_paths": [
+      "src/aos/verification.py",
+      "src/aos/validate.py",
+      "schemas/v0.1/verification_result.schema.json",
+      "tests/test_verification.py"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "descriptors/",
+      "tasks/",
+      ".github/"
+    ],
+    "is_valid": false,
+    "violations": []
+  },
+  "started_at": "2026-08-26T20:03:27.523553+00:00",
+  "task_id": "AOS4-REF-001",
+  "verification_checks": [
+    {
+      "check_id": "descriptor_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "target_repository_identity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "task_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_requirements",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_capability",
+      "message": "Worker adapter capability is UNPROVEN",
+      "status": "FAIL"
+    },
+    {
+      "check_id": "retry_policy",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "required_checks_contract",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "canonical_snapshot",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "execution_authority",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "execution_base_resolvability",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_pre_execution",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "workspace_initial_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_execution",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_forensic_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_scope_guard",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "scope_guard_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "project:aos4_verification_foundation_tests",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "project:aos_full_regression",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "scope_guard_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "failure_candidate_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "candidate_persistence",
+      "status": "NOT_RUN"
+    }
+  ],
+  "worker_adapter": "antigravity",
+  "worker_branch": null,
+  "worker_capability_status": "UNPROVEN",
+  "worker_exit_code": null,
+  "worker_identity": null,
+  "worker_mutation_attempted": false,
+  "worker_timed_out": false
+}
