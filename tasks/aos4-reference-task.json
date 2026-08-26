@@ -24,6 +24,7 @@
   },
   "worker_requirements": {
     "adapter": "antigravity",
+    "environment": "non_production",
     "isolated_worktree": true,
     "timeout_seconds": 420
   },

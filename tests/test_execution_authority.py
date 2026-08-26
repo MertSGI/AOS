@@ -52,6 +52,7 @@ def make_valid_task(
         },
         "worker_requirements": {
             "adapter": "antigravity",
+            "environment": "non_production",
             "isolated_worktree": True
         },
         "evidence_requirements": {

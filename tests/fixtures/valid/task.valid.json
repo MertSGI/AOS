@@ -14,7 +14,7 @@
   },
   "worker_requirements": {
     "adapter": "antigravity",
-    "environment": "windows-x64",
+    "environment": "non_production",
     "capabilities": ["python3.12", "git"],
     "isolated_worktree": true,
     "timeout_seconds": 600

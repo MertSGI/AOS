@@ -89,12 +89,11 @@ def validate_execution_authority(
 
     # 7. task.risk_class check under DEC-022 HumanGatePolicy
     from aos.human_gate_policy import evaluate_human_gate_policy
-    # Derive deterministic execution-boundary facts from task & snapshot contracts
+    # Derive deterministic execution-boundary facts strictly from task contract
     worker_reqs = task.get("worker_requirements", {})
     isolated_worktree = bool(isinstance(worker_reqs, dict) and worker_reqs.get("isolated_worktree") is True)
-    # Target is non-production if project authority is not production_mutation
-    authority_cfg = snapshot.get("authority", {}) if isinstance(snapshot, dict) else {}
-    is_non_prod = authority_cfg.get("production_mutation") != "production" if isinstance(authority_cfg, dict) else True
+    environment = worker_reqs.get("environment") if isinstance(worker_reqs, dict) else None
+    is_non_prod = (environment == "non_production")
     is_isolated_non_prod = isolated_worktree and is_non_prod
 
     exec_context = {

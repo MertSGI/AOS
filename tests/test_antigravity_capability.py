@@ -191,6 +191,7 @@ def make_generic_task(
         },
         "worker_requirements": {
             "adapter": adapter,
+            "environment": "non_production",
             "isolated_worktree": isolated_worktree,
         },
         "evidence_requirements": {
@@ -2118,7 +2119,7 @@ class TestAntigravityCapabilityV028:
             "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             "branch_name": "aos/test-r1-fail",
             "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
-            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "worker_requirements": {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True, "timeout_seconds": 60},
             "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
             "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
         }
@@ -2244,7 +2245,7 @@ class TestAntigravityCapabilityV028:
             "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             "branch_name": "aos/test-r1-pass",
             "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
-            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "worker_requirements": {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True, "timeout_seconds": 60},
             "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
             "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
         }

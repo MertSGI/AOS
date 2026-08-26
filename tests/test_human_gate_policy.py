@@ -52,7 +52,7 @@ class TestHumanGatePolicy:
             "risk_class": "R1",
             "base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
             "branch_name": "aos/aos4-ref-001",
-            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True},
+            "worker_requirements": {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True},
             "allowed_scope": {"paths": ["src/aos/verification.py"], "forbidden_paths": []},
             "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["c1"]},
             "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"}
@@ -75,6 +75,106 @@ class TestHumanGatePolicy:
         auth_res = validate_execution_authority(snapshot, task)
         assert auth_res.is_valid is True
         assert auth_res.disposition == "ACCEPT"
+
+    def test_r1_environment_variations_execution_authority(self):
+        from aos.execution_authority import validate_execution_authority
+        base_task = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "task_id": "AOS4-REF-001",
+            "gate": "AOS-4",
+            "title": "T",
+            "description": "D",
+            "risk_class": "R1",
+            "base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "branch_name": "aos/aos4-ref-001",
+            "allowed_scope": {"paths": ["src/aos/verification.py"]},
+            "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["c1"]},
+            "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"}
+        }
+        snapshot = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "repository": "MertSGI/AOS",
+            "source_ref": "feature/aos-4-independent-verification-hold",
+            "source_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "current_status": "BOOTSTRAP",
+            "current_milestone": "AOS-4",
+            "canonical_next_action": "Action",
+            "target_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "next_action_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "has_ambiguity": False,
+            "ambiguity_reasons": [],
+            "input_file_hashes": {"state": "0000000000000000000000000000000000000000000000000000000000000000"}
+        }
+
+        # 1. isolated_worktree=true, environment=non_production -> ACCEPT (AUTO_EXECUTE)
+        t1 = json.loads(json.dumps(base_task))
+        t1["worker_requirements"] = {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True}
+        assert validate_execution_authority(snapshot, t1).is_valid is True
+
+        # 2. isolated_worktree=true, environment=production -> HOLD (HUMAN_REQUIRED)
+        t2 = json.loads(json.dumps(base_task))
+        t2["worker_requirements"] = {"adapter": "antigravity", "environment": "production", "isolated_worktree": True}
+        assert validate_execution_authority(snapshot, t2).is_valid is False
+
+        # 3. isolated_worktree=true, environment missing -> HOLD (HUMAN_REQUIRED)
+        t3 = json.loads(json.dumps(base_task))
+        t3["worker_requirements"] = {"adapter": "antigravity", "isolated_worktree": True}
+        assert validate_execution_authority(snapshot, t3).is_valid is False
+
+        # 4. isolated_worktree=false, environment=non_production -> HOLD (HUMAN_REQUIRED)
+        t4 = json.loads(json.dumps(base_task))
+        t4["worker_requirements"] = {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": False}
+        assert validate_execution_authority(snapshot, t4).is_valid is False
+
+        # 5. unknown/unrecognized environment -> HOLD
+        t5 = json.loads(json.dumps(base_task))
+        t5["worker_requirements"] = {"adapter": "antigravity", "environment": "staging", "isolated_worktree": True}
+        assert validate_execution_authority(snapshot, t5).is_valid is False
+
+    def test_canonical_aos4_reference_task_integrity_and_policy(self):
+        from aos.validate import validate_document
+        from aos.execution_authority import validate_execution_authority
+        task_path = Path("tasks/aos4-reference-task.json")
+        assert task_path.is_file()
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+
+        val = validate_document("task", task)
+        assert val.is_valid is True
+
+        assert task["worker_requirements"]["environment"] == "non_production"
+        assert task["base_sha"] == "d8ed009da7c26ceff153ada29ab9e78526d925c7"
+        assert task["allowed_scope"]["paths"] == [
+            "src/aos/verification.py",
+            "src/aos/validate.py",
+            "schemas/v0.1/verification_result.schema.json",
+            "tests/test_verification.py"
+        ]
+
+        snapshot = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "repository": "MertSGI/AOS",
+            "source_ref": "feature/aos-4-independent-verification-hold",
+            "source_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "current_status": "BOOTSTRAP",
+            "current_milestone": "AOS-4",
+            "canonical_next_action": "Action",
+            "target_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "next_action_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "has_ambiguity": False,
+            "ambiguity_reasons": [],
+            "input_file_hashes": {"state": "0000000000000000000000000000000000000000000000000000000000000000"}
+        }
+
+        auth_res = validate_execution_authority(snapshot, task)
+        assert auth_res.is_valid is True
+
+        state_path = Path("docs/project-control/STATE.json")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["extensions"]["aos4_independent_verification"]["next_execution_attempt_number"] == 3
+        assert state["extensions"]["aos4_independent_verification"]["next_execution_authorization_status"] == "PENDING_POLICY_EVALUATION"
 
     def test_accepted_isolated_nonprod_r2_auto_execute(self):
         task = {"task_id": "T-R2", "project_id": "aos", "gate": "AOS-4", "risk_class": "R2"}

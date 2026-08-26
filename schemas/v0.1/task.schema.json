@@ -94,7 +94,11 @@
           "minLength": 1
         },
         "environment": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "non_production",
+            "production"
+          ]
         },
         "capabilities": {
           "type": "array",

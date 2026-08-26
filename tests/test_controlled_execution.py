@@ -272,6 +272,7 @@ def make_generic_task(
         },
         "worker_requirements": {
             "adapter": adapter,
+            "environment": "non_production",
             "isolated_worktree": isolated_worktree,
         },
         "evidence_requirements": {
