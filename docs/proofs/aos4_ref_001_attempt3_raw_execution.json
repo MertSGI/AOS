@@ -1,0 +1,149 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS4-REF-001",
+  "gate": "AOS-4",
+  "disposition": "HOLD",
+  "control_source_sha": null,
+  "execution_base_sha": null,
+  "worker_branch": null,
+  "initial_head_sha": null,
+  "final_head_sha": null,
+  "changed_paths": [],
+  "scope_validation": {
+    "is_valid": false,
+    "allowed_paths": [
+      "src/aos/verification.py",
+      "src/aos/validate.py",
+      "schemas/v0.1/verification_result.schema.json",
+      "tests/test_verification.py"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "descriptors/",
+      "tasks/",
+      ".github/"
+    ],
+    "violations": []
+  },
+  "worker_adapter": "antigravity",
+  "worker_identity": null,
+  "worker_capability_status": "PROVEN",
+  "worker_mutation_attempted": false,
+  "worker_exit_code": null,
+  "worker_timed_out": false,
+  "verification_checks": [
+    {
+      "check_id": "descriptor_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "target_repository_identity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "task_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_requirements",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_capability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "retry_policy",
+      "status": "PASS"
+    },
+    {
+      "check_id": "required_checks_contract",
+      "status": "PASS"
+    },
+    {
+      "check_id": "canonical_snapshot",
+      "status": "FAIL",
+      "message": "Failed to resolve ref 'feature/aos-4-independent-verification-hold' for repository 'MertSGI/AOS': <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Missing Authority Key Identifier (_ssl.c:1077)>"
+    },
+    {
+      "check_id": "execution_authority",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "execution_base_resolvability",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_pre_execution",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "workspace_initial_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_execution",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_forensic_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_scope_guard",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "scope_guard_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_post_worker",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "project:aos4_verification_foundation_tests",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "project:aos_full_regression",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "scope_guard_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "live_guard_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "failure_candidate_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "candidate_persistence",
+      "status": "NOT_RUN"
+    }
+  ],
+  "mutation_performed": false,
+  "retry_count": 0,
+  "started_at": "2026-08-26T11:13:38.403413+00:00",
+  "finished_at": "2026-08-26T11:13:39.528769+00:00",
+  "errors": [
+    "LIVE_GUARD: Failed to resolve control ref 'feature/aos-4-independent-verification-hold': Failed to resolve ref 'feature/aos-4-independent-verification-hold' for repository 'MertSGI/AOS': <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Missing Authority Key Identifier (_ssl.c:1077)>"
+  ]
+}
