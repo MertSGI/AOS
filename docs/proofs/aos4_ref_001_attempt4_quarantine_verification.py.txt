@@ -1,0 +1,751 @@
+"""Generic deterministic independent-verification foundation for AOS-4."""
+
+from __future__ import annotations
+
+import datetime
+import re
+import uuid
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+from aos.scope_guard import validate_scope
+from aos.validate import validate_document
+
+VERIFICATION_CONTRACT_VERSION = "0.1.0"
+DEFAULT_VERIFIER_IDENTITY = "aos.independent_verifier_v0.1"
+
+EVIDENCE_LEVEL_RANK: Dict[str, int] = {
+    "E0_CLAIM": 0,
+    "E1_LOCAL_SOURCE": 1,
+    "E1_REMOTE_SOURCE_PROVEN": 1,
+    "E2_EXECUTABLE_EXACT_REVISION_PROVEN": 2,
+    "E3_ISOLATED_RUNTIME_PROVEN": 3,
+    "E4_SHARED_STAGING_PROVEN": 4,
+    "E5_PRODUCTION_OBSERVATION": 5,
+}
+
+DEFAULT_LIMITATIONS: List[str] = [
+    "Independent deterministic verification only.",
+    "No worker execution or workspace mutation performed by verifier.",
+    "Executor self-attestation alone is not accepted as canonical closure authority.",
+    "Human gate required for production, destructive, or roadmap modifications.",
+]
+
+
+def _to_dict_safe(obj: Any) -> Any:
+    """Helper to convert objects with to_dict method to dictionaries."""
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        return obj.to_dict()
+    return obj
+
+
+class IndependentVerificationResult:
+    """Immutable result of independent verification evaluation."""
+
+    def __init__(
+        self,
+        schema_version: str,
+        verification_id: str,
+        project_id: str,
+        task_id: str,
+        gate: str,
+        disposition: str,
+        closure_authorized: bool,
+        verifier: str,
+        verified_at: str,
+        checks: List[Dict[str, Any]],
+        limitations: List[str],
+        control_source_sha: Optional[str] = None,
+        execution_base_sha: Optional[str] = None,
+        candidate_id: Optional[str] = None,
+        execution_disposition: Optional[str] = None,
+        evidence_records: Optional[List[Dict[str, Any]]] = None,
+        reasons: Optional[List[str]] = None,
+        errors: Optional[List[str]] = None,
+        violations: Optional[List[str]] = None,
+        extensions: Optional[Dict[str, Any]] = None,
+    ):
+        self.schema_version = schema_version
+        self.verification_id = verification_id
+        self.project_id = project_id
+        self.task_id = task_id
+        self.gate = gate
+        self.disposition = disposition
+        self.closure_authorized = closure_authorized
+        self.verifier = verifier
+        self.verified_at = verified_at
+        self.checks = checks
+        self.limitations = limitations
+        self.control_source_sha = control_source_sha
+        self.execution_base_sha = execution_base_sha
+        self.candidate_id = candidate_id
+        self.execution_disposition = execution_disposition
+        self.evidence_records = evidence_records
+        self.reasons = reasons or []
+        self.errors = errors or []
+        self.violations = violations or []
+        self.extensions = extensions
+
+    @property
+    def is_pass(self) -> bool:
+        """Returns True if verification fully passed and closure is authorized."""
+        return self.disposition == "PASS" and self.closure_authorized is True
+
+    @property
+    def is_hold(self) -> bool:
+        """Returns True if verification resulted in HOLD disposition."""
+        return self.disposition == "HOLD"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert result to dictionary conforming to verification_result schema."""
+        d: Dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "verification_id": self.verification_id,
+            "project_id": self.project_id,
+            "task_id": self.task_id,
+            "gate": self.gate,
+            "disposition": self.disposition,
+            "closure_authorized": self.closure_authorized,
+            "verifier": self.verifier,
+            "verified_at": self.verified_at,
+            "control_source_sha": self.control_source_sha,
+            "execution_base_sha": self.execution_base_sha,
+            "candidate_id": self.candidate_id,
+            "execution_disposition": self.execution_disposition,
+            "checks": self.checks,
+            "reasons": self.reasons,
+            "errors": self.errors,
+            "violations": self.violations,
+            "limitations": self.limitations,
+        }
+        if self.evidence_records is not None:
+            d["evidence_records"] = self.evidence_records
+        if self.extensions is not None:
+            d["extensions"] = self.extensions
+        return d
+
+    def __repr__(self) -> str:
+        return (
+            f"IndependentVerificationResult(id='{self.verification_id}', "
+            f"task='{self.task_id}', disposition='{self.disposition}', "
+            f"closure_authorized={self.closure_authorized})"
+        )
+
+
+def validate_evidence_record(
+    evidence: Dict[str, Any],
+    task: Optional[Dict[str, Any]] = None,
+    execution_result: Optional[Dict[str, Any]] = None,
+    artifacts_checker: Optional[Callable[[str], bool]] = None,
+) -> Tuple[bool, List[str]]:
+    """Validate a single evidence record against schema and execution context."""
+    errors: List[str] = []
+
+    val = validate_document("evidence", evidence)
+    if not val.is_valid:
+        errors.extend([f"Evidence schema invalid: {e.message}" for e in val.errors])
+        return False, errors
+
+    ev_id = evidence.get("evidence_id", "unknown")
+
+    # Context consistency checks
+    if task:
+        if evidence.get("project") != task.get("project_id"):
+            errors.append(f"Evidence {ev_id} project '{evidence.get('project')}' != task project '{task.get('project_id')}'")
+        if evidence.get("gate") != task.get("gate"):
+            errors.append(f"Evidence {ev_id} gate '{evidence.get('gate')}' != task gate '{task.get('gate')}'")
+        if evidence.get("task_id") and evidence.get("task_id") != task.get("task_id"):
+            errors.append(f"Evidence {ev_id} task_id '{evidence.get('task_id')}' != task task_id '{task.get('task_id')}'")
+
+        # Minimum evidence level check
+        min_level = task.get("evidence_requirements", {}).get("minimum_level")
+        if min_level:
+            ev_level = evidence.get("evidence_level")
+            ev_rank = EVIDENCE_LEVEL_RANK.get(ev_level, -1)
+            req_rank = EVIDENCE_LEVEL_RANK.get(min_level, 999)
+            if ev_rank < req_rank:
+                errors.append(
+                    f"Evidence {ev_id} level '{ev_level}' does not meet required minimum level '{min_level}'"
+                )
+
+    if execution_result:
+        exec_proj = execution_result.get("project_id")
+        exec_gate = execution_result.get("gate")
+        exec_task = execution_result.get("task_id")
+        if exec_proj and evidence.get("project") != exec_proj:
+            errors.append(f"Evidence {ev_id} project '{evidence.get('project')}' != execution project '{exec_proj}'")
+        if exec_gate and evidence.get("gate") != exec_gate:
+            errors.append(f"Evidence {ev_id} gate '{evidence.get('gate')}' != execution gate '{exec_gate}'")
+        if exec_task and evidence.get("task_id") and evidence.get("task_id") != exec_task:
+            errors.append(f"Evidence {ev_id} task_id '{evidence.get('task_id')}' != execution task_id '{exec_task}'")
+
+        # Check revision consistency
+        rev = evidence.get("revision", {})
+        revs = evidence.get("revisions", {})
+        ev_base = rev.get("base_sha") or revs.get("base_sha")
+        exec_base = execution_result.get("execution_base_sha")
+        if ev_base and exec_base and ev_base != exec_base:
+            errors.append(f"Evidence {ev_id} base SHA '{ev_base}' != execution base SHA '{exec_base}'")
+
+    # Artifacts presence check
+    artifacts = evidence.get("artifacts", [])
+    if artifacts and artifacts_checker:
+        for art in artifacts:
+            if not artifacts_checker(art):
+                errors.append(f"Evidence {ev_id} claims artifact '{art}' which is absent or invalid")
+
+    return len(errors) == 0, errors
+
+
+def detect_evidence_contradictions(
+    evidence_records: List[Dict[str, Any]],
+    accepted_evidence: Optional[List[Dict[str, Any]]] = None,
+    execution_result: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Detect contradictions across evidence records, accepted evidence, and execution result."""
+    contradictions: List[str] = []
+    all_records = list(evidence_records)
+    if accepted_evidence:
+        all_records.extend(accepted_evidence)
+
+    # Check for duplicate evidence_ids with differing payloads
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for ev in all_records:
+        eid = ev.get("evidence_id")
+        if not eid:
+            continue
+        if eid in by_id:
+            prev = by_id[eid]
+            if prev.get("result") != ev.get("result"):
+                contradictions.append(
+                    f"Contradictory evidence results for evidence_id '{eid}': '{prev.get('result')}' vs '{ev.get('result')}'"
+                )
+            if prev.get("evidence_level") != ev.get("evidence_level"):
+                contradictions.append(
+                    f"Contradictory evidence levels for evidence_id '{eid}': '{prev.get('evidence_level')}' vs '{ev.get('evidence_level')}'"
+                )
+        else:
+            by_id[eid] = ev
+
+    # Check for contradictory claims with execution result
+    if execution_result:
+        exec_disposition = execution_result.get("disposition")
+        for ev in evidence_records:
+            eid = ev.get("evidence_id", "unknown")
+            ev_res = str(ev.get("result", "")).upper()
+            if exec_disposition in ("WORKER_FAILED", "VERIFICATION_FAILED") and ev_res in ("PASS", "SUCCESS", "CLOSED_PROVEN", "VERIFIED"):
+                contradictions.append(
+                    f"Evidence {eid} claims '{ev_res}' but execution result disposition is '{exec_disposition}'"
+                )
+
+    return contradictions
+
+
+class IndependentVerifier:
+    """Deterministic independent verifier for AOS controlled execution results and evidence."""
+
+    def __init__(
+        self,
+        verifier_identity: str = DEFAULT_VERIFIER_IDENTITY,
+        default_limitations: Optional[List[str]] = None,
+        artifacts_checker: Optional[Callable[[str], bool]] = None,
+    ):
+        self.verifier_identity = verifier_identity
+        self.limitations = default_limitations or list(DEFAULT_LIMITATIONS)
+        self.artifacts_checker = artifacts_checker
+
+    def verify(
+        self,
+        execution_result: Any,
+        task: Optional[Any] = None,
+        snapshot: Optional[Any] = None,
+        descriptor: Optional[Any] = None,
+        evidence_records: Optional[List[Any]] = None,
+        accepted_evidence: Optional[List[Any]] = None,
+        artifacts_checker: Optional[Callable[[str], bool]] = None,
+        custom_checks: Optional[List[Callable[[Dict[str, Any]], Tuple[str, str, str]]]] = None,
+    ) -> IndependentVerificationResult:
+        """Independently verify execution result and evidence without worker execution or mutation.
+
+        Returns an IndependentVerificationResult with disposition 'PASS' or 'HOLD'.
+        Fails closed on any malformed input, missing requirement, scope violation, or contradiction.
+        """
+        raw_exec = _to_dict_safe(execution_result)
+        raw_task = _to_dict_safe(task)
+        raw_snapshot = _to_dict_safe(snapshot)
+        raw_descriptor = _to_dict_safe(descriptor)
+        raw_evidence_records = [_to_dict_safe(e) for e in (evidence_records or [])] if evidence_records is not None else None
+        raw_accepted_evidence = [_to_dict_safe(e) for e in (accepted_evidence or [])] if accepted_evidence is not None else None
+        art_checker = artifacts_checker or self.artifacts_checker
+
+        verification_id = f"ver_{uuid.uuid4().hex[:16]}"
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        checks_list: List[Dict[str, Any]] = []
+        reasons: List[str] = []
+        errors: List[str] = []
+        violations: List[str] = []
+
+        def _record_check(check_id: str, status: str, message: str = ""):
+            checks_list.append({
+                "check_id": check_id,
+                "status": status,
+                "message": message,
+            })
+
+        # Safe extraction of identity fields for fail-closed result packaging
+        project_id = "unknown"
+        task_id = "unknown"
+        gate = "unknown"
+        control_source_sha = None
+        execution_base_sha = None
+        candidate_id = None
+        execution_disposition = None
+
+        if isinstance(raw_exec, dict):
+            project_id = str(raw_exec.get("project_id") or project_id)
+            task_id = str(raw_exec.get("task_id") or task_id)
+            gate = str(raw_exec.get("gate") or gate)
+            control_source_sha = raw_exec.get("control_source_sha")
+            execution_base_sha = raw_exec.get("execution_base_sha")
+            execution_disposition = raw_exec.get("disposition")
+            cand_meta = raw_exec.get("extensions", {}).get("candidate") if isinstance(raw_exec.get("extensions"), dict) else None
+            if isinstance(cand_meta, dict):
+                candidate_id = cand_meta.get("candidate_id")
+
+        if project_id == "unknown" and isinstance(raw_task, dict) and raw_task.get("project_id"):
+            project_id = str(raw_task["project_id"])
+        if task_id == "unknown" and isinstance(raw_task, dict) and raw_task.get("task_id"):
+            task_id = str(raw_task["task_id"])
+        if gate == "unknown" and isinstance(raw_task, dict) and raw_task.get("gate"):
+            gate = str(raw_task["gate"])
+
+        # Sanitize project_id/task_id/gate to conform to schema regex if unknown
+        if not re.match(r"^[a-z0-9_-]+$", project_id):
+            project_id = "unknown"
+        if not re.match(r"^[A-Za-z0-9_.-]+$", task_id):
+            task_id = "unknown"
+        if not gate:
+            gate = "unknown"
+
+        # 1. Validate ControlledExecutionResult schema
+        if not isinstance(raw_exec, dict):
+            msg = "Execution result is not a dictionary"
+            _record_check("execution_result_schema", "FAIL", msg)
+            errors.append(msg)
+            reasons.append(msg)
+            return self._build_result(
+                verification_id, project_id, task_id, gate, "HOLD", False,
+                now_iso, checks_list, reasons, errors, violations,
+                control_source_sha, execution_base_sha, candidate_id, execution_disposition, raw_evidence_records
+            )
+
+        val_exec = validate_document("controlled_execution_result", raw_exec)
+        if not val_exec.is_valid:
+            msg = f"ControlledExecutionResult schema invalid: {'; '.join(str(e) for e in val_exec.errors)}"
+            _record_check("execution_result_schema", "FAIL", msg)
+            errors.append(msg)
+            reasons.append(msg)
+        else:
+            _record_check("execution_result_schema", "PASS")
+
+        # 2. Validate Task schema (if provided)
+        if raw_task is not None:
+            if not isinstance(raw_task, dict):
+                msg = "Task specification is not a dictionary"
+                _record_check("task_schema", "FAIL", msg)
+                errors.append(msg)
+                reasons.append(msg)
+            else:
+                val_task = validate_document("task", raw_task)
+                if not val_task.is_valid:
+                    msg = f"Task schema invalid: {'; '.join(str(e) for e in val_task.errors)}"
+                    _record_check("task_schema", "FAIL", msg)
+                    errors.append(msg)
+                    reasons.append(msg)
+                else:
+                    _record_check("task_schema", "PASS")
+
+        # 3. Validate Snapshot schema & ambiguity (if provided)
+        if raw_snapshot is not None:
+            if not isinstance(raw_snapshot, dict):
+                msg = "Canonical project snapshot is not a dictionary"
+                _record_check("canonical_snapshot", "FAIL", msg)
+                errors.append(msg)
+                reasons.append(msg)
+            else:
+                val_snap = validate_document("canonical_project_snapshot", raw_snapshot)
+                if not val_snap.is_valid:
+                    msg = f"Snapshot schema invalid: {'; '.join(str(e) for e in val_snap.errors)}"
+                    _record_check("canonical_snapshot", "FAIL", msg)
+                    errors.append(msg)
+                    reasons.append(msg)
+                elif raw_snapshot.get("has_ambiguity") or raw_snapshot.get("ambiguity_reasons"):
+                    reasons_str = "; ".join(raw_snapshot.get("ambiguity_reasons", []))
+                    msg = f"Snapshot has unresolved ambiguity: {reasons_str}"
+                    _record_check("canonical_snapshot", "FAIL", msg)
+                    errors.append(msg)
+                    reasons.append(msg)
+                else:
+                    _record_check("canonical_snapshot", "PASS")
+
+        # 4. Validate Descriptor schema (if provided)
+        if raw_descriptor is not None:
+            if not isinstance(raw_descriptor, dict):
+                msg = "Project descriptor is not a dictionary"
+                _record_check("descriptor_schema", "FAIL", msg)
+                errors.append(msg)
+                reasons.append(msg)
+            else:
+                val_desc = validate_document("project_descriptor", raw_descriptor)
+                if not val_desc.is_valid:
+                    msg = f"Descriptor schema invalid: {'; '.join(str(e) for e in val_desc.errors)}"
+                    _record_check("descriptor_schema", "FAIL", msg)
+                    errors.append(msg)
+                    reasons.append(msg)
+                else:
+                    _record_check("descriptor_schema", "PASS")
+
+        # 5. Identity Consistency Check
+        identity_errors: List[str] = []
+        if raw_task and isinstance(raw_task, dict):
+            if raw_exec.get("project_id") != raw_task.get("project_id"):
+                identity_errors.append(f"Project ID mismatch: execution '{raw_exec.get('project_id')}' != task '{raw_task.get('project_id')}'")
+            if raw_exec.get("task_id") != raw_task.get("task_id"):
+                identity_errors.append(f"Task ID mismatch: execution '{raw_exec.get('task_id')}' != task '{raw_task.get('task_id')}'")
+            if raw_exec.get("gate") != raw_task.get("gate"):
+                identity_errors.append(f"Gate mismatch: execution '{raw_exec.get('gate')}' != task '{raw_task.get('gate')}'")
+
+        if raw_snapshot and isinstance(raw_snapshot, dict):
+            if raw_exec.get("project_id") != raw_snapshot.get("project_id"):
+                identity_errors.append(f"Project ID mismatch: execution '{raw_exec.get('project_id')}' != snapshot '{raw_snapshot.get('project_id')}'")
+            if raw_exec.get("gate") != raw_snapshot.get("current_milestone"):
+                identity_errors.append(f"Gate mismatch: execution gate '{raw_exec.get('gate')}' != snapshot milestone '{raw_snapshot.get('current_milestone')}'")
+
+        if raw_descriptor and isinstance(raw_descriptor, dict):
+            if raw_exec.get("project_id") != raw_descriptor.get("project_id"):
+                identity_errors.append(f"Project ID mismatch: execution '{raw_exec.get('project_id')}' != descriptor '{raw_descriptor.get('project_id')}'")
+
+        if identity_errors:
+            msg = "; ".join(identity_errors)
+            _record_check("identity_consistency", "FAIL", msg)
+            errors.extend(identity_errors)
+            reasons.append(msg)
+        else:
+            _record_check("identity_consistency", "PASS")
+
+        # 6. Revision Authority Consistency (Exact SHA check)
+        rev_errors: List[str] = []
+        if raw_snapshot and isinstance(raw_snapshot, dict):
+            snap_source = raw_snapshot.get("source_sha")
+            if snap_source and raw_exec.get("control_source_sha") != snap_source:
+                rev_errors.append(f"Control source SHA mismatch: execution '{raw_exec.get('control_source_sha')}' != snapshot '{snap_source}'")
+
+            snap_exec_base = raw_snapshot.get("next_action_execution_base_sha")
+            if snap_exec_base and raw_exec.get("execution_base_sha") != snap_exec_base:
+                rev_errors.append(f"Execution base SHA mismatch: execution '{raw_exec.get('execution_base_sha')}' != snapshot authority '{snap_exec_base}'")
+
+        if raw_task and isinstance(raw_task, dict):
+            task_base = raw_task.get("base_sha")
+            if task_base and raw_exec.get("execution_base_sha") != task_base:
+                rev_errors.append(f"Execution base SHA mismatch: execution '{raw_exec.get('execution_base_sha')}' != task base '{task_base}'")
+
+        if raw_exec.get("initial_head_sha") and raw_exec.get("execution_base_sha"):
+            if raw_exec.get("initial_head_sha") != raw_exec.get("execution_base_sha"):
+                rev_errors.append(f"Initial head SHA '{raw_exec.get('initial_head_sha')}' does not match execution base SHA '{raw_exec.get('execution_base_sha')}'")
+
+        if rev_errors:
+            msg = "; ".join(rev_errors)
+            _record_check("revision_authority", "FAIL", msg)
+            errors.extend(rev_errors)
+            reasons.append(msg)
+        else:
+            _record_check("revision_authority", "PASS")
+
+        # 7. Executor Disposition & Self-Attestation Guard
+        # The executor disposition MUST be VERIFIED_CANDIDATE. However, that alone is not closure authority.
+        exec_disp = raw_exec.get("disposition")
+        if exec_disp != "VERIFIED_CANDIDATE":
+            msg = f"Executor disposition '{exec_disp}' is not VERIFIED_CANDIDATE"
+            _record_check("executor_disposition", "FAIL", msg)
+            reasons.append(msg)
+        else:
+            _record_check("executor_disposition", "PASS")
+
+        # 8. Scope Guard Independent Verification
+        scope_val = raw_exec.get("scope_validation", {})
+        scope_errors: List[str] = []
+        if not scope_val.get("is_valid"):
+            scope_errors.append("Execution scope validation marked invalid by runner")
+        if scope_val.get("violations"):
+            scope_errors.extend([f"Scope violation: {v}" for v in scope_val.get("violations", [])])
+            violations.extend(scope_val.get("violations", []))
+
+        # Independently re-evaluate scope against task allowed_scope if task is provided
+        if raw_task and isinstance(raw_task, dict) and "allowed_scope" in raw_task:
+            changed_paths = raw_exec.get("changed_paths", [])
+            independent_scope = validate_scope(changed_paths, raw_task["allowed_scope"])
+            if not independent_scope.is_valid:
+                scope_errors.extend(independent_scope.violations)
+                violations.extend(independent_scope.violations)
+
+        if scope_errors:
+            msg = "; ".join(scope_errors)
+            _record_check("scope_guard", "FAIL", msg)
+            errors.extend(scope_errors)
+            reasons.append(msg)
+        else:
+            _record_check("scope_guard", "PASS")
+
+        # 9. Worker Execution Integrity
+        worker_errors: List[str] = []
+        if raw_exec.get("worker_timed_out"):
+            worker_errors.append("Worker execution timed out")
+        if raw_exec.get("worker_exit_code") is not None and raw_exec.get("worker_exit_code") != 0:
+            worker_errors.append(f"Worker exited with non-zero exit code: {raw_exec.get('worker_exit_code')}")
+        if raw_exec.get("worker_capability_status") == "UNPROVEN":
+            worker_errors.append("Worker adapter capability is UNPROVEN")
+
+        if worker_errors:
+            msg = "; ".join(worker_errors)
+            _record_check("worker_integrity", "FAIL", msg)
+            errors.extend(worker_errors)
+            reasons.append(msg)
+        else:
+            _record_check("worker_integrity", "PASS")
+
+        # 10. Post-Worker Git Integrity (HEAD immutability)
+        git_errors: List[str] = []
+        init_head = raw_exec.get("initial_head_sha")
+        final_head = raw_exec.get("final_head_sha")
+        if init_head and final_head and init_head != final_head:
+            git_errors.append(f"Unauthorized commit or HEAD change: initial '{init_head}' != final '{final_head}'")
+
+        if raw_task and isinstance(raw_task, dict) and raw_task.get("branch_name"):
+            expected_branch = raw_task.get("branch_name")
+            if raw_exec.get("worker_branch") != expected_branch:
+                git_errors.append(f"Worker branch mismatch: actual '{raw_exec.get('worker_branch')}' != expected '{expected_branch}'")
+
+        if git_errors:
+            msg = "; ".join(git_errors)
+            _record_check("git_integrity", "FAIL", msg)
+            errors.extend(git_errors)
+            reasons.append(msg)
+        else:
+            _record_check("git_integrity", "PASS")
+
+        # 11. Verification Checks Contract (Check all runner verification checks passed)
+        exec_checks = raw_exec.get("verification_checks", [])
+        checks_by_id: Dict[str, Dict[str, Any]] = {}
+        failed_runner_checks: List[str] = []
+
+        for chk in exec_checks:
+            cid = chk.get("check_id")
+            if cid:
+                checks_by_id[cid] = chk
+                if chk.get("status") == "FAIL":
+                    failed_runner_checks.append(f"Runner check '{cid}' failed: {chk.get('message', '')}")
+
+        missing_required_checks: List[str] = []
+        if raw_task and isinstance(raw_task, dict):
+            req_checks = raw_task.get("evidence_requirements", {}).get("required_checks", [])
+            for rc in req_checks:
+                check_key = f"project:{rc}"
+                direct_match = checks_by_id.get(check_key) or checks_by_id.get(rc)
+                if not direct_match:
+                    missing_required_checks.append(f"Required verification check '{rc}' was not run")
+                elif direct_match.get("status") != "PASS":
+                    missing_required_checks.append(f"Required verification check '{rc}' did not PASS (status={direct_match.get('status')})")
+
+        verification_contract_errors = failed_runner_checks + missing_required_checks
+        if verification_contract_errors:
+            msg = "; ".join(verification_contract_errors)
+            _record_check("verification_checks_contract", "FAIL", msg)
+            errors.extend(verification_contract_errors)
+            reasons.append(msg)
+        else:
+            _record_check("verification_checks_contract", "PASS")
+
+        # 12. Execution Errors Check
+        if raw_exec.get("errors"):
+            exec_errs = [str(e) for e in raw_exec.get("errors", [])]
+            msg = f"Execution result contains errors: {'; '.join(exec_errs)}"
+            _record_check("execution_errors", "FAIL", msg)
+            errors.extend(exec_errs)
+            reasons.append(msg)
+        else:
+            _record_check("execution_errors", "PASS")
+
+        # 13. Evidence Records Verification
+        if raw_evidence_records:
+            evidence_errors: List[str] = []
+            for ev in raw_evidence_records:
+                is_valid_ev, ev_errs = validate_evidence_record(
+                    evidence=ev,
+                    task=raw_task if isinstance(raw_task, dict) else None,
+                    execution_result=raw_exec,
+                    artifacts_checker=art_checker,
+                )
+                if not is_valid_ev:
+                    evidence_errors.extend(ev_errs)
+
+            if evidence_errors:
+                msg = "; ".join(evidence_errors)
+                _record_check("evidence_metadata", "FAIL", msg)
+                errors.extend(evidence_errors)
+                reasons.append(msg)
+            else:
+                _record_check("evidence_metadata", "PASS")
+
+        # 14. Evidence Contradiction Detection
+        if raw_evidence_records or raw_accepted_evidence:
+            contradictions = detect_evidence_contradictions(
+                evidence_records=raw_evidence_records or [],
+                accepted_evidence=raw_accepted_evidence,
+                execution_result=raw_exec,
+            )
+            if contradictions:
+                msg = "; ".join(contradictions)
+                _record_check("evidence_contradiction", "FAIL", msg)
+                errors.extend(contradictions)
+                reasons.append(msg)
+            else:
+                _record_check("evidence_contradiction", "PASS")
+
+        # 15. Candidate Store Integrity (if candidate extension present)
+        cand_ext = raw_exec.get("extensions", {}).get("candidate") if isinstance(raw_exec.get("extensions"), dict) else None
+        if cand_ext is not None:
+            cand_errors: List[str] = []
+            if not isinstance(cand_ext, dict):
+                cand_errors.append("Candidate extension is not an object")
+            else:
+                if cand_ext.get("status") != "PERSISTED":
+                    cand_errors.append(f"Candidate status '{cand_ext.get('status')}' != 'PERSISTED'")
+                m_sha = cand_ext.get("manifest_sha256")
+                if not m_sha or not re.match(r"^[0-9a-f]{64}$", str(m_sha)):
+                    cand_errors.append(f"Candidate manifest_sha256 is invalid or malformed: '{m_sha}'")
+
+            if cand_errors:
+                msg = "; ".join(cand_errors)
+                _record_check("candidate_store_integrity", "FAIL", msg)
+                errors.extend(cand_errors)
+                reasons.append(msg)
+            else:
+                _record_check("candidate_store_integrity", "PASS")
+
+        # 16. Custom Check Callbacks (if any)
+        if custom_checks:
+            for fn in custom_checks:
+                try:
+                    cid, c_stat, c_msg = fn(raw_exec)
+                    _record_check(cid, c_stat, c_msg)
+                    if c_stat != "PASS":
+                        errors.append(c_msg)
+                        reasons.append(c_msg)
+                except Exception as ex:
+                    _record_check("custom_check", "FAIL", f"Custom check exception: {ex}")
+                    errors.append(str(ex))
+                    reasons.append(str(ex))
+
+        # Determine Final Disposition
+        any_failed = any(c.get("status") in ("FAIL", "HOLD") for c in checks_list)
+        disposition = "HOLD" if any_failed else "PASS"
+        closure_authorized = (disposition == "PASS")
+
+        return self._build_result(
+            verification_id=verification_id,
+            project_id=project_id,
+            task_id=task_id,
+            gate=gate,
+            disposition=disposition,
+            closure_authorized=closure_authorized,
+            verified_at=now_iso,
+            checks=checks_list,
+            reasons=reasons,
+            errors=errors,
+            violations=violations,
+            control_source_sha=control_source_sha,
+            execution_base_sha=execution_base_sha,
+            candidate_id=candidate_id,
+            execution_disposition=execution_disposition,
+            evidence_records=raw_evidence_records,
+        )
+
+    def _build_result(
+        self,
+        verification_id: str,
+        project_id: str,
+        task_id: str,
+        gate: str,
+        disposition: str,
+        closure_authorized: bool,
+        verified_at: str,
+        checks: List[Dict[str, Any]],
+        reasons: List[str],
+        errors: List[str],
+        violations: List[str],
+        control_source_sha: Optional[str] = None,
+        execution_base_sha: Optional[str] = None,
+        candidate_id: Optional[str] = None,
+        execution_disposition: Optional[str] = None,
+        evidence_records: Optional[List[Dict[str, Any]]] = None,
+        extensions: Optional[Dict[str, Any]] = None,
+    ) -> IndependentVerificationResult:
+        """Construct and self-validate IndependentVerificationResult against schema."""
+        result_obj = IndependentVerificationResult(
+            schema_version=VERIFICATION_CONTRACT_VERSION,
+            verification_id=verification_id,
+            project_id=project_id,
+            task_id=task_id,
+            gate=gate,
+            disposition=disposition,
+            closure_authorized=closure_authorized,
+            verifier=self.verifier_identity,
+            verified_at=verified_at,
+            checks=checks,
+            limitations=self.limitations,
+            control_source_sha=control_source_sha,
+            execution_base_sha=execution_base_sha,
+            candidate_id=candidate_id,
+            execution_disposition=execution_disposition,
+            evidence_records=evidence_records,
+            reasons=reasons,
+            errors=errors,
+            violations=violations,
+            extensions=extensions,
+        )
+
+        # Self-validate result against canonical verification_result schema
+        res_dict = result_obj.to_dict()
+        val = validate_document("verification_result", res_dict)
+        if not val.is_valid:
+            err_msgs = "; ".join(str(e) for e in val.errors)
+            raise RuntimeError(
+                f"Internal verification contract error: generated verification result does not conform to schema: {err_msgs}"
+            )
+
+        return result_obj
+
+
+def verify_controlled_execution(
+    execution_result: Any,
+    task: Optional[Any] = None,
+    snapshot: Optional[Any] = None,
+    descriptor: Optional[Any] = None,
+    evidence_records: Optional[List[Any]] = None,
+    accepted_evidence: Optional[List[Any]] = None,
+    artifacts_checker: Optional[Callable[[str], bool]] = None,
+    verifier_identity: Optional[str] = None,
+) -> IndependentVerificationResult:
+    """Convenience functional entrypoint for independent verification."""
+    verifier = IndependentVerifier(
+        verifier_identity=verifier_identity or DEFAULT_VERIFIER_IDENTITY,
+        artifacts_checker=artifacts_checker,
+    )
+    return verifier.verify(
+        execution_result=execution_result,
+        task=task,
+        snapshot=snapshot,
+        descriptor=descriptor,
+        evidence_records=evidence_records,
+        accepted_evidence=accepted_evidence,
+    )
