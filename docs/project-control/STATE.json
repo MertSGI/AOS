@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "AOS_4_REF_001_ATTEMPT_3_BASE_INDEPENDENT_REVIEW_PENDING",
+    "status": "FRESH_MACHINE_CAPABILITY_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independent verification and review of AOS4-REF-001 retarget to runtime-hardened capability-proven controller base d8ed009da7c26ceff153ada29ab9e78526d925c7 before any attempt #3 authorization.",
+    "next_action": "Independent verification of newly canonicalized fresh-machine capability evidence before any AOS4-REF-001 attempt #3 authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,16 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_3_BASE_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "FRESH_MACHINE_CAPABILITY_INDEPENDENT_REVIEW_PENDING",
+            "current_machine_capability_status": "PROVEN",
+            "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
+            "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
+            "current_machine_capability_adapter_contract_version": "0.2.9",
+            "current_machine_capability_cli_version": "1.1.20",
+            "current_machine_capability_cli_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+            "current_machine_capability_proof": "docs/proofs/antigravity_capability_probe_v0.2.9_fresh_machine_95278ed1c14545a15e243d3e7450d52d26c659c0.json",
+            "current_machine_capability_proof_sha256": "754f2e9347996cfa760bd5fc04dadd27f75fcb27a66ea7c2b5a183c9f51b6c4c",
+            "current_machine_capability_independent_review_status": "PENDING",
             "runtime_trust_remediation_authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
             "runtime_trust_remediation_authorization_type": "EXPLICIT_HUMAN_RUNTIME_TRUST_REMEDIATION",
             "runtime_trust_remediation_authorization_status": "CONSUMED",
