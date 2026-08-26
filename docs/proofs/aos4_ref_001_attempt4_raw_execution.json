@@ -1,0 +1,201 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS4-REF-001",
+  "gate": "AOS-4",
+  "disposition": "VERIFICATION_FAILED",
+  "control_source_sha": "9d48f2e626b51e9592155b8891edf8e442c1abfe",
+  "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "worker_branch": "aos/aos4-ref-001",
+  "initial_head_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "final_head_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "changed_paths": [
+    "schemas/v0.1/verification_result.schema.json",
+    "src/aos/validate.py",
+    "src/aos/verification.py",
+    "tests/test_verification.py"
+  ],
+  "scope_validation": {
+    "is_valid": true,
+    "allowed_paths": [
+      "src/aos/verification.py",
+      "src/aos/validate.py",
+      "schemas/v0.1/verification_result.schema.json",
+      "tests/test_verification.py"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "descriptors/",
+      "tasks/",
+      ".github/"
+    ],
+    "violations": []
+  },
+  "worker_adapter": "antigravity",
+  "worker_identity": "antigravity-cli (PROVEN)",
+  "worker_capability_status": "PROVEN",
+  "worker_mutation_attempted": true,
+  "worker_exit_code": 0,
+  "worker_timed_out": false,
+  "verification_checks": [
+    {
+      "check_id": "descriptor_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "target_repository_identity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "task_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_requirements",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_capability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "retry_policy",
+      "status": "PASS"
+    },
+    {
+      "check_id": "required_checks_contract",
+      "status": "PASS"
+    },
+    {
+      "check_id": "canonical_snapshot",
+      "status": "PASS"
+    },
+    {
+      "check_id": "execution_authority",
+      "status": "PASS"
+    },
+    {
+      "check_id": "execution_base_resolvability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_pre_execution",
+      "status": "PASS"
+    },
+    {
+      "check_id": "workspace_initial_integrity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_execution",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_failure_forensic_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_scope_guard",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "scope_guard_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "project:aos4_verification_foundation_tests",
+      "status": "FAIL",
+      "message": "Check 'aos4_verification_foundation_tests' failed with exit code 1"
+    },
+    {
+      "check_id": "project:aos_full_regression",
+      "status": "FAIL",
+      "message": "Check 'aos_full_regression' timed out after 180s"
+    },
+    {
+      "check_id": "git_integrity_final",
+      "status": "PASS"
+    },
+    {
+      "check_id": "scope_guard_final",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_final",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "failure_candidate_quarantine",
+      "status": "PASS",
+      "message": "Quarantined unverified candidate quar_aaa1541ebb7d4b54"
+    },
+    {
+      "check_id": "candidate_persistence",
+      "status": "NOT_RUN"
+    }
+  ],
+  "mutation_performed": true,
+  "retry_count": 0,
+  "started_at": "2026-08-26T16:55:02.793498+00:00",
+  "finished_at": "2026-08-26T17:01:52.183854+00:00",
+  "errors": [
+    "Check 'aos4_verification_foundation_tests' failed with exit code 1",
+    "Check 'aos_full_regression' timed out after 180s"
+  ],
+  "extensions": {
+    "verification_diagnostics": [
+      {
+        "check_id": "aos4_verification_foundation_tests",
+        "exit_code": 1,
+        "timed_out": false,
+        "stdout_present": true,
+        "stdout_len": 1278,
+        "stdout_sha256": "86a26d227188316cf3246194e443576555b8193483b78d1ca93a03442e0c451e",
+        "stderr_present": false,
+        "stderr_len": 0,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sanitized_stdout_tail": "....F..................                                                  [100%]\n================================== FAILURES ===================================\n_______ TestIndependentVerificationScenarios.test_scenario_1_valid_pass _______\n\nself = <test_verification.TestIndependentVerificationScenarios object at 0x0000010A9FDA56D0>\n\n    def test_scenario_1_valid_pass(self):\n        \"\"\"Scenario 1: Valid PASS with all requirements satisfied authorizes closure.\"\"\"\n        exec_res = make_valid_execution_result()\n        task = make_valid_task()\n        snap = make_valid_snapshot()\n        desc = make_valid_descriptor()\n        evidence = [make_valid_evidence()]\n    \n        res = verify_controlled_execution(\n            execution_result=exec_res,\n            task=task,\n            snapshot=snap,\n            descriptor=desc,\n            evidence_records=evidence,\n        )\n    \n>       assert res.disposition == \"PASS\"\nE       AssertionError: assert 'HOLD' == 'PASS'\nE         \nE         - PASS\nE         + HOLD\n\ntests\\test_verification.py:300: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_verification.py::TestIndependentVerificationScenarios::test_scenario_1_valid_pass\n1 failed, 22 passed in 1.64s\n",
+        "sanitized_stderr_tail": ""
+      },
+      {
+        "check_id": "aos_full_regression",
+        "exit_code": null,
+        "timed_out": true,
+        "stdout_present": false,
+        "stdout_len": 0,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_present": false,
+        "stderr_len": 0,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sanitized_stdout_tail": "",
+        "sanitized_stderr_tail": "Timeout expired after 180s"
+      }
+    ],
+    "quarantine_candidate": {
+      "status": "QUARANTINED_UNVERIFIED",
+      "quarantine_store_contract_version": "0.1.0",
+      "quarantine_id": "quar_aaa1541ebb7d4b54",
+      "manifest_sha256": "d8cac7fbc0b2b6b852427234ca015bb2208bb2dcc62fc7a324d7780cf3d33fc3",
+      "worker_changed_paths": [
+        "schemas/v0.1/verification_result.schema.json",
+        "src/aos/validate.py",
+        "src/aos/verification.py",
+        "tests/test_verification.py"
+      ],
+      "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+      "control_source_sha": "9d48f2e626b51e9592155b8891edf8e442c1abfe"
+    }
+  }
+}
