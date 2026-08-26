@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T21:40:37+03:00",
+    "updated_at": "2026-08-26T21:54:29+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_4_CONTROL_CONTRACT_REMEDIATION_REVIEW_PENDING",
+    "status": "ATTEMPT_4_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_5_POLICY_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the exact Attempt #4 control-contract remediation, including task description-only clarification and bounded full-regression timeout change from 180 to 420 seconds, before any Attempt #5 policy evaluation.",
+    "next_action": "Perform a fresh deterministic DEC-022 policy evaluation for AOS4-REF-001 Attempt #5 under the independently accepted remediation control state. Do not execute Attempt #5 without fresh authority and required shared-runtime coordination.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_4_CONTROL_CONTRACT_REMEDIATION_REVIEW_PENDING",
+            "reference_status": "ATTEMPT_4_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_5_POLICY_PENDING",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -153,7 +153,7 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 5,
-            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT4_REMEDIATION_REVIEW",
+            "next_execution_authorization_status": "PENDING_POLICY_EVALUATION",
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",
@@ -211,16 +211,23 @@
                 "TEST_FIXTURE_CONTRACT_DRIFT_INVALID_VALID_DESCRIPTOR_FIXTURE",
                 "FULL_REGRESSION_TIMEOUT_BUDGET_NOT_ROBUST_ON_WINDOWS_HOST"
             ],
-            "attempt_4_remediation_status": "CONTROL_CONTRACT_REMEDIATION_IMPLEMENTED_REVIEW_PENDING",
+            "attempt_4_remediation_status": "INDEPENDENTLY_ACCEPTED",
             "attempt_4_scenario_1_remediation_type": "TASK_DESCRIPTION_CONTRACT_CLARIFICATION",
-            "attempt_4_scenario_1_remediation_status": "IMPLEMENTED_REEXECUTION_REQUIRED",
+            "attempt_4_scenario_1_remediation_status": "INDEPENDENTLY_ACCEPTED_REEXECUTION_REQUIRED",
             "attempt_4_scenario_1_code_fix_present": false,
             "attempt_4_scenario_1_quarantine_promoted": false,
+            "attempt_4_scenario_1_effectiveness_proven": false,
             "attempt_4_full_regression_timeout_previous_seconds": 180,
             "attempt_4_full_regression_timeout_current_seconds": 420,
-            "attempt_4_full_regression_timeout_remediation_status": "IMPLEMENTED_REVIEW_PENDING",
+            "attempt_4_full_regression_timeout_remediation_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_4_remediation_return_hash_label_discrepancy": true,
+            "attempt_4_remediation_authoritative_contradiction": false,
             "attempt_4_remediation_proof": "docs/proofs/aos4_ref_001_attempt4_control_contract_remediation.json",
-            "attempt_4_remediation_independent_review_status": "PENDING",
+            "attempt_4_remediation_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_4_remediation_independent_review_result": "PASS",
+            "attempt_4_remediation_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical commit, file, diff and exact-SHA CI evidence",
+            "attempt_4_remediation_reviewed_control_sha": "a0968f2e81c261313d0338aa063958cb71da0b76",
+            "attempt_4_remediation_independent_review_proof": "docs/proofs/aos4_ref_001_attempt4_control_contract_remediation_independent_review.json",
             "attempt_3_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-V2-20260826T103700Z",
             "attempt_3_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_3_authorization_decision": "AUTO_EXECUTE",

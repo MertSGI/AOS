@@ -1,0 +1,75 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT4_CONTROL_CONTRACT_REMEDIATION_INDEPENDENT_REVIEW",
+  "reviewed_control_sha": "a0968f2e81c261313d0338aa063958cb71da0b76",
+  "reviewed_parent_sha": "a30b0a27934afc0cd8d4ea153e846d8faf914e44",
+  "reviewed_remediation_proof": "docs/proofs/aos4_ref_001_attempt4_control_contract_remediation.json",
+  "reviewed_remediation_proof_sha256": "e9c36a190eba0b08962f209fd759fb473c23a6bbd4810767f10c6d63069906b4",
+  "review_result": "PASS",
+  "independent_review_status": "INDEPENDENTLY_ACCEPTED",
+  "authoritative_contradiction": false,
+  "task_remediation": {
+    "path": "tasks/aos4-reference-task.json",
+    "base_git_blob": "2c517f45a191f46f8a77b8628abe9f8516dadd93",
+    "reviewed_git_blob": "11229c3ea55fa097a6671c360c0cf3ff04ceae32",
+    "description_only_semantic_change": true,
+    "non_description_fields_unchanged": true,
+    "result": "PASS",
+    "status": "INDEPENDENTLY_ACCEPTED",
+    "code_fix_present": false,
+    "fresh_worker_reexecution_required": true,
+    "quarantine_promoted": false
+  },
+  "timeout_remediation": {
+    "path": "descriptors/aos.descriptor.json",
+    "base_git_blob": "28225acaee633d134f32a47b5bf2cbe867c0b415",
+    "reviewed_git_blob": "38cadf940ea9416cad7db7333bb9acb627c54678",
+    "only_timeout_semantic_change": true,
+    "before_seconds": 180,
+    "after_seconds": 420,
+    "bounded_enforcement_preserved": true,
+    "result": "PASS",
+    "status": "INDEPENDENTLY_ACCEPTED"
+  },
+  "windows_runtime_context": {
+    "prior_clean_durations_seconds": [
+      276.5,
+      294.53
+    ],
+    "stage_10l_clean_duration_seconds": 350.56,
+    "original_180_below_observed_clean_runtime": true,
+    "420_is_bounded": true,
+    "420_future_guarantee_claimed": false
+  },
+  "exact_sha_ci": {
+    "control_sha": "a0968f2e81c261313d0338aa063958cb71da0b76",
+    "run_id": 33001758219,
+    "job_id": 98285129508,
+    "result": "SUCCESS",
+    "pytest_passed": 378,
+    "pytest_deselected": 1,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "return_hash_observability": {
+    "return_hash_label_discrepancy": true,
+    "executor_reported_task_after": "2cfb4b1aee0fe3f7d24775d1f11c81cf2084c856",
+    "canonical_task_git_blob": "11229c3ea55fa097a6671c360c0cf3ff04ceae32",
+    "executor_reported_descriptor_after": "effad94f268ae7f7bf30965d1d6a9a0ea6a6c2fa",
+    "canonical_descriptor_git_blob": "38cadf940ea9416cad7db7333bb9acb627c54678",
+    "canonical_artifact_contradiction": false,
+    "authoritative_contradiction": false,
+    "acceptance_hash_source": "GITHUB_CANONICAL_GIT_OBJECTS"
+  },
+  "attempt_5_authorized": false,
+  "attempt_5_executed": false,
+  "limitations": [
+    "Control-contract remediation accepted, not future worker implementation.",
+    "Scenario-1 effectiveness still requires fresh worker execution.",
+    "420 seconds is bounded but not a guarantee against all host/runtime variance.",
+    "Original candidate-caused timeout remains unproven.",
+    "Returned local/hash labels were not used as canonical identity.",
+    "No Attempt #5 authority exists.",
+    "This review does not close AOS-4."
+  ]
+}
