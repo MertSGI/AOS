@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T14:41:39+03:00",
+    "updated_at": "2026-08-26T14:57:02+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_3_HOLD_INDEPENDENTLY_ACCEPTED_TRANSPORT_REMEDIATION_REVIEW_PENDING",
+    "status": "TRANSPORT_REMEDIATION_EXACT_SHA_RUNTIME_PROOF_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independent exact-SHA review of the native-system-trust ProjectSourceAdapter remediation and its read-only Windows transport proof before any attempt #4 DEC-022 authorization.",
+    "next_action": "Independent review of the canonical exact-SHA Windows ProjectSourceAdapter transport proof and remediation commit before DEC-022 attempt #4 authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_3_HOLD_INDEPENDENTLY_ACCEPTED_TRANSPORT_REMEDIATION_REVIEW_PENDING",
+            "reference_status": "TRANSPORT_REMEDIATION_EXACT_SHA_RUNTIME_PROOF_REVIEW_PENDING",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -177,13 +177,18 @@
             "attempt_3_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical evidence and exact-SHA CI",
             "attempt_3_independent_review_control_sha": "e6de0a8fe1a8ba883461025cf4a8bf45704df186",
             "attempt_3_independent_review_ci_run_id": 32963702293,
-            "transport_remediation_status": "IMPLEMENTED_LOCAL_VALIDATION_PASS_REMOTE_REVIEW_PENDING",
+            "transport_remediation_status": "EXACT_SHA_WINDOWS_RUNTIME_PROOF_CANONICALIZED_REVIEW_PENDING",
             "transport_remediation_base_sha": "e6de0a8fe1a8ba883461025cf4a8bf45704df186",
             "transport_remediation_strategy": "EXPLICIT_NATIVE_SYSTEM_TRUSTSTORE_CONTEXT",
             "transport_remediation_truststore_version": "0.10.4",
             "transport_remediation_tls_verification_required": true,
             "transport_remediation_global_ssl_injection": false,
             "transport_remediation_live_smoke_status": "PASS",
+            "transport_remediation_runtime_proof": "docs/proofs/project_source_adapter_windows_transport_17aaf35d902606bccb3d20e712e5b7e37814f2d8.json",
+            "transport_remediation_runtime_proof_sha256": "4b7ec2771db2b7a923015d80b2e22e5a2652c518bae8bba881f93e25e4ea2d1a",
+            "transport_remediation_runtime_proof_source_revision": "17aaf35d902606bccb3d20e712e5b7e37814f2d8",
+            "transport_remediation_runtime_proof_result": "PASS",
+            "transport_remediation_independent_review_status": "PENDING",
             "attempt_3_authorization_invalidation_reason": "AUTHORIZATION_TRANSACTION_SCOPE_VIOLATION",
             "attempt_3_invalidated_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-20260826T101300Z",
             "attempt_3_invalidated_control_commit_sha": "57231a028157dee813f2d4012d5d3bec7438cdad",

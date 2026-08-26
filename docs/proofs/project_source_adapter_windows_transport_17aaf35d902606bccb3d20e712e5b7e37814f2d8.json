@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "PROJECT_SOURCE_ADAPTER_WINDOWS_NATIVE_TRUST_TRANSPORT",
+  "proof_id": "PROOF-TRANSPORT-20260826T115740Z-17aaf35d",
+  "aos_revision": "17aaf35d902606bccb3d20e712e5b7e37814f2d8",
+  "branch": "feature/aos-4-independent-verification-hold",
+  "repository": "MertSGI/AOS",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python_version": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+  "python_executable_filename": "python.exe",
+  "truststore_version": "0.10.4",
+  "transport_strategy": "EXPLICIT_NATIVE_SYSTEM_TRUSTSTORE_CONTEXT",
+  "tls_context_type": "SSLContext",
+  "tls_protocol": "16",
+  "tls_verification_disabled": false,
+  "global_ssl_injection_used": false,
+  "insecure_bypass_used": false,
+  "ssl_cert_file_env_present": false,
+  "requests_ca_bundle_env_present": false,
+  "pythonhttpsverify_env_present": false,
+  "network_operation_count": 3,
+  "resolve_ref": {
+    "status": "PASS",
+    "returned_sha": "17aaf35d902606bccb3d20e712e5b7e37814f2d8"
+  },
+  "resolve_exact_revision": {
+    "status": "PASS",
+    "requested_sha": "17aaf35d902606bccb3d20e712e5b7e37814f2d8",
+    "returned_sha": "17aaf35d902606bccb3d20e712e5b7e37814f2d8"
+  },
+  "fetch_state": {
+    "status": "PASS",
+    "utf8_valid": true,
+    "json_valid": true,
+    "current_gate": "AOS-4",
+    "content_sha256": "0a79d282ac849fa10005b9ced9e152ce0c9ee56634ecf9e8b9633eafcc1de018"
+  },
+  "result": "PASS",
+  "errors": [],
+  "started_at": "2026-08-26T11:57:40.347697+00:00",
+  "finished_at": "2026-08-26T11:57:41.941592+00:00",
+  "limitations": [
+    "Proves ProjectSourceAdapter read-only GitHub HTTPS transport on this Windows/Python machine and exact AOS revision.",
+    "Proves use of OS-native trust through explicit truststore context.",
+    "Does not prove OS-level sandbox containment.",
+    "Does not authorize AOS4 attempt #4.",
+    "Does not prove the future Antigravity worker outcome.",
+    "No LARI or production mutation occurred."
+  ]
+}
