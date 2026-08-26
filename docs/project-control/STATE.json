@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T21:54:29+03:00",
+    "updated_at": "2026-08-26T22:16:45+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_4_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_5_POLICY_PENDING",
+    "status": "ATTEMPT_5_POLICY_AUTHORIZED_NOT_EXECUTED",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Perform a fresh deterministic DEC-022 policy evaluation for AOS4-REF-001 Attempt #5 under the independently accepted remediation control state. Do not execute Attempt #5 without fresh authority and required shared-runtime coordination.",
+    "next_action": "Obtain fresh LARI shared-runtime pause coordination, then execute exactly one ControlledExecutionEngine transaction for AOS4-REF-001 Attempt #5 using the fresh policy authority. Do not reuse Attempt #4 artifacts or authorization.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_4_REMEDIATION_INDEPENDENTLY_ACCEPTED_ATTEMPT_5_POLICY_PENDING",
+            "reference_status": "ATTEMPT_5_POLICY_AUTHORIZED_NOT_EXECUTED",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -153,7 +153,27 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 5,
-            "next_execution_authorization_status": "PENDING_POLICY_EVALUATION",
+            "next_execution_authorization_status": "POLICY_AUTHORIZED",
+            "attempt_5_authorization_id": "AOS4-REF-001-R1-ATTEMPT5-POLICY-20260826T191645Z",
+            "attempt_5_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
+            "attempt_5_authorization_decision": "AUTO_EXECUTE",
+            "attempt_5_authority_source": "POLICY_AUTONOMOUS",
+            "attempt_5_authorization_status": "ISSUED_NOT_CONSUMED",
+            "attempt_5_authorization_consumed": false,
+            "attempt_5_authorization_control_source_sha": "e8d1b5857315a4cbc321950f3eea6d858a2a6de3",
+            "attempt_5_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "attempt_5_authorization_artifact": "docs/proofs/aos4_ref_001_attempt5_execution_authorization.json",
+            "attempt_5_controlled_execution_max": 1,
+            "attempt_5_nested_worker_max": 1,
+            "attempt_5_direct_agent_max": 0,
+            "attempt_5_retry_max": 0,
+            "attempt_5_execution_actual": 0,
+            "attempt_5_nested_worker_actual": 0,
+            "attempt_5_worker_execution_actual": 0,
+            "attempt_5_retry_actual": 0,
+            "attempt_5_terminal": false,
+            "attempt_5_candidate_status": "NOT_CREATED",
+            "attempt_5_quarantine_status": "NOT_CREATED",
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",
