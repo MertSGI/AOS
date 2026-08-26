@@ -1,6 +1,6 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T11:17:02+03:00",
+    "updated_at": "2026-08-26T11:27:46+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
@@ -127,6 +127,9 @@
             "current_machine_capability_review_verifier": "GPT-5.6 Sol using direct GitHub canonical evidence verification",
             "current_machine_capability_reviewed_control_sha": "360eda9b93ddc0bcc5c6c2f5d0802406f5ffeb4b",
             "current_machine_capability_reviewed_proof_sha256": "754f2e9347996cfa760bd5fc04dadd27f75fcb27a66ea7c2b5a183c9f51b6c4c",
+            "current_machine_capability_review_evidence_id": "AOS-EV-0012",
+            "current_machine_capability_review_timestamp_correction_evidence_id": "AOS-EV-0013",
+            "current_machine_capability_review_record_integrity": "CORRECTED_ACCEPTED",
             "runtime_trust_remediation_authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
             "runtime_trust_remediation_authorization_type": "EXPLICIT_HUMAN_RUNTIME_TRUST_REMEDIATION",
             "runtime_trust_remediation_authorization_status": "CONSUMED",
