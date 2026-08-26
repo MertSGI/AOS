@@ -1,13 +1,13 @@
 {
     "schema_version": "0.1.0",
-    "updated_at": "2026-08-26T13:12:05+03:00",
+    "updated_at": "2026-08-26T13:29:02+03:00",
     "project": {
         "name": "AOS",
         "expanded_name": "Agent Operating System",
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_3_POLICY_AUTHORIZED_NOT_EXECUTED",
+    "status": "ATTEMPT_3_AUTHORITY_REEVALUATION_REQUIRED",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Controlled AOS4-REF-001 attempt #3 execution under the issued, unconsumed policy authorization, subject to pre-execution invariant checks.",
+    "next_action": "Fresh deterministic DEC-022 policy evaluation and replacement unconsumed authorization for AOS4-REF-001 attempt #3 after test-coupling remediation.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_3_POLICY_AUTHORIZED_NOT_EXECUTED",
+            "reference_status": "ATTEMPT_3_AUTHORITY_REEVALUATION_REQUIRED",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_probe_id": "PROBE-20260826-080007-6594624b",
             "current_machine_capability_aos_revision": "95278ed1c14545a15e243d3e7450d52d26c659c0",
@@ -153,12 +153,15 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 3,
-            "next_execution_authorization_status": "POLICY_AUTHORIZED",
+            "next_execution_authorization_status": "PENDING_POLICY_REEVALUATION",
             "attempt_3_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-20260826T101300Z",
             "attempt_3_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_3_authorization_decision": "AUTO_EXECUTE",
             "attempt_3_authority_source": "POLICY_AUTONOMOUS",
-            "attempt_3_authorization_status": "ISSUED_NOT_CONSUMED",
+            "attempt_3_authorization_status": "INVALIDATED_UNCONSUMED",
+            "attempt_3_authorization_invalidation_reason": "AUTHORIZATION_TRANSACTION_SCOPE_VIOLATION",
+            "attempt_3_invalidated_authorization_id": "AOS4-REF-001-R1-ATTEMPT3-POLICY-20260826T101300Z",
+            "attempt_3_invalidated_control_commit_sha": "57231a028157dee813f2d4012d5d3bec7438cdad",
             "attempt_3_authorization_control_source_sha": "07f070f19d38758f1b8ffc7e93f376a2482efee1",
             "attempt_3_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
             "attempt_3_authorization_artifact": "docs/proofs/aos4_ref_001_attempt3_execution_authorization.json",
