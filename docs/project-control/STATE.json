@@ -137,8 +137,8 @@
                 "final_controller_base_ci_run_id": 32814443647,
                 "final_retarget_ci_run_id": 32826283683
             },
-            "next_execution_attempt_number": 2,
-            "next_execution_authorization_status": "CONSUMED",
+            "next_execution_attempt_number": 3,
+            "next_execution_authorization_status": "PENDING_POLICY_EVALUATION",
             "attempt_2_authorization_id": "AOS4-REF-001-R1-ATTEMPT2-20260825-1315",
             "attempt_2_authorization_type": "EXPLICIT_HUMAN_R1_REAUTHORIZATION",
             "attempt_2_authorization_status": "CONSUMED",

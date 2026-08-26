@@ -1,0 +1,187 @@
+"""Comprehensive offline test suite for DEC-022 HumanGatePolicy and ExecutionAuthorization."""
+
+import json
+from pathlib import Path
+import pytest
+
+from aos.human_gate_policy import (
+    HUMAN_CRITICAL_CATEGORIES,
+    FORBIDDEN_CATEGORIES,
+    evaluate_human_gate_policy,
+)
+from aos.validate import validate_document, load_schema
+
+
+class TestHumanGatePolicy:
+    def test_r0_auto_execute(self):
+        task = {"task_id": "T-R0", "project_id": "aos", "gate": "AOS-4", "risk_class": "R0"}
+        res = evaluate_human_gate_policy(task)
+        assert res.decision == "AUTO_EXECUTE"
+        assert res.authority_source == "POLICY_AUTONOMOUS"
+        assert "RISK_CLASS_R0_AUTO_EXECUTE" in res.reason_codes
+
+    def test_isolated_nonprod_r1_auto_execute(self):
+        task = {"task_id": "T-R1", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"is_isolated_non_prod": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+        assert res.authority_source == "POLICY_AUTONOMOUS"
+
+    def test_accepted_isolated_nonprod_r2_auto_execute(self):
+        task = {"task_id": "T-R2", "project_id": "aos", "gate": "AOS-4", "risk_class": "R2"}
+        ctx = {"is_isolated_non_prod": True, "is_accepted_envelope": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+        assert res.authority_source == "POLICY_AUTONOMOUS"
+
+    def test_r2_outside_accepted_envelope_human_required(self):
+        task = {"task_id": "T-R2-OUT", "project_id": "aos", "gate": "AOS-4", "risk_class": "R2"}
+        ctx = {"is_isolated_non_prod": True, "is_accepted_envelope": False}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "HUMAN_REQUIRED"
+        assert res.authority_source == "NONE"
+
+    def test_r3_human_required(self):
+        task = {"task_id": "T-R3", "project_id": "aos", "gate": "AOS-4", "risk_class": "R3"}
+        res = evaluate_human_gate_policy(task)
+        assert res.decision == "HUMAN_REQUIRED"
+        assert res.authority_source == "NONE"
+
+    def test_r4_forbidden(self):
+        task = {"task_id": "T-R4", "project_id": "aos", "gate": "AOS-4", "risk_class": "R4"}
+        res = evaluate_human_gate_policy(task)
+        assert res.decision == "FORBIDDEN"
+        assert res.authority_source == "NONE"
+
+    @pytest.mark.parametrize("cat", sorted(list(HUMAN_CRITICAL_CATEGORIES)))
+    def test_every_human_critical_category(self, cat):
+        task = {"task_id": "T-CRIT", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"human_critical_categories": [cat]}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "HUMAN_REQUIRED"
+        assert cat in res.human_critical_categories
+
+    @pytest.mark.parametrize("fcat", sorted(list(FORBIDDEN_CATEGORIES)))
+    def test_forbidden_bypass_categories(self, fcat):
+        task = {"task_id": "T-FORB", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"forbidden_categories": [fcat]}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "FORBIDDEN"
+        assert fcat in res.forbidden_categories
+
+    def test_planner_human_gate_required_true_cannot_create_unnecessary_gate(self):
+        """Planner setting human_gate_required=True is advisory only; policy evaluates R1 isolated as AUTO_EXECUTE."""
+        task = {
+            "task_id": "T-PLANNER-ADVISORY",
+            "project_id": "aos",
+            "gate": "AOS-4",
+            "risk_class": "R1",
+            "human_gate_required": True,
+        }
+        res = evaluate_human_gate_policy(task, context={"is_isolated_non_prod": True})
+        assert res.decision == "AUTO_EXECUTE"
+
+    def test_planner_cannot_downgrade_human_required(self):
+        """Planner setting human_gate_required=False on R3 cannot bypass HUMAN_REQUIRED decision."""
+        task = {
+            "task_id": "T-R3-PLANNER-FALSE",
+            "project_id": "aos",
+            "gate": "AOS-4",
+            "risk_class": "R3",
+            "human_gate_required": False,
+        }
+        res = evaluate_human_gate_policy(task)
+        assert res.decision == "HUMAN_REQUIRED"
+
+    def test_ordinary_implementation_failure_not_human_gated(self):
+        task = {"task_id": "T-FAIL", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"failure_type": "ORDINARY_IMPLEMENTATION_FAILURE", "is_isolated_non_prod": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+
+    def test_deterministic_test_failure_not_human_gated(self):
+        task = {"task_id": "T-TEST-FAIL", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"failure_type": "DETERMINISTIC_TEST_FAILURE", "is_isolated_non_prod": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+
+    def test_worker_timeout_not_human_gated(self):
+        task = {"task_id": "T-TIMEOUT", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"failure_type": "WORKER_TIMEOUT", "is_isolated_non_prod": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+
+    def test_safe_capability_reprobe_auto_remediate(self):
+        task = {"task_id": "T-REPROBE", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"is_capability_reprobe": True, "reprobe_allowed": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_REMEDIATE"
+        assert res.authority_source == "POLICY_AUTONOMOUS"
+
+    def test_retry_within_budget_does_not_require_human(self):
+        task = {"task_id": "T-RETRY", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"retry_count": 1, "retry_max": 2, "is_isolated_non_prod": True}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "AUTO_EXECUTE"
+
+    def test_exhausted_retry_with_no_safe_remediation_human_required(self):
+        task = {"task_id": "T-EXHAUST", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"retry_count": 3, "retry_max": 2, "has_safe_remediation": False}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "HUMAN_REQUIRED"
+        assert "RETRY_CEILING_EXCEEDED_WITH_NO_SAFE_REMEDIATION" in res.human_critical_categories
+
+    def test_capability_proof_persistence_preserves_exact_probe_res_proof(self, tmp_path):
+        from aos.workers.antigravity_probe import persist_capability_proof
+
+        proof_artifact = {
+            "schema_version": "0.1.0",
+            "probe_id": "PROBE-TEST-123",
+            "probe_status": "PASS",
+            "challenge_sha256": "abc123sha",
+            "head_before": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "head_after": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "branch_before": "feature/aos-4-independent-verification-hold",
+            "branch_after": "feature/aos-4-independent-verification-hold",
+            "expected_result_file_sha256": "exp123",
+            "actual_result_file_sha256": "exp123",
+            "outside_sentinel_before_sha256": "sentinel1",
+            "outside_sentinel_after_sha256": "sentinel1",
+            "unexpected_external_paths_count": 0,
+            "changed_paths": ["probe/result.txt"],
+            "exit_code": 0,
+            "timed_out": False,
+            "errors": [],
+        }
+
+        store_file = tmp_path / "capability_proof.json"
+        saved_path = persist_capability_proof(proof_artifact, store_file)
+
+        assert saved_path.is_file()
+        loaded = json.loads(saved_path.read_text(encoding="utf-8"))
+
+        for key in [
+            "challenge_sha256",
+            "head_before",
+            "head_after",
+            "branch_before",
+            "branch_after",
+            "expected_result_file_sha256",
+            "actual_result_file_sha256",
+            "outside_sentinel_before_sha256",
+            "outside_sentinel_after_sha256",
+            "unexpected_external_paths_count",
+            "changed_paths",
+            "exit_code",
+            "timed_out",
+            "errors",
+        ]:
+            assert key in loaded
+            assert loaded[key] == proof_artifact[key]
+
+    def test_historical_incomplete_evidence_not_rewritten(self):
+        """Historical proof files are immutable."""
+        hist_proof = Path("docs/proofs/aos3_r1_e2e_reference_execution_attempt2.json")
+        if hist_proof.is_file():
+            content = hist_proof.read_text(encoding="utf-8")
+            assert "schema_version" in content

@@ -170,3 +170,37 @@ GPT-5.6 Sol remains the high-consequence reasoning reference baseline. Qualified
 A human request must NOT directly instruct execution workers. AOS performs impact analysis and required gates first. Accepted material changes become canonical transactions. Future controlled execution tasks will carry a control generation/epoch identity and fail closed when operating against stale control authority.
 
 Safe PAUSE/HOLD may stop execution immediately. RESUME and material roadmap/policy changes require canonical validation.
+
+---
+
+## AOS-DEC-022 — Exception-Only Human Approval and Policy-Issued Execution Authority
+**Status:** ACCEPTED
+**Decision:** Routine execution and retry operations in isolated, non-production environments proceed autonomously under policy-issued execution authority without requiring human re-authorization at every step.
+
+Canonical authoritative outcomes:
+- `AUTO_EXECUTE`: Autonomous execution authorized by policy.
+- `AUTO_REMEDIATE`: Safe autonomous diagnostic or reprobe operation authorized.
+- `HUMAN_REQUIRED`: High-consequence or out-of-scope operation requiring human intervention.
+- `FORBIDDEN`: Violates hard security or policy boundaries; permanently blocked.
+
+Authority sources:
+- `POLICY_AUTONOMOUS`
+- `HUMAN_EXPLICIT`
+- `NONE`
+
+Human-critical categories requiring explicit human authorization include:
+1. `MATERIAL_ROADMAP_OR_SCOPE_CHANGE`
+2. `PRODUCTION_OR_CUSTOMER_MUTATION`
+3. `DESTRUCTIVE_DATA_OPERATION`
+4. `SECURITY_OR_AUTH_BOUNDARY_CHANGE`
+5. `TRUST_MODEL_CHANGE`
+6. `SECRET_OR_SENSITIVE_DATA_BOUNDARY_CHANGE`
+7. `BILLING_OR_PAID_PROVIDER_ACTIVATION`
+8. `AUTHORITATIVE_EVIDENCE_CONTRADICTION`
+9. `EVIDENCE_WAIVER_OR_FORCE_PASS`
+10. `RETRY_CEILING_EXCEEDED_WITH_NO_SAFE_REMEDIATION`
+11. `LEGAL_OR_COMPLIANCE_AUTHORITY_AMBIGUITY`
+12. `UNAPPROVED_HOST_PERMISSION_OR_TRUST_CONFIGURATION_CHANGE`
+
+Ordinary implementation failures, test failures, CI failures, worker timeouts, capability reprobes within budget, and routine retries do NOT by themselves require human intervention. Planner `human_gate_required` setting is advisory only; deterministic `HumanGatePolicy` owns the authoritative decision. Planner cannot downgrade `HUMAN_REQUIRED` or force unnecessary gates. Independent verification remains required to close tasks, and contradictions trigger `HOLD`.
+

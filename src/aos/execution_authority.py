@@ -87,10 +87,13 @@ def validate_execution_authority(
     if not task_gate or task_gate != snapshot_milestone:
         errors.append(f"Task gate '{task_gate}' does not match canonical snapshot milestone '{snapshot_milestone}'")
 
-    # 7. task.risk_class == 'R1' (R1 isolated implementation only)
-    task_risk = task.get("risk_class")
-    if task_risk != "R1":
-        errors.append(f"Task risk_class '{task_risk}' is not eligible for controlled execution (must be R1)")
+    # 7. task.risk_class check under DEC-022 HumanGatePolicy
+    from aos.human_gate_policy import evaluate_human_gate_policy
+    gate_eval = evaluate_human_gate_policy(task, project_descriptor=snapshot, context={"is_isolated_non_prod": True})
+    if gate_eval.decision not in ("AUTO_EXECUTE", "AUTO_REMEDIATE"):
+        errors.append(
+            f"Execution authority human gate policy returned '{gate_eval.decision}' ({', '.join(gate_eval.reason_codes)})"
+        )
 
     # 8. task.base_sha == snapshot.next_action_execution_base_sha
     task_base_sha = task.get("base_sha")
