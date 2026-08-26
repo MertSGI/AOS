@@ -195,13 +195,17 @@ def evaluate_human_gate_policy(
 
     # 7. R1 check (Isolated non-prod)
     elif risk_class == "R1":
-        is_isolated = context.get("is_isolated_non_prod", True)
-        if is_isolated:
+        is_isolated = context.get("is_isolated_non_prod")
+        if is_isolated is True:
             reason_codes.append("RISK_CLASS_R1_ISOLATED_NONPROD_AUTO_EXECUTE")
             decision = "AUTO_EXECUTE"
             authority_source = "POLICY_AUTONOMOUS"
+        elif is_isolated is False:
+            reason_codes.append("RISK_CLASS_R1_EXPLICIT_NON_ISOLATED_REQUIRES_HUMAN")
+            decision = "HUMAN_REQUIRED"
+            authority_source = "NONE"
         else:
-            reason_codes.append("RISK_CLASS_R1_NON_ISOLATED_REQUIRES_HUMAN")
+            reason_codes.append("RISK_CLASS_R1_MISSING_ISOLATION_EVIDENCE_FAILS_CLOSED")
             decision = "HUMAN_REQUIRED"
             authority_source = "NONE"
 

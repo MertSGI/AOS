@@ -27,6 +27,55 @@ class TestHumanGatePolicy:
         assert res.decision == "AUTO_EXECUTE"
         assert res.authority_source == "POLICY_AUTONOMOUS"
 
+    def test_r1_explicit_false_human_required(self):
+        task = {"task_id": "T-R1-FALSE", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        ctx = {"is_isolated_non_prod": False}
+        res = evaluate_human_gate_policy(task, context=ctx)
+        assert res.decision == "HUMAN_REQUIRED"
+        assert "RISK_CLASS_R1_EXPLICIT_NON_ISOLATED_REQUIRES_HUMAN" in res.reason_codes
+
+    def test_r1_missing_context_fails_closed(self):
+        task = {"task_id": "T-R1-MISSING", "project_id": "aos", "gate": "AOS-4", "risk_class": "R1"}
+        res = evaluate_human_gate_policy(task, context={})
+        assert res.decision == "HUMAN_REQUIRED"
+        assert "RISK_CLASS_R1_MISSING_ISOLATION_EVIDENCE_FAILS_CLOSED" in res.reason_codes
+
+    def test_execution_authority_derives_isolation_facts(self):
+        from aos.execution_authority import validate_execution_authority
+        task = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "task_id": "AOS4-REF-001",
+            "gate": "AOS-4",
+            "title": "Test Title",
+            "description": "Test Description",
+            "risk_class": "R1",
+            "base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "branch_name": "aos/aos4-ref-001",
+            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True},
+            "allowed_scope": {"paths": ["src/aos/verification.py"], "forbidden_paths": []},
+            "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["c1"]},
+            "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"}
+        }
+        snapshot = {
+            "schema_version": "0.1.0",
+            "project_id": "aos",
+            "repository": "MertSGI/AOS",
+            "source_ref": "feature/aos-4-independent-verification-hold",
+            "source_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "current_status": "BOOTSTRAP",
+            "current_milestone": "AOS-4",
+            "canonical_next_action": "Action",
+            "target_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "next_action_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+            "has_ambiguity": False,
+            "ambiguity_reasons": [],
+            "input_file_hashes": {"state": "0000000000000000000000000000000000000000000000000000000000000000"}
+        }
+        auth_res = validate_execution_authority(snapshot, task)
+        assert auth_res.is_valid is True
+        assert auth_res.disposition == "ACCEPT"
+
     def test_accepted_isolated_nonprod_r2_auto_execute(self):
         task = {"task_id": "T-R2", "project_id": "aos", "gate": "AOS-4", "risk_class": "R2"}
         ctx = {"is_isolated_non_prod": True, "is_accepted_envelope": True}

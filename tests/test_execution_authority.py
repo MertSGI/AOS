@@ -51,7 +51,8 @@ def make_valid_task(
             "paths": ["src/"]
         },
         "worker_requirements": {
-            "adapter": "antigravity"
+            "adapter": "antigravity",
+            "isolated_worktree": True
         },
         "evidence_requirements": {
             "minimum_level": "E3_ISOLATED_RUNTIME_PROVEN"
