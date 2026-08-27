@@ -1,0 +1,122 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT5_CLI_IDENTITY_PROVENANCE_DIAGNOSIS",
+  "control_sha": "c7214a08ae9d7a1f768ef615284cc9381cd76878",
+  "diagnosis_result": "PASS",
+  "historical_identity": {
+    "version": "1.1.20",
+    "sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "status": "HISTORICALLY_PROVEN"
+  },
+  "observed_identity": {
+    "version": "1.1.21",
+    "sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "capability_status": "UNPROVEN"
+  },
+  "current_file_metadata": {
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime\\antigravity-cli\\1.1.20\\antigravity.exe",
+    "sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "file_length": 186524824,
+    "creation_time_utc": "2026-08-26T06:24:50.151816Z",
+    "last_write_time_utc": "2026-08-26T16:55:33.051968Z",
+    "pe_file_version": null,
+    "pe_product_version": null,
+    "company_name": null,
+    "original_filename": null
+  },
+  "authenticode": {
+    "status": "Valid",
+    "status_message": "Signature verified.",
+    "signer_subject": "CN=Google LLC, O=Google LLC, L=Mountain View, S=California, C=US, SERIALNUMBER=3582691, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.2=Delaware, OID.1.3.6.1.4.1.311.60.2.1.3=US",
+    "signer_issuer": "CN=DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1, O=\"DigiCert, Inc.\", C=US",
+    "signer_thumbprint": "607A3EDAA64933E94422FC8F0C80388E0590986C",
+    "not_before": "2024-04-08T00:00:00Z",
+    "not_after": "2027-04-10T23:59:59Z"
+  },
+  "alternate_data_streams": {
+    "zone_identifier_present": false,
+    "streams": [
+      {
+        "stream": ":$DATA",
+        "length": 186524824
+      }
+    ]
+  },
+  "aos_runtime_inventory": {
+    "executable_count": 1,
+    "directory_1_1_21_exists": false,
+    "versioned_directory_content_mismatch": true,
+    "old_identity_binary_still_present": false,
+    "new_identity_duplicate_present": false,
+    "executables": [
+      {
+        "relative_path": "antigravity-cli/1.1.20/antigravity.exe",
+        "sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+        "length": 186524824,
+        "creation_time_utc": "2026-08-26T06:24:50.151816Z",
+        "last_write_time_utc": "2026-08-26T16:55:33.051968Z",
+        "pe_file_version": null,
+        "pe_product_version": null,
+        "authenticode_status": "Valid",
+        "signer_thumbprint": "607A3EDAA64933E94422FC8F0C80388E0590986C"
+      }
+    ]
+  },
+  "machine_local_attestation": {
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\capabilities\\antigravity.json",
+    "exists": true,
+    "sha256": "2ce00d956f877fec92f87018505f2ec31bb62ef6e21cbb72fac6ae87fdf95b5b",
+    "creation_time_utc": "2026-08-26T08:00:28.623409Z",
+    "last_write_time_utc": "2026-08-26T11:13:22.200433Z",
+    "schema_valid": true,
+    "attested_version": "1.1.20",
+    "attested_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "probe_id": "PROBE-20260826-080007-6594624b",
+    "capability_status": "PROVEN"
+  },
+  "historical_capability_proof": {
+    "proof_path": "docs/proofs/antigravity_capability_probe_v0.2.9_fresh_machine_95278ed1c14545a15e243d3e7450d52d26c659c0.json",
+    "proof_sha256": "754f2e9347996cfa760bd5fc04dadd27f75fcb27a66ea7c2b5a183c9f51b6c4c",
+    "probe_id": "PROBE-20260826-080007-6594624b",
+    "probe_timestamp": "2026-08-26T08:00:07.997362+00:00",
+    "executable_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "cli_version": "1.1.20",
+    "adapter_contract_version": "0.2.9",
+    "runtime_fingerprint_sha256": "88367dd5107162b26d0447744c4f3cc8adcd4493e60d24fb86006d24d5cc96d8",
+    "historical_proof_valid_for_prior_identity": true,
+    "valid_for_current_identity": false
+  },
+  "timeline": {
+    "latest_old_identity_evidence_timestamp": "2026-08-26T11:13:22.200433Z",
+    "earliest_new_identity_evidence_timestamp": "2026-08-26T16:55:33.051968Z",
+    "drift_window_status": "BOUNDED",
+    "drift_window_start": "2026-08-26T11:13:22.200433Z",
+    "drift_window_end": "2026-08-26T16:55:33.051968Z"
+  },
+  "provenance": {
+    "root_cause": "UNCLASSIFIED",
+    "confidence": "UNCLASSIFIED",
+    "direct_modifying_mechanism_evidence_present": false
+  },
+  "runtime_immutability": {
+    "start_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "end_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "unchanged_during_diagnosis": true
+  },
+  "current_machine_capability_status": "UNPROVEN",
+  "fresh_capability_attestation_created": false,
+  "runtime_mutation_performed": false,
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "independent_review_status": "PENDING",
+  "limitations": [
+    "no CLI binary was executed",
+    "no runtime mutation occurred",
+    "no capability re-attestation occurred",
+    "provenance diagnosis does not itself make capability PROVEN",
+    "pre-engine gate remediation remains outstanding",
+    "timeout remediation remains outstanding",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}

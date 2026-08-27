@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_5_INDEPENDENTLY_REVIEWED_MULTI_REMEDIATION_REQUIRED",
+    "status": "ATTEMPT_5_CLI_PROVENANCE_DIAGNOSIS_REVIEW_PENDING_MULTI_REMEDIATION_REMAINS",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Perform a read-only dedicated CLI provenance/runtime diagnosis, then design and independently review a canonical deterministic pre-engine execution gate and a renewed bounded full-regression timeout remediation before any fresh capability attestation or Attempt #6 policy evaluation.",
+    "next_action": "Independently review the read-only CLI provenance diagnosis. If accepted, continue with a separate bounded canonical pre-engine execution gate remediation. Capability remains UNPROVEN and Attempt #6 remains unauthorized.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_5_INDEPENDENTLY_REVIEWED_MULTI_REMEDIATION_REQUIRED",
+            "reference_status": "ATTEMPT_5_CLI_PROVENANCE_DIAGNOSIS_REVIEW_PENDING_MULTI_REMEDIATION_REMAINS",
             "current_machine_capability_status": "UNPROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -202,6 +202,14 @@
             "attempt_5_engine_capability_defect_proven": false,
             "attempt_5_cli_identity_drift": "CONFIRMED",
             "attempt_5_cli_drift_root_cause": "UNCLASSIFIED",
+            "attempt_5_cli_provenance_diagnosis_status": "COMPLETE_REVIEW_PENDING",
+            "attempt_5_cli_provenance_diagnosis_result": "PASS",
+            "attempt_5_cli_provenance_diagnosis_proof": "docs/proofs/aos4_ref_001_attempt5_cli_provenance_diagnosis.json",
+            "attempt_5_cli_provenance_root_cause": "UNCLASSIFIED",
+            "attempt_5_cli_provenance_confidence": "UNCLASSIFIED",
+            "attempt_5_cli_drift_window_status": "BOUNDED",
+            "attempt_5_cli_drift_window_start": "2026-08-26T11:13:22.200433Z",
+            "attempt_5_cli_drift_window_end": "2026-08-26T16:55:33.051968Z",
             "stage_10o_execution_protocol": "HOLD",
             "stage_10o_protocol_failure": "PREEXECUTION_CLI_IDENTITY_MISMATCH_DID_NOT_STOP_BEFORE_ENGINE_INVOCATION",
             "stage_10o_protocol_root_cause": "CONTROLLER_ORCHESTRATION_NONCOMPLIANCE",
