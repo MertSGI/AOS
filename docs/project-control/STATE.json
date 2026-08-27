@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_5_CLI_PROVENANCE_DIAGNOSIS_REVIEW_PENDING_MULTI_REMEDIATION_REMAINS",
+    "status": "ATTEMPT_5_CLI_PROVENANCE_INDEPENDENTLY_ACCEPTED_PREENGINE_GATE_REMEDIATION_NEXT",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the read-only CLI provenance diagnosis. If accepted, continue with a separate bounded canonical pre-engine execution gate remediation. Capability remains UNPROVEN and Attempt #6 remains unauthorized.",
+    "next_action": "Implement a bounded canonical deterministic pre-engine execution gate that fails closed before authority-consuming engine invocation on runtime identity, capability, authorization freshness, source repository freshness, and raw output collision failures. Do not re-attest capability or evaluate Attempt #6 yet.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_5_CLI_PROVENANCE_DIAGNOSIS_REVIEW_PENDING_MULTI_REMEDIATION_REMAINS",
+            "reference_status": "ATTEMPT_5_CLI_PROVENANCE_INDEPENDENTLY_ACCEPTED_PREENGINE_GATE_REMEDIATION_NEXT",
             "current_machine_capability_status": "UNPROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -202,12 +202,17 @@
             "attempt_5_engine_capability_defect_proven": false,
             "attempt_5_cli_identity_drift": "CONFIRMED",
             "attempt_5_cli_drift_root_cause": "UNCLASSIFIED",
-            "attempt_5_cli_provenance_diagnosis_status": "COMPLETE_REVIEW_PENDING",
-            "attempt_5_cli_provenance_diagnosis_result": "PASS",
-            "attempt_5_cli_provenance_diagnosis_proof": "docs/proofs/aos4_ref_001_attempt5_cli_provenance_diagnosis.json",
+            "attempt_5_cli_provenance_diagnosis_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_5_cli_provenance_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_5_cli_provenance_independent_review_result": "PASS",
+            "attempt_5_cli_provenance_independent_review_verifier": "GPT-5.6 Sol using direct GitHub canonical commit, proof, state/evidence, and exact-SHA CI evidence",
+            "attempt_5_cli_provenance_independent_review_control_sha": "b6e7886362420e067eea8d994236e67d8594c122",
+            "attempt_5_cli_provenance_independent_review_proof": "docs/proofs/aos4_ref_001_attempt5_cli_provenance_independent_review.json",
             "attempt_5_cli_provenance_root_cause": "UNCLASSIFIED",
             "attempt_5_cli_provenance_confidence": "UNCLASSIFIED",
             "attempt_5_cli_drift_window_status": "BOUNDED",
+            "attempt_5_cli_drift_window_evidence_class": "FILESYSTEM_AND_ATTESTATION_METADATA",
+            "attempt_5_cli_drift_window_mechanism_proven": false,
             "attempt_5_cli_drift_window_start": "2026-08-26T11:13:22.200433Z",
             "attempt_5_cli_drift_window_end": "2026-08-26T16:55:33.051968Z",
             "stage_10o_execution_protocol": "HOLD",

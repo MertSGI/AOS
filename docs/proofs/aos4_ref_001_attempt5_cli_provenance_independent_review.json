@@ -1,0 +1,71 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT5_CLI_PROVENANCE_INDEPENDENT_REVIEW",
+  "reviewed_control_sha": "b6e7886362420e067eea8d994236e67d8594c122",
+  "reviewed_parent_sha": "c7214a08ae9d7a1f768ef615284cc9381cd76878",
+  "reviewed_provenance_proof": "docs/proofs/aos4_ref_001_attempt5_cli_provenance_diagnosis.json",
+  "reviewed_provenance_proof_sha256": "30f6feda936f7927bb4396ad84fc3a9697729c8511e43baaf42de10e9d390f11",
+  "review_status": "INDEPENDENTLY_ACCEPTED",
+  "review_result": "PASS",
+  "authoritative_contradiction": false,
+  "identity_review": {
+    "drift_confirmed": true,
+    "historical_version": "1.1.20",
+    "historical_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "observed_version": "1.1.21",
+    "observed_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "current_capability_status": "UNPROVEN"
+  },
+  "publisher_review": {
+    "authenticode_status": "Valid",
+    "signer": "Google LLC",
+    "publisher_evidence_does_not_prove_update_mechanism": true
+  },
+  "provenance_review": {
+    "root_cause": "UNCLASSIFIED",
+    "confidence": "UNCLASSIFIED",
+    "direct_modifying_mechanism_evidence_present": false
+  },
+  "drift_window_review": {
+    "status": "BOUNDED",
+    "evidence_class": "FILESYSTEM_AND_ATTESTATION_METADATA",
+    "mechanism_proven": false,
+    "start": "2026-08-26T11:13:22.200433Z",
+    "end": "2026-08-26T16:55:33.051968Z"
+  },
+  "runtime_review": {
+    "runtime_unchanged_during_diagnosis": true,
+    "cli_executed": false,
+    "runtime_mutation_count": 0,
+    "capability_reattestation_performed": false
+  },
+  "exact_sha_ci": {
+    "control_sha": "b6e7886362420e067eea8d994236e67d8594c122",
+    "run_id": 33098209548,
+    "job_id": 98608616001,
+    "result": "SUCCESS",
+    "pytest_passed": 378,
+    "pytest_deselected": 1,
+    "pytest_duration_seconds": 9.20,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "remaining_remediation_items": [
+    "CANONICAL_PRE_ENGINE_EXECUTION_GATE_REQUIRED",
+    "FULL_REGRESSION_TIMEOUT_420_NOT_ROBUST_AGAINST_NEW_WINDOWS_RUNTIME",
+    "CURRENT_CLI_IDENTITY_REQUIRES_FRESH_CAPABILITY_PROOF"
+  ],
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "limitations": [
+    "independent review accepts diagnosis, not a modifying mechanism",
+    "Authenticode publisher evidence does not prove update provenance",
+    "bounded drift window is based on filesystem/attestation metadata",
+    "current capability remains UNPROVEN",
+    "no capability re-attestation is authorized by this review",
+    "pre-engine gate remediation remains outstanding",
+    "timeout remediation remains outstanding",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}
