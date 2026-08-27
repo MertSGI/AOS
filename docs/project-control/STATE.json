@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT_5_CLI_PROVENANCE_INDEPENDENTLY_ACCEPTED_PREENGINE_GATE_REMEDIATION_NEXT",
+    "status": "PRE_ENGINE_EXECUTION_GATE_IMPLEMENTED_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Implement a bounded canonical deterministic pre-engine execution gate that fails closed before authority-consuming engine invocation on runtime identity, capability, authorization freshness, source repository freshness, and raw output collision failures. Do not re-attest capability or evaluate Attempt #6 yet.",
+    "next_action": "Independently review the canonical deterministic pre-engine execution gate, including hash-before-version ordering, authorization/source freshness, raw-result collision prevention, and zero engine invocation on HOLD. Current capability remains UNPROVEN; timeout remediation and capability re-attestation remain outstanding.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT_5_CLI_PROVENANCE_INDEPENDENTLY_ACCEPTED_PREENGINE_GATE_REMEDIATION_NEXT",
+            "reference_status": "PRE_ENGINE_EXECUTION_GATE_IMPLEMENTED_INDEPENDENT_REVIEW_PENDING",
             "current_machine_capability_status": "UNPROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -222,6 +222,19 @@
             "stage_10o_engine_fail_closed_behavior": "CORRECT",
             "stage_10o_authoritative_contradiction": true,
             "stage_10o_protocol_contradiction_review_status": "INDEPENDENTLY_ACCEPTED",
+            "pre_engine_execution_gate_status": "IMPLEMENTED_REVIEW_PENDING",
+            "pre_engine_execution_gate_module": "src/aos/execution_preflight.py",
+            "pre_engine_execution_gate_test_module": "tests/test_execution_preflight.py",
+            "pre_engine_execution_gate_source_finding": "NO_CANONICAL_PRE_ENGINE_RUNTIME_IDENTITY_GATE",
+            "pre_engine_execution_gate_hash_first": true,
+            "pre_engine_execution_gate_hash_mismatch_cli_execution_allowed": false,
+            "pre_engine_execution_gate_blocks_engine_on_hold": true,
+            "pre_engine_execution_gate_authorization_freshness": "ENFORCED",
+            "pre_engine_execution_gate_source_freshness": "ENFORCED",
+            "pre_engine_execution_gate_raw_result_collision_guard": "ENFORCED",
+            "pre_engine_execution_gate_controller_mode": "ONE_SHOT",
+            "pre_engine_execution_gate_independent_review_status": "PENDING",
+            "pre_engine_execution_gate_proof": "docs/proofs/aos4_attempt5_pre_engine_execution_gate_remediation.json",
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",
