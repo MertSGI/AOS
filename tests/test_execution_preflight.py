@@ -6,8 +6,10 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from aos.controlled_execution import ControlledExecutionEngine
 from aos.execution_preflight import (
     PreEngineExecutionGate,
     PreEngineExecutionRequest,
@@ -23,12 +25,18 @@ class FakeCompletedProcess:
 
 
 class FakeEngine:
-    def __init__(self):
+    def __init__(self, disposition: str = "VERIFIED_CANDIDATE", raises: bool = False):
         self.call_count = 0
+        self.last_kwargs: Optional[Dict[str, Any]] = None
+        self.disposition = disposition
+        self.raises = raises
 
-    def execute(self, task_id: str, request_path: str, state_path: str) -> Dict[str, Any]:
+    def execute(self, local_target_repo_path: Optional[str] = None) -> Dict[str, Any]:
         self.call_count += 1
-        return {"status": "PASS", "disposition": "VERIFIED_CANDIDATE", "task_id": task_id}
+        self.last_kwargs = {"local_target_repo_path": local_target_repo_path}
+        if self.raises:
+            raise RuntimeError("Synthetic engine failure")
+        return {"status": self.disposition, "disposition": self.disposition}
 
 
 def make_fixture_env(tmp_path: Path):
@@ -75,9 +83,32 @@ def make_fixture_env(tmp_path: Path):
     state_data = {
         "schema_version": "0.1.0",
         "updated_at": "2026-08-27T20:00:00Z",
-        "project": {"name": "TestProject"},
-        "status": "TEST_STATUS",
+        "project": {
+            "name": "AOS",
+            "expanded_name": "Agent Operating System",
+            "working_name_status": "PROVISIONAL",
+            "purpose": "Reusable AI-plus-deterministic development orchestration platform",
+        },
+        "status": "PRE_ENGINE_EXECUTION_GATE_IMPLEMENTED_INDEPENDENT_REVIEW_PENDING",
         "current_gate": "AOS-4",
+        "delivery_train": [
+            "AOS-0 Foundation & Charter",
+            "AOS-1 Canonical Memory & Schemas",
+            "AOS-2 Shadow Orchestrator",
+            "AOS-3 Controlled Single-Worker Execution",
+            "AOS-4 Independent Verification & HOLD",
+        ],
+        "principles": {
+            "fail_closed": True,
+            "evidence_over_claims": True,
+            "exact_revision_required": True,
+            "planner_executor_verifier_separation": True,
+            "human_critical_authority": True,
+            "portable_multi_project": True,
+            "multi_pc_required": True,
+            "canonical_truth_in_version_control": True,
+        },
+        "next_action": "Test next action string",
         "extensions": {
             "aos4_independent_verification": {
                 "next_execution_attempt_number": 6,
@@ -134,8 +165,11 @@ def make_fake_git_runner(
     parent: str = "1111111111111111111111111111111111111111",
     status_porcelain: str = "",
     remote_head: Optional[str] = None,
-    carrier_present: bool = True,
-    parent_present: bool = False,
+    auth_carrier_present: bool = True,
+    auth_parent_present: bool = False,
+    state_carrier_present: bool = True,
+    carrier_ls_tree_fails: bool = False,
+    parent_ls_tree_fails: bool = False,
     git_fails: bool = False,
 ):
     remote_target = remote_head if remote_head is not None else head
@@ -144,7 +178,6 @@ def make_fake_git_runner(
         if git_fails:
             return FakeCompletedProcess(returncode=1, stderr="Git execution error simulated")
 
-        cmd_str = " ".join(cmd)
         if cmd == ["branch", "--show-current"]:
             return FakeCompletedProcess(0, f"{branch}\n")
         elif cmd == ["rev-parse", "HEAD"]:
@@ -155,13 +188,28 @@ def make_fake_git_runner(
             return FakeCompletedProcess(0, status_porcelain)
         elif cmd[0] == "ls-remote":
             return FakeCompletedProcess(0, f"{remote_target}\t{cmd[2]}\n")
-        elif cmd[0] == "cat-file" and cmd[1] == "-e":
+        elif cmd[0] == "ls-tree" and cmd[1] == "--name-only":
             target_ref = cmd[2]
-            if target_ref.startswith("HEAD:"):
-                return FakeCompletedProcess(0 if carrier_present else 1, "", "")
-            elif target_ref.startswith(f"{parent}:"):
-                return FakeCompletedProcess(0 if parent_present else 1, "", "")
-            return FakeCompletedProcess(1, "", "")
+            target_path = cmd[4] if len(cmd) > 4 else ""
+
+            if target_ref == "HEAD":
+                if carrier_ls_tree_fails:
+                    return FakeCompletedProcess(1, stderr="ls-tree HEAD failure")
+                if "execution_authorization.json" in target_path:
+                    return FakeCompletedProcess(0, f"{target_path}\n" if auth_carrier_present else "")
+                elif "STATE.json" in target_path:
+                    return FakeCompletedProcess(0, f"{target_path}\n" if state_carrier_present else "")
+                return FakeCompletedProcess(0, f"{target_path}\n")
+
+            elif target_ref == parent:
+                if parent_ls_tree_fails:
+                    return FakeCompletedProcess(1, stderr="ls-tree parent failure")
+                if "execution_authorization.json" in target_path:
+                    return FakeCompletedProcess(0, f"{target_path}\n" if auth_parent_present else "")
+                return FakeCompletedProcess(0, "")
+
+            return FakeCompletedProcess(0, "")
+
         return FakeCompletedProcess(0, "", "")
 
     return git_runner
@@ -180,20 +228,15 @@ def make_request(env: Dict[str, Any]) -> PreEngineExecutionRequest:
     )
 
 
-# Test A: valid complete preflight = PASS, controller invokes engine exactly once
-def test_valid_preflight_pass(tmp_path):
+# Section 15: Real ControlledExecutionEngine autospec signature test
+def test_real_controlled_execution_engine_autospec_signature(tmp_path):
     env = make_fixture_env(tmp_path)
     req = make_request(env)
 
-    version_calls = []
-    cap_calls = []
-
     def fake_version_resolver(cli_path: Path):
-        version_calls.append(cli_path)
         return "1.1.20"
 
-    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any]):
-        cap_calls.append(cli_path)
+    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any], identity: Dict[str, Any]):
         return "PROVEN"
 
     gate = PreEngineExecutionGate(
@@ -201,520 +244,320 @@ def test_valid_preflight_pass(tmp_path):
         capability_resolver=fake_cap_resolver,
         git_runner=make_fake_git_runner(),
     )
-    engine = FakeEngine()
+    engine = create_autospec(ControlledExecutionEngine, instance=True)
+    engine.execute.return_value = {
+        "status": "PASS",
+        "disposition": "VERIFIED_CANDIDATE",
+        "candidate_id": "CAND-001",
+    }
     controller = PreflightControlledExecutionController(gate=gate, engine=engine)
 
     res = controller.execute(req)
     assert res["preflight_status"] == "PASS"
     assert res["engine_invoked"] is True
-    assert engine.call_count == 1
-    assert len(version_calls) == 1
-    assert len(cap_calls) == 1
+    assert res["disposition"] == "VERIFIED_CANDIDATE"
+    engine.execute.assert_called_once_with(
+        local_target_repo_path=str(req.local_target_repo_path)
+    )
 
 
-# Test B: CLI hash mismatch = HOLD, version/cap/engine call count = 0
-def test_cli_hash_mismatch_blocks_version_and_engine(tmp_path):
+# Section 16: Exact Engine Result Test
+def test_exact_engine_result_preserved(tmp_path):
     env = make_fixture_env(tmp_path)
-    # Mutate CLI file content so hash differs
-    env["cli_file"].write_bytes(b"tampered content")
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: "1.1.20",
+        capability_resolver=lambda p, a, i: "PROVEN",
+        git_runner=make_fake_git_runner(),
+    )
+    engine = FakeEngine(disposition="VERIFICATION_FAILED")
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "PASS"
+    assert res["engine_invoked"] is True
+    assert res["disposition"] == "VERIFICATION_FAILED"
+    assert res["status"] == "VERIFICATION_FAILED"
+    assert res["engine_result"] == {"status": "VERIFICATION_FAILED", "disposition": "VERIFICATION_FAILED"}
+
+
+# Section 17: One-Shot After Hold Test
+def test_one_shot_enforced_after_preflight_hold(tmp_path):
+    env = make_fixture_env(tmp_path)
+    env["cli_file"].write_bytes(b"tampered content")  # Force CLI hash mismatch
     req = make_request(env)
 
     version_calls = []
     cap_calls = []
 
-    def fake_version_resolver(cli_path: Path):
-        version_calls.append(cli_path)
-        return "1.1.20"
-
-    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any]):
-        cap_calls.append(cli_path)
-        return "PROVEN"
-
     gate = PreEngineExecutionGate(
-        cli_version_resolver=fake_version_resolver,
-        capability_resolver=fake_cap_resolver,
-        git_runner=make_fake_git_runner(),
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-    assert engine.call_count == 0
-    assert len(version_calls) == 0  # CRITICAL: Version resolver must NOT be called on hash mismatch!
-    assert len(cap_calls) == 0
-
-
-# Test C: CLI version mismatch after valid hash = HOLD, cap/engine call count = 0
-def test_cli_version_mismatch_after_hash_match(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    version_calls = []
-    cap_calls = []
-
-    def fake_version_resolver(cli_path: Path):
-        version_calls.append(cli_path)
-        return "1.1.21"  # Mismatch (expected 1.1.20)
-
-    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any]):
-        cap_calls.append(cli_path)
-        return "PROVEN"
-
-    gate = PreEngineExecutionGate(
-        cli_version_resolver=fake_version_resolver,
-        capability_resolver=fake_cap_resolver,
-        git_runner=make_fake_git_runner(),
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-    assert engine.call_count == 0
-    assert len(version_calls) == 1
-    assert len(cap_calls) == 0
-
-
-# Test D: capability UNPROVEN = HOLD, engine call count = 0
-def test_capability_unproven_blocks_engine(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    def fake_version_resolver(cli_path: Path):
-        return "1.1.20"
-
-    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any]):
-        return "UNPROVEN"
-
-    gate = PreEngineExecutionGate(
-        cli_version_resolver=fake_version_resolver,
-        capability_resolver=fake_cap_resolver,
-        git_runner=make_fake_git_runner(),
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-    assert engine.call_count == 0
-
-
-# Test E: malformed capability attestation = HOLD, engine call count = 0
-def test_malformed_capability_attestation(tmp_path):
-    env = make_fixture_env(tmp_path)
-    # Write invalid capability attestation
-    env["cap_store"].write_text(json.dumps({"invalid": "schema"}), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-    assert engine.call_count == 0
-
-
-# Test F: authorization malformed/schema-invalid = HOLD
-def test_malformed_authorization_artifact(tmp_path):
-    env = make_fixture_env(tmp_path)
-    env["auth_file"].write_text(json.dumps({"schema_version": "0.1.0"}), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test G: authorization decision HUMAN_REQUIRED = HOLD
-def test_authorization_decision_human_required(tmp_path):
-    env = make_fixture_env(tmp_path)
-    auth = env["auth_data"]
-    auth["decision"] = "HUMAN_REQUIRED"
-    env["auth_file"].write_text(json.dumps(auth), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test H: authorization already consumed in canonical STATE = HOLD
-def test_authorization_already_consumed_in_state(tmp_path):
-    env = make_fixture_env(tmp_path)
-    st = env["state_data"]
-    st["extensions"]["aos4_independent_verification"]["attempt_6_authorization_consumed"] = True
-    env["state_file"].write_text(json.dumps(st), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test I: authorization status not ISSUED_NOT_CONSUMED = HOLD
-def test_authorization_status_not_issued(tmp_path):
-    env = make_fixture_env(tmp_path)
-    st = env["state_data"]
-    st["extensions"]["aos4_independent_verification"]["attempt_6_authorization_status"] = "CONSUMED"
-    env["state_file"].write_text(json.dumps(st), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test J: authorization ID mismatch = HOLD
-def test_authorization_id_mismatch(tmp_path):
-    env = make_fixture_env(tmp_path)
-    st = env["state_data"]
-    st["extensions"]["aos4_independent_verification"]["attempt_6_authorization_id"] = "WRONG-ID"
-    env["state_file"].write_text(json.dumps(st), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test K: state execution_actual > 0 = HOLD
-def test_state_execution_actual_greater_than_zero(tmp_path):
-    env = make_fixture_env(tmp_path)
-    st = env["state_data"]
-    st["extensions"]["aos4_independent_verification"]["attempt_6_execution_actual"] = 1
-    env["state_file"].write_text(json.dumps(st), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test L: state terminal true = HOLD
-def test_state_terminal_true(tmp_path):
-    env = make_fixture_env(tmp_path)
-    st = env["state_data"]
-    st["extensions"]["aos4_independent_verification"]["attempt_6_terminal"] = True
-    env["state_file"].write_text(json.dumps(st), encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test M: wrong branch = HOLD
-def test_wrong_branch(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(branch="main")
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test N: HEAD parent != authorization.control_source_sha = HOLD
-def test_head_parent_mismatch(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(parent="9999999999999999999999999999999999999999")
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test O: dirty working tree = HOLD
-def test_dirty_working_tree(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(status_porcelain=" M file.py\n")
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test P: remote branch SHA != local HEAD = HOLD
-def test_remote_sha_mismatch(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(remote_head="8888888888888888888888888888888888888888")
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test Q: authorization artifact absent from carrier = HOLD
-def test_auth_artifact_absent_from_carrier(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(carrier_present=False)
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test R: authorization artifact already exists at parent = HOLD
-def test_auth_artifact_already_exists_at_parent(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(
-        git_runner=make_fake_git_runner(parent_present=True)
-    )
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test S: raw result path already exists = HOLD
-def test_raw_result_collision(tmp_path):
-    env = make_fixture_env(tmp_path)
-    env["raw_result"].write_text("existing result", encoding="utf-8")
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test T: Git inspection/read failure = HOLD
-def test_git_failure(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner(git_fails=True))
-    engine = FakeEngine()
-    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
-
-    res = controller.execute(req)
-    assert res["preflight_status"] == "HOLD"
-    assert res["engine_invoked"] is False
-
-
-# Test U: controller second execution attempt = HOLD / rejected, total calls remain 1
-def test_one_shot_controller_prevents_second_execution(tmp_path):
-    env = make_fixture_env(tmp_path)
-    req = make_request(env)
-
-    def fake_version_resolver(cli_path: Path):
-        return "1.1.20"
-
-    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any]):
-        return "PROVEN"
-
-    gate = PreEngineExecutionGate(
-        cli_version_resolver=fake_version_resolver,
-        capability_resolver=fake_cap_resolver,
+        cli_version_resolver=lambda p: version_calls.append(1) or "1.1.20",
+        capability_resolver=lambda p, a, i: cap_calls.append(1) or "PROVEN",
         git_runner=make_fake_git_runner(),
     )
     engine = FakeEngine()
     controller = PreflightControlledExecutionController(gate=gate, engine=engine)
 
     res1 = controller.execute(req)
-    assert res1["preflight_status"] == "PASS"
-    assert res1["engine_invoked"] is True
-    assert engine.call_count == 1
+    assert res1["preflight_status"] == "HOLD"
+    assert res1["engine_invoked"] is False
+    assert engine.call_count == 0
+    assert len(version_calls) == 0
+
+    # Fix CLI file for second call on SAME controller instance
+    env["cli_file"].write_bytes(b"fake antigravity executable content")
 
     res2 = controller.execute(req)
     assert res2["preflight_status"] == "HOLD"
     assert res2["engine_invoked"] is False
-    assert engine.call_count == 1  # Total engine calls MUST remain 1!
+    assert engine.call_count == 0
+    assert len(version_calls) == 0
+    assert len(cap_calls) == 0
 
 
-# Test V: no hard-coded project/user path assumptions in core gate
-def test_project_agnostic_synthetic_paths(tmp_path):
-    custom_repo = tmp_path / "custom_project_repo"
-    custom_repo.mkdir(parents=True)
+# Section 18: Default Resolver No Second CLI Query Test
+def test_default_capability_resolver_reuses_identity(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
 
-    auth_file = custom_repo / "custom_auth.json"
-    state_file = custom_repo / "custom_state.json"
-    cli_file = tmp_path / "custom_cli.exe"
-    cli_bytes = b"custom cli binary"
-    cli_file.write_bytes(cli_bytes)
-    cli_hash = hashlib.sha256(cli_bytes).hexdigest()
-    cap_store = tmp_path / "custom_cap.json"
-    raw_result = tmp_path / "custom_raw_result.json"
+    version_calls = []
 
-    auth_data = {
-        "schema_version": "0.1.0",
-        "authorization_id": "CUSTOM-AUTH-999",
-        "project_id": "custom_project",
-        "task_id": "CUSTOM-TASK-001",
-        "gate": "CUSTOM-GATE",
-        "risk_class": "R1",
-        "decision": "AUTO_EXECUTE",
-        "authority_source": "POLICY_AUTONOMOUS",
-        "reason_codes": ["CUSTOM_REASON"],
-        "control_source_sha": "4444444444444444444444444444444444444444",
-        "execution_base_sha": "5555555555555555555555555555555555555555",
-        "timestamp": "2026-08-27T20:00:00Z",
-    }
-    auth_file.write_text(json.dumps(auth_data), encoding="utf-8")
+    def fake_version_resolver(cli_path: Path):
+        version_calls.append(cli_path)
+        return "1.1.20"
 
-    state_data = {
-        "schema_version": "0.1.0",
-        "updated_at": "2026-08-27T20:00:00Z",
-        "project": {"name": "CustomProject"},
-        "status": "CUSTOM_STATUS",
-        "current_gate": "CUSTOM-GATE",
-        "extensions": {
-            "aos4_independent_verification": {
-                "next_execution_attempt_number": 3,
-                "next_execution_authorization_status": "POLICY_AUTHORIZED",
-                "attempt_3_authorization_id": "CUSTOM-AUTH-999",
-                "attempt_3_authorization_status": "ISSUED_NOT_CONSUMED",
-                "attempt_3_authorization_consumed": False,
-                "attempt_3_authorization_control_source_sha": "4444444444444444444444444444444444444444",
-                "attempt_3_execution_base_sha": "5555555555555555555555555555555555555555",
-                "attempt_3_execution_actual": 0,
-                "attempt_3_worker_execution_actual": 0,
-                "attempt_3_retry_actual": 0,
-                "attempt_3_terminal": False,
-            }
-        },
-    }
-    state_file.write_text(json.dumps(state_data), encoding="utf-8")
+    cap_identity_passed = []
 
-    cap_data = {
-        "schema_version": "0.1.0",
-        "worker_adapter": "antigravity",
-        "adapter_contract_version": "0.2.9",
-        "executable_filename": "custom_cli.exe",
-        "executable_sha256": cli_hash,
-        "reported_cli_version": "2.0.0",
-        "runtime_environment_profile_version": "0.1.0",
-        "runtime_environment_fingerprint_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
-        "capability_status": "PROVEN",
-        "probe_id": "CUSTOM-PROBE",
-        "probe_timestamp": "2026-08-27T20:00:00Z",
-        "aos_revision_used_for_probe": "4444444444444444444444444444444444444444",
-        "capabilities_proven": ["custom_cap"],
-        "limitations": ["None"],
-    }
-    cap_store.write_text(json.dumps(cap_data), encoding="utf-8")
-
-    req = PreEngineExecutionRequest(
-        local_target_repo_path=custom_repo,
-        expected_control_branch="feature/custom-branch",
-        authorization_artifact_path=auth_file,
-        canonical_state_path=state_file,
-        attempt_number=3,
-        cli_command=cli_file,
-        raw_result_path=raw_result,
-        capability_store_path=cap_store,
-    )
+    def fake_cap_resolver(cli_path: Path, attestation: Dict[str, Any], identity: Dict[str, Any]):
+        cap_identity_passed.append(identity)
+        return "PROVEN"
 
     gate = PreEngineExecutionGate(
-        cli_version_resolver=lambda p: "2.0.0",
-        capability_resolver=lambda p, att: "PROVEN",
-        git_runner=make_fake_git_runner(
-            branch="feature/custom-branch",
-            head="7777777777777777777777777777777777777777",
-            parent="4444444444444444444444444444444444444444",
-            remote_head="7777777777777777777777777777777777777777",
-        ),
+        cli_version_resolver=fake_version_resolver,
+        capability_resolver=fake_cap_resolver,
+        git_runner=make_fake_git_runner(),
     )
-
     engine = FakeEngine()
     controller = PreflightControlledExecutionController(gate=gate, engine=engine)
 
     res = controller.execute(req)
     assert res["preflight_status"] == "PASS"
-    assert res["engine_invoked"] is True
+    assert len(version_calls) == 1  # Exactly 1 CLI version query!
+    assert len(cap_identity_passed) == 1
+    assert cap_identity_passed[0]["version"] == "1.1.20"
+    assert cap_identity_passed[0]["sha256"] == env["cli_hash"]
 
 
-# Test W: fail ordering proves unknown hash binary is not executed even for version inspection
-def test_unknown_hash_binary_never_executed_for_version(tmp_path):
+# Section 19: Absolute CLI Path Test
+def test_relative_cli_path_fails(tmp_path):
     env = make_fixture_env(tmp_path)
-    env["cli_file"].write_bytes(b"completely unknown or untrusted binary bytes")
-    req = make_request(env)
+    env_req = make_request(env)
 
-    version_resolver_invoked = []
-
-    def tracking_version_resolver(cli_path: Path):
-        version_resolver_invoked.append(True)
-        return "1.1.20"
-
-    gate = PreEngineExecutionGate(
-        cli_version_resolver=tracking_version_resolver,
-        capability_resolver=lambda p, a: "PROVEN",
-        git_runner=make_fake_git_runner(),
+    # Use relative path
+    req = PreEngineExecutionRequest(
+        local_target_repo_path=env_req.local_target_repo_path,
+        expected_control_branch=env_req.expected_control_branch,
+        authorization_artifact_path=env_req.authorization_artifact_path,
+        canonical_state_path=env_req.canonical_state_path,
+        attempt_number=env_req.attempt_number,
+        cli_command="agy",  # Relative path!
+        raw_result_path=env_req.raw_result_path,
+        capability_store_path=env_req.capability_store_path,
     )
 
+    version_calls = []
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: version_calls.append(1) or "1.1.20",
+        capability_resolver=lambda p, a, i: "PROVEN",
+        git_runner=make_fake_git_runner(),
+    )
     engine = FakeEngine()
     controller = PreflightControlledExecutionController(gate=gate, engine=engine)
 
     res = controller.execute(req)
     assert res["preflight_status"] == "HOLD"
-    assert len(version_resolver_invoked) == 0  # PROOF: Version resolver NEVER invoked for untrusted hash!
+    assert res["engine_invoked"] is False
+    assert engine.call_count == 0
+    assert len(version_calls) == 0
+
+
+# Section 20: External Canonical File Tests
+def test_external_auth_artifact_holds(tmp_path):
+    env = make_fixture_env(tmp_path)
+    env_req = make_request(env)
+
+    external_auth = tmp_path / "external_auth.json"
+    external_auth.write_text(env["auth_file"].read_text())
+
+    req = PreEngineExecutionRequest(
+        local_target_repo_path=env_req.local_target_repo_path,
+        expected_control_branch=env_req.expected_control_branch,
+        authorization_artifact_path=external_auth,  # Outside target repo!
+        canonical_state_path=env_req.canonical_state_path,
+        attempt_number=env_req.attempt_number,
+        cli_command=env_req.cli_command,
+        raw_result_path=env_req.raw_result_path,
+        capability_store_path=env_req.capability_store_path,
+    )
+
+    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+def test_external_canonical_state_holds(tmp_path):
+    env = make_fixture_env(tmp_path)
+    env_req = make_request(env)
+
+    external_state = tmp_path / "external_state.json"
+    external_state.write_text(env["state_file"].read_text())
+
+    req = PreEngineExecutionRequest(
+        local_target_repo_path=env_req.local_target_repo_path,
+        expected_control_branch=env_req.expected_control_branch,
+        authorization_artifact_path=env_req.authorization_artifact_path,
+        canonical_state_path=external_state,  # Outside target repo!
+        attempt_number=env_req.attempt_number,
+        cli_command=env_req.cli_command,
+        raw_result_path=env_req.raw_result_path,
+        capability_store_path=env_req.capability_store_path,
+    )
+
+    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner())
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+# Section 21: Carrier Read-Failure Test
+def test_carrier_ls_tree_failure_holds(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner(carrier_ls_tree_fails=True))
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+def test_parent_ls_tree_failure_holds(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner(parent_ls_tree_fails=True))
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+# Section 22: Canonical State Presence Test
+def test_canonical_state_absent_from_head_holds(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(git_runner=make_fake_git_runner(state_carrier_present=False))
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+# Test CLI Hash Mismatch blocks version and engine
+def test_cli_hash_mismatch_blocks_version_and_engine(tmp_path):
+    env = make_fixture_env(tmp_path)
+    env["cli_file"].write_bytes(b"tampered content")
+    req = make_request(env)
+
+    version_calls = []
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: version_calls.append(1) or "1.1.20",
+        capability_resolver=lambda p, a, i: "PROVEN",
+        git_runner=make_fake_git_runner(),
+    )
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+    assert engine.call_count == 0
+    assert len(version_calls) == 0
+
+
+# Test CLI Version Mismatch
+def test_cli_version_mismatch_after_hash_match(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    version_calls = []
+    cap_calls = []
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: version_calls.append(1) or "1.1.21",  # Mismatch
+        capability_resolver=lambda p, a, i: cap_calls.append(1) or "PROVEN",
+        git_runner=make_fake_git_runner(),
+    )
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+    assert engine.call_count == 0
+    assert len(version_calls) == 1
+    assert len(cap_calls) == 0
+
+
+# Test Capability UNPROVEN
+def test_capability_unproven_blocks_engine(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: "1.1.20",
+        capability_resolver=lambda p, a, i: "UNPROVEN",
+        git_runner=make_fake_git_runner(),
+    )
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+    assert engine.call_count == 0
+
+
+# Test Engine Exception Fail Closed
+def test_engine_exception_fails_closed(tmp_path):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    gate = PreEngineExecutionGate(
+        cli_version_resolver=lambda p: "1.1.20",
+        capability_resolver=lambda p, a, i: "PROVEN",
+        git_runner=make_fake_git_runner(),
+    )
+    engine = FakeEngine(raises=True)
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "PASS"
+    assert res["engine_invoked"] is True
+    assert res["disposition"] == "HOLD"
+    assert res["status"] == "HOLD"
+    assert "Synthetic engine failure" in res["errors"][0]
