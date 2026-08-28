@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS4_VERIFICATION_FOUNDATION_SEMANTIC_REMEDIATED_INDEPENDENT_REVIEW_PENDING",
+  "status": "AOS4_VERIFIER_TOTAL_FAIL_CLOSED_HARDENED_FINAL_SOURCE_REVIEW_PENDING",
   "current_gate": "AOS-4",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review the integrated verification foundation implementation and the canonical six-scenario AOS-4 regression matrix. If that review and exact-SHA CI pass with no authoritative contradiction, proceed directly to AOS-4 closure. Do not create another candidate, rerun Attempt #6, or authorize a retry.",
+  "next_action": "Independently review the final AOS-4 verifier fail-closed trust boundary, candidate manifest binding, adversarial malformed-input regressions, preserved six-scenario matrix, and exact-SHA CI. If no substantive security/correctness blocker remains, proceed directly to AOS-4 closure. Do not create another candidate or rerun Attempt #6.",
   "implementation_started": true,
   "extensions": {
     "aos3_controlled_execution": {
@@ -571,7 +571,7 @@
     "attempt_6_candidate_materialization_patch": "docs/proofs/aos4_ref_001_attempt6_candidate.patch",
     "attempt_6_candidate_materialization_patch_sha256": "1662bb216192d6e4ae284ad1558d05c361920fa2089d4387096d52c8fd3871a5",
     "attempt_6_candidate_semantic_review_status": "HOLD_REMEDIATED_IN_SOURCE_REVIEW_PENDING",
-    "next_execution_authorization_status": "BLOCKED_ON_AOS4_SEMANTIC_REMEDIATION_INDEPENDENT_REVIEW",
+    "next_execution_authorization_status": "BLOCKED_ON_AOS4_FINAL_SOURCE_REVIEW",
     "attempt_6_candidate_materialization_v1_manifest_integrity": "PASS",
     "attempt_6_candidate_materialization_v1_patch_completeness": "INCOMPLETE_FOR_SEMANTIC_REVIEW",
     "attempt_6_candidate_snapshot_bundle_status": "COMPLETE_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
@@ -587,7 +587,10 @@
     "attempt_6_authorization_consumed": true,
     "attempt_6_terminal": true,
     "attempt_6_rerun": false,
-    "retry_authorized": false
+    "retry_authorized": false,
+    "stage_10ae_independent_review_result": "HOLD",
+    "stage_10ae_independent_review_root_blocker": "VERIFIER_FAIL_CLOSED_TRUST_BOUNDARY_NOT_TOTAL",
+    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING"
   },
   "accepted_gates": [
     {
