@@ -1,36 +1,14 @@
-"""Tests for AOS-5 Stage 11B SQLite Durable Coordination Backend.
+"""Tests for AOS-5 Stage 11B-R1 SQLite Durable Coordination Backend Integrity.
 
-Covers:
-1. schema initialization
-2. compatible reopen
-3. unsupported schema fails
-4. worker registration persists
-5. contradictory immutable worker registration fails
-6. new session allowed
-7. first lease persists across reopen
-8. same owner after reopen is ALREADY_OWNED
-9. same-owner reclaim does not extend TTL
-10. other active owner gets HELD_BY_OTHER
-11. backend authoritative clock
-12. heartbeat persists
-13. expiry persists
-14. exact expiry permits recovery
-15. new lease_id on recovery
-16. generation increments across restart
-17. stale heartbeat after recovery rejected
-18. stale release after recovery rejected
-19. release persists
-20. release enables new epoch
-21. two backend instances concurrently claim same task: exactly one winner
-22. multi-contender same DB: exactly one active owner
-23. corrupt timestamp fails closed
-24. corrupt generation fails closed
-25. corrupt TTL fails closed
-26. malformed capability tag storage fails closed
-27. SQL-looking identifier treated as data
-28. DB-loss isolation preserves canonical sentinel
-29. no Git/provider/LARI/network operation
-30. SQLite backend satisfies CoordinationBackend structural API
+Covers all Stage 11B baseline requirements plus Stage 11B-R1 controller findings:
+A. Unsupported schema non-mutation proof
+B. Same-version missing table/column fail closed without silent repair
+C. Capability tag decoder corruption matrix (object, scalar, non-string, adversarial)
+D. Lease parser corruption matrix (TTL, generation, status, naive/non-UTC ISO, empty string, time order)
+E. Non-SQLite existing file fails closed as CoordinationStorageError
+F. Invalid busy_timeout_ms input validation
+G. Concurrent winner exact-binding proof (two-instance and multi-contender)
+H. Thread failure observability across concurrent test barriers
 """
 
 from datetime import datetime, timedelta, timezone
@@ -89,13 +67,62 @@ def test_compatible_reopen(tmp_path):
     assert db_file.exists()
 
 
-# 3. unsupported schema fails
-def test_unsupported_schema_fails(tmp_path):
-    db_file = tmp_path / "test_coordination.db"
-    backend = SQLiteCoordinationBackend(db_file)
-
+# 3. unsupported schema fails without mutation
+def test_unsupported_schema_open_is_nonmutating(tmp_path):
+    db_file = tmp_path / "test_unsupported.db"
     conn = sqlite3.connect(str(db_file))
-    conn.execute("UPDATE meta SET value = '9.9.9' WHERE key = 'schema_version';")
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '9.9.9');")
+    conn.commit()
+
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables_before = {row[0] for row in cursor.fetchall()}
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        SQLiteCoordinationBackend(db_file)
+
+    conn2 = sqlite3.connect(str(db_file))
+    cursor2 = conn2.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables_after = {row[0] for row in cursor2.fetchall()}
+    cursor3 = conn2.execute("SELECT value FROM meta WHERE key = 'schema_version';")
+    ver_after = cursor3.fetchone()[0]
+    conn2.close()
+
+    assert tables_after == tables_before
+    assert ver_after == "9.9.9"
+    assert "workers" not in tables_after
+    assert "leases" not in tables_after
+
+
+# 4. same-version missing required table fails without repair
+def test_same_version_missing_required_table_fails_without_repair(tmp_path):
+    db_file = tmp_path / "test_missing_table.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?);", (SQLITE_SCHEMA_VERSION,))
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        SQLiteCoordinationBackend(db_file)
+
+    conn2 = sqlite3.connect(str(db_file))
+    cursor = conn2.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables_after = {row[0] for row in cursor.fetchall()}
+    conn2.close()
+    assert "workers" not in tables_after
+    assert "leases" not in tables_after
+
+
+# 5. same-version missing ownership column fails without repair
+def test_same_version_missing_ownership_column_fails_without_repair(tmp_path):
+    db_file = tmp_path / "test_missing_col.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?);", (SQLITE_SCHEMA_VERSION,))
+    conn.execute("CREATE TABLE workers (worker_id TEXT PRIMARY KEY);")
+    conn.execute("CREATE TABLE leases (task_id TEXT PRIMARY KEY);")
     conn.commit()
     conn.close()
 
@@ -103,7 +130,7 @@ def test_unsupported_schema_fails(tmp_path):
         SQLiteCoordinationBackend(db_file)
 
 
-# 4. worker registration persists
+# 6. worker registration persists
 def test_worker_registration_persists(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     backend1 = SQLiteCoordinationBackend(db_file)
@@ -114,7 +141,7 @@ def test_worker_registration_persists(tmp_path):
     assert backend2.is_worker_registered("w1", "s1")
 
 
-# 5. contradictory immutable worker registration fails
+# 7. contradictory immutable worker registration fails
 def test_contradictory_worker_registration_fails(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     backend1 = SQLiteCoordinationBackend(db_file)
@@ -128,7 +155,7 @@ def test_contradictory_worker_registration_fails(tmp_path):
         backend2.register_worker(w1_contradictory)
 
 
-# 6. new session allowed
+# 8. new session allowed
 def test_new_session_allowed(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     backend = SQLiteCoordinationBackend(db_file)
@@ -141,7 +168,7 @@ def test_new_session_allowed(tmp_path):
     assert backend.is_worker_registered("w1", "s2")
 
 
-# 7. first lease persists across reopen
+# 9. first lease persists across reopen
 def test_first_lease_persists_across_reopen(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -162,8 +189,7 @@ def test_first_lease_persists_across_reopen(tmp_path):
     assert lease2.ttl_seconds == 60.0
 
 
-# 8. same owner after reopen is ALREADY_OWNED
-# 9. same-owner reclaim does not extend TTL
+# 10. same owner after reopen is ALREADY_OWNED
 def test_same_owner_after_reopen_already_owned(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -180,7 +206,7 @@ def test_same_owner_after_reopen_already_owned(tmp_path):
     assert res2.lease.expires_at == res1.lease.expires_at
 
 
-# 10. other active owner gets HELD_BY_OTHER
+# 11. other active owner gets HELD_BY_OTHER
 def test_other_active_owner_gets_held_by_other(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -196,7 +222,6 @@ def test_other_active_owner_gets_held_by_other(tmp_path):
     assert res2.lease.worker_id == "w1"
 
 
-# 11. backend authoritative clock
 # 12. heartbeat persists
 def test_heartbeat_persists(tmp_path):
     db_file = tmp_path / "test_coordination.db"
@@ -217,10 +242,7 @@ def test_heartbeat_persists(tmp_path):
     assert lease2.expires_at == clock.now() + timedelta(seconds=60)
 
 
-# 13. expiry persists
-# 14. exact expiry permits recovery
-# 15. new lease_id on recovery
-# 16. generation increments across restart
+# 13. expiry and recovery across restart
 def test_expiry_and_recovery_across_restart(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -241,8 +263,7 @@ def test_expiry_and_recovery_across_restart(tmp_path):
     assert res2.lease.generation == res1.lease.generation + 1
 
 
-# 17. stale heartbeat after recovery rejected
-# 18. stale release after recovery rejected
+# 14. stale operations rejected after recovery
 def test_stale_operations_after_recovery_rejected(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -265,8 +286,7 @@ def test_stale_operations_after_recovery_rejected(tmp_path):
     assert rel_stale is False
 
 
-# 19. release persists
-# 20. release enables new epoch
+# 15. release persists and enables new epoch
 def test_release_persists_and_enables_new_epoch(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     clock = ControlledClock()
@@ -288,9 +308,213 @@ def test_release_persists_and_enables_new_epoch(tmp_path):
     assert res2.lease.generation == res1.lease.generation + 1
 
 
-# 21. two backend instances concurrently claim same task: exactly one winner
-def test_two_backend_instances_concurrent_claim(tmp_path):
-    db_file = tmp_path / "test_coordination.db"
+# 16. Capability Tag Decoder Corruption Matrix
+def test_corrupt_capability_json_syntax_fails_closed(tmp_path):
+    db_file = tmp_path / "test_cap_syntax.db"
+    backend = SQLiteCoordinationBackend(db_file)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        "INSERT INTO workers (worker_id, session_id, capability_tags_json, registered_at) VALUES ('w1', 's1', 'invalid-json', '2026-08-28T12:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    w1 = WorkerIdentity("w1", "s1")
+    with pytest.raises(CoordinationStorageError):
+        backend.register_worker(w1)
+
+
+def test_corrupt_capability_json_object_shape_fails_closed(tmp_path):
+    db_file = tmp_path / "test_cap_obj.db"
+    backend = SQLiteCoordinationBackend(db_file)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        "INSERT INTO workers (worker_id, session_id, capability_tags_json, registered_at) VALUES ('w1', 's1', '{\"c1\": 1}', '2026-08-28T12:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    w1 = WorkerIdentity("w1", "s1", ["c1"])
+    with pytest.raises(CoordinationStorageError):
+        backend.register_worker(w1)
+
+    with pytest.raises(CoordinationStorageError):
+        backend.try_claim("task-1", w1, 60.0)
+
+
+def test_corrupt_capability_json_scalar_fails_closed(tmp_path):
+    db_file = tmp_path / "test_cap_scalar.db"
+    backend = SQLiteCoordinationBackend(db_file)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        "INSERT INTO workers (worker_id, session_id, capability_tags_json, registered_at) VALUES ('w1', 's1', '12345', '2026-08-28T12:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    w1 = WorkerIdentity("w1", "s1")
+    with pytest.raises(CoordinationStorageError):
+        backend.register_worker(w1)
+
+
+def test_corrupt_capability_json_non_string_entry_fails_closed(tmp_path):
+    db_file = tmp_path / "test_cap_nonstr.db"
+    backend = SQLiteCoordinationBackend(db_file)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        "INSERT INTO workers (worker_id, session_id, capability_tags_json, registered_at) VALUES ('w1', 's1', '[\"c1\", 123]', '2026-08-28T12:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+
+    w1 = WorkerIdentity("w1", "s1", ["c1"])
+    with pytest.raises(CoordinationStorageError):
+        backend.register_worker(w1)
+
+
+# 17. Lease Storage Corruption Matrix
+def test_corrupt_persisted_ttl_fails_closed(tmp_path):
+    db_file = tmp_path / "test_ttl.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET ttl_seconds = -10.0 WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_corrupt_persisted_generation_fails_closed(tmp_path):
+    db_file = tmp_path / "test_gen.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET generation = -1 WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_corrupt_persisted_status_fails_closed(tmp_path):
+    db_file = tmp_path / "test_status.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET status = 'INVALID_STATUS' WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_corrupt_naive_timestamp_fails_closed(tmp_path):
+    db_file = tmp_path / "test_naive.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET expires_at = '2026-08-28T12:00:00' WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_corrupt_non_utc_timestamp_fails_closed(tmp_path):
+    db_file = tmp_path / "test_non_utc.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET expires_at = '2026-08-28T12:00:00+03:00' WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_corrupt_empty_required_ownership_field_fails_closed(tmp_path):
+    db_file = tmp_path / "test_empty_field.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET worker_id = '   ' WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+def test_impossible_persisted_time_order_fails_closed(tmp_path):
+    db_file = tmp_path / "test_time_order.db"
+    backend = SQLiteCoordinationBackend(db_file)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    backend.try_claim("task-1", w1, 60.0)
+
+    # Set acquired_at > last_heartbeat_at (acquired in future relative to last_hb and expires_at)
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("UPDATE leases SET acquired_at = '2099-01-01T12:00:00+00:00' WHERE task_id = 'task-1';")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CoordinationStorageError):
+        backend.get_lease("task-1")
+
+
+# 18. Non-SQLite existing file fails closed
+def test_non_sqlite_existing_file_fails_as_storage_error(tmp_path):
+    db_file = tmp_path / "bad_file.db"
+    db_file.write_bytes(b"NOT A SQLITE FILE")
+
+    with pytest.raises(CoordinationStorageError):
+        SQLiteCoordinationBackend(db_file)
+
+
+# 19. Invalid busy_timeout_ms validation
+def test_invalid_busy_timeout_ms_fails_closed(tmp_path):
+    db_file = tmp_path / "test_timeout.db"
+    with pytest.raises(InvalidInputError):
+        SQLiteCoordinationBackend(db_file, busy_timeout_ms=-100)
+
+    with pytest.raises(InvalidInputError):
+        SQLiteCoordinationBackend(db_file, busy_timeout_ms=100000)
+
+    with pytest.raises(InvalidInputError):
+        SQLiteCoordinationBackend(db_file, busy_timeout_ms="5000")
+
+
+# 20. Concurrent winner exact-binding proof
+def test_two_backend_instances_concurrent_claim_exact_winner_binding(tmp_path):
+    db_file = tmp_path / "test_concurrent_binding.db"
     backend1 = SQLiteCoordinationBackend(db_file)
     backend2 = SQLiteCoordinationBackend(db_file)
 
@@ -301,14 +525,21 @@ def test_two_backend_instances_concurrent_claim(tmp_path):
 
     barrier = threading.Barrier(2)
     results = [None, None]
+    exceptions = [None, None]
 
     def worker1_task():
-        barrier.wait()
-        results[0] = backend1.try_claim("concurrent-task", w1, 60.0)
+        try:
+            barrier.wait()
+            results[0] = backend1.try_claim("concurrent-task", w1, 60.0)
+        except Exception as exc:
+            exceptions[0] = exc
 
     def worker2_task():
-        barrier.wait()
-        results[1] = backend2.try_claim("concurrent-task", w2, 60.0)
+        try:
+            barrier.wait()
+            results[1] = backend2.try_claim("concurrent-task", w2, 60.0)
+        except Exception as exc:
+            exceptions[1] = exc
 
     t1 = threading.Thread(target=worker1_task)
     t2 = threading.Thread(target=worker2_task)
@@ -317,20 +548,36 @@ def test_two_backend_instances_concurrent_claim(tmp_path):
     t1.join()
     t2.join()
 
+    assert exceptions == [None, None]
+
     dispositions = [results[0].disposition, results[1].disposition]
-    assert ClaimDisposition.ACQUIRED in dispositions
-    assert ClaimDisposition.HELD_BY_OTHER in dispositions
     assert dispositions.count(ClaimDisposition.ACQUIRED) == 1
     assert dispositions.count(ClaimDisposition.HELD_BY_OTHER) == 1
 
-    stored = backend1.get_lease("concurrent-task")
-    assert stored is not None
-    assert stored.status == LeaseStatus.ACTIVE
+    winner_result = results[0] if results[0].disposition == ClaimDisposition.ACQUIRED else results[1]
+    loser_result = results[1] if results[0].disposition == ClaimDisposition.ACQUIRED else results[0]
+
+    persisted = backend1.get_lease("concurrent-task")
+    assert persisted is not None
+    assert persisted.status == LeaseStatus.ACTIVE
+
+    # Exact binding assertions
+    assert persisted.task_id == winner_result.lease.task_id
+    assert persisted.worker_id == winner_result.lease.worker_id
+    assert persisted.session_id == winner_result.lease.session_id
+    assert persisted.lease_id == winner_result.lease.lease_id
+    assert persisted.generation == winner_result.lease.generation
+    assert persisted.acquired_at == winner_result.lease.acquired_at
+    assert persisted.expires_at == winner_result.lease.expires_at
+
+    # Loser lease describes the same active owner epoch
+    assert loser_result.lease.lease_id == winner_result.lease.lease_id
+    assert loser_result.lease.worker_id == winner_result.lease.worker_id
 
 
-# 22. multi-contender same DB: exactly one active owner
-def test_multi_contender_same_db(tmp_path):
-    db_file = tmp_path / "test_coordination.db"
+# 21. Multi-contender exact-binding proof
+def test_multi_contender_exact_winner_binding(tmp_path):
+    db_file = tmp_path / "test_multi_binding.db"
     backends = [SQLiteCoordinationBackend(db_file) for _ in range(10)]
     workers = [WorkerIdentity(f"w_{i}", f"s_{i}") for i in range(10)]
 
@@ -339,10 +586,14 @@ def test_multi_contender_same_db(tmp_path):
 
     barrier = threading.Barrier(10)
     results = [None] * 10
+    exceptions = [None] * 10
 
     def worker_task(idx: int):
-        barrier.wait()
-        results[idx] = backends[idx].try_claim("multi-task", workers[idx], 60.0)
+        try:
+            barrier.wait()
+            results[idx] = backends[idx].try_claim("multi-task", workers[idx], 60.0)
+        except Exception as exc:
+            exceptions[idx] = exc
 
     threads = [threading.Thread(target=worker_task, args=(i,)) for i in range(10)]
     for t in threads:
@@ -350,47 +601,22 @@ def test_multi_contender_same_db(tmp_path):
     for t in threads:
         t.join()
 
+    assert all(e is None for e in exceptions)
+
     dispositions = [r.disposition for r in results]
     assert dispositions.count(ClaimDisposition.ACQUIRED) == 1
     assert dispositions.count(ClaimDisposition.HELD_BY_OTHER) == 9
 
+    winner = next(r for r in results if r.disposition == ClaimDisposition.ACQUIRED)
+    persisted = backends[0].get_lease("multi-task")
 
-# 23. corrupt timestamp fails closed
-# 24. corrupt generation fails closed
-# 25. corrupt TTL fails closed
-# 26. malformed capability tag storage fails closed
-def test_storage_corruption_fails_closed(tmp_path):
-    db_file = tmp_path / "test_coordination.db"
-    backend = SQLiteCoordinationBackend(db_file)
-    w1 = WorkerIdentity("w1", "s1", ["c1"])
-    backend.register_worker(w1)
-    backend.try_claim("task-1", w1, 60.0)
-
-    # Corrupt timestamp
-    conn = sqlite3.connect(str(db_file))
-    conn.execute("UPDATE leases SET expires_at = 'invalid-date' WHERE task_id = 'task-1';")
-    conn.commit()
-    conn.close()
-
-    with pytest.raises(CoordinationStorageError):
-        backend.get_lease("task-1")
-
-    # Reset valid DB and corrupt generation
-    db_file2 = tmp_path / "test_coordination2.db"
-    backend2 = SQLiteCoordinationBackend(db_file2)
-    backend2.register_worker(w1)
-    backend2.try_claim("task-1", w1, 60.0)
-
-    conn = sqlite3.connect(str(db_file2))
-    conn.execute("UPDATE leases SET generation = -5 WHERE task_id = 'task-1';")
-    conn.commit()
-    conn.close()
-
-    with pytest.raises(CoordinationStorageError):
-        backend2.get_lease("task-1")
+    assert persisted == winner.lease
+    for loser in [r for r in results if r.disposition == ClaimDisposition.HELD_BY_OTHER]:
+        assert loser.lease.lease_id == winner.lease.lease_id
+        assert loser.lease.worker_id == winner.lease.worker_id
 
 
-# 27. SQL-looking identifier treated as data
+# 22. SQL-looking identifier treated as data
 def test_sql_looking_identifier_treated_as_data(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     backend = SQLiteCoordinationBackend(db_file)
@@ -407,7 +633,7 @@ def test_sql_looking_identifier_treated_as_data(tmp_path):
     assert stored.worker_id == w1.worker_id
 
 
-# 28. DB-loss isolation preserves canonical sentinel
+# 23. DB-loss isolation preserves canonical sentinel
 def test_db_loss_isolation_preserves_canonical_sentinel(tmp_path):
     sentinel_file = tmp_path / "sentinel_canonical_truth.json"
     sentinel_data = b'{"canonical": "truth", "important": 12345}'
@@ -420,25 +646,22 @@ def test_db_loss_isolation_preserves_canonical_sentinel(tmp_path):
     backend1.register_worker(w1)
     backend1.try_claim("task-1", w1, 60.0)
 
-    # Delete coordination database files (simulated DB loss)
     db_file.unlink()
     for extra in tmp_path.glob("coordination.db*"):
         extra.unlink()
 
-    # Sentinel remains untouched
     assert sentinel_file.exists()
     assert hashlib.sha256(sentinel_file.read_bytes()).hexdigest() == sentinel_hash
 
-    # Fresh coordination backend starts new epoch
     backend2 = SQLiteCoordinationBackend(db_file)
     assert backend2.get_lease("task-1") is None
     backend2.register_worker(w1)
     res = backend2.try_claim("task-1", w1, 60.0)
     assert res.disposition == ClaimDisposition.ACQUIRED
-    assert res.lease.generation == 1  # Fresh coordination epoch starts at 1
+    assert res.lease.generation == 1
 
 
-# 29. no Git/provider/LARI/network operation
+# 24. No external dependencies
 def test_no_external_dependencies_in_sqlite_backend():
     import aos.coordination_sqlite as sqlite_coord
 
@@ -451,7 +674,7 @@ def test_no_external_dependencies_in_sqlite_backend():
         assert f"from {word}" not in content.lower()
 
 
-# 30. SQLite backend satisfies CoordinationBackend structural API
+# 25. SQLite backend satisfies CoordinationBackend structural API
 def test_sqlite_backend_satisfies_protocol(tmp_path):
     db_file = tmp_path / "test_coordination.db"
     backend: CoordinationBackend = SQLiteCoordinationBackend(db_file)

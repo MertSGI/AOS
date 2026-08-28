@@ -1,14 +1,16 @@
-"""AOS-5 Distributed Multi-PC Coordination — Stage 11B SQLite Coordination Backend.
+"""AOS-5 Distributed Multi-PC Coordination — Stage 11B-R1 SQLite Coordination Backend.
 
 Durable local SQLite reference implementation of CoordinationBackend:
 - Versioned SQLite storage (schema version 0.1.0)
-- Structural compatibility with CoordinationBackend
+- Non-destructive existing store classification prior to DDL mutation
+- Strict capability tag JSON array decoding
+- Strict lease row temporal integrity validation
+- Bounded integer busy timeout validation
+- All SQLite storage errors mapped to CoordinationStorageError
 - Transactional cross-instance atomic claim (BEGIN IMMEDIATE / COMMIT / ROLLBACK)
 - Explicit database path required
 - Restart persistence (registered workers, leases, fencing generations)
 - Non-canonical coordination store isolation (zero Git/project mutation)
-- Fail-closed storage corruption handling
-- SQL parameter binding for caller identifiers
 """
 
 from datetime import datetime, timezone
@@ -16,8 +18,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
-import threading
-from typing import Callable, Optional, Union
+from typing import Callable, FrozenSet, Optional, Union
 
 from aos.coordination import (
     ClaimDisposition,
@@ -38,45 +39,82 @@ from aos.coordination import (
 
 SQLITE_SCHEMA_VERSION = "0.1.0"
 
-INIT_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
+EXPECTED_TABLES = {"meta", "workers", "leases"}
 
-CREATE TABLE IF NOT EXISTS workers (
-    worker_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    capability_tags_json TEXT NOT NULL,
-    registered_at TEXT NOT NULL,
-    PRIMARY KEY (worker_id, session_id)
-);
+EXPECTED_COLUMNS = {
+    "meta": {"key", "value"},
+    "workers": {"worker_id", "session_id", "capability_tags_json", "registered_at"},
+    "leases": {
+        "task_id",
+        "worker_id",
+        "session_id",
+        "lease_id",
+        "acquired_at",
+        "last_heartbeat_at",
+        "expires_at",
+        "ttl_seconds",
+        "generation",
+        "status",
+    },
+}
 
-CREATE TABLE IF NOT EXISTS leases (
-    task_id TEXT PRIMARY KEY,
-    worker_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    lease_id TEXT NOT NULL,
-    acquired_at TEXT NOT NULL,
-    last_heartbeat_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    ttl_seconds REAL NOT NULL,
-    generation INTEGER NOT NULL,
-    status TEXT NOT NULL
-);
-"""
+INIT_SCHEMA_SQL_STATEMENTS = [
+    """
+    CREATE TABLE meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE workers (
+        worker_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        capability_tags_json TEXT NOT NULL,
+        registered_at TEXT NOT NULL,
+        PRIMARY KEY (worker_id, session_id)
+    );
+    """,
+    """
+    CREATE TABLE leases (
+        task_id TEXT PRIMARY KEY,
+        worker_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        last_heartbeat_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        ttl_seconds REAL NOT NULL,
+        generation INTEGER NOT NULL,
+        status TEXT NOT NULL
+    );
+    """,
+]
+
+
+def _validate_busy_timeout_ms(val: int) -> int:
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise InvalidInputError("busy_timeout_ms must be an integer")
+    if val <= 0 or val > 60000:
+        raise InvalidInputError("busy_timeout_ms must be a positive integer <= 60000")
+    return val
 
 
 def _iso_to_datetime(val_str: str) -> datetime:
     if not isinstance(val_str, str) or not val_str.strip():
         raise CoordinationStorageError("Persisted datetime must be a non-empty string")
+
+    val = val_str.strip()
     try:
-        dt = datetime.fromisoformat(val_str.strip())
+        dt = datetime.fromisoformat(val)
     except (ValueError, TypeError) as exc:
         raise CoordinationStorageError(f"Persisted timestamp '{val_str}' is malformed") from exc
 
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
         raise CoordinationStorageError(f"Persisted timestamp '{val_str}' is naive; timezone-aware required")
+
+    # Require ISO string representation to end with UTC offset (+00:00 or Z)
+    if not (val.endswith("+00:00") or val.endswith("Z") or val.endswith("+0000")):
+        raise CoordinationStorageError(f"Persisted timestamp '{val_str}' is not UTC normalized")
 
     return dt.astimezone(timezone.utc)
 
@@ -87,6 +125,34 @@ def _datetime_to_iso(dt: datetime) -> str:
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
         raise InvalidClockError("Clock provider returned naive datetime; timezone-aware required")
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def _decode_capability_tags_json(raw_json: str) -> FrozenSet[str]:
+    if not isinstance(raw_json, str):
+        raise CoordinationStorageError("Corrupt capability_tags_json: not a string")
+    try:
+        data = json.loads(raw_json)
+    except Exception as exc:
+        raise CoordinationStorageError("Corrupt capability_tags_json: invalid JSON syntax") from exc
+
+    if not isinstance(data, list):
+        raise CoordinationStorageError("Corrupt capability_tags_json: JSON data must be a list")
+
+    seen = set()
+    for item in data:
+        if not isinstance(item, str):
+            raise CoordinationStorageError("Corrupt capability_tags_json: list elements must be strings")
+        if not item or item != item.strip():
+            raise CoordinationStorageError("Corrupt capability_tags_json: strings must be non-empty and trimmed")
+        if item in seen:
+            raise CoordinationStorageError("Corrupt capability_tags_json: duplicate tags found")
+        seen.add(item)
+
+    # Canonical writer stores sorted tags
+    if data != sorted(list(seen)):
+        raise CoordinationStorageError("Corrupt capability_tags_json: tags not deterministically sorted")
+
+    return frozenset(seen)
 
 
 class SQLiteCoordinationBackend:
@@ -101,9 +167,9 @@ class SQLiteCoordinationBackend:
         if db_path is None or str(db_path).strip() == "":
             raise InvalidInputError("db_path must be an explicit non-empty file path")
 
+        self._busy_timeout_ms = _validate_busy_timeout_ms(busy_timeout_ms)
         self._db_path = Path(db_path).resolve()
         self._clock_provider = clock_provider or default_utc_clock
-        self._busy_timeout_ms = busy_timeout_ms
 
         # Ensure parent directory exists
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,36 +184,70 @@ class SQLiteCoordinationBackend:
         return now
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(
-            str(self._db_path),
-            timeout=self._busy_timeout_ms / 1000.0,
-            isolation_level=None,  # Autocommit mode; explicit BEGIN IMMEDIATE used
-        )
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
-        return conn
+        try:
+            conn = sqlite3.connect(
+                str(self._db_path),
+                timeout=self._busy_timeout_ms / 1000.0,
+                isolation_level=None,  # Autocommit mode; explicit BEGIN IMMEDIATE used
+            )
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
+            return conn
+        except sqlite3.Error as exc:
+            raise CoordinationStorageError(f"Failed to open SQLite database at '{self._db_path}'") from exc
 
     def _init_db(self) -> None:
         conn = self._connect()
         try:
-            conn.executescript(INIT_SCHEMA_SQL)
-            conn.execute("BEGIN IMMEDIATE;")
-            cursor = conn.execute("SELECT value FROM meta WHERE key = 'schema_version';")
-            row = cursor.fetchone()
-            if row is None:
+            # Check if database file was already non-empty / contained tables before any DDL
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            existing_tables = {row[0] for row in cursor.fetchall()}
+
+            if not existing_tables:
+                # NEW STORE: Transactional atomic initialization
+                conn.execute("BEGIN IMMEDIATE;")
+                for stmt in INIT_SCHEMA_SQL_STATEMENTS:
+                    conn.execute(stmt)
                 conn.execute(
                     "INSERT INTO meta (key, value) VALUES ('schema_version', ?);",
                     (SQLITE_SCHEMA_VERSION,),
                 )
-            else:
-                current_ver = row[0]
-                if current_ver != SQLITE_SCHEMA_VERSION:
-                    conn.execute("ROLLBACK;")
-                    raise CoordinationStorageError(
-                        f"Unsupported SQLite coordination schema version '{current_ver}'; expected '{SQLITE_SCHEMA_VERSION}'"
-                    )
+                conn.execute("COMMIT;")
+                return
 
-            conn.execute("COMMIT;")
+            # EXISTING STORE: Validate structure and schema version BEFORE ANY MUTATION
+            if "meta" not in existing_tables:
+                raise CoordinationStorageError("Existing database is missing required 'meta' table")
+
+            # Check table presence
+            if not EXPECTED_TABLES.issubset(existing_tables):
+                raise CoordinationStorageError("Existing database is missing required AOS tables")
+
+            # Check column structure
+            for tbl, req_cols in EXPECTED_COLUMNS.items():
+                cursor = conn.execute(f"PRAGMA table_info({tbl});")
+                cols = {row[1] for row in cursor.fetchall()}
+                if not req_cols.issubset(cols):
+                    raise CoordinationStorageError(f"Existing table '{tbl}' missing required columns")
+
+            # Check schema version
+            cursor = conn.execute("SELECT value FROM meta WHERE key = 'schema_version';")
+            rows = cursor.fetchall()
+            if len(rows) != 1:
+                raise CoordinationStorageError("Existing database meta table does not contain exactly one schema_version")
+
+            current_ver = rows[0][0]
+            if current_ver != SQLITE_SCHEMA_VERSION:
+                raise CoordinationStorageError(
+                    f"Unsupported SQLite coordination schema version '{current_ver}'; expected '{SQLITE_SCHEMA_VERSION}'"
+                )
+
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
+            raise CoordinationStorageError(f"Database error during database initialization: {exc}") from exc
         except Exception:
             try:
                 conn.execute("ROLLBACK;")
@@ -173,13 +273,8 @@ class SQLiteCoordinationBackend:
             )
             row = cursor.fetchone()
             if row is not None:
-                try:
-                    existing_tags = set(json.loads(row[0]))
-                except Exception as exc:
-                    conn.execute("ROLLBACK;")
-                    raise CoordinationStorageError("Corrupt capability_tags_json in database") from exc
-
-                if existing_tags == set(identity.capability_tags):
+                existing_tags = _decode_capability_tags_json(row[0])
+                if existing_tags == identity.capability_tags:
                     # Idempotent re-registration
                     conn.execute("COMMIT;")
                     return
@@ -194,12 +289,18 @@ class SQLiteCoordinationBackend:
                 (identity.worker_id, identity.session_id, tags_json, now_str),
             )
             conn.execute("COMMIT;")
-        except Exception:
+        except (InvalidIdentityError, InvalidInputError, InvalidClockError, CoordinationStorageError):
             try:
                 conn.execute("ROLLBACK;")
             except Exception:
                 pass
             raise
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
+            raise CoordinationStorageError(f"Database error during register_worker: {exc}") from exc
         finally:
             conn.close()
 
@@ -214,11 +315,15 @@ class SQLiteCoordinationBackend:
                 (worker_id.strip(), session_id.strip()),
             )
             return cursor.fetchone() is not None
+        except sqlite3.Error as exc:
+            raise CoordinationStorageError(f"Database error during is_worker_registered: {exc}") from exc
         finally:
             conn.close()
 
     def _parse_lease_row(self, row: tuple) -> LeaseSnapshot:
-        # task_id, worker_id, session_id, lease_id, acquired_at, last_heartbeat_at, expires_at, ttl_seconds, generation, status
+        if len(row) != 10:
+            raise CoordinationStorageError("Corrupt lease row: incorrect column count")
+
         (
             task_id,
             worker_id,
@@ -232,20 +337,25 @@ class SQLiteCoordinationBackend:
             status_str,
         ) = row
 
-        if not isinstance(task_id, str) or not task_id:
+        if not isinstance(task_id, str) or not task_id.strip():
             raise CoordinationStorageError("Corrupt task_id in lease row")
-        if not isinstance(worker_id, str) or not worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip():
             raise CoordinationStorageError("Corrupt worker_id in lease row")
-        if not isinstance(session_id, str) or not session_id:
+        if not isinstance(session_id, str) or not session_id.strip():
             raise CoordinationStorageError("Corrupt session_id in lease row")
-        if not isinstance(lease_id, str) or not lease_id:
+        if not isinstance(lease_id, str) or not lease_id.strip():
             raise CoordinationStorageError("Corrupt lease_id in lease row")
 
         acquired_at = _iso_to_datetime(acquired_at_str)
         last_hb = _iso_to_datetime(last_hb_str)
         expires_at = _iso_to_datetime(expires_at_str)
 
-        if not isinstance(ttl_sec, (int, float)) or math.isnan(ttl_sec) or math.isinf(ttl_sec) or ttl_sec <= 0:
+        if acquired_at > last_hb:
+            raise CoordinationStorageError("Corrupt lease row: acquired_at > last_heartbeat_at")
+        if last_hb >= expires_at:
+            raise CoordinationStorageError("Corrupt lease row: last_heartbeat_at >= expires_at")
+
+        if isinstance(ttl_sec, bool) or not isinstance(ttl_sec, (int, float)) or math.isnan(ttl_sec) or math.isinf(ttl_sec) or ttl_sec <= 0:
             raise CoordinationStorageError(f"Corrupt ttl_seconds '{ttl_sec}' in lease row")
 
         if isinstance(gen, bool) or not isinstance(gen, int) or gen <= 0:
@@ -283,6 +393,10 @@ class SQLiteCoordinationBackend:
             if row is None:
                 return None
             return self._parse_lease_row(row)
+        except (CoordinationStorageError, InvalidClockError):
+            raise
+        except sqlite3.Error as exc:
+            raise CoordinationStorageError(f"Database error during get_lease: {exc}") from exc
         finally:
             conn.close()
 
@@ -309,13 +423,8 @@ class SQLiteCoordinationBackend:
                 conn.execute("ROLLBACK;")
                 raise InvalidIdentityError("Worker identity must be registered prior to claiming tasks")
 
-            try:
-                registered_tags = set(json.loads(row[0]))
-            except Exception as exc:
-                conn.execute("ROLLBACK;")
-                raise CoordinationStorageError("Corrupt capability_tags_json in database") from exc
-
-            if registered_tags != set(identity.capability_tags):
+            registered_tags = _decode_capability_tags_json(row[0])
+            if registered_tags != identity.capability_tags:
                 conn.execute("ROLLBACK;")
                 raise InvalidIdentityError("Worker identity tags do not match registered identity")
 
@@ -407,12 +516,18 @@ class SQLiteCoordinationBackend:
                 disposition=ClaimDisposition.ACQUIRED,
                 lease=new_lease,
             )
-        except Exception:
+        except (InvalidIdentityError, InvalidInputError, InvalidClockError, CoordinationStorageError):
             try:
                 conn.execute("ROLLBACK;")
             except Exception:
                 pass
             raise
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
+            raise CoordinationStorageError(f"Database error during try_claim: {exc}") from exc
         finally:
             conn.close()
 
@@ -462,7 +577,6 @@ class SQLiteCoordinationBackend:
 
             now = self._now()
             if now >= current.expires_at:
-                # Mark EXPIRED
                 conn.execute(
                     "UPDATE leases SET status = ? WHERE task_id = ?;",
                     (LeaseStatus.EXPIRED.value, task_id),
@@ -492,12 +606,18 @@ class SQLiteCoordinationBackend:
                 generation=current.generation,
                 status=LeaseStatus.ACTIVE,
             )
-        except Exception:
+        except (InvalidInputError, InvalidClockError, CoordinationStorageError):
             try:
                 conn.execute("ROLLBACK;")
             except Exception:
                 pass
             raise
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
+            raise CoordinationStorageError(f"Database error during heartbeat: {exc}") from exc
         finally:
             conn.close()
 
@@ -560,11 +680,17 @@ class SQLiteCoordinationBackend:
             )
             conn.execute("COMMIT;")
             return True
-        except Exception:
+        except (InvalidInputError, InvalidClockError, CoordinationStorageError):
             try:
                 conn.execute("ROLLBACK;")
             except Exception:
                 pass
             raise
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
+            raise CoordinationStorageError(f"Database error during release: {exc}") from exc
         finally:
             conn.close()
