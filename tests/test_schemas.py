@@ -74,6 +74,11 @@ class TestCanonicalProjectControlData:
         res, code = validate_file("evidence", evidence_file)
         assert code == 0, f"EVIDENCE.jsonl failed validation: {[e.message for e in res.errors]}"
 
+    def test_canonical_descriptor_is_valid(self):
+        descriptor_file = Path(__file__).resolve().parent.parent / "descriptors" / "aos.descriptor.json"
+        res, code = validate_file("project_descriptor", descriptor_file)
+        assert code == 0, f"aos.descriptor.json failed validation: {[e.message for e in res.errors]}"
+
 
 class TestUnknownFieldRejection:
     """Core contract objects must reject unknown top-level and nested fields."""

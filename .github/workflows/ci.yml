@@ -9,6 +9,24 @@ on:
 jobs:
   validate-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aos
+          POSTGRES_PASSWORD: aos_ci_test
+          POSTGRES_DB: aos_coordination_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aos -d aos_coordination_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      AOS_POSTGRES_TEST_DSN: postgresql://aos:aos_ci_test@127.0.0.1:5432/aos_coordination_test
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,13 +39,36 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,postgres]"
+
+      - name: Verify PostgreSQL connectivity
+        run: |
+          python -c "
+          import os, psycopg
+          dsns = [
+              'postgresql://aos:aos_ci_test@127.0.0.1:5432/aos_coordination_test',
+              'postgresql://aos:aos_ci_test@localhost:5432/aos_coordination_test',
+              'postgresql://aos:aos_ci_test@postgres:5432/aos_coordination_test'
+          ]
+          connected = False
+          for dsn in dsns:
+              try:
+                  conn = psycopg.connect(dsn)
+                  print(f'SUCCESS connecting with: {dsn}')
+                  conn.close()
+                  connected = True
+                  break
+              except Exception as e:
+                  print(f'FAILED connecting with {dsn}: {e}')
+          if not connected:
+              raise RuntimeError('Could not connect to PostgreSQL with any DSN!')
+          "
 
       - name: Run pytest schema validation tests
         run: |
-          pytest -v
+          python -m pytest -v --tb=short -m "not postgres_integration"
 
       - name: Validate canonical state and evidence files
         run: |
-          python -m aos.validate state docs/project-control/STATE.json
-          python -m aos.validate evidence docs/project-control/EVIDENCE.jsonl
+          python -m src.aos.validate state docs/project-control/STATE.json
+          python -m src.aos.validate evidence docs/project-control/EVIDENCE.jsonl

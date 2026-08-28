@@ -22,6 +22,9 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
 ]
+postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
 
 [project.scripts]
 aos-validate = "aos.validate:main"
@@ -32,7 +35,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-m 'not live_read_only'"
+addopts = "-m 'not live_read_only and not postgres_integration'"
 markers = [
-    "live_read_only: mark test as requiring live GitHub network access"
+    "live_read_only: mark test as requiring live GitHub network access",
+    "postgres_integration: mark test as requiring real PostgreSQL server connection"
 ]
