@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_PRE_ENGINE_EXECUTION_GATE_R3_CORRECTION",
+  "base_control_sha": "124d010a7419a4bdd506b5eb1acdc1b979649a34",
+  "stage_10t_r2_transaction_result": "PASS",
+  "stage_10t_r2_exact_sha_ci_result": "PASS",
+  "stage_10t_r2_independent_review_result": "HOLD",
+  "independent_findings": [
+    "WINDOWS_REPARSE_POINT_GUARD_INCOMPLETE",
+    "CANONICAL_LIVE_EXECUTION_ENTRYPOINT_NOT_BOUND"
+  ],
+  "corrections": {
+    "windows_symlink_guard": true,
+    "windows_junction_guard": true,
+    "windows_reparse_point_guard": true,
+    "indirection_inspection_fail_closed": true,
+    "authorization_component_indirection_guard": true,
+    "state_component_indirection_guard": true,
+    "cli_indirection_guard": true,
+    "capability_store_indirection_guard": true,
+    "deterministic_no_skip_indirection_tests": true,
+    "canonical_live_execution_controller": "CanonicalLiveExecutionController",
+    "canonical_live_boundary_uses_production_preengine_defaults": true,
+    "canonical_live_boundary_caller_gate_override_allowed": false,
+    "canonical_live_boundary_direct_engine_call": false,
+    "canonical_live_boundary_preflight_hold_engine_count": 0,
+    "canonical_live_boundary_one_shot": true,
+    "r2_tests_removed": [],
+    "live_cli_execution_count": 0,
+    "live_engine_execution_count": 0,
+    "live_worker_execution_count": 0,
+    "capability_probe_count": 0,
+    "runtime_mutation_count": 0,
+    "capability_reattestation_performed": false,
+    "timeout_remediation_performed": false,
+    "attempt_6_authorized": false,
+    "attempt_6_executed": false,
+    "independent_review_status": "PENDING",
+    "result": "PASS"
+  },
+  "limitations": [
+    "R3 remains source/test remediation pending independent review",
+    "no live preflight was executed",
+    "current machine capability remains UNPROVEN",
+    "timeout remediation remains outstanding",
+    "no Attempt #6 authorization exists",
+    "does not close AOS-4"
+  ]
+}

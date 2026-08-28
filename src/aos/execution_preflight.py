@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,23 +114,40 @@ def _default_capability_resolver(cli_path: Path, attestation: Dict[str, Any], id
     return resolve_capability_status(cli_command=str(cli_path), store_path=store_path, identity=identity)
 
 
+def _is_path_indirection(path: Path) -> bool:
+    """Check if path is a symlink, Windows junction, or Windows reparse point. Fail closed on error."""
+    try:
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction") and callable(path.is_junction) and path.is_junction():
+            return True
+
+        lstat_res = os.lstat(path)
+        attrs = getattr(lstat_res, "st_file_attributes", 0)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if reparse_flag and (attrs & reparse_flag):
+            return True
+        return False
+    except Exception:
+        return True
+
+
 def _is_canonical_file_safe(file_path: Path, repo_path: Path) -> Tuple[bool, str]:
-    """Verify file exists, is not a symlink, contains no symlinked path components up to repo_path, and is contained in repo_path."""
+    """Verify file exists, is not an indirection, contains no indirection components up to repo_path, and is contained in repo_path."""
     try:
         if not file_path.is_file():
             return False, f"File not found or not regular file: {file_path}"
-        if file_path.is_symlink():
-            return False, f"File is a symlink: {file_path}"
+        if _is_path_indirection(file_path):
+            return False, f"File is a symlink, junction, or reparse point: {file_path}"
 
         curr = file_path.parent
         repo_resolved = repo_path.resolve()
         while True:
-            if curr.is_symlink():
-                return False, f"Path component '{curr}' is a symlink"
+            if _is_path_indirection(curr):
+                return False, f"Path component '{curr}' is a symlink, junction, or reparse point"
             if curr.resolve() == repo_resolved:
                 break
             if curr.parent == curr:
-                # Reached root without finding repo_path
                 return False, f"Path '{file_path}' is outside repository '{repo_path}'"
             curr = curr.parent
 
@@ -200,7 +218,7 @@ class PreEngineExecutionGate:
             if message:
                 checks_map[check_id].message = message
 
-        # 1. request_contract (Symlink & path containment before resolve)
+        # 1. request_contract (Indirection & path containment before resolve)
         try:
             if not request.local_target_repo_path.is_dir():
                 return _fail("request_contract", f"Local target repo path not found: {request.local_target_repo_path}")
@@ -420,15 +438,15 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("raw_result_collision", f"Raw result collision check error: {e}")
 
-        # 12. capability_attestation_schema (Section 4 & 5: Trusted capability store path resolver & safety)
+        # 12. capability_attestation_schema (Trusted capability store path & indirection safety)
         try:
             store_path = Path(self.capability_store_path_resolver())
             if not store_path.is_absolute():
                 return _fail("capability_attestation_schema", f"Capability store path is not absolute: {store_path}")
             if not store_path.is_file():
                 return _fail("capability_attestation_schema", f"Capability store file not found or not regular file: {store_path}")
-            if store_path.is_symlink():
-                return _fail("capability_attestation_schema", f"Capability store path is a symlink: {store_path}")
+            if _is_path_indirection(store_path):
+                return _fail("capability_attestation_schema", f"Capability store path is a symlink, junction, or reparse point: {store_path}")
 
             with open(store_path, "r", encoding="utf-8") as f:
                 parsed_attestation = json.load(f)
@@ -452,15 +470,15 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("capability_attestation_schema", f"Capability attestation check error: {e}")
 
-        # 13. cli_path (Absolute pinned CLI path, no PATH fallback)
+        # 13. cli_path (Absolute pinned CLI path, no indirection)
         try:
             cli_path_obj = Path(request.cli_command)
             if not cli_path_obj.is_absolute():
                 return _fail("cli_path", f"CLI path is not absolute: {request.cli_command}")
             if not cli_path_obj.is_file():
                 return _fail("cli_path", f"CLI path is not a regular file: {request.cli_command}")
-            if cli_path_obj.is_symlink():
-                return _fail("cli_path", f"CLI path is a symlink: {request.cli_command}")
+            if _is_path_indirection(cli_path_obj):
+                return _fail("cli_path", f"CLI path is a symlink, junction, or reparse point: {request.cli_command}")
 
             resolved_cli_file = cli_path_obj.resolve()
             expected_filename = parsed_attestation.get("executable_filename")
@@ -498,7 +516,7 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("cli_version", f"CLI version inspection error: {e}")
 
-        # 16. worker_capability (ONLY AFTER VERSION MATCH! Reuses precomputed identity)
+        # 16. worker_capability (ONLY AFTER VERSION MATCH! Reuse precomputed identity)
         try:
             precomputed_identity = {
                 "path": str(resolved_cli_file),
@@ -567,7 +585,7 @@ class PreflightControlledExecutionController:
                 "errors": [f"Engine raised exception: {e}"],
             }
 
-        # Section 7: MALFORMED ENGINE RESULT MUST HOLD (No PASS fallback)
+        # MALFORMED ENGINE RESULT MUST HOLD (No PASS fallback)
         if not isinstance(engine_res, dict):
             return {
                 "status": "HOLD",
@@ -591,7 +609,7 @@ class PreflightControlledExecutionController:
                 "errors": [f"INVALID_ENGINE_TERMINAL_RESULT: Missing or invalid terminal disposition '{disp}'"],
             }
 
-        # Section 8: REAL VALID ENGINE RESULT PRESERVATION
+        # REAL VALID ENGINE RESULT PRESERVATION
         return {
             "status": disp,
             "preflight_status": "PASS",
@@ -600,3 +618,14 @@ class PreflightControlledExecutionController:
             "preflight_result": preflight_res.to_dict(),
             "engine_result": engine_res,
         }
+
+
+class CanonicalLiveExecutionController:
+    """Canonical production-facing live execution boundary for AOS-4."""
+
+    def __init__(self, engine: Any):
+        gate = PreEngineExecutionGate()  # Production defaults enforced!
+        self._controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    def execute(self, request: PreEngineExecutionRequest) -> Dict[str, Any]:
+        return self._controller.execute(request)

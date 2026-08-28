@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "PRE_ENGINE_EXECUTION_GATE_R2_CORRECTED_INDEPENDENT_REVIEW_PENDING",
+    "status": "PRE_ENGINE_EXECUTION_GATE_R3_FINAL_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the final pre-engine gate R2 correction, including restored regression coverage, trusted capability-store binding, canonical symlink safety, production default resolver identity reuse, and fail-closed engine terminal-result handling. Timeout remediation and capability re-attestation remain outstanding.",
+    "next_action": "Independently review the final R3 pre-engine gate, including deterministic Windows reparse/junction protection and the canonical AOS-4 live execution boundary. If accepted, proceed to the separately bounded full-regression timeout remediation. Current capability remains UNPROVEN and Attempt #6 remains unauthorized.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "PRE_ENGINE_EXECUTION_GATE_R2_CORRECTED_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "PRE_ENGINE_EXECUTION_GATE_R3_FINAL_REVIEW_PENDING",
             "current_machine_capability_status": "UNPROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -261,6 +261,18 @@
             "pre_engine_execution_gate_canonical_symlink_guard": "ENFORCED_BEFORE_RESOLVE",
             "pre_engine_execution_gate_engine_result_fail_closed": "ENFORCED",
             "pre_engine_execution_gate_full_regression_matrix": "RESTORED",
+            "pre_engine_execution_gate_stage_10t_r2_independent_review_result": "HOLD",
+            "pre_engine_execution_gate_stage_10t_r2_review_findings": [
+                "WINDOWS_REPARSE_POINT_GUARD_INCOMPLETE",
+                "CANONICAL_LIVE_EXECUTION_ENTRYPOINT_NOT_BOUND"
+            ],
+            "pre_engine_execution_gate_r3_status": "CORRECTED_REVIEW_PENDING",
+            "pre_engine_execution_gate_r3_proof": "docs/proofs/aos4_attempt5_pre_engine_execution_gate_r3_correction.json",
+            "pre_engine_execution_gate_windows_reparse_guard": "ENFORCED",
+            "pre_engine_execution_gate_security_test_skip_dependency": "REMOVED",
+            "pre_engine_execution_gate_supported_live_boundary": "CanonicalLiveExecutionController",
+            "pre_engine_execution_gate_live_boundary_production_defaults": "ENFORCED",
+            "pre_engine_execution_gate_live_boundary_direct_engine_bypass": "NOT_USED_BY_SUPPORTED_BOUNDARY",
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",

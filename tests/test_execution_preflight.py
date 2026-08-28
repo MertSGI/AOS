@@ -1,8 +1,10 @@
 """Deterministic offline unit tests for PreEngineExecutionGate and PreflightControlledExecutionController."""
 
+import ast
 import hashlib
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,9 +14,11 @@ import pytest
 import aos.execution_preflight as ep_mod
 from aos.controlled_execution import ControlledExecutionEngine
 from aos.execution_preflight import (
+    CanonicalLiveExecutionController,
     PreEngineExecutionGate,
     PreEngineExecutionRequest,
     PreflightControlledExecutionController,
+    _is_path_indirection,
 )
 
 
@@ -199,16 +203,16 @@ def make_fake_git_runner(
             if target_ref == "HEAD":
                 if carrier_ls_tree_fails:
                     return FakeCompletedProcess(1, stderr="ls-tree HEAD failure")
-                if "execution_authorization.json" in target_path:
+                if "execution_authorization.json" in target_path or "custom_auth.json" in target_path:
                     return FakeCompletedProcess(0, f"{target_path}\n" if auth_carrier_present else "")
-                elif "STATE.json" in target_path:
+                elif "STATE.json" in target_path or "custom_state.json" in target_path:
                     return FakeCompletedProcess(0, f"{target_path}\n" if state_carrier_present else "")
                 return FakeCompletedProcess(0, f"{target_path}\n")
 
             elif target_ref == parent:
                 if parent_ls_tree_fails:
                     return FakeCompletedProcess(1, stderr="ls-tree parent failure")
-                if "execution_authorization.json" in target_path:
+                if "execution_authorization.json" in target_path or "custom_auth.json" in target_path:
                     return FakeCompletedProcess(0, f"{target_path}\n" if auth_parent_present else "")
                 return FakeCompletedProcess(0, "")
 
@@ -927,7 +931,7 @@ def test_unknown_hash_binary_never_executed_for_version(tmp_path):
 
 
 # ==========================================
-# NEW R2 SPECIFIC TEST COVERAGE
+# R2 SPECIFIC TEST COVERAGE
 # ==========================================
 
 def test_capability_store_path_not_in_request_dataclass():
@@ -1087,3 +1091,150 @@ def test_non_dict_engine_result_holds(tmp_path):
     assert res["disposition"] == "HOLD"
     assert res["status"] == "HOLD"
     assert "INVALID_ENGINE_TERMINAL_RESULT" in res["errors"][0]
+
+
+# ==========================================
+# NEW R3 SPECIFIC TEST COVERAGE
+# ==========================================
+
+# Section 8: Deterministic no-skip coverage for path indirection helper
+def test_path_indirection_helper_symlink_junction_reparse_point(tmp_path, monkeypatch):
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+
+    # A. Symlink reported true
+    monkeypatch.setattr(Path, "is_symlink", lambda self: True)
+    assert _is_path_indirection(test_file) is True
+    monkeypatch.undo()
+
+    # B. Junction reported true
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(Path, "is_junction", lambda self: True, raising=False)
+    assert _is_path_indirection(test_file) is True
+    monkeypatch.undo()
+
+    # C. Windows reparse point attribute set
+    fake_stat = MagicMock()
+    fake_stat.st_file_attributes = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(os, "lstat", lambda p: fake_stat)
+    assert _is_path_indirection(test_file) is True
+    monkeypatch.undo()
+
+    # D. lstat exception -> fail closed (returns True)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    def raise_lstat(p):
+        raise OSError("Stat error simulated")
+    monkeypatch.setattr(os, "lstat", raise_lstat)
+    assert _is_path_indirection(test_file) is True
+
+
+# Section 9: Auth file under indirection directory => HOLD
+def test_auth_artifact_under_indirection_directory_holds(tmp_path, monkeypatch):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    # Indirection on docs/proofs parent directory
+    def fake_indirection(p: Path) -> bool:
+        return "proofs" in str(p) or p.name == "proofs"
+
+    monkeypatch.setattr(ep_mod, "_is_path_indirection", fake_indirection)
+
+    gate = make_gate(env)
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+# Section 9: STATE file under indirection directory => HOLD
+def test_canonical_state_under_indirection_directory_holds(tmp_path, monkeypatch):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    # Indirection on project-control parent directory
+    def fake_indirection(p: Path) -> bool:
+        return "project-control" in str(p) or p.name == "project-control"
+
+    monkeypatch.setattr(ep_mod, "_is_path_indirection", fake_indirection)
+
+    gate = make_gate(env)
+    engine = FakeEngine()
+    controller = PreflightControlledExecutionController(gate=gate, engine=engine)
+
+    res = controller.execute(req)
+    assert res["preflight_status"] == "HOLD"
+    assert res["engine_invoked"] is False
+
+
+# Section 13: CanonicalLiveExecutionController autospec signature test
+def test_canonical_live_execution_controller_autospec_signature(tmp_path, monkeypatch):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    # Monkeypatch capability_store_path_resolver in default gate construction
+    def fake_gate_eval(self_gate, request_arg):
+        ordered_checks = [ep_mod.PreEngineCheck(cid, "PASS") for cid in self_gate.ORDERED_CHECK_IDS]
+        return ep_mod.PreEngineExecutionResult("PASS", True, ordered_checks)
+
+    monkeypatch.setattr(PreEngineExecutionGate, "evaluate", fake_gate_eval)
+
+    engine = create_autospec(ControlledExecutionEngine, instance=True)
+    engine.execute.return_value = {
+        "status": "PASS",
+        "disposition": "VERIFIED_CANDIDATE",
+    }
+
+    live_controller = CanonicalLiveExecutionController(engine=engine)
+    res = live_controller.execute(req)
+
+    assert res["preflight_status"] == "PASS"
+    assert res["engine_invoked"] is True
+    engine.execute.assert_called_once_with(
+        local_target_repo_path=str(req.local_target_repo_path)
+    )
+
+
+# Section 14: CanonicalLiveExecutionController hold and one-shot test
+def test_canonical_live_execution_controller_hold_and_one_shot(tmp_path, monkeypatch):
+    env = make_fixture_env(tmp_path)
+    req = make_request(env)
+
+    # Gate evaluate returns HOLD
+    def fake_gate_eval_hold(self_gate, request_arg):
+        ordered_checks = [ep_mod.PreEngineCheck(cid, "FAIL") for cid in self_gate.ORDERED_CHECK_IDS]
+        return ep_mod.PreEngineExecutionResult("HOLD", False, ordered_checks, ["Preflight HOLD"])
+
+    monkeypatch.setattr(PreEngineExecutionGate, "evaluate", fake_gate_eval_hold)
+
+    engine = FakeEngine()
+    live_controller = CanonicalLiveExecutionController(engine=engine)
+
+    res1 = live_controller.execute(req)
+    assert res1["preflight_status"] == "HOLD"
+    assert res1["engine_invoked"] is False
+    assert engine.call_count == 0
+
+    res2 = live_controller.execute(req)
+    assert res2["preflight_status"] == "HOLD"
+    assert res2["engine_invoked"] is False
+    assert engine.call_count == 0  # Total engine calls = 0!
+
+
+# Section 15: No direct engine invocation in CanonicalLiveExecutionController source code
+def test_canonical_live_execution_controller_no_direct_engine_call_in_source():
+    src_file = Path(ep_mod.__file__)
+    tree = ast.parse(src_file.read_text(encoding="utf-8"))
+
+    canonical_class = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "CanonicalLiveExecutionController":
+            canonical_class = node
+            break
+
+    assert canonical_class is not None, "CanonicalLiveExecutionController class not found in source"
+
+    class_src = ast.unparse(canonical_class)
+    assert ".engine.execute(" not in class_src, "CanonicalLiveExecutionController must not call .engine.execute directly"
