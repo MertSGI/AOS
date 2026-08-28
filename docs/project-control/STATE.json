@@ -7,8 +7,8 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS4_FINAL_MANIFEST_FAIL_CLOSED_CORRECTED_INDEPENDENT_CLOSURE_REVIEW_PENDING",
-  "current_gate": "AOS-4",
+  "status": "AOS4_CLOSED_PROVEN_AOS5_READY",
+  "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
     "AOS-1 Canonical Memory & Schemas",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review the exact final manifest fail-closed correction, candidate-specific regression isolation, canonical state coherence, and exact-SHA CI. If PASS with no authoritative contradiction, close AOS-4 directly. Do not perform further general AOS-4 hardening.",
+  "next_action": "Begin AOS-5 Distributed Multi-PC Coordination from the canonical roadmap. Start with one bounded coordination-foundation stage covering worker identity, lease ownership, heartbeat/expiry semantics, and deterministic concurrent claim behavior. Do not mutate LARI during AOS-5 foundation work.",
   "implementation_started": true,
   "extensions": {
     "aos3_controlled_execution": {
@@ -104,7 +104,7 @@
       "current_e2e_retry_max": 0
     },
     "aos4_independent_verification": {
-      "status": "BOOTSTRAP",
+      "status": "CLOSED_PROVEN",
       "control_branch": "feature/aos-4-independent-verification-hold",
       "bootstrap_base_sha": "1dfd59f850383dc4f40a59fd42462facb2b89315",
       "next_action_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
@@ -114,7 +114,7 @@
       "contradiction_must_hold": true,
       "evidence_exact_revision_required": true,
       "reference_task": "tasks/aos4-reference-task.json",
-      "reference_status": "ATTEMPT6_EXECUTION_RECORD_INDEPENDENTLY_ACCEPTED_CANDIDATE_SEMANTIC_REVIEW_NEXT",
+      "reference_status": "CLOSED_PROVEN",
       "current_machine_capability_status": "PROVEN",
       "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
       "current_machine_capability_prior_identity_version": "1.1.20",
@@ -175,7 +175,7 @@
         "final_retarget_ci_run_id": 32826283683
       },
       "next_execution_attempt_number": 6,
-      "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_CANDIDATE_SEMANTIC_REVIEW",
+      "next_execution_authorization_status": "GATE_CLOSED_NO_EXECUTION_AUTHORIZATION",
       "attempt_6_authorization_id": "AOS4-REF-001-R1-ATTEMPT6-POLICY-20260828T082650Z",
       "attempt_6_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
       "attempt_6_authorization_decision": "AUTO_EXECUTE",
@@ -563,7 +563,22 @@
       "attempt_1_candidate_status": "NOT_PERSISTED",
       "current_execution_proof": "docs/proofs/aos4_ref_001_execution.json",
       "current_execution_max": 1,
-      "current_execution_retry_max": 0
+      "current_execution_retry_max": 0,
+      "stage_10ae_r2_transaction_result": "PASS",
+      "stage_10ae_r2_source_review_result": "INDEPENDENTLY_ACCEPTED",
+      "stage_10ae_r2_exact_sha_ci_result": "SUCCESS",
+      "stage_10ae_r2_exact_sha_ci_run_id": 33168338979,
+      "stage_10ae_r2_exact_sha_ci_job_id": 98839042947,
+      "stage_10ae_r2_exact_sha_ci_pytest": "486 passed, 1 deselected in 8.75s",
+      "stage_10ae_r2_state_pointer_claim_result": "CONTRADICTED_AND_CORRECTED_AT_CLOSURE",
+      "aos4_six_required_scenario_matrix_status": "INDEPENDENTLY_ACCEPTED",
+      "aos4_final_source_review_result": "PASS",
+      "aos4_security_correctness_blocker": false,
+      "aos4_authoritative_contradiction": false,
+      "aos4_closure_status": "CLOSED_PROVEN",
+      "aos4_verified_implementation_sha": "5a8e7023d244b145dd6e7442dc3d876107cb0601",
+      "attempt_6_rerun": false,
+      "retry_authorized": false
     },
     "attempt_6_candidate_materialization_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
     "attempt_6_candidate_materialization_manifest": "docs/proofs/aos4_ref_001_attempt6_candidate_manifest.json",
@@ -571,7 +586,6 @@
     "attempt_6_candidate_materialization_patch": "docs/proofs/aos4_ref_001_attempt6_candidate.patch",
     "attempt_6_candidate_materialization_patch_sha256": "1662bb216192d6e4ae284ad1558d05c361920fa2089d4387096d52c8fd3871a5",
     "attempt_6_candidate_semantic_review_status": "HOLD_REMEDIATED_IN_SOURCE_REVIEW_PENDING",
-    "next_execution_authorization_status": "BLOCKED_ON_AOS4_FINAL_CLOSURE_REVIEW",
     "attempt_6_candidate_materialization_v1_manifest_integrity": "PASS",
     "attempt_6_candidate_materialization_v1_patch_completeness": "INCOMPLETE_FOR_SEMANTIC_REVIEW",
     "attempt_6_candidate_snapshot_bundle_status": "COMPLETE_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
@@ -582,7 +596,6 @@
       "DECLARED_EVIDENCE_ARTIFACT_ABSENCE_IS_NOT_VERIFIED"
     ],
     "aos4_verification_foundation_semantic_remediation_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
-    "aos4_required_scenario_matrix_implementation_status": "COMPLETE_INDEPENDENT_CLOSURE_REVIEW_PENDING",
     "attempt_6_authorization_status": "CONSUMED",
     "attempt_6_authorization_consumed": true,
     "attempt_6_terminal": true,
@@ -590,12 +603,7 @@
     "retry_authorized": false,
     "stage_10ae_independent_review_result": "HOLD",
     "stage_10ae_independent_review_root_blocker": "VERIFIER_FAIL_CLOSED_TRUST_BOUNDARY_NOT_TOTAL",
-    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
-    "reference_status": "AOS4_FINAL_MANIFEST_FAIL_CLOSED_CORRECTED_INDEPENDENT_CLOSURE_REVIEW_PENDING",
-    "stage_10ae_r1_transaction_result": "PASS",
-    "stage_10ae_r1_independent_review_result": "HOLD",
-    "stage_10ae_r1_independent_review_blocker": "UNRECOGNIZED_CANDIDATE_MANIFEST_STATE_CAN_BYPASS_BYTE_VERIFICATION",
-    "stage_10ae_r2_manifest_fail_closed_status": "COMPLETE_INDEPENDENT_CLOSURE_REVIEW_PENDING"
+    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING"
   },
   "accepted_gates": [
     {
@@ -635,6 +643,15 @@
       "verified_sha": "c96e1c8c29d8a1dfb0f881651a0588ee9d8c0906",
       "closed_at": "2026-08-24T18:59:53+03:00",
       "reopen_condition": "Authoritative contradiction in machine capability, canonical execution-base authority, structured worker-result integrity, scope/Git containment, LIVE_GUARD behavior, deterministic verification, or accepted AOS-3 runtime evidence."
+    },
+    {
+      "gate": "AOS-4",
+      "name": "Independent Verification & HOLD",
+      "status": "CLOSED_PROVEN",
+      "evidence_level": "E3_ISOLATED_RUNTIME_PROVEN",
+      "verified_sha": "5a8e7023d244b145dd6e7442dc3d876107cb0601",
+      "closed_at": "2026-08-28T14:45:00Z",
+      "reopen_condition": "Authoritative contradiction in independent-verifier fail-closed behavior, candidate/evidence binding, required scenario behavior, exact-revision integrity, or accepted AOS-4 evidence."
     }
   ]
 }
