@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 import math
 import threading
-from typing import Callable, Dict, FrozenSet, Optional, Tuple, Union
+from typing import Callable, Dict, FrozenSet, Optional, Protocol, Tuple, Union
 
 
 class CoordinationError(Exception):
@@ -35,6 +35,10 @@ class InvalidInputError(CoordinationError):
 
 class InvalidClockError(CoordinationError):
     """Raised when injected clock returns naive datetime or invalid time."""
+
+
+class CoordinationStorageError(CoordinationError):
+    """Raised when storage corruption, schema mismatch, or DB operation fails closed."""
 
 
 class LeaseStatus(str, Enum):
@@ -130,6 +134,42 @@ class ClaimResult:
 
 def default_utc_clock() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class CoordinationBackend(Protocol):
+    """Pluggable structural backend contract for AOS coordination."""
+
+    def register_worker(self, identity: WorkerIdentity) -> None:
+        ...
+
+    def is_worker_registered(self, worker_id: str, session_id: str) -> bool:
+        ...
+
+    def try_claim(self, task_id: str, identity: WorkerIdentity, ttl_seconds: float) -> ClaimResult:
+        ...
+
+    def heartbeat(
+        self,
+        task_id: str,
+        worker_id: str,
+        session_id: str,
+        lease_id: str,
+        generation: int,
+    ) -> Optional[LeaseSnapshot]:
+        ...
+
+    def release(
+        self,
+        task_id: str,
+        worker_id: str,
+        session_id: str,
+        lease_id: str,
+        generation: int,
+    ) -> bool:
+        ...
+
+    def get_lease(self, task_id: str) -> Optional[LeaseSnapshot]:
+        ...
 
 
 class InMemoryCoordinationBackend:
