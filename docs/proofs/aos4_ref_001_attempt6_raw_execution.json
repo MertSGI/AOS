@@ -1,0 +1,198 @@
+{
+  "changed_paths": [
+    "schemas/v0.1/verification_result.schema.json",
+    "src/aos/validate.py",
+    "src/aos/verification.py",
+    "tests/test_verification.py"
+  ],
+  "control_source_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+  "disposition": "VERIFIED_CANDIDATE",
+  "errors": [],
+  "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "extensions": {
+    "candidate": {
+      "candidate_id": "cand_11807a536a5a4af2",
+      "candidate_store_contract_version": "0.1.0",
+      "changed_paths": [
+        "schemas/v0.1/verification_result.schema.json",
+        "src/aos/validate.py",
+        "src/aos/verification.py",
+        "tests/test_verification.py"
+      ],
+      "control_source_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+      "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+      "manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+      "status": "PERSISTED"
+    },
+    "verification_diagnostics": [
+      {
+        "check_id": "aos4_verification_foundation_tests",
+        "exit_code": 0,
+        "sanitized_stderr_tail": "",
+        "sanitized_stdout_tail": "...............................................                          [100%]\n47 passed in 1.38s\n",
+        "stderr_len": 0,
+        "stderr_present": false,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_len": 99,
+        "stdout_present": true,
+        "stdout_sha256": "5fb99f76b43caaf3df0ef8e2d14e871bc389b56db5696233488e58dc93be82c2",
+        "timed_out": false
+      },
+      {
+        "check_id": "aos_full_regression",
+        "exit_code": 0,
+        "sanitized_stderr_tail": "",
+        "sanitized_stdout_tail": "........................................................................ [ 19%]\n......................................ssss.............................. [ 38%]\n........................................................................ [ 57%]\n........................................................................ [ 76%]\n........................................................................ [ 95%]\n................s                                                        [100%]\n============================== warnings summary ===============================\ntests/test_providers.py::TestSchemaAndAdapterRegressions::test_gemini_uses_bounded_max_output_tokens_4096\n  C:\\Users\\mozcelikbas\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\google\\genai\\types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17\n    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]\n\n..\\..\\Programs\\Python\\Python314\\Lib\\site-packages\\_pytest\\cacheprovider.py:469\n  C:\\Users\\mozcelikbas\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\_pytest\\cacheprovider.py:469: PytestCacheWarning: could not create cache path <VERIFY_WORKSPACE>\\.pytest_cache\\v\\cache\\nodeids: [WinError 5] Eri\u015fim engellendi: 'C:\\\\Users\\\\mozcelikbas\\\\AppData\\\\Local\\\\Temp\\\\aos_verify_aos_full_regression_1gzhy0ef\\\\pytest-cache-files-v_qj0_py' -> 'C:\\\\Users\\\\mozcelikbas\\\\AppData\\\\Local\\\\Temp\\\\aos_verify_aos_full_regression_1gzhy0ef\\\\.pytest_cache'\n    config.cache.set(\"cache/nodeids\", sorted(self.cached_nodeids))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n372 passed, 5 skipped, 1 deselected, 2 warnings in 168.18s (0:02:48)\n",
+        "stderr_len": 0,
+        "stderr_present": false,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_len": 1757,
+        "stdout_present": true,
+        "stdout_sha256": "8476fde0d3d2fe9939009f396d35c850e001b86e09ea6e5941ca21abce947347",
+        "timed_out": false
+      }
+    ]
+  },
+  "final_head_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "finished_at": "2026-08-28T08:44:57.640684+00:00",
+  "gate": "AOS-4",
+  "initial_head_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "mutation_performed": true,
+  "project_id": "aos",
+  "retry_count": 0,
+  "schema_version": "0.1.0",
+  "scope_validation": {
+    "allowed_paths": [
+      "src/aos/verification.py",
+      "src/aos/validate.py",
+      "schemas/v0.1/verification_result.schema.json",
+      "tests/test_verification.py"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "descriptors/",
+      "tasks/",
+      ".github/"
+    ],
+    "is_valid": true,
+    "violations": []
+  },
+  "started_at": "2026-08-28T08:38:14.168845+00:00",
+  "task_id": "AOS4-REF-001",
+  "verification_checks": [
+    {
+      "check_id": "descriptor_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "target_repository_identity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "task_schema",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_requirements",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_capability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "retry_policy",
+      "status": "PASS"
+    },
+    {
+      "check_id": "required_checks_contract",
+      "status": "PASS"
+    },
+    {
+      "check_id": "canonical_snapshot",
+      "status": "PASS"
+    },
+    {
+      "check_id": "execution_authority",
+      "status": "PASS"
+    },
+    {
+      "check_id": "execution_base_resolvability",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_pre_execution",
+      "status": "PASS"
+    },
+    {
+      "check_id": "workspace_initial_integrity",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_execution",
+      "status": "PASS"
+    },
+    {
+      "check_id": "worker_failure_forensic_integrity",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_scope_guard",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "worker_failure_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "git_integrity_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "scope_guard_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_post_worker",
+      "status": "PASS"
+    },
+    {
+      "check_id": "project:aos4_verification_foundation_tests",
+      "message": "Exit code 0",
+      "status": "PASS"
+    },
+    {
+      "check_id": "project:aos_full_regression",
+      "message": "Exit code 0",
+      "status": "PASS"
+    },
+    {
+      "check_id": "git_integrity_final",
+      "status": "PASS"
+    },
+    {
+      "check_id": "scope_guard_final",
+      "status": "PASS"
+    },
+    {
+      "check_id": "live_guard_final",
+      "status": "PASS"
+    },
+    {
+      "check_id": "failure_candidate_quarantine",
+      "status": "NOT_RUN"
+    },
+    {
+      "check_id": "candidate_persistence",
+      "message": "Persisted candidate cand_11807a536a5a4af2",
+      "status": "PASS"
+    }
+  ],
+  "worker_adapter": "antigravity",
+  "worker_branch": "aos/aos4-ref-001",
+  "worker_capability_status": "PROVEN",
+  "worker_exit_code": 0,
+  "worker_identity": "antigravity-cli (PROVEN)",
+  "worker_mutation_attempted": true,
+  "worker_timed_out": false
+}

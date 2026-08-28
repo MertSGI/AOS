@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT6_POLICY_AUTHORIZED_EXECUTION_READY",
+    "status": "ATTEMPT6_VERIFIED_CANDIDATE_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the fresh Attempt #6 authorization carrier without creating another commit. If accepted, execute Attempt #6 directly from this same carrier SHA through CanonicalLiveExecutionController. Preflight HOLD must leave authorization unconsumed and engine invocation at zero; preflight PASS may invoke ControlledExecutionEngine exactly once.",
+    "next_action": "Independently review the exact Attempt #6 canonical preflight result, raw ControlledExecutionEngine result, worker/verification evidence, candidate or quarantine persistence evidence, and terminal disposition. Do not authorize a retry or close AOS-4 until that independent review is complete.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT6_POLICY_AUTHORIZED_EXECUTION_READY",
+            "reference_status": "ATTEMPT6_VERIFIED_CANDIDATE_INDEPENDENT_REVIEW_PENDING",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -175,13 +175,13 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 6,
-            "next_execution_authorization_status": "POLICY_AUTHORIZED",
+            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_INDEPENDENT_REVIEW",
             "attempt_6_authorization_id": "AOS4-REF-001-R1-ATTEMPT6-POLICY-20260828T082650Z",
             "attempt_6_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_6_authorization_decision": "AUTO_EXECUTE",
             "attempt_6_authority_source": "POLICY_AUTONOMOUS",
-            "attempt_6_authorization_status": "ISSUED_NOT_CONSUMED",
-            "attempt_6_authorization_consumed": false,
+            "attempt_6_authorization_status": "CONSUMED",
+            "attempt_6_authorization_consumed": true,
             "attempt_6_authorization_control_source_sha": "6a932c29fdc2c0900a053862fe1da1ba79aa2af7",
             "attempt_6_execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
             "attempt_6_authorization_artifact": "docs/proofs/aos4_ref_001_attempt6_execution_authorization.json",
@@ -189,12 +189,12 @@
             "attempt_6_nested_worker_max": 1,
             "attempt_6_direct_agent_max": 0,
             "attempt_6_retry_max": 0,
-            "attempt_6_execution_actual": 0,
-            "attempt_6_nested_worker_actual": 0,
-            "attempt_6_worker_execution_actual": 0,
+            "attempt_6_execution_actual": 1,
+            "attempt_6_nested_worker_actual": 1,
+            "attempt_6_worker_execution_actual": 1,
             "attempt_6_retry_actual": 0,
-            "attempt_6_terminal": false,
-            "attempt_6_candidate_status": "NOT_CREATED",
+            "attempt_6_terminal": true,
+            "attempt_6_candidate_status": "VERIFIED_CANDIDATE_CREATED",
             "attempt_6_quarantine_status": "NOT_CREATED",
             "attempt_6_pre_engine_gate_required": true,
             "attempt_6_canonical_live_controller": "CanonicalLiveExecutionController",
@@ -520,7 +520,12 @@
             "attempt_1_candidate_status": "NOT_PERSISTED",
             "current_execution_proof": "docs/proofs/aos4_ref_001_execution.json",
             "current_execution_max": 1,
-            "current_execution_retry_max": 0
+            "current_execution_retry_max": 0,
+            "attempt_6_terminal_disposition": "VERIFIED_CANDIDATE",
+            "attempt_6_raw_execution_proof": "docs/proofs/aos4_ref_001_attempt6_raw_execution.json",
+            "attempt_6_raw_execution_proof_sha256": "5cb9ff363ee3d817863236b8d78df00b31b03947250328de9ae93cd1be7b10a8",
+            "attempt_6_controller_result_proof": "docs/proofs/aos4_ref_001_attempt6_controller_result.json",
+            "attempt_6_controller_result_proof_sha256": "3f91dc65cece1ae18438e1333f3caad60be548e384c5c81ba16ba711ca8b51a4"
         }
     },
     "accepted_gates": [
