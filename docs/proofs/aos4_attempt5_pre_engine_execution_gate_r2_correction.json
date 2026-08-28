@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_PRE_ENGINE_EXECUTION_GATE_R2_CORRECTION",
+  "base_control_sha": "c1a75306b2743bfda7ae23df1b7aedb3263f8cea",
+  "stage_10t_r1_transaction_result": "PASS",
+  "stage_10t_r1_independent_review_result": "HOLD",
+  "independent_findings": [
+    "PREVIOUS_PREFLIGHT_REGRESSION_MATRIX_WAS_REDUCED",
+    "PRODUCTION_DEFAULT_CAPABILITY_RESOLVER_PATH_NOT_ACTUALLY_TESTED",
+    "CALLER_CONTROLLED_CAPABILITY_STORE_CAN_BYPASS_PREENGINE_CANONICAL_ATTESTATION_BINDING",
+    "CANONICAL_AUTH_STATE_SYMLINK_DETECTION_WEAKENED_BY_EARLY_PATH_RESOLVE",
+    "MALFORMED_ENGINE_RESULT_CAN_FALL_BACK_TO_PASS"
+  ],
+  "corrections": {
+    "full_stage_10t_regression_matrix_restored": true,
+    "removed_preflight_test_functions": [],
+    "request_capability_store_override_removed": true,
+    "trusted_gate_capability_store_resolution": true,
+    "capability_store_symlink_rejected": true,
+    "canonical_file_symlink_detection_before_resolve": true,
+    "canonical_path_component_symlink_detection": true,
+    "production_default_capability_resolver_tested": true,
+    "precomputed_identity_reused": true,
+    "valid_preflight_version_query_count": 1,
+    "malformed_engine_result_fails_closed": true,
+    "engine_pass_fallback_removed": true,
+    "real_engine_interface_compatible": true,
+    "one_shot_preserved": true,
+    "live_cli_execution_count": 0,
+    "live_engine_execution_count": 0,
+    "live_worker_execution_count": 0,
+    "capability_probe_count": 0,
+    "runtime_mutation_count": 0,
+    "capability_reattestation_performed": false,
+    "timeout_remediation_performed": false,
+    "attempt_6_authorized": false,
+    "attempt_6_executed": false,
+    "independent_review_status": "PENDING",
+    "result": "PASS"
+  },
+  "limitations": [
+    "source/test correction requires independent review",
+    "current machine capability remains UNPROVEN",
+    "timeout remediation remains outstanding",
+    "no live preflight performed",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}

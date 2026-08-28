@@ -8,7 +8,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from aos.validate import validate_document
 from aos.workers.antigravity import (
@@ -17,6 +17,13 @@ from aos.workers.antigravity import (
     get_local_capability_store_path,
     resolve_capability_status,
 )
+
+ALLOWED_ENGINE_DISPOSITIONS = {
+    "VERIFIED_CANDIDATE",
+    "VERIFICATION_FAILED",
+    "WORKER_FAILED",
+    "HOLD",
+}
 
 
 @dataclass
@@ -30,15 +37,13 @@ class PreEngineExecutionRequest:
     attempt_number: int
     cli_command: Union[str, Path]
     raw_result_path: Union[str, Path]
-    capability_store_path: Optional[Union[str, Path]] = None
 
     def __post_init__(self) -> None:
         self.local_target_repo_path = Path(self.local_target_repo_path).resolve()
-        self.authorization_artifact_path = Path(self.authorization_artifact_path).resolve()
-        self.canonical_state_path = Path(self.canonical_state_path).resolve()
-        self.raw_result_path = Path(self.raw_result_path).resolve()
-        if self.capability_store_path:
-            self.capability_store_path = Path(self.capability_store_path).resolve()
+        # Preserve absolute path identity without early symlink resolution for authorization and state
+        self.authorization_artifact_path = Path(self.authorization_artifact_path).absolute()
+        self.canonical_state_path = Path(self.canonical_state_path).absolute()
+        self.raw_result_path = Path(self.raw_result_path).absolute()
         if isinstance(self.cli_command, Path):
             self.cli_command = str(self.cli_command)
 
@@ -108,6 +113,34 @@ def _default_capability_resolver(cli_path: Path, attestation: Dict[str, Any], id
     return resolve_capability_status(cli_command=str(cli_path), store_path=store_path, identity=identity)
 
 
+def _is_canonical_file_safe(file_path: Path, repo_path: Path) -> Tuple[bool, str]:
+    """Verify file exists, is not a symlink, contains no symlinked path components up to repo_path, and is contained in repo_path."""
+    try:
+        if not file_path.is_file():
+            return False, f"File not found or not regular file: {file_path}"
+        if file_path.is_symlink():
+            return False, f"File is a symlink: {file_path}"
+
+        curr = file_path.parent
+        repo_resolved = repo_path.resolve()
+        while True:
+            if curr.is_symlink():
+                return False, f"Path component '{curr}' is a symlink"
+            if curr.resolve() == repo_resolved:
+                break
+            if curr.parent == curr:
+                # Reached root without finding repo_path
+                return False, f"Path '{file_path}' is outside repository '{repo_path}'"
+            curr = curr.parent
+
+        if not file_path.resolve().is_relative_to(repo_resolved):
+            return False, f"Resolved path '{file_path.resolve()}' outside repo '{repo_resolved}'"
+
+        return True, ""
+    except Exception as e:
+        return False, f"Path safety inspection error: {e}"
+
+
 class PreEngineExecutionGate:
     """Canonical deterministic pre-engine execution gate."""
 
@@ -135,10 +168,14 @@ class PreEngineExecutionGate:
         cli_version_resolver: Optional[Callable[[Path], Optional[str]]] = None,
         capability_resolver: Optional[Callable[[Path, Dict[str, Any], Dict[str, Any]], str]] = None,
         git_runner: Optional[Callable[[List[str], Path], subprocess.CompletedProcess[str]]] = None,
+        capability_store_path_resolver: Optional[Callable[[], Path]] = None,
     ):
         self.cli_version_resolver = cli_version_resolver or _default_cli_version_resolver
         self.capability_resolver = capability_resolver or _default_capability_resolver
         self.git_runner = git_runner or _default_git_runner
+        self.capability_store_path_resolver = capability_store_path_resolver or (
+            lambda: get_local_capability_store_path("antigravity")
+        )
 
     def evaluate(self, request: PreEngineExecutionRequest) -> PreEngineExecutionResult:
         checks_map: Dict[str, PreEngineCheck] = {
@@ -163,24 +200,18 @@ class PreEngineExecutionGate:
             if message:
                 checks_map[check_id].message = message
 
-        # 1. request_contract
+        # 1. request_contract (Symlink & path containment before resolve)
         try:
             if not request.local_target_repo_path.is_dir():
                 return _fail("request_contract", f"Local target repo path not found: {request.local_target_repo_path}")
-            if not request.authorization_artifact_path.is_file():
-                return _fail("request_contract", f"Authorization artifact not found: {request.authorization_artifact_path}")
-            if request.authorization_artifact_path.is_symlink():
-                return _fail("request_contract", "Authorization artifact is a symlink")
-            if not request.canonical_state_path.is_file():
-                return _fail("request_contract", f"Canonical state file not found: {request.canonical_state_path}")
-            if request.canonical_state_path.is_symlink():
-                return _fail("request_contract", "Canonical state file is a symlink")
 
-            # Path containment checks
-            if not request.authorization_artifact_path.is_relative_to(request.local_target_repo_path):
-                return _fail("request_contract", "Authorization artifact path outside target repo")
-            if not request.canonical_state_path.is_relative_to(request.local_target_repo_path):
-                return _fail("request_contract", "Canonical state path outside target repo")
+            auth_safe, auth_msg = _is_canonical_file_safe(request.authorization_artifact_path, request.local_target_repo_path)
+            if not auth_safe:
+                return _fail("request_contract", f"Authorization artifact unsafe: {auth_msg}")
+
+            state_safe, state_msg = _is_canonical_file_safe(request.canonical_state_path, request.local_target_repo_path)
+            if not state_safe:
+                return _fail("request_contract", f"Canonical state file unsafe: {state_msg}")
 
             if request.attempt_number <= 0:
                 return _fail("request_contract", f"Invalid attempt number: {request.attempt_number}")
@@ -230,7 +261,6 @@ class PreEngineExecutionGate:
             with open(request.canonical_state_path, "r", encoding="utf-8") as f:
                 parsed_state = json.load(f)
 
-            # Section 9: Validate STATE against state.schema.json
             val_state = validate_document("state", parsed_state)
             if not val_state.is_valid:
                 err_msg = "; ".join(e.message for e in val_state.errors)
@@ -246,7 +276,6 @@ class PreEngineExecutionGate:
                     "canonical_state_freshness",
                     f"State next attempt number ({next_att}) != requested ({request.attempt_number})",
                 )
-            # Section 10: Accept ONLY explicitly governed live states: POLICY_AUTHORIZED, EXPLICIT_HUMAN_REAUTHORIZATION
             if next_auth_stat not in ("POLICY_AUTHORIZED", "EXPLICIT_HUMAN_REAUTHORIZATION"):
                 return _fail(
                     "canonical_state_freshness",
@@ -352,7 +381,6 @@ class PreEngineExecutionGate:
         try:
             rel_auth_path = os.path.relpath(request.authorization_artifact_path, request.local_target_repo_path).replace("\\", "/")
 
-            # Section 11: git ls-tree --name-only <ref> -- <path>
             res_carrier_tree = self.git_runner(["ls-tree", "--name-only", "HEAD", "--", rel_auth_path], cwd=request.local_target_repo_path)
             if res_carrier_tree.returncode != 0:
                 return _fail("authorization_carrier_presence", f"Git ls-tree HEAD command failed for auth artifact: {res_carrier_tree.stderr}")
@@ -371,7 +399,7 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("authorization_carrier_presence", f"Authorization carrier presence check error: {e}")
 
-        # 10. canonical_state_carrier_presence (Section 12)
+        # 10. canonical_state_carrier_presence
         try:
             rel_state_path = os.path.relpath(request.canonical_state_path, request.local_target_repo_path).replace("\\", "/")
             res_state_tree = self.git_runner(["ls-tree", "--name-only", "HEAD", "--", rel_state_path], cwd=request.local_target_repo_path)
@@ -392,12 +420,15 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("raw_result_collision", f"Raw result collision check error: {e}")
 
-        # 12. capability_attestation_schema
+        # 12. capability_attestation_schema (Section 4 & 5: Trusted capability store path resolver & safety)
         try:
-            store_path = request.capability_store_path or get_local_capability_store_path("antigravity")
-            store_path = Path(store_path)
+            store_path = Path(self.capability_store_path_resolver())
+            if not store_path.is_absolute():
+                return _fail("capability_attestation_schema", f"Capability store path is not absolute: {store_path}")
             if not store_path.is_file():
-                return _fail("capability_attestation_schema", f"Capability attestation store file not found: {store_path}")
+                return _fail("capability_attestation_schema", f"Capability store file not found or not regular file: {store_path}")
+            if store_path.is_symlink():
+                return _fail("capability_attestation_schema", f"Capability store path is a symlink: {store_path}")
 
             with open(store_path, "r", encoding="utf-8") as f:
                 parsed_attestation = json.load(f)
@@ -421,7 +452,7 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("capability_attestation_schema", f"Capability attestation check error: {e}")
 
-        # 13. cli_path (Section 7: REQUIRE ABSOLUTE PINNED CLI PATH, NO PATH-BASED FALLBACK)
+        # 13. cli_path (Absolute pinned CLI path, no PATH fallback)
         try:
             cli_path_obj = Path(request.cli_command)
             if not cli_path_obj.is_absolute():
@@ -467,7 +498,7 @@ class PreEngineExecutionGate:
         except Exception as e:
             return _fail("cli_version", f"CLI version inspection error: {e}")
 
-        # 16. worker_capability (ONLY AFTER VERSION MATCH! Section 13: Reuse precomputed identity)
+        # 16. worker_capability (ONLY AFTER VERSION MATCH! Reuses precomputed identity)
         try:
             precomputed_identity = {
                 "path": str(resolved_cli_file),
@@ -496,10 +527,10 @@ class PreflightControlledExecutionController:
     ):
         self.gate = gate
         self.engine = engine
-        self._attempted = False  # Section 6: Set BEFORE preflight evaluation
+        self._attempted = False
 
     def execute(self, request: PreEngineExecutionRequest) -> Dict[str, Any]:
-        # Section 6: TRUE ONE-SHOT CONTROLLER (set attempted BEFORE preflight on first call)
+        # TRUE ONE-SHOT CONTROLLER: set attempted BEFORE preflight on first call
         if self._attempted:
             return {
                 "status": "HOLD",
@@ -509,7 +540,7 @@ class PreflightControlledExecutionController:
                 "disposition": "HOLD",
             }
 
-        self._attempted = True  # Mark attempted immediately on first call!
+        self._attempted = True
 
         preflight_res = self.gate.evaluate(request)
         if preflight_res.status != "PASS" or not preflight_res.engine_may_execute:
@@ -522,13 +553,11 @@ class PreflightControlledExecutionController:
                 "disposition": "HOLD",
             }
 
-        # Section 4: Canonical real engine invocation signature
         try:
             engine_res = self.engine.execute(
                 local_target_repo_path=str(request.local_target_repo_path)
             )
         except Exception as e:
-            # Section 5: Fail closed if engine raises exception after invocation boundary
             return {
                 "status": "HOLD",
                 "preflight_status": "PASS",
@@ -538,25 +567,36 @@ class PreflightControlledExecutionController:
                 "errors": [f"Engine raised exception: {e}"],
             }
 
-        # Section 5: PRESERVE EXACT ENGINE RESULT
-        if isinstance(engine_res, dict):
-            disp = engine_res.get("disposition") or engine_res.get("status") or "PASS"
+        # Section 7: MALFORMED ENGINE RESULT MUST HOLD (No PASS fallback)
+        if not isinstance(engine_res, dict):
             return {
-                "status": disp,
+                "status": "HOLD",
                 "preflight_status": "PASS",
                 "engine_invoked": True,
-                "disposition": disp,
+                "disposition": "HOLD",
+                "preflight_result": preflight_res.to_dict(),
+                "engine_result": str(engine_res),
+                "errors": ["INVALID_ENGINE_TERMINAL_RESULT: Engine result is not a dictionary"],
+            }
+
+        disp = engine_res.get("disposition")
+        if not disp or disp not in ALLOWED_ENGINE_DISPOSITIONS:
+            return {
+                "status": "HOLD",
+                "preflight_status": "PASS",
+                "engine_invoked": True,
+                "disposition": "HOLD",
                 "preflight_result": preflight_res.to_dict(),
                 "engine_result": engine_res,
+                "errors": [f"INVALID_ENGINE_TERMINAL_RESULT: Missing or invalid terminal disposition '{disp}'"],
             }
-        else:
-            disp = getattr(engine_res, "disposition", getattr(engine_res, "status", "PASS"))
-            res_dict = engine_res.to_dict() if hasattr(engine_res, "to_dict") else str(engine_res)
-            return {
-                "status": disp,
-                "preflight_status": "PASS",
-                "engine_invoked": True,
-                "disposition": disp,
-                "preflight_result": preflight_res.to_dict(),
-                "engine_result": res_dict,
-            }
+
+        # Section 8: REAL VALID ENGINE RESULT PRESERVATION
+        return {
+            "status": disp,
+            "preflight_status": "PASS",
+            "engine_invoked": True,
+            "disposition": disp,
+            "preflight_result": preflight_res.to_dict(),
+            "engine_result": engine_res,
+        }
