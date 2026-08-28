@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "ATTEMPT6_CANDIDATE_MATERIALIZED_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
+  "status": "ATTEMPT6_EXACT_CANDIDATE_SNAPSHOT_READY_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
   "current_gate": "AOS-4",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -571,7 +571,12 @@
     "attempt_6_candidate_materialization_patch": "docs/proofs/aos4_ref_001_attempt6_candidate.patch",
     "attempt_6_candidate_materialization_patch_sha256": "1662bb216192d6e4ae284ad1558d05c361920fa2089d4387096d52c8fd3871a5",
     "attempt_6_candidate_semantic_review_status": "PENDING",
-    "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_CANDIDATE_SEMANTIC_REVIEW"
+    "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_CANDIDATE_SEMANTIC_REVIEW",
+    "attempt_6_candidate_materialization_v1_manifest_integrity": "PASS",
+    "attempt_6_candidate_materialization_v1_patch_completeness": "INCOMPLETE_FOR_SEMANTIC_REVIEW",
+    "attempt_6_candidate_snapshot_bundle_status": "COMPLETE_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
+    "attempt_6_candidate_snapshot_index": "docs/proofs/aos4_ref_001_attempt6_candidate_snapshot_index.json",
+    "attempt_6_candidate_snapshot_file_count": 4
   },
   "accepted_gates": [
     {
