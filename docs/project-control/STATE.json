@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_COORDINATION_FOUNDATION_IMPLEMENTED_REVIEW_PENDING",
+  "status": "AOS5_COORDINATION_FOUNDATION_CORRECTED_REVIEW_PENDING",
   "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,20 +68,30 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review the AOS-5 coordination foundation at its exact source SHA. If accepted, proceed to the next bounded AOS-5 durable coordination backend contract stage. Do not begin SQLite/Postgres/Supabase implementation before independent acceptance.",
+  "next_action": "Independently review the corrected AOS-5 coordination foundation at its exact R1 source SHA, including worker/session incarnation semantics, immutable per-lease TTL heartbeat behavior, expiry-aware release semantics, evidence integrity, deterministic concurrent claim behavior, and exact-SHA CI. If accepted, proceed to the next bounded durable coordination backend contract stage.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
-      "status": "FOUNDATION_IMPLEMENTED_REVIEW_PENDING",
+      "status": "FOUNDATION_CORRECTED_REVIEW_PENDING",
       "control_branch": "feature/aos-5-distributed-coordination",
       "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
       "next_action_execution_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
+      "stage_11a_implementation_sha": "cc80b1a4e3ae05244284f855c7a569a7142917e0",
+      "stage_11a_transaction_result": "PASS",
+      "stage_11a_exact_sha_ci_result": "SUCCESS",
+      "stage_11a_independent_review_result": "HOLD",
+      "stage_11a_independent_review_findings": [
+        "AOS5_EVIDENCE_RECORD_MISSING",
+        "WORKER_REGISTRY_COLLAPSES_SESSION_IDENTITY",
+        "HEARTBEAT_CALLER_CAN_OVERRIDE_LEASE_TTL",
+        "EXPIRED_OWNER_CAN_RELEASE_AFTER_EXPIRY"
+      ],
       "foundation_scope": "worker identity, worker registration, lease ownership, heartbeat/expiry, atomic same-task claim, expiry recovery, stale-owner fencing",
       "reference_backend": "IN_MEMORY",
       "distributed_backend_status": "NOT_IMPLEMENTED",
       "sqlite_backend_status": "NOT_IMPLEMENTED",
       "postgres_supabase_backend_status": "NOT_IMPLEMENTED",
-      "independent_review_status": "PENDING",
+      "independent_review_status": "PENDING_R1",
       "canonical_git_truth_preserved": true,
       "lari_mutation_allowed": false
     },
