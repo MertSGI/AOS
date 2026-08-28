@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "INDEPENDENT_AOS4_CURRENT_CLI_CAPABILITY_REVIEW",
+  "reviewed_control_sha": "1fa97f6ef39b38d389f2f71917f748ad6c468c41",
+  "reviewed_parent_sha": "4d24a5ca09b43df7ab2980e9dd45646535c76c4b",
+  "reviewed_branch": "feature/aos-4-independent-verification-hold",
+  "reviewed_runtime_probe": {
+    "probe_id": "PROBE-20260828-061638-d851efb7",
+    "cli_version": "1.1.21",
+    "cli_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "adapter_contract_version": "0.2.9",
+    "runtime_fingerprint_sha256": "88367dd5107162b26d0447744c4f3cc8adcd4493e60d24fb86006d24d5cc96d8",
+    "probe_status": "PASS",
+    "post_probe_resolution": "PROVEN",
+    "worker_adapter_resolution": "PROVEN",
+    "worker_executed": false
+  },
+  "reviewed_artifacts": {
+    "probe_proof_git_blob": "7632780a8d11ce84f53e5685fcb6d2d55b2186ee",
+    "probe_proof_sha256": "63611cceda4ffe6cafee97357ea0853adb7d87ad2d49bfd8a59f5ef20a6bc9d6",
+    "attestation_git_blob": "8323a1254581af0978c239e4d2d226b1ca96853a",
+    "attestation_sha256": "1f3436d81a1c315187f10bbe34c3435a9b9c57b5d6f2ded9774f14d277d45f04",
+    "reattestation_summary_git_blob": "8e8b833a9991df3e1c5cff05c515cd93d37d4eb1",
+    "reattestation_summary_sha256": "205c4ac8b2345b26f5801130dcc0841c7a49c3acbc4797c648022363306fb1ac",
+    "r2_correction_proof_git_blob": "6f6f1f36dfa535f19d62b9a96735a20922f9abf7"
+  },
+  "state_integrity_review": {
+    "original_duplicate_collision_detected": true,
+    "r1_collision_repair": "PASS",
+    "historical_prior_identity_values_preserved": true,
+    "current_identity_review_key_unique": true,
+    "strict_duplicate_json_validator": "PASS"
+  },
+  "live_preflight_review": {
+    "authorization_strict_json": "PASS",
+    "canonical_state_strict_json": "PASS",
+    "capability_attestation_strict_json": "PASS",
+    "ordinary_authority_json_load_present": false,
+    "last_key_wins_authority_path": "REMOVED",
+    "jsonl_physical_line_diagnostic": "PASS"
+  },
+  "exact_sha_ci": {
+    "run_id": 33150263469,
+    "job_id": 98780356069,
+    "result": "SUCCESS",
+    "pytest_passed": 442,
+    "pytest_deselected": 1,
+    "pytest_duration_seconds": 8.70,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "independent_review_status": "INDEPENDENTLY_ACCEPTED",
+  "independent_review_result": "PASS",
+  "security_correctness_blocker": false,
+  "authoritative_contradiction": false,
+  "current_machine_capability_status": "PROVEN",
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "cli_drift_root_cause": "UNCLASSIFIED",
+  "limitations": [
+    "accepted capability remains identity and runtime-fingerprint specific",
+    "future CLI binary/runtime-profile drift invalidates capability",
+    "prior CLI drift mechanism remains UNCLASSIFIED",
+    "behavioral capability proof does not prove OS-level sandbox containment",
+    "no worker task was executed during capability probe",
+    "no Attempt #6 authority exists yet",
+    "does not close AOS-4"
+  ]
+}

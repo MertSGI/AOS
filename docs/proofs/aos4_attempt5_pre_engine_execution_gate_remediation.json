@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_PRE_ENGINE_EXECUTION_GATE_REMEDIATION",
+  "base_control_sha": "972883a6996e322b68504f7e3b660b7861d12b6f",
+  "source_finding": "NO_CANONICAL_PRE_ENGINE_RUNTIME_IDENTITY_GATE",
+  "source_protocol_failure": "PREEXECUTION_CLI_IDENTITY_MISMATCH_DID_NOT_STOP_BEFORE_ENGINE_INVOCATION",
+  "implementation": {
+    "module": "src/aos/execution_preflight.py",
+    "test_module": "tests/test_execution_preflight.py",
+    "canonical_pre_engine_gate_implemented": true,
+    "controller_wrapper_implemented": true,
+    "engine_invocation_blocked_on_preflight_hold": true,
+    "hash_checked_before_cli_version_execution": true,
+    "hash_mismatch_cli_execution_count": 0,
+    "hash_mismatch_engine_execution_count": 0,
+    "capability_unproven_engine_execution_count": 0,
+    "authorization_freshness_enforced": true,
+    "source_repo_freshness_enforced": true,
+    "raw_result_collision_guard": true,
+    "one_shot_controller": true
+  },
+  "engine_defense_in_depth_preserved": true,
+  "live_antigravity_cli_execution_count": 0,
+  "live_engine_execution_count": 0,
+  "live_worker_execution_count": 0,
+  "runtime_mutation_count": 0,
+  "capability_reattestation_performed": false,
+  "timeout_remediation_performed": false,
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "independent_review_status": "PENDING",
+  "result": "PASS",
+  "limitations": [
+    "implementation is source/test remediation only",
+    "no current CLI capability was re-attested",
+    "current machine capability remains UNPROVEN",
+    "no live preflight against current machine is performed in this stage",
+    "timeout remediation remains outstanding",
+    "independent review of implementation remains pending",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}

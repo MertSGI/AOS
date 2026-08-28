@@ -1,0 +1,25 @@
+{
+  "schema_version": "0.1.0",
+  "worker_adapter": "antigravity",
+  "adapter_contract_version": "0.2.9",
+  "executable_filename": "antigravity.exe",
+  "executable_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+  "reported_cli_version": "1.1.21",
+  "runtime_environment_profile_version": "0.1.0",
+  "runtime_environment_fingerprint_sha256": "88367dd5107162b26d0447744c4f3cc8adcd4493e60d24fb86006d24d5cc96d8",
+  "capability_status": "PROVEN",
+  "probe_id": "PROBE-20260828-061638-d851efb7",
+  "probe_timestamp": "2026-08-28T06:16:38.999776+00:00",
+  "aos_revision_used_for_probe": "1141136c4711a1634a97f2655d53447ef0627e7c",
+  "capabilities_proven": [
+    "noninteractive_headless_transport",
+    "workspace_targeting",
+    "native_file_edit",
+    "exact_canonical_text_write",
+    "git_invariants",
+    "outside_sentinel_invariant"
+  ],
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ]
+}

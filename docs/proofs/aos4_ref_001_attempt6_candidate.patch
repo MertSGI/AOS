@@ -1,0 +1,12 @@
+diff --git a/src/aos/validate.py b/src/aos/validate.py
+index 742141de5d5b560d93cc5d10d119845d36d15ef2..fb82fb1559087280d388d0aa279526354d01de96 100644
+--- a/src/aos/validate.py
++++ b/src/aos/validate.py
+@@ -30,6 +30,7 @@ TYPE_TO_SCHEMA = {
+     "control_request": "control_request.schema.json",
+     "controlled_execution_result": "controlled_execution_result.schema.json",
+     "worker_capability_attestation": "worker_capability_attestation.schema.json",
++    "verification_result": "verification_result.schema.json",
+ }
+ 
+ 

@@ -56,12 +56,17 @@ class MockSourceAdapter(ProjectSourceAdapter):
     def resolve_ref_to_sha(self) -> str:
         return "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
 
+    def resolve_exact_revision(self, exact_sha: str) -> str:
+        return exact_sha.lower()
+
+
     def fetch_canonical_context(self, exact_sha: str, paths: Dict[str, str]):
         contents = {
+
             "state": json.dumps({
                 "schema_version": "0.1.0",
                 "current_status": "READY",
-                "current_milestone": "M1",
+                "current_milestone": "AOS-3",
                 "next_action": "Do task",
                 "next_action_execution_base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             }),
@@ -79,7 +84,7 @@ class MockSourceAdapter(ProjectSourceAdapter):
             "source_ref": self.control_ref,
             "source_sha": exact_sha,
             "current_status": "READY",
-            "current_milestone": "M1",
+            "current_milestone": "AOS-3",
             "canonical_next_action": "Do task",
             "target_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
             "next_action_execution_base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
@@ -92,11 +97,21 @@ class MockSourceAdapter(ProjectSourceAdapter):
 class MockGitWorkspace(GitWorkspace):
     def __init__(self, repo, base_sha, task_id, branch_name=None):
         super().__init__(repo, base_sha, task_id, branch_name)
+        self.workspace_dir = None
 
     def setup(self) -> str:
-        self.workspace_dir = "/tmp/mock_cap_ws"
+        self.workspace_dir = tempfile.mkdtemp(prefix="mock_cap_ws_")
+        subprocess.run(["git", "init"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "AOS Tester"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "tester@aos.test"], cwd=self.workspace_dir, check=True, capture_output=True)
+        base_f = Path(self.workspace_dir) / "README.md"
+        base_f.write_text("# Mock base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "base commit"], cwd=self.workspace_dir, check=True, capture_output=True)
+        subprocess.run(["git", "checkout", "-b", self.worker_branch], cwd=self.workspace_dir, check=True, capture_output=True)
         self.initial_head_sha = self.base_sha
         return self.workspace_dir
+
 
     def get_current_head(self) -> str:
         return self.base_sha
@@ -108,7 +123,8 @@ class MockGitWorkspace(GitWorkspace):
         return []
 
     def cleanup(self) -> None:
-        pass
+        if self.workspace_dir and os.path.exists(self.workspace_dir):
+            shutil.rmtree(self.workspace_dir, ignore_errors=True)
 
 
 def make_generic_descriptor(project_id="generic_project", repo="GenericOrg/GenericRepo"):
@@ -175,6 +191,7 @@ def make_generic_task(
         },
         "worker_requirements": {
             "adapter": adapter,
+            "environment": "non_production",
             "isolated_worktree": isolated_worktree,
         },
         "evidence_requirements": {
@@ -1433,7 +1450,8 @@ class TestAntigravityCapabilityV028:
         assert res["attestation"] is not None
         assert res["attestation"]["capability_status"] == "PROVEN"
         assert res["attestation"]["runtime_environment_fingerprint_sha256"] == fp
-        assert res["attestation"]["adapter_contract_version"] == "0.2.8"
+        assert res["attestation"]["adapter_contract_version"] == "0.2.9"
+
 
     def test_challenge_no_trailing_lf_fails(self, temp_capability_env):
         """B. No trailing LF: exact mismatch HOLD."""
@@ -1616,10 +1634,11 @@ class TestAntigravityCapabilityV028:
         valid_attestation = make_valid_attestation(
             exe_sha=fake_id["sha256"],
             cli_ver=fake_id["version"],
-            contract_ver="0.2.8",
+            contract_ver="0.2.9",
             exe_name=fake_id["filename"],
             fingerprint=fp,
         )
+
         store_file.write_text(json.dumps(valid_attestation, indent=2), encoding="utf-8")
 
         captured_cmd = []
@@ -1710,8 +1729,9 @@ class TestAntigravityCapabilityV028:
         valid_attestation = {
             "schema_version": "0.1.0",
             "worker_adapter": "antigravity",
-            "adapter_contract_version": "0.2.8",
+            "adapter_contract_version": "0.2.9",
             "executable_filename": fake_id["filename"],
+
             "executable_sha256": fake_id["sha256"],
             "reported_cli_version": fake_id["version"],
             "runtime_environment_profile_version": "0.1.0",
@@ -2099,7 +2119,7 @@ class TestAntigravityCapabilityV028:
             "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             "branch_name": "aos/test-r1-fail",
             "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
-            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "worker_requirements": {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True, "timeout_seconds": 60},
             "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
             "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
         }
@@ -2225,7 +2245,7 @@ class TestAntigravityCapabilityV028:
             "base_sha": "5e935ed049ffe08a6797643ec9cc2b7d4e6ae637",
             "branch_name": "aos/test-r1-pass",
             "allowed_scope": {"paths": ["docs/proofs/result.txt"], "forbidden_paths": []},
-            "worker_requirements": {"adapter": "antigravity", "isolated_worktree": True, "timeout_seconds": 60},
+            "worker_requirements": {"adapter": "antigravity", "environment": "non_production", "isolated_worktree": True, "timeout_seconds": 60},
             "evidence_requirements": {"minimum_level": "E3_ISOLATED_RUNTIME_PROVEN", "required_checks": ["chk1"]},
             "retry_policy": {"max_retries": 0, "retry_count": 0, "auto_retry_on_semantic_failure": False, "on_exhausted": "HOLD"},
         }

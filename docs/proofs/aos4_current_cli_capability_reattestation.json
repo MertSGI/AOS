@@ -1,0 +1,68 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_CURRENT_CLI_CAPABILITY_REATTESTATION",
+  "control_sha": "1141136c4711a1634a97f2655d53447ef0627e7c",
+  "historical_identity": {
+    "version": "1.1.20",
+    "sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "status": "HISTORICALLY_PROVEN"
+  },
+  "current_identity": {
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime\\antigravity-cli\\1.1.20\\antigravity.exe",
+    "version": "1.1.21",
+    "sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "authenticode_status": "Valid",
+    "signer_thumbprint": "607A3EDAA64933E94422FC8F0C80388E0590986C"
+  },
+  "probe": {
+    "probe_id": "PROBE-20260828-061638-d851efb7",
+    "probe_status": "PASS",
+    "adapter_contract_version": "0.2.9",
+    "aos_revision_used": "1141136c4711a1634a97f2655d53447ef0627e7c",
+    "cli_version_query_count": 1,
+    "live_probe_invocation_count": 1,
+    "worker_execution_count": 0,
+    "engine_execution_count": 0
+  },
+  "runtime": {
+    "profile_version": "0.1.0",
+    "pre_probe_fingerprint_sha256": "88367dd5107162b26d0447744c4f3cc8adcd4493e60d24fb86006d24d5cc96d8",
+    "post_probe_fingerprint_sha256": "88367dd5107162b26d0447744c4f3cc8adcd4493e60d24fb86006d24d5cc96d8",
+    "fingerprint_unchanged": true,
+    "cli_binary_unchanged": true,
+    "antigravity_config_inputs_unchanged": true
+  },
+  "attestation": {
+    "machine_local_path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\capabilities\\antigravity.json",
+    "old_sha256": "2ce00d956f877fec92f87018505f2ec31bb62ef6e21cbb72fac6ae87fdf95b5b",
+    "new_sha256": "1f3436d81a1c315187f10bbe34c3435a9b9c57b5d6f2ded9774f14d277d45f04",
+    "schema_valid": true,
+    "capability_status": "PROVEN"
+  },
+  "post_probe_resolution": {
+    "resolve_capability_status": "PROVEN",
+    "worker_adapter_capability_status": "PROVEN",
+    "worker_executed": false
+  },
+  "canonical_artifacts": {
+    "probe_proof": "docs/proofs/antigravity_capability_probe_v0.2.9_current_identity_1141136c4711a1634a97f2655d53447ef0627e7c.json",
+    "probe_proof_sha256": "63611cceda4ffe6cafee97357ea0853adb7d87ad2d49bfd8a59f5ef20a6bc9d6",
+    "attestation_snapshot": "docs/proofs/antigravity_capability_attestation_v0.2.9_current_identity_1141136c4711a1634a97f2655d53447ef0627e7c.json",
+    "attestation_snapshot_sha256": "1f3436d81a1c315187f10bbe34c3435a9b9c57b5d6f2ded9774f14d277d45f04"
+  },
+  "result": "PASS",
+  "independent_review_status": "PENDING",
+  "current_governance_status": "PROVEN_REVIEW_PENDING",
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "limitations": [
+    "behavioral capability proof does not prove OS-level sandbox containment",
+    "CLI drift root cause remains UNCLASSIFIED",
+    "current identity capability is not independently accepted yet",
+    "machine-local attestation was replaced only after successful canonical probe",
+    "no worker task was executed",
+    "no ControlledExecutionEngine transaction occurred",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}

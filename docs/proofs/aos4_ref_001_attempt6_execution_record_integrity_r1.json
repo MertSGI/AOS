@@ -1,0 +1,63 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT6_EXECUTION_RECORD_INTEGRITY_R1",
+  "base_control_sha": "865b239d8134d33c175d02c8a570ae50995cf436",
+  "stage_10aa_transaction_result": "PASS",
+  "stage_10aa_engine_disposition": "VERIFIED_CANDIDATE",
+  "stage_10aa_independent_review_result": "HOLD",
+  "primary_classification": "ATTEMPT6_CANONICAL_EXECUTION_RECORD_CONTRADICTORY_AND_INCOMPLETE",
+  "findings": [
+    "EV0045_TIMESTAMP_PRECEDES_EXECUTION_START_AND_TERMINAL_RESULT",
+    "EV0045_ENGINE_CONTROL_SOURCE_SHA_MISRECORDED_AS_AUTHORIZATION_PARENT",
+    "ATTEMPT6_TERMINAL_PROOF_AND_CANDIDATE_BINDINGS_MISSING_FROM_STATE",
+    "EV0045_REQUIRED_EXECUTION_DETAILS_INCOMPLETE"
+  ],
+  "immutable_execution_artifacts": {
+    "raw_execution_git_blob": "4304ec66ef55fa4d6ba62616efd8e446045982ad",
+    "raw_execution_sha256": "5cb9ff363ee3d817863236b8d78df00b31b03947250328de9ae93cd1be7b10a8",
+    "controller_result_git_blob": "4cc95ed0c74e9aa1e363f951b82afecbb431f136",
+    "controller_result_sha256": "3f91dc65cece1ae18438e1333f3caad60be548e384c5c81ba16ba711ca8b51a4"
+  },
+  "temporal_integrity": {
+    "historical_ev0045_timestamp": "2026-08-28T08:38:00Z",
+    "engine_started_at": "2026-08-28T08:38:14.168845+00:00",
+    "engine_finished_at": "2026-08-28T08:44:57.640684+00:00",
+    "historical_ev0045_timestamp_precedes_execution_start": true,
+    "historical_ev0045_timestamp_precedes_terminal_result": true
+  },
+  "control_sha_integrity": {
+    "authorization_control_source_sha": "6a932c29fdc2c0900a053862fe1da1ba79aa2af7",
+    "execution_carrier_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+    "engine_control_source_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+    "historical_ev0045_control_source_field": "6a932c29fdc2c0900a053862fe1da1ba79aa2af7",
+    "historical_ev0045_field_semantics": "MISLABELED_AUTHORIZATION_CONTROL_SOURCE_AS_ENGINE_CONTROL_SOURCE"
+  },
+  "candidate_binding": {
+    "candidate_id": "cand_11807a536a5a4af2",
+    "candidate_manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+    "candidate_persistence_status": "PERSISTED",
+    "candidate_semantic_review_status": "PENDING"
+  },
+  "corrections": {
+    "historical_ev0045_preserved": true,
+    "corrective_evidence_appended": true,
+    "state_terminal_disposition_bound": true,
+    "state_raw_execution_proof_bound": true,
+    "state_controller_result_bound": true,
+    "state_candidate_identity_bound": true,
+    "authorization_and_engine_control_shas_disambiguated": true,
+    "execution_detail_record_completed": true,
+    "attempt6_rerun": false,
+    "retry_authorized": false
+  },
+  "result": "PASS",
+  "independent_review_status": "PENDING",
+  "limitations": [
+    "does not independently accept the candidate",
+    "does not inspect candidate-store contents",
+    "does not rerun worker or engine",
+    "historical EV-0045 remains preserved as contradictory evidence",
+    "candidate semantic review remains pending",
+    "AOS-4 remains open"
+  ]
+}

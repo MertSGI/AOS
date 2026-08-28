@@ -1,0 +1,73 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT6_CANDIDATE_MATERIALIZATION",
+  "control_sha": "1e829adae98b8226c9adb0f8149191bd095a222a",
+  "candidate_id": "cand_11807a536a5a4af2",
+  "expected_manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+  "actual_manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+  "manifest_match": true,
+  "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "candidate_workspace_head_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "candidate_workspace_remote_count": 0,
+  "expected_changed_paths": [
+    "schemas/v0.1/verification_result.schema.json",
+    "src/aos/validate.py",
+    "src/aos/verification.py",
+    "tests/test_verification.py"
+  ],
+  "actual_changed_paths": [
+    "schemas/v0.1/verification_result.schema.json",
+    "src/aos/validate.py",
+    "src/aos/verification.py",
+    "tests/test_verification.py"
+  ],
+  "changed_paths_match": true,
+  "path_integrity": [
+    {
+      "path": "schemas/v0.1/verification_result.schema.json",
+      "manifest_state": "PRESENT",
+      "manifest_size_if_any": 2241,
+      "actual_size_if_any": 2241,
+      "manifest_sha256_if_any": "294b3ce20524bfee02efce44e2f6ec1d0f478d9b29e6f433d2e4f29160ea325f",
+      "actual_sha256_if_any": "294b3ce20524bfee02efce44e2f6ec1d0f478d9b29e6f433d2e4f29160ea325f",
+      "match": true
+    },
+    {
+      "path": "src/aos/validate.py",
+      "manifest_state": "PRESENT",
+      "manifest_size_if_any": 6479,
+      "actual_size_if_any": 6479,
+      "manifest_sha256_if_any": "5bf55e98518556a37ffa5741bb2e5f43bf0d92d87ccacf6f64c7818fa2269f0e",
+      "actual_sha256_if_any": "5bf55e98518556a37ffa5741bb2e5f43bf0d92d87ccacf6f64c7818fa2269f0e",
+      "match": true
+    },
+    {
+      "path": "src/aos/verification.py",
+      "manifest_state": "PRESENT",
+      "manifest_size_if_any": 26605,
+      "actual_size_if_any": 26605,
+      "manifest_sha256_if_any": "8e684cb41791992c8c712fa91fa9e02719e9c1ba36d2268ae87bf255fec735da",
+      "actual_sha256_if_any": "8e684cb41791992c8c712fa91fa9e02719e9c1ba36d2268ae87bf255fec735da",
+      "match": true
+    },
+    {
+      "path": "tests/test_verification.py",
+      "manifest_state": "PRESENT",
+      "manifest_size_if_any": 38235,
+      "actual_size_if_any": 38235,
+      "manifest_sha256_if_any": "4e4be9a14e6969b2d6298700c0d71067ad503eea05ed68cc437c9a267e95f1e7",
+      "actual_sha256_if_any": "4e4be9a14e6969b2d6298700c0d71067ad503eea05ed68cc437c9a267e95f1e7",
+      "match": true
+    }
+  ],
+  "canonical_manifest_path": "docs/proofs/aos4_ref_001_attempt6_candidate_manifest.json",
+  "canonical_manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+  "canonical_manifest_byte_equal": true,
+  "canonical_patch_path": "docs/proofs/aos4_ref_001_attempt6_candidate.patch",
+  "canonical_patch_sha256": "1662bb216192d6e4ae284ad1558d05c361920fa2089d4387096d52c8fd3871a5",
+  "candidate_store_access_mode": "READ_ONLY",
+  "candidate_mutation_count": 0,
+  "attempt_6_rerun": false,
+  "semantic_review_status": "PENDING_INDEPENDENT_CONTROLLER",
+  "result": "PASS"
+}

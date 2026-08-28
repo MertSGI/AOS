@@ -57,7 +57,8 @@ class WorkerAdapter(ABC):
         workspace_path: str,
         allowed_scope: Dict[str, Any],
         base_sha: str,
-        timeout_seconds: int = 3600,
+        timeout_seconds: int = 180,
     ) -> WorkerExecutionResult:
+
         """Execute a task in an isolated workspace."""
         pass

@@ -15,6 +15,7 @@ dependencies = [
     "jsonschema[format-nongpl]>=4.20.0",
     "openai==3.3.1",
     "google-genai==2.19.0",
+    "truststore==0.10.4",
 ]
 
 [project.optional-dependencies]

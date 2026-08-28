@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_FINAL_MANIFEST_FAIL_CLOSED_CORRECTION",
+  "base_control_sha": "1150225412e879f458565ebbd8a7eb8097882371",
+  "stage_10ae_r1_transaction_result": "PASS",
+  "stage_10ae_r1_independent_review_result": "HOLD",
+  "sole_source_blocker": "UNRECOGNIZED_CANDIDATE_MANIFEST_STATE_CAN_BYPASS_BYTE_VERIFICATION",
+  "regression_quality_gap": "CANDIDATE_SPECIFIC_TESTS_HOLD_BEFORE_REACHING_CANDIDATE_GUARD",
+  "state_pointer_gap": "STALE_NESTED_AOS4_REFERENCE_AND_AUTHORIZATION_POINTERS",
+  "correction": {
+    "unknown_manifest_state_fails_closed": true,
+    "non_dict_manifest_record_fails_closed": true,
+    "present_record_structure_validated": true,
+    "candidate_specific_tests_use_complete_context": true,
+    "candidate_specific_tests_assert_candidate_guard": true,
+    "canonical_aos4_state_pointers_coherent": true,
+    "six_required_scenarios_preserved": true
+  },
+  "attempt_6_rerun": false,
+  "new_candidate_created": false,
+  "retry_authorized": false,
+  "result": "PASS",
+  "independent_review_status": "PENDING"
+}

@@ -1,0 +1,70 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_FULL_REGRESSION_TIMEOUT_600_REMEDIATION",
+  "base_control_sha": "4793c1b65136026da28455ff1fe6a74ab5f102c2",
+  "previous_timeout_seconds": 420,
+  "new_timeout_seconds": 600,
+  "timeout_enforcement_preserved": true,
+  "selection_basis": {
+    "latest_accepted_windows_observation_seconds": 479.21,
+    "safety_multiplier": 1.25,
+    "unrounded_seconds": 599.0125,
+    "rounding_policy": "CEIL_TO_NEXT_60_SECONDS",
+    "selected_seconds": 600
+  },
+  "descriptor_change": {
+    "path": "descriptors/aos.descriptor.json",
+    "check": "aos_full_regression",
+    "argv_unchanged": true,
+    "foundation_timeout_unchanged": true,
+    "only_timeout_semantic_change": true
+  },
+  "fresh_windows_validation": {
+    "run_count": 3,
+    "outer_timeout_seconds": 600,
+    "runs": [
+      {
+        "run_number": 1,
+        "duration_seconds": 172.2158,
+        "return_code": 0,
+        "timed_out": false,
+        "pytest_summary": "418 passed, 8 skipped, 1 deselected, 1 warning in 169.65s (0:02:49)"
+      },
+      {
+        "run_number": 2,
+        "duration_seconds": 157.1288,
+        "return_code": 0,
+        "timed_out": false,
+        "pytest_summary": "418 passed, 8 skipped, 1 deselected, 1 warning in 155.85s (0:02:35)"
+      },
+      {
+        "run_number": 3,
+        "duration_seconds": 178.6201,
+        "return_code": 0,
+        "timed_out": false,
+        "pytest_summary": "418 passed, 8 skipped, 1 deselected, 1 warning in 177.32s (0:02:57)"
+      }
+    ],
+    "min_seconds": 157.1288,
+    "max_seconds": 178.6201,
+    "mean_seconds": 169.3216,
+    "headroom_seconds": 421.3799,
+    "classification": "ROBUST_AGAINST_CURRENT_ACCEPTED_AND_THREE_FRESH_WINDOWS_OBSERVATIONS"
+  },
+  "current_machine_capability_status": "UNPROVEN",
+  "capability_reattestation_performed": false,
+  "pre_engine_gate_status": "INDEPENDENTLY_ACCEPTED",
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "runtime_mutation_count": 0,
+  "result": "PASS",
+  "independent_review_status": "PENDING",
+  "limitations": [
+    "timeout remains bounded at 600 seconds",
+    "three successful Windows observations do not guarantee future runtime",
+    "current CLI capability remains UNPROVEN",
+    "capability re-attestation remains outstanding",
+    "Attempt #6 remains unauthorized",
+    "does not close AOS-4"
+  ]
+}

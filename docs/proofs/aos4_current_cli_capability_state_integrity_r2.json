@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_CURRENT_CLI_CAPABILITY_STATE_INTEGRITY_R2",
+  "base_control_sha": "4d24a5ca09b43df7ab2980e9dd45646535c76c4b",
+  "stage_10x_probe_technical_result": "PASS",
+  "stage_10x_r1_transaction_result": "PASS",
+  "stage_10x_r1_independent_review_result": "HOLD",
+  "primary_blocker": "CANONICAL_LIVE_PREFLIGHT_STILL_ACCEPTS_DUPLICATE_JSON_OBJECT_KEYS",
+  "secondary_gap": "JSONL_DUPLICATE_KEY_DIAGNOSTIC_LOSES_PHYSICAL_LINE_NUMBER",
+  "affected_live_inputs": [
+    "EXECUTION_AUTHORIZATION",
+    "CANONICAL_STATE",
+    "WORKER_CAPABILITY_ATTESTATION"
+  ],
+  "corrections": {
+    "central_strict_json_helpers": true,
+    "validator_uses_central_strict_helpers": true,
+    "authorization_live_read_strict": true,
+    "canonical_state_live_read_strict": true,
+    "capability_attestation_live_read_strict": true,
+    "duplicate_authorization_holds_before_engine": true,
+    "duplicate_state_holds_before_engine": true,
+    "duplicate_attestation_holds_before_cli_version": true,
+    "jsonl_physical_line_number_preserved": true,
+    "last_key_wins_authority_path_removed": true,
+    "existing_stage_10x_probe_reused": true,
+    "capability_probe_rerun": false,
+    "machine_local_attestation_mutated": false
+  },
+  "stage_10x_artifacts": {
+    "probe_id": "PROBE-20260828-061638-d851efb7",
+    "probe_proof_sha256": "63611cceda4ffe6cafee97357ea0853adb7d87ad2d49bfd8a59f5ef20a6bc9d6",
+    "attestation_sha256": "1f3436d81a1c315187f10bbe34c3435a9b9c57b5d6f2ded9774f14d277d45f04",
+    "reattestation_summary_sha256": "205c4ac8b2345b26f5801130dcc0841c7a49c3acbc4797c648022363306fb1ac"
+  },
+  "current_machine_capability_status": "PROVEN_REVIEW_PENDING",
+  "current_machine_capability_runtime_resolution": "PROVEN",
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "result": "PASS",
+  "independent_review_status": "PENDING",
+  "limitations": [
+    "source/control correction only",
+    "Stage 10X capability probe was not rerun",
+    "current capability is not governance-accepted yet",
+    "CLI drift root cause remains UNCLASSIFIED",
+    "no machine-local attestation mutation occurred",
+    "no Attempt #6 authority exists",
+    "does not close AOS-4"
+  ]
+}

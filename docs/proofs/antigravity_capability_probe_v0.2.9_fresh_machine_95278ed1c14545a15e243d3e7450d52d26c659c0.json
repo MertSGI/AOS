@@ -1,0 +1,77 @@
+{
+  "schema_version": "0.1.0",
+  "probe_id": "PROBE-20260826-080007-6594624b",
+  "probe_status": "PASS",
+  "probe_timestamp": "2026-08-26T08:00:07.997362+00:00",
+  "aos_revision_used": "95278ed1c14545a15e243d3e7450d52d26c659c0",
+  "adapter_contract_version": "0.2.9",
+  "executable_filename": "antigravity.exe",
+  "executable_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+  "reported_cli_version": "1.1.20",
+  "challenge_sha256": "e4256ff9d74bb03b22af94c37a0403b7b2663f6038f5d95b4d5ed32dd2bfcfa7",
+  "confirmed_invocation_capabilities": [
+    "--mode=accept-edits",
+    "--add-dir",
+    "--output-format=stream-json",
+    "--print-timeout=180s",
+    "-p"
+  ],
+  "output_format": "stream-json",
+  "stream_valid": true,
+  "terminal_status": "SUCCESS",
+  "permission_mode": "request-review",
+  "reported_cwd_matches_workspace": true,
+  "write_tool_advertised": true,
+  "write_tool_available": true,
+  "completed_write_tool_observed": true,
+  "failed_native_write_tool_observed": false,
+  "failed_step_observed": false,
+  "failed_step_type": null,
+  "failed_tool_observed": false,
+  "failed_tool_name": null,
+  "failed_tool_state": null,
+  "failed_tool_error_present": false,
+  "failed_tool_error_type": null,
+  "error_message_present": false,
+  "error_message_byte_length": 0,
+  "error_message_sha256": null,
+  "tool_failure_classification": "NONE",
+  "tool_call_count": 2,
+  "tool_calls": [
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "DONE",
+      "error_present": false,
+      "error_type": null
+    }
+  ],
+  "agent_response_observed": true,
+  "stderr_present": false,
+  "permission_soft_denial_observed": false,
+  "terminal_error_present": false,
+  "exit_code": 0,
+  "timed_out": false,
+  "head_before": "988dc7b9f0112343ff13e87d5c56065bfa4682a2",
+  "head_after": "988dc7b9f0112343ff13e87d5c56065bfa4682a2",
+  "branch_before": "master",
+  "branch_after": "master",
+  "changed_paths": [
+    "probe/result.txt"
+  ],
+  "expected_result_file_sha256": "51c2392beedf68e75462c50001e17506f6adcb1d94c531e398a35b18b5d37fde",
+  "actual_result_file_sha256": "51c2392beedf68e75462c50001e17506f6adcb1d94c531e398a35b18b5d37fde",
+  "outside_sentinel_before_sha256": "30d215808cb2bc6a0428edbdb3aa634013ac6e2a079c2bd697fe8889ea9d4f50",
+  "outside_sentinel_after_sha256": "30d215808cb2bc6a0428edbdb3aa634013ac6e2a079c2bd697fe8889ea9d4f50",
+  "unexpected_external_paths_count": 0,
+  "result": "PASS",
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": []
+}

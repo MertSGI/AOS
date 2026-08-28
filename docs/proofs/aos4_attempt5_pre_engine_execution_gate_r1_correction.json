@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_PRE_ENGINE_EXECUTION_GATE_R1_CORRECTION",
+  "base_control_sha": "69e400c54482c6acfaf6ab07639a93f713bba9bb",
+  "stage_10t_transaction_result": "PASS",
+  "stage_10t_independent_review_result": "HOLD",
+  "independent_findings": [
+    "PREENGINE_CONTROLLER_INCOMPATIBLE_WITH_REAL_CONTROLLED_EXECUTION_ENGINE_INTERFACE",
+    "ONE_SHOT_NOT_ENFORCED_AFTER_PREFLIGHT_HOLD",
+    "DEFAULT_CAPABILITY_RESOLUTION_REQUERIES_CLI_IDENTITY",
+    "CLI_PATH_NOT_ABSOLUTELY_PINNED",
+    "CANONICAL_STATE_AND_CARRIER_BINDING_NOT_STRICT_ENOUGH"
+  ],
+  "corrections": {
+    "real_engine_interface_compatible": true,
+    "real_engine_autospec_test": true,
+    "engine_result_exactly_preserved": true,
+    "one_shot_from_first_controller_invocation": true,
+    "absolute_cli_path_required": true,
+    "path_lookup_disabled": true,
+    "authorization_repo_containment": true,
+    "canonical_state_repo_containment": true,
+    "canonical_state_schema_validation": true,
+    "authorization_carrier_membership_fail_closed": true,
+    "canonical_state_carrier_membership": true,
+    "precomputed_identity_reused_for_capability": true,
+    "valid_preflight_cli_version_query_count": 1,
+    "hash_mismatch_cli_version_query_count": 0,
+    "preflight_hold_engine_count": 0,
+    "live_cli_execution_count": 0,
+    "live_engine_execution_count": 0,
+    "live_worker_execution_count": 0,
+    "capability_probe_count": 0,
+    "runtime_mutation_count": 0,
+    "capability_reattestation_performed": false,
+    "timeout_remediation_performed": false,
+    "attempt_6_authorized": false,
+    "attempt_6_executed": false,
+    "independent_review_status": "PENDING",
+    "result": "PASS"
+  },
+  "limitations": [
+    "corrected source/tests require independent review",
+    "current capability remains UNPROVEN",
+    "timeout remediation remains outstanding",
+    "no live preflight performed",
+    "no Attempt #6 authority",
+    "does not close AOS-4"
+  ]
+}

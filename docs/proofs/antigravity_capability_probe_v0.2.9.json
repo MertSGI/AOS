@@ -1,0 +1,82 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS4-RUNTIME-TRUST-REMEDIATION-20260825-1338",
+  "authorized_live_coding_invocations": 1,
+  "actual_live_coding_invocations": 1,
+  "invocation_budget_compliance": true,
+  "probe_id": "PROBE-20260825-110208-4002efeb",
+  "probe_status": "PASS",
+  "probe_timestamp": "2026-08-25T11:02:08.937666+00:00",
+  "aos_revision_used": "d2b79db60f3ea0e5690371a6a1134cbfd3010021",
+  "adapter_contract_version": "0.2.9",
+  "executable_filename": "agy.EXE",
+  "executable_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+  "reported_cli_version": "1.1.20",
+  "runtime_environment_profile_version": "0.1.0",
+  "runtime_fingerprint_before": "08dd6d10e53fcf6238ddc8d006a4364f89f2fc75c83a53156a3e90cd5b0d68a8",
+  "runtime_fingerprint_after": "08dd6d10e53fcf6238ddc8d006a4364f89f2fc75c83a53156a3e90cd5b0d68a8",
+  "runtime_fingerprint_stable": true,
+  "node_available": true,
+  "node_version": "v24.19.0",
+  "enabled_plugin_count": 0,
+  "enabled_plugins": [],
+  "confirmed_invocation_capabilities": [
+    "--mode=accept-edits",
+    "--add-dir",
+    "--output-format=stream-json",
+    "--print-timeout=180s",
+    "-p"
+  ],
+  "output_format": "stream-json",
+  "stream_valid": true,
+  "terminal_status": "SUCCESS",
+  "permission_mode": "request-review",
+  "reported_cwd_matches_workspace": true,
+  "write_tool_advertised": true,
+  "write_tool_available": true,
+  "completed_write_tool_observed": true,
+  "failed_native_write_tool_observed": false,
+  "failed_step_observed": false,
+  "failed_step_type": null,
+  "failed_tool_observed": false,
+  "failed_tool_name": null,
+  "failed_tool_state": null,
+  "failed_tool_error_present": false,
+  "failed_tool_error_type": null,
+  "error_message_present": false,
+  "error_message_byte_length": 0,
+  "error_message_sha256": null,
+  "tool_failure_classification": "NONE",
+  "tool_call_count": 2,
+  "tool_calls": [
+    {
+      "tool_name": "write_to_file",
+      "state": "ACTIVE",
+      "error_present": false,
+      "error_type": null
+    },
+    {
+      "tool_name": "write_to_file",
+      "state": "DONE",
+      "error_present": false,
+      "error_type": null
+    }
+  ],
+  "agent_response_observed": true,
+  "stderr_present": false,
+  "permission_soft_denial_observed": false,
+  "terminal_error_present": false,
+  "exit_code": 0,
+  "timed_out": false,
+  "changed_paths": [
+    "probe/result.txt"
+  ],
+  "result": "PASS",
+  "capability_status_after_probe": "PROVEN",
+  "fresh_real_adapter_capability_status": "PROVEN",
+  "attestation_written": true,
+  "limitations": [
+    "This proves behavioral non-interactive execution in the disposable probe environment. It does not prove OS-level sandbox containment."
+  ],
+  "errors": []
+}

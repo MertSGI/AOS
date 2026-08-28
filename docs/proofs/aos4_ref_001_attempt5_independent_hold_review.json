@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT5_INDEPENDENT_CAPABILITY_HOLD_REVIEW",
+  "reviewed_control_sha": "ed5f88df100c7ad82959d8fff9ee80efd3e07cd6",
+  "reviewed_parent_sha": "1430ec56c687eb462a71bbd16607025430698412",
+  "raw_execution_proof": "docs/proofs/aos4_ref_001_attempt5_raw_execution.json",
+  "raw_execution_sha256": "0f2eab607f6fb164b09a1e286b8c0253b134478ad01e94d287c436c3bffc3801",
+  "forensic_summary": "docs/proofs/aos4_ref_001_attempt5_capability_hold_forensic_summary.json",
+  "forensic_summary_sha256": "4853ac9cf5d5c5ed6dbd604a8498c7db9349e64a1e2d5854d6701d65e6655023",
+  "review_result": "INDEPENDENTLY_ACCEPTED_HOLD",
+  "terminal_disposition": "HOLD",
+  "engine_fail_closed_behavior": "CORRECT",
+  "engine_capability_defect_proven": false,
+  "cli_identity": {
+    "drift_confirmed": true,
+    "prior_version": "1.1.20",
+    "prior_sha256": "98ce5e394600094bedcef0458ed47add891b46f2de237b5b9a1e03f8911ec305",
+    "observed_version": "1.1.21",
+    "observed_sha256": "2947e70d02cd2206b043566170439613be1723f0df3d417314a4ac2220ad9b26",
+    "current_capability_status": "UNPROVEN",
+    "root_cause": "UNCLASSIFIED"
+  },
+  "stage_10o_protocol": {
+    "result": "HOLD",
+    "failure": "PREEXECUTION_CLI_IDENTITY_MISMATCH_DID_NOT_STOP_BEFORE_ENGINE_INVOCATION",
+    "root_cause": "CONTROLLER_ORCHESTRATION_NONCOMPLIANCE",
+    "structural_hardening_gap": "NO_CANONICAL_PRE_ENGINE_RUNTIME_IDENTITY_GATE",
+    "engine_fail_closed_behavior": "CORRECT",
+    "worker_dispatch_prevented": true,
+    "protocol_contradiction": true
+  },
+  "timeout_review": {
+    "current_timeout_seconds": 420,
+    "new_clean_windows_observation_seconds": 479.21,
+    "new_observation_exceeds_current_timeout": true,
+    "future_robustness_status": "NOT_ROBUST_AGAINST_NEW_OBSERVED_WINDOWS_RUNTIME",
+    "historical_remediation_acceptance_preserved": true,
+    "remediation_reopened": true,
+    "candidate_caused_timeout_proven": false
+  },
+  "exact_sha_ci": {
+    "control_sha": "ed5f88df100c7ad82959d8fff9ee80efd3e07cd6",
+    "run_id": 33009610353,
+    "job_id": 98312164976,
+    "result": "SUCCESS",
+    "pytest_passed": 378,
+    "pytest_deselected": 1,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "remediation_required": true,
+  "remediation_items": [
+    "CLI_IDENTITY_DRIFT_REQUIRES_READ_ONLY_PROVENANCE_DIAGNOSIS_AND_FRESH_CAPABILITY_PROOF",
+    "CANONICAL_PRE_ENGINE_EXECUTION_GATE_REQUIRED",
+    "FULL_REGRESSION_TIMEOUT_420_NOT_ROBUST_AGAINST_NEW_WINDOWS_RUNTIME"
+  ],
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "limitations": [
+    "CLI drift root cause remains unclassified",
+    "current CLI identity has no accepted capability attestation",
+    "no runtime mutation was performed",
+    "no fresh capability probe was performed",
+    "deterministic pre-engine gate is not yet implemented",
+    "new timeout value has not been selected",
+    "no Attempt #6 authority exists",
+    "review does not close AOS-4"
+  ]
+}

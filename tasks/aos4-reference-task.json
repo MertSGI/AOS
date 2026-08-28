@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos",
+  "task_id": "AOS4-REF-001",
+  "gate": "AOS-4",
+  "title": "AOS-4 Independent Verification Foundation",
+  "description": "Implement the generic deterministic independent-verification foundation. Introduce a verification-result contract and verifier boundary that consumes an existing ControlledExecutionResult and evidence metadata without executing or mutating the worker task. The verifier must produce PASS or HOLD-style verification output, must fail closed on malformed or contradictory evidence, and must not permit the executor result alone to authorize canonical closure. REMEDIATION REQUIREMENT: Any fixture/helper described or named as 'valid' MUST itself validate against the canonical schema present in the execution workspace. Specifically, the make_valid_descriptor() fixture used by the verification foundation tests MUST construct a project descriptor valid against canonical project_descriptor.schema.json (including required control keys: state, decisions, evidence, roadmap; and required authority keys: production_mutation, roadmap_change, destructive_data). Do NOT weaken project_descriptor schema, validation behavior, verifier fail-closed behavior, or required scenario expectations merely to make the test pass. Scenario 1 must PASS because its input fixture is genuinely canonical-valid, not because verification was weakened or bypassed. Preserve fail-closed semantics for malformed, stale, scope-invalid, missing-artifact, and contradictory inputs.",
+  "risk_class": "R1",
+  "base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "branch_name": "aos/aos4-ref-001",
+  "allowed_scope": {
+    "paths": [
+      "src/aos/verification.py",
+      "src/aos/validate.py",
+      "schemas/v0.1/verification_result.schema.json",
+      "tests/test_verification.py"
+    ],
+    "forbidden_paths": [
+      "docs/project-control/",
+      "descriptors/",
+      "tasks/",
+      ".github/"
+    ]
+  },
+  "worker_requirements": {
+    "adapter": "antigravity",
+    "environment": "non_production",
+    "isolated_worktree": true,
+    "timeout_seconds": 420
+  },
+  "evidence_requirements": {
+    "minimum_level": "E3_ISOLATED_RUNTIME_PROVEN",
+    "required_checks": [
+      "aos4_verification_foundation_tests",
+      "aos_full_regression"
+    ]
+  },
+  "retry_policy": {
+    "max_retries": 0,
+    "retry_count": 0,
+    "auto_retry_on_semantic_failure": false,
+    "on_exhausted": "HOLD"
+  }
+}

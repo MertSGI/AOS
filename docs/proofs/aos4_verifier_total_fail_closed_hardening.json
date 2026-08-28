@@ -1,0 +1,32 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_VERIFIER_TOTAL_FAIL_CLOSED_HARDENING",
+  "base_control_sha": "7cef3ef42d3c6ffab0898daaf6278d68e4e6a22c",
+  "stage_10ae_transaction_result": "PASS",
+  "stage_10ae_independent_review_result": "HOLD",
+  "root_blocker": "VERIFIER_FAIL_CLOSED_TRUST_BOUNDARY_NOT_TOTAL",
+  "findings": [
+    "VERIFIED_CANDIDATE_WITHOUT_CANDIDATE_METADATA_CAN_PASS_CANDIDATE_INTEGRITY",
+    "SCHEMA_INVALID_NESTED_INPUT_CAN_RAISE_INSTEAD_OF_RETURN_HOLD",
+    "NON_PASS_UNKNOWN_EVIDENCE_RESULT_CAN_ESCAPE_EVIDENCE_CONSISTENCY",
+    "CANDIDATE_MANIFEST_NOT_SEMANTICALLY_BOUND_TO_EXECUTION_RESULT"
+  ],
+  "hardening": {
+    "structural_validation_precedes_semantic_dereference": true,
+    "unexpected_semantic_exception_fails_closed": true,
+    "verified_candidate_metadata_required": true,
+    "candidate_id_canonicalized": true,
+    "candidate_extension_bound_to_execution": true,
+    "candidate_store_containment_enforced": true,
+    "manifest_strict_json_parsing": true,
+    "manifest_metadata_bound_to_execution": true,
+    "manifest_workspace_bytes_verified": true,
+    "non_pass_evidence_result_holds": true,
+    "six_required_scenarios_preserved": true
+  },
+  "attempt_6_rerun": false,
+  "new_candidate_created": false,
+  "retry_authorized": false,
+  "result": "PASS",
+  "independent_review_status": "PENDING"
+}

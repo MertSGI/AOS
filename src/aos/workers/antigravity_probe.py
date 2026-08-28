@@ -51,6 +51,20 @@ def write_local_capability_attestation(
     return target_path
 
 
+def persist_capability_proof(
+    proof_artifact: Dict[str, Any],
+    proof_store_path: Path,
+) -> Path:
+    """Persist exact sanitized probe proof artifact without reconstructing from attestation."""
+    proof_store_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = proof_store_path.parent / f".tmp_{uuid.uuid4().hex}_{proof_store_path.name}"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(proof_artifact, f, indent=2)
+
+    os.replace(temp_file, proof_store_path)
+    return proof_store_path
+
+
 def run_antigravity_probe(
     cli_command: str = "agy",
     timeout_seconds: int = 180,

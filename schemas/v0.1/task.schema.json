@@ -94,7 +94,11 @@
           "minLength": 1
         },
         "environment": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "non_production",
+            "production"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -108,8 +112,10 @@
         },
         "timeout_seconds": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 600
         }
+
       }
     },
     "evidence_requirements": {

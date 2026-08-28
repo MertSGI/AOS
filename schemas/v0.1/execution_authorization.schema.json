@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/execution_authorization.schema.json",
+  "title": "AOS Execution Authorization Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "authorization_id",
+    "project_id",
+    "task_id",
+    "gate",
+    "risk_class",
+    "decision",
+    "authority_source",
+    "reason_codes",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "authorization_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["R0", "R1", "R2", "R3", "R4"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["AUTO_EXECUTE", "AUTO_REMEDIATE", "HUMAN_REQUIRED", "FORBIDDEN"]
+    },
+    "authority_source": {
+      "type": "string",
+      "enum": ["POLICY_AUTONOMOUS", "HUMAN_EXPLICIT", "NONE"]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "human_critical_categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "MATERIAL_ROADMAP_OR_SCOPE_CHANGE",
+          "PRODUCTION_OR_CUSTOMER_MUTATION",
+          "DESTRUCTIVE_DATA_OPERATION",
+          "SECURITY_OR_AUTH_BOUNDARY_CHANGE",
+          "TRUST_MODEL_CHANGE",
+          "SECRET_OR_SENSITIVE_DATA_BOUNDARY_CHANGE",
+          "BILLING_OR_PAID_PROVIDER_ACTIVATION",
+          "AUTHORITATIVE_EVIDENCE_CONTRADICTION",
+          "EVIDENCE_WAIVER_OR_FORCE_PASS",
+          "RETRY_CEILING_EXCEEDED_WITH_NO_SAFE_REMEDIATION",
+          "LEGAL_OR_COMPLIANCE_AUTHORITY_AMBIGUITY",
+          "UNAPPROVED_HOST_PERMISSION_OR_TRUST_CONFIGURATION_CHANGE"
+        ]
+      }
+    },
+    "forbidden_categories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "execution_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "control_source_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

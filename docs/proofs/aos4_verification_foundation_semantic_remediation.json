@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_VERIFICATION_FOUNDATION_SEMANTIC_REMEDIATION",
+  "base_control_sha": "59fa1e357986070e5515bb4c2bdb0c89b0314824",
+  "attempt_6_candidate_id": "cand_11807a536a5a4af2",
+  "attempt_6_candidate_semantic_review_result": "HOLD",
+  "candidate_semantic_blockers": [
+    "EXECUTOR_RESULT_ALONE_CAN_AUTHORIZE_CANONICAL_CLOSURE",
+    "DECLARED_EVIDENCE_ARTIFACT_ABSENCE_IS_NOT_VERIFIED"
+  ],
+  "related_bypasses_closed": [
+    "CHECK_ARTIFACTS_FALSE_CAN_STILL_REACH_CLOSURE",
+    "PERSISTED_CANDIDATE_WITHOUT_STORE_DIR_CAN_SKIP_PHYSICAL_CHECK"
+  ],
+  "remediation": {
+    "verification_result_schema_integrated": true,
+    "current_strict_validator_preserved": true,
+    "independent_context_required_for_closure": true,
+    "artifact_verification_required_for_closure": true,
+    "persisted_candidate_store_required": true,
+    "declared_evidence_artifacts_verified": true,
+    "artifact_path_traversal_rejected": true,
+    "executor_result_alone_holds": true
+  },
+  "required_scenario_matrix": {
+    "valid_pass": "PASS",
+    "failing_deterministic_test": "HOLD",
+    "browser_claim_missing_artifact": "HOLD",
+    "stale_sha": "HOLD",
+    "scope_violation": "HOLD",
+    "contradictory_accepted_evidence": "HOLD"
+  },
+  "attempt_6_rerun": false,
+  "retry_authorized": false,
+  "result": "PASS",
+  "independent_review_status": "PENDING"
+}

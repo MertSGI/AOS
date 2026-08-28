@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_INDEPENDENT_VERIFICATION_CLOSURE",
+  "gate": "AOS-4",
+  "closure_status": "CLOSED_PROVEN",
+  "verified_implementation_sha": "5a8e7023d244b145dd6e7442dc3d876107cb0601",
+  "independent_controller": "GPT-5.6 Sol",
+  "attempt_6": {
+    "authorization_consumed": true,
+    "execution_actual": 1,
+    "worker_execution_actual": 1,
+    "retry_actual": 0,
+    "terminal": true,
+    "terminal_disposition": "VERIFIED_CANDIDATE",
+    "rerun": false
+  },
+  "final_source_review": {
+    "stage_10ae_transaction": "PASS",
+    "stage_10ae_r1_core_hardening": "PASS",
+    "stage_10ae_r2_manifest_fail_closed": "PASS",
+    "independent_result": "PASS",
+    "security_correctness_blocker": false,
+    "authoritative_source_contradiction": false
+  },
+  "required_scenario_matrix": {
+    "valid_pass": "PASS",
+    "failing_deterministic_test": "HOLD",
+    "browser_claim_missing_artifact": "HOLD",
+    "stale_sha": "HOLD",
+    "scope_violation": "HOLD",
+    "contradictory_accepted_evidence": "HOLD"
+  },
+  "exact_sha_ci": {
+    "run_id": 33168338979,
+    "job_id": 98839042947,
+    "result": "SUCCESS",
+    "pytest": "486 passed, 1 deselected in 8.75s",
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "stage_10ae_r2_record_contradiction": {
+    "executor_claimed_state_pointer_coherence": true,
+    "independent_review_found_claim_incorrect": true,
+    "stale_nested_reference_status_found": true,
+    "stale_nested_authorization_status_found": true,
+    "misplaced_outer_extension_pointers_found": true,
+    "corrected_in_closure_transaction": true
+  },
+  "source_mutated_in_closure_transaction": false,
+  "attempt_6_rerun": false,
+  "new_candidate_created": false,
+  "retry_authorized": false,
+  "result": "PASS"
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT4_CONTROL_CONTRACT_REMEDIATION",
+  "base_control_sha": "a30b0a27934afc0cd8d4ea153e846d8faf914e44",
+  "source_independent_review_proof": "docs/proofs/aos4_ref_001_attempt4_independent_failure_review.json",
+  "source_independent_review_proof_sha256": "28d7d1ee6fd457f1ca4eb46ac26d94745647f874b883740a43d85d9cce69b3bd",
+  "scenario_1_remediation": {
+    "failure_class": "TEST_FIXTURE_CONTRACT_DRIFT",
+    "root_cause": "INVALID_TEST_FIXTURE_DESCRIPTOR",
+    "remediation_type": "TASK_DESCRIPTION_CONTRACT_CLARIFICATION",
+    "task_path": "tasks/aos4-reference-task.json",
+    "task_description_updated": true,
+    "task_non_description_fields_unchanged": true,
+    "actual_fixture_code_modified": false,
+    "quarantine_promoted": false,
+    "fresh_worker_reexecution_required": true
+  },
+  "full_regression_remediation": {
+    "failure_class": "VERIFICATION_TIMEOUT_BUDGET_NOT_ROBUST_ON_OBSERVED_WINDOWS_HOST",
+    "descriptor_path": "descriptors/aos.descriptor.json",
+    "prior_timeout_seconds": 180,
+    "new_timeout_seconds": 420,
+    "descriptor_only_timeout_value_changed": true,
+    "bounded_timeout_enforcement_preserved": true,
+    "candidate_caused_timeout_proven": false
+  },
+  "quarantine_id": "quar_aaa1541ebb7d4b54",
+  "quarantine_promotion_count": 0,
+  "candidate_promotion_count": 0,
+  "worker_execution_count": 0,
+  "controlled_execution_engine_count": 0,
+  "attempt_5_authorized": false,
+  "attempt_5_executed": false,
+  "result": "PASS",
+  "independent_review_status": "PENDING",
+  "limitations": [
+    "No worker implementation code was promoted from Attempt #4 quarantine.",
+    "Scenario-1 fixture code is not yet declared fixed.",
+    "Task description clarification requires a fresh worker execution to prove remediation effectiveness.",
+    "Timeout configuration was changed from 180 to bounded 420 seconds.",
+    "420 seconds does not disable fail-closed timeout enforcement.",
+    "No Attempt #5 authority exists.",
+    "This remediation does not close AOS-4."
+  ]
+}

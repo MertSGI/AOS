@@ -1,0 +1,74 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "INDEPENDENT_AOS4_PRE_ENGINE_EXECUTION_GATE_R3_REVIEW",
+  "reviewed_control_sha": "f289c147b0a8f89e854371c97e601fafc65fe58a",
+  "reviewed_base_sha": "124d010a7419a4bdd506b5eb1acdc1b979649a34",
+  "reviewed_branch": "feature/aos-4-independent-verification-hold",
+  "reviewed_r3_proof": "docs/proofs/aos4_attempt5_pre_engine_execution_gate_r3_correction.json",
+  "reviewed_r3_proof_git_blob": "0c93e31ea7213c45239ff8fb37a75a27298c436c",
+  "reviewed_source_git_blob": "95c6d931bbc477d0da4bd9c27ed3a872280a2e9c",
+  "reviewed_test_git_blob": "d0e78a912b42391dea1394c8a3d5492217723b92",
+  "transaction": {
+    "ahead_by": 1,
+    "behind_by": 0,
+    "exact_changed_file_count": 5,
+    "changed_files": [
+      "src/aos/execution_preflight.py",
+      "tests/test_execution_preflight.py",
+      "docs/project-control/STATE.json",
+      "docs/project-control/EVIDENCE.jsonl",
+      "docs/proofs/aos4_attempt5_pre_engine_execution_gate_r3_correction.json"
+    ]
+  },
+  "review": {
+    "windows_symlink_guard": "ACCEPTED",
+    "windows_junction_guard": "ACCEPTED",
+    "windows_reparse_point_guard": "ACCEPTED",
+    "indirection_inspection_fail_closed": "ACCEPTED",
+    "authorization_component_indirection_guard": "ACCEPTED",
+    "state_component_indirection_guard": "ACCEPTED",
+    "cli_indirection_guard": "ACCEPTED",
+    "capability_store_indirection_guard": "ACCEPTED",
+    "deterministic_no_skip_indirection_tests": "ACCEPTED",
+    "canonical_live_execution_controller": "ACCEPTED",
+    "canonical_live_boundary_production_defaults": "ACCEPTED",
+    "canonical_live_boundary_caller_gate_override_allowed": false,
+    "canonical_live_boundary_direct_engine_call": false,
+    "canonical_live_boundary_one_shot": "ACCEPTED",
+    "r2_tests_removed": [],
+    "security_correctness_blocker": false
+  },
+  "test_matrix": {
+    "canonical_r2_base_preflight_test_count": 42,
+    "canonical_r3_final_preflight_test_count": 48,
+    "return_base_test_count_reported": 14,
+    "return_base_test_count_label_discrepancy": true,
+    "canonical_artifact_contradiction": false
+  },
+  "exact_sha_ci": {
+    "run_id": 33144376157,
+    "job_id": 98762092315,
+    "result": "SUCCESS",
+    "pytest_passed": 426,
+    "pytest_deselected": 1,
+    "pytest_duration_seconds": 8.06,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "current_machine_capability_status": "UNPROVEN",
+  "full_regression_timeout_current_seconds": 420,
+  "full_regression_timeout_remediation_required": true,
+  "capability_reattestation_performed": false,
+  "timeout_remediation_performed": false,
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "result": "PASS",
+  "independent_review_status": "INDEPENDENTLY_ACCEPTED",
+  "limitations": [
+    "accepts final pre-engine R3 source/test implementation",
+    "does not prove current CLI capability",
+    "does not remediate the full-regression Windows timeout",
+    "does not authorize Attempt #6",
+    "does not close AOS-4"
+  ]
+}

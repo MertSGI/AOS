@@ -233,3 +233,119 @@ class TestSchemaMetaValidation:
 
         for prop_name, prop_val in properties.items():
             check_node(prop_val, prop_name)
+
+
+class TestStrictDuplicateJSONKeyRejection:
+    """Regression tests for strict duplicate JSON key detection in validate_file."""
+
+    def test_top_level_duplicate_key_rejected(self, tmp_path):
+        json_content = '{\n  "schema_version": "0.1.0",\n  "schema_version": "0.1.0"\n}'
+        f = tmp_path / "dup_top.json"
+        f.write_text(json_content, encoding="utf-8")
+        res, code = validate_file("state", f)
+        assert code != 0
+        assert res.is_valid is False
+        assert len(res.errors) == 1
+        assert res.errors[0].validator == "duplicate_json_key"
+        assert "Duplicate JSON object key: schema_version" in res.errors[0].message
+
+    def test_nested_duplicate_key_rejected(self, tmp_path):
+        json_content = '{\n  "schema_version": "0.1.0",\n  "project": {\n    "name": "AOS",\n    "name": "AOS_DUP"\n  }\n}'
+        f = tmp_path / "dup_nested.json"
+        f.write_text(json_content, encoding="utf-8")
+        res, code = validate_file("state", f)
+        assert code != 0
+        assert res.is_valid is False
+        assert len(res.errors) == 1
+        assert res.errors[0].validator == "duplicate_json_key"
+        assert "Duplicate JSON object key: name" in res.errors[0].message
+
+    def test_jsonl_line_duplicate_key_rejected(self, tmp_path):
+        import json
+        valid_ev = {
+            "schema_version": "0.1.0",
+            "evidence_id": "AOS-EV-0001",
+            "timestamp": "2026-08-27T20:00:00Z",
+            "project": "AOS",
+            "gate": "AOS-4",
+            "task_id": "TASK-001",
+            "type": "AOS4_CURRENT_CLI_CAPABILITY_STATE_INTEGRITY_R2",
+            "claim": "Test claim",
+            "evidence_level": "E1_LOCAL_SOURCE",
+            "revisions": {"commit_sha": "1111111111111111111111111111111111111111", "base_sha": "2222222222222222222222222222222222222222", "branch": "main"},
+            "environment": {"os": "Windows", "worker": "w", "runtime": "r"},
+            "verification": {"method": "m", "verifier": "v"},
+            "result": "PASS",
+            "limitations": ["none"]
+        }
+        jsonl_content = json.dumps(valid_ev) + '\n{"schema_version": "0.1.0", "schema_version": "0.1.0"}'
+        f = tmp_path / "dup.jsonl"
+        f.write_text(jsonl_content, encoding="utf-8")
+        res, code = validate_file("evidence", f)
+        assert code != 0
+        assert res.is_valid is False
+        assert len(res.errors) == 1
+        assert res.errors[0].validator == "duplicate_json_key"
+
+    def test_canonical_state_strict_passes(self):
+        state_file = CANONICAL_DIR / "STATE.json"
+        res, code = validate_file("state", state_file)
+        assert code == 0, f"STATE.json failed strict validation: {[e.message for e in res.errors]}"
+
+    def test_canonical_evidence_strict_passes(self):
+        evidence_file = CANONICAL_DIR / "EVIDENCE.jsonl"
+        res, code = validate_file("evidence", evidence_file)
+        assert code == 0, f"EVIDENCE.jsonl failed strict validation: {[e.message for e in res.errors]}"
+
+    def test_exact_historical_collision_pattern_rejected(self, tmp_path):
+        collision_json = '''{
+          "current_machine_capability_independent_review_status": "PENDING_CURRENT_IDENTITY_REVIEW",
+          "current_machine_capability_independent_review_status": "INDEPENDENTLY_ACCEPTED"
+        }'''
+        f = tmp_path / "collision.json"
+        f.write_text(collision_json, encoding="utf-8")
+        res, code = validate_file("state", f)
+        assert code != 0
+        assert res.is_valid is False
+        assert res.errors[0].validator == "duplicate_json_key"
+
+    def test_state_raw_text_key_uniqueness(self):
+        import json
+        state_path = CANONICAL_DIR / "STATE.json"
+        state_text = state_path.read_text(encoding="utf-8")
+        key_target = '"current_machine_capability_independent_review_status"'
+        count = state_text.count(key_target)
+        assert count == 1, f"Expected exactly 1 occurrence of {key_target} in STATE.json, got {count}"
+
+    def test_jsonl_physical_line_number_preserved(self, tmp_path):
+        import json
+        valid_ev = {
+            "schema_version": "0.1.0",
+            "evidence_id": "AOS-EV-0001",
+            "timestamp": "2026-08-27T20:00:00Z",
+            "project": "AOS",
+            "gate": "AOS-4",
+            "task_id": "TASK-001",
+            "type": "AOS4_CURRENT_CLI_CAPABILITY_STATE_INTEGRITY_R2",
+            "claim": "Test claim",
+            "evidence_level": "E1_LOCAL_SOURCE",
+            "revisions": {"commit_sha": "1111111111111111111111111111111111111111", "base_sha": "2222222222222222222222222222222222222222", "branch": "main"},
+            "environment": {"os": "Windows", "worker": "w", "runtime": "r"},
+            "verification": {"method": "m", "verifier": "v"},
+            "result": "PASS",
+            "limitations": ["none"]
+        }
+        jsonl_content = json.dumps(valid_ev) + '\n\n{"schema_version": "0.1.0", "schema_version": "0.1.0"}'
+        f = tmp_path / "blank_lines.jsonl"
+        f.write_text(jsonl_content, encoding="utf-8")
+        res, code = validate_file("evidence", f)
+        assert code != 0
+        assert res.is_valid is False
+        assert len(res.errors) == 1
+        assert "Line 3: Duplicate JSON object key" in res.errors[0].message
+
+    def test_loads_json_strict_direct(self):
+        from aos.validate import DuplicateJSONKeyError, loads_json_strict
+        with pytest.raises(DuplicateJSONKeyError) as exc_info:
+            loads_json_strict('{"key": "a", "key": "b"}')
+        assert "Duplicate JSON object key: key" in str(exc_info.value)

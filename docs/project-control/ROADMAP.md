@@ -178,6 +178,9 @@ R1 isolated implementation only.
 - post-HOLD unauthorized mutation count is zero,
 - evidence requirements are gate-specific.
 
+### Status
+`CLOSED_PROVEN` (`E3_ISOLATED_RUNTIME_PROVEN`, verified implementation SHA `5a8e7023d244b145dd6e7442dc3d876107cb0601`, exact-SHA CI run `33168338979`)
+
 ---
 
 ## AOS-5 — Distributed Multi-PC Coordination

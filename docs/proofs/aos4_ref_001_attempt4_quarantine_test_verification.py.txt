@@ -1,0 +1,614 @@
+"""Unit tests for AOS-4 generic deterministic independent verification foundation."""
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List
+
+import pytest
+from jsonschema import Draft202012Validator
+
+from aos.validate import SCHEMA_DIR, validate_document
+from aos.verification import (
+    DEFAULT_LIMITATIONS,
+    DEFAULT_VERIFIER_IDENTITY,
+    EVIDENCE_LEVEL_RANK,
+    IndependentVerificationResult,
+    IndependentVerifier,
+    detect_evidence_contradictions,
+    validate_evidence_record,
+    verify_controlled_execution,
+)
+
+
+def make_valid_execution_result(
+    project_id: str = "aos",
+    task_id: str = "AOS4-REF-001",
+    gate: str = "AOS-4",
+    disposition: str = "VERIFIED_CANDIDATE",
+    control_sha: str = "baeed4b78b20fa22a87740641cc8898f385f58cb",
+    exec_base_sha: str = "3779c0a195301ec585a59537db5baa8df86228cf",
+    worker_branch: str = "aos/aos4-ref-001",
+    changed_paths: List[str] | None = None,
+    verification_checks: List[Dict[str, Any]] | None = None,
+    worker_exit_code: int = 0,
+    worker_timed_out: bool = False,
+    errors: List[str] | None = None,
+) -> Dict[str, Any]:
+    paths = changed_paths or ["src/aos/verification.py", "tests/test_verification.py"]
+    checks = verification_checks or [
+        {"check_id": "descriptor_schema", "status": "PASS"},
+        {"check_id": "task_schema", "status": "PASS"},
+        {"check_id": "project:aos4_verification_foundation_tests", "status": "PASS"},
+        {"check_id": "project:aos_full_regression", "status": "PASS"},
+    ]
+    return {
+        "schema_version": "0.1.0",
+        "project_id": project_id,
+        "task_id": task_id,
+        "gate": gate,
+        "disposition": disposition,
+        "control_source_sha": control_sha,
+        "execution_base_sha": exec_base_sha,
+        "worker_branch": worker_branch,
+        "initial_head_sha": exec_base_sha,
+        "final_head_sha": exec_base_sha,
+        "changed_paths": paths,
+        "scope_validation": {
+            "is_valid": True,
+            "allowed_paths": [
+                "src/aos/verification.py",
+                "src/aos/validate.py",
+                "schemas/v0.1/verification_result.schema.json",
+                "tests/test_verification.py",
+            ],
+            "forbidden_paths": [
+                "docs/project-control/",
+                "descriptors/",
+                "tasks/",
+                ".github/",
+            ],
+            "violations": [],
+        },
+        "worker_adapter": "antigravity",
+        "worker_identity": "antigravity-cli (PROVEN)",
+        "worker_capability_status": "PROVEN",
+        "worker_mutation_attempted": True,
+        "worker_exit_code": worker_exit_code,
+        "worker_timed_out": worker_timed_out,
+        "verification_checks": checks,
+        "mutation_performed": True,
+        "retry_count": 0,
+        "started_at": "2026-08-25T10:25:05.178171+00:00",
+        "finished_at": "2026-08-25T10:28:10.666976+00:00",
+        "errors": errors or [],
+        "extensions": {
+            "candidate": {
+                "status": "PERSISTED",
+                "candidate_id": "cand_1234567890abcdef",
+                "manifest_sha256": "a" * 64,
+            }
+        },
+    }
+
+
+def make_valid_task(
+    project_id: str = "aos",
+    task_id: str = "AOS4-REF-001",
+    gate: str = "AOS-4",
+    base_sha: str = "3779c0a195301ec585a59537db5baa8df86228cf",
+    branch_name: str = "aos/aos4-ref-001",
+    min_level: str = "E3_ISOLATED_RUNTIME_PROVEN",
+    required_checks: List[str] | None = None,
+) -> Dict[str, Any]:
+    req_checks = required_checks if required_checks is not None else [
+        "aos4_verification_foundation_tests",
+        "aos_full_regression",
+    ]
+    return {
+        "schema_version": "0.1.0",
+        "project_id": project_id,
+        "task_id": task_id,
+        "gate": gate,
+        "title": "AOS-4 Independent Verification Foundation",
+        "description": "Deterministic independent verification foundation implementation",
+        "risk_class": "R1",
+        "base_sha": base_sha,
+        "branch_name": branch_name,
+        "allowed_scope": {
+            "paths": [
+                "src/aos/verification.py",
+                "src/aos/validate.py",
+                "schemas/v0.1/verification_result.schema.json",
+                "tests/test_verification.py",
+            ],
+            "forbidden_paths": [
+                "docs/project-control/",
+                "descriptors/",
+                "tasks/",
+                ".github/",
+            ],
+        },
+        "worker_requirements": {
+            "adapter": "antigravity",
+            "isolated_worktree": True,
+            "timeout_seconds": 180,
+        },
+        "evidence_requirements": {
+            "minimum_level": min_level,
+            "required_checks": req_checks,
+        },
+        "retry_policy": {
+            "max_retries": 0,
+            "retry_count": 0,
+            "auto_retry_on_semantic_failure": False,
+            "on_exhausted": "HOLD",
+        },
+    }
+
+
+def make_valid_snapshot(
+    project_id: str = "aos",
+    source_sha: str = "baeed4b78b20fa22a87740641cc8898f385f58cb",
+    exec_base_sha: str = "3779c0a195301ec585a59537db5baa8df86228cf",
+    current_milestone: str = "AOS-4",
+    has_ambiguity: bool = False,
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "0.1.0",
+        "project_id": project_id,
+        "repository": "MertSGI/AOS",
+        "source_ref": "feature/aos-4-independent-verification-hold",
+        "source_sha": source_sha,
+        "current_status": "CONTROLLED_EXECUTION_PROVEN",
+        "current_milestone": current_milestone,
+        "canonical_next_action": "Implement generic deterministic independent verification",
+        "next_action_execution_base_sha": exec_base_sha,
+        "has_ambiguity": has_ambiguity,
+        "ambiguity_reasons": ["Ambiguity in control plane"] if has_ambiguity else [],
+        "input_file_hashes": {
+            "state": "0" * 64,
+        },
+    }
+
+
+def make_valid_descriptor(
+    project_id: str = "aos",
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "0.1.0",
+        "project_id": project_id,
+        "repository": "MertSGI/AOS",
+        "control_ref": "feature/aos-4-independent-verification-hold",
+        "description": "AOS project descriptor",
+        "control": {
+            "state": "docs/project-control/STATE.json",
+        },
+        "projection": {
+            "current_status_pointer": "/status",
+            "current_milestone_pointer": "/current_gate",
+            "canonical_next_action_pointer": "/next_action",
+        },
+        "authority": {
+            "production_mutation": "human_required",
+        },
+        "workers": {
+            "branch_prefix": "aos/",
+            "isolated_worktree_required": True,
+            "max_concurrent_workers": 1,
+        },
+    }
+
+
+def make_valid_evidence(
+    evidence_id: str = "EVID-AOS4-001",
+    project: str = "aos",
+    gate: str = "AOS-4",
+    task_id: str = "AOS4-REF-001",
+    evidence_level: str = "E3_ISOLATED_RUNTIME_PROVEN",
+    base_sha: str = "3779c0a195301ec585a59537db5baa8df86228cf",
+    result: str = "PASS",
+    artifacts: List[str] | None = None,
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "0.1.0",
+        "evidence_id": evidence_id,
+        "timestamp": "2026-08-25T10:28:10.666976+00:00",
+        "project": project,
+        "gate": gate,
+        "task_id": task_id,
+        "type": "automated_verification",
+        "claim": "Deterministic independent verification passed with zero regressions",
+        "evidence_level": evidence_level,
+        "revision": {
+            "commit_sha": base_sha,
+            "base_sha": base_sha,
+            "branch": "aos/aos4-ref-001",
+            "status": "VERIFIED",
+        },
+        "result": result,
+        "artifacts": artifacts or [],
+        "limitations": [
+            "Deterministic isolated verification proof only",
+        ],
+    }
+
+
+class TestSchemaValidationAndContracts:
+    """Test schema validity and contract validation for verification_result.schema.json."""
+
+    def test_schema_file_exists_and_valid_draft_2020_12(self):
+        schema_path = SCHEMA_DIR / "verification_result.schema.json"
+        assert schema_path.is_file(), f"Schema file not found at {schema_path}"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["$id"] == "https://schemas.mertsgi.org/aos/v0.1/verification_result.schema.json"
+
+    def test_validate_document_supports_verification_result(self):
+        res_obj = IndependentVerifier().verify(
+            execution_result=make_valid_execution_result(),
+            task=make_valid_task(),
+            snapshot=make_valid_snapshot(),
+        )
+        val = validate_document("verification_result", res_obj.to_dict())
+        assert val.is_valid is True
+        assert len(val.errors) == 0
+
+    def test_unknown_top_level_field_rejected(self):
+        res_obj = IndependentVerifier().verify(
+            execution_result=make_valid_execution_result(),
+            task=make_valid_task(),
+            snapshot=make_valid_snapshot(),
+        )
+        data = res_obj.to_dict()
+        data["_unauthorized_unknown_field"] = "bad"
+        val = validate_document("verification_result", data)
+        assert val.is_valid is False
+        assert any("_unauthorized_unknown_field" in e.message for e in val.errors)
+
+    def test_extensions_object_accepted(self):
+        res_obj = IndependentVerifier().verify(
+            execution_result=make_valid_execution_result(),
+            task=make_valid_task(),
+            snapshot=make_valid_snapshot(),
+        )
+        data = res_obj.to_dict()
+        data["extensions"] = {"custom_metric": 42, "metadata": {"note": "accepted"}}
+        val = validate_document("verification_result", data)
+        assert val.is_valid is True
+
+
+class TestIndependentVerificationScenarios:
+    """Tests covering all required AOS-4 independent verification scenarios."""
+
+    def test_scenario_1_valid_pass(self):
+        """Scenario 1: Valid PASS with all requirements satisfied authorizes closure."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+        desc = make_valid_descriptor()
+        evidence = [make_valid_evidence()]
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+            descriptor=desc,
+            evidence_records=evidence,
+        )
+
+        assert res.disposition == "PASS"
+        assert res.closure_authorized is True
+        assert res.is_pass is True
+        assert res.is_hold is False
+        assert len(res.reasons) == 0
+        assert len(res.errors) == 0
+        assert all(c["status"] == "PASS" for c in res.checks)
+
+        # Output dictionary validates against schema
+        val = validate_document("verification_result", res.to_dict())
+        assert val.is_valid is True
+
+    def test_scenario_2_failing_deterministic_test_holds(self):
+        """Scenario 2: Failing runner check causes verification HOLD and blocks closure."""
+        failed_checks = [
+            {"check_id": "project:aos4_verification_foundation_tests", "status": "FAIL", "message": "1 test failed"},
+            {"check_id": "project:aos_full_regression", "status": "PASS"},
+        ]
+        exec_res = make_valid_execution_result(
+            disposition="VERIFICATION_FAILED",
+            verification_checks=failed_checks,
+            errors=["Check 'aos4_verification_foundation_tests' failed with exit code 1"],
+        )
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert res.is_pass is False
+        assert res.is_hold is True
+        assert any("aos4_verification_foundation_tests" in r for r in res.reasons)
+        assert any(c["check_id"] == "verification_checks_contract" and c["status"] == "FAIL" for c in res.checks)
+
+    def test_scenario_3_claimed_artifact_absent_holds(self):
+        """Scenario 3: Executor claims browser/artifact proof but artifact is absent -> HOLD."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+        evidence = [
+            make_valid_evidence(artifacts=["docs/proofs/missing_artifact.png"])
+        ]
+
+        def fake_artifacts_checker(path: str) -> bool:
+            return False  # Artifact is missing
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+            evidence_records=evidence,
+            artifacts_checker=fake_artifacts_checker,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("missing_artifact.png" in r for r in res.reasons)
+        assert any(c["check_id"] == "evidence_metadata" and c["status"] == "FAIL" for c in res.checks)
+
+    def test_scenario_4_stale_control_sha_holds(self):
+        """Scenario 4: Stale control SHA or execution base SHA mismatch -> HOLD."""
+        exec_res = make_valid_execution_result(
+            control_sha="1111111111111111111111111111111111111111",
+            exec_base_sha="3779c0a195301ec585a59537db5baa8df86228cf",
+        )
+        task = make_valid_task()
+        snap = make_valid_snapshot(source_sha="baeed4b78b20fa22a87740641cc8898f385f58cb")
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Control source SHA mismatch" in r for r in res.reasons)
+        assert any(c["check_id"] == "revision_authority" and c["status"] == "FAIL" for c in res.checks)
+
+    def test_scenario_4b_stale_execution_base_sha_holds(self):
+        """Scenario 4b: Execution base SHA mismatch between task and execution result -> HOLD."""
+        exec_res = make_valid_execution_result(
+            exec_base_sha="2222222222222222222222222222222222222222",
+        )
+        task = make_valid_task(base_sha="3779c0a195301ec585a59537db5baa8df86228cf")
+        snap = make_valid_snapshot(exec_base_sha="3779c0a195301ec585a59537db5baa8df86228cf")
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Execution base SHA mismatch" in r for r in res.reasons)
+
+    def test_scenario_5_scope_violation_holds(self):
+        """Scenario 5: Workspace mutation scope violation -> HOLD."""
+        exec_res = make_valid_execution_result(
+            changed_paths=[
+                "src/aos/verification.py",
+                "docs/project-control/STATE.json",  # Forbidden!
+            ]
+        )
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("docs/project-control/STATE.json" in v or "forbidden" in v.lower() for v in res.violations)
+        assert any(c["check_id"] == "scope_guard" and c["status"] == "FAIL" for c in res.checks)
+
+    def test_scenario_6_contradictory_evidence_holds(self):
+        """Scenario 6: Contradictory accepted evidence records -> HOLD."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+
+        ev1 = make_valid_evidence(evidence_id="EVID-1", result="PASS")
+        ev2 = make_valid_evidence(evidence_id="EVID-1", result="FAIL")  # Contradiction on same ID
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+            evidence_records=[ev1, ev2],
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Contradictory evidence results" in r for r in res.reasons)
+        assert any(c["check_id"] == "evidence_contradiction" and c["status"] == "FAIL" for c in res.checks)
+
+    def test_scenario_6b_evidence_contradicts_worker_failure(self):
+        """Scenario 6b: Evidence claims PASS while execution disposition is WORKER_FAILED -> HOLD."""
+        exec_res = make_valid_execution_result(
+            disposition="WORKER_FAILED",
+            worker_exit_code=1,
+        )
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+        ev = make_valid_evidence(result="PASS")
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+            evidence_records=[ev],
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("claims 'PASS' but execution result disposition is 'WORKER_FAILED'" in r for r in res.reasons)
+
+
+class TestFailClosedGuardsAndBoundaries:
+    """Test fail-closed behavior on malformed inputs and self-attestation boundary."""
+
+    def test_malformed_evidence_fails_closed(self):
+        """Evidence missing required fields fails closed."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        malformed_ev = {
+            "schema_version": "0.1.0",
+            "evidence_id": "EVID-MALFORMED",
+            # missing timestamp, project, gate, type, claim, evidence_level, result, limitations
+        }
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            evidence_records=[malformed_ev],
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Evidence schema invalid" in r for r in res.reasons)
+
+    def test_malformed_execution_result_fails_closed(self):
+        """Malformed execution result fails closed."""
+        malformed_exec = {"schema_version": "0.1.0", "project_id": "aos"}
+        res = verify_controlled_execution(execution_result=malformed_exec)
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("ControlledExecutionResult schema invalid" in r for r in res.reasons)
+
+    def test_non_dict_execution_result_fails_closed(self):
+        """Non-dict execution result fails closed without raising unhandled exceptions."""
+        res = verify_controlled_execution(execution_result="not-a-dict")
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+
+    def test_worker_timeout_fails_closed(self):
+        """Worker timeout causes HOLD."""
+        exec_res = make_valid_execution_result(
+            disposition="WORKER_FAILED",
+            worker_timed_out=True,
+            worker_exit_code=None,
+        )
+        res = verify_controlled_execution(execution_result=exec_res)
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Worker execution timed out" in r for r in res.reasons)
+
+    def test_unproven_worker_capability_fails_closed(self):
+        """UNPROVEN worker capability causes HOLD."""
+        exec_res = make_valid_execution_result()
+        exec_res["worker_capability_status"] = "UNPROVEN"
+        res = verify_controlled_execution(execution_result=exec_res)
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("UNPROVEN" in r for r in res.reasons)
+
+    def test_unauthorized_commit_head_change_fails_closed(self):
+        """Worker moving HEAD or creating unauthorized commits causes HOLD."""
+        exec_res = make_valid_execution_result()
+        exec_res["final_head_sha"] = "9999999999999999999999999999999999999999"
+        res = verify_controlled_execution(execution_result=exec_res)
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("HEAD change" in r for r in res.reasons)
+
+    def test_insufficient_evidence_level_fails_closed(self):
+        """Evidence level below task required minimum fails closed."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task(min_level="E3_ISOLATED_RUNTIME_PROVEN")
+        evidence = [
+            make_valid_evidence(evidence_level="E1_LOCAL_SOURCE")  # E1 < E3
+        ]
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            evidence_records=evidence,
+        )
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("does not meet required minimum level" in r for r in res.reasons)
+
+    def test_missing_required_task_check_fails_closed(self):
+        """Missing required check from task evidence_requirements causes HOLD."""
+        exec_res = make_valid_execution_result(
+            verification_checks=[
+                {"check_id": "project:aos4_verification_foundation_tests", "status": "PASS"}
+                # missing 'aos_full_regression'
+            ]
+        )
+        task = make_valid_task(required_checks=["aos4_verification_foundation_tests", "aos_full_regression"])
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+        )
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("aos_full_regression" in r for r in res.reasons)
+
+    def test_executor_claim_alone_never_authorizes_closure(self):
+        """Executor claiming VERIFIED_CANDIDATE alone without snapshot match never authorizes closure."""
+        exec_res = make_valid_execution_result(disposition="VERIFIED_CANDIDATE")
+        # Provide mismatched snapshot
+        snap = make_valid_snapshot(current_milestone="AOS-3")  # Snapshot is at AOS-3, task is AOS-4
+        task = make_valid_task(gate="AOS-4")
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("Gate mismatch" in r for r in res.reasons)
+
+    def test_snapshot_ambiguity_causes_hold(self):
+        """Snapshot with has_ambiguity=True causes verification HOLD."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        snap = make_valid_snapshot(has_ambiguity=True)
+
+        res = verify_controlled_execution(
+            execution_result=exec_res,
+            task=task,
+            snapshot=snap,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.closure_authorized is False
+        assert any("ambiguity" in r.lower() for r in res.reasons)
+
+    def test_verifier_boundary_is_pure_and_idempotent(self):
+        """Verifier does not mutate inputs and produces identical results across multiple calls."""
+        exec_res = make_valid_execution_result()
+        task = make_valid_task()
+        snap = make_valid_snapshot()
+        exec_copy = json.loads(json.dumps(exec_res))
+
+        verifier = IndependentVerifier()
+        res1 = verifier.verify(exec_res, task=task, snapshot=snap)
+        res2 = verifier.verify(exec_res, task=task, snapshot=snap)
+
+        assert exec_res == exec_copy, "Verifier must not mutate input execution_result"
+        assert res1.disposition == res2.disposition == "PASS"
+        assert res1.closure_authorized == res2.closure_authorized is True
+        assert len(res1.checks) == len(res2.checks)

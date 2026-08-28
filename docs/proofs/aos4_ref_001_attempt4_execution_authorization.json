@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
+  "project_id": "aos",
+  "task_id": "AOS4-REF-001",
+  "gate": "AOS-4",
+  "risk_class": "R1",
+  "decision": "AUTO_EXECUTE",
+  "authority_source": "POLICY_AUTONOMOUS",
+  "reason_codes": [
+    "RISK_CLASS_R1_ISOLATED_NONPROD_AUTO_EXECUTE"
+  ],
+  "human_critical_categories": [],
+  "forbidden_categories": [],
+  "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "control_source_sha": "50b36578685c4bd4d307d5fdad24e1a1f63a6a01",
+  "timestamp": "2026-08-26T13:41:49.000000+00:00"
+}

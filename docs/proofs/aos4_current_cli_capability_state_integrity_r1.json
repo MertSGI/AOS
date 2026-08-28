@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_CURRENT_CLI_CAPABILITY_STATE_INTEGRITY_R1",
+  "base_control_sha": "fabba53a5933190443d85ee62c3765b9d433245c",
+  "stage_10x_probe_technical_result": "PASS",
+  "stage_10x_independent_review_result": "HOLD",
+  "primary_defect": "DUPLICATE_JSON_KEY_COLLISION_IN_STATE_EXTENSIONS",
+  "structural_gap": "CANONICAL_JSON_VALIDATOR_DID_NOT_REJECT_DUPLICATE_OBJECT_KEYS",
+  "duplicate_key": "current_machine_capability_independent_review_status",
+  "conflicting_values": [
+    "PENDING_CURRENT_IDENTITY_REVIEW",
+    "INDEPENDENTLY_ACCEPTED"
+  ],
+  "historical_value_classification": "PRIOR_IDENTITY_1_1_20",
+  "current_value_classification": "CURRENT_IDENTITY_1_1_21_REVIEW_PENDING",
+  "corrections": {
+    "canonical_state_duplicate_removed": true,
+    "historical_fields_renamed_prior_identity": true,
+    "historical_values_preserved": true,
+    "current_identity_review_status": "PENDING_CURRENT_IDENTITY_REVIEW",
+    "strict_duplicate_json_key_detection_added": true,
+    "strict_json_file_validation": true,
+    "strict_jsonl_validation": true,
+    "strict_schema_json_loading": true,
+    "duplicate_nested_key_rejected": true,
+    "duplicate_jsonl_key_rejected": true,
+    "existing_stage_10x_probe_reused": true,
+    "capability_probe_rerun": false,
+    "machine_local_attestation_mutated": false
+  },
+  "stage_10x_artifacts": {
+    "probe_id": "PROBE-20260828-061638-d851efb7",
+    "probe_proof_sha256": "63611cceda4ffe6cafee97357ea0853adb7d87ad2d49bfd8a59f5ef20a6bc9d6",
+    "attestation_sha256": "1f3436d81a1c315187f10bbe34c3435a9b9c57b5d6f2ded9774f14d277d45f04",
+    "reattestation_summary_sha256": "205c4ac8b2345b26f5801130dcc0841c7a49c3acbc4797c648022363306fb1ac"
+  },
+  "current_machine_capability_status": "PROVEN_REVIEW_PENDING",
+  "current_machine_capability_runtime_resolution": "PROVEN",
+  "attempt_6_authorized": false,
+  "attempt_6_executed": false,
+  "independent_review_status": "PENDING",
+  "result": "PASS",
+  "limitations": [
+    "correction does not independently accept current capability",
+    "Stage 10X runtime proof was not rerun",
+    "CLI drift root cause remains UNCLASSIFIED",
+    "no machine-local runtime or attestation mutation occurred",
+    "Attempt #6 remains unauthorized",
+    "does not close AOS-4"
+  ]
+}

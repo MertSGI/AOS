@@ -1,0 +1,59 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "AOS4_ATTEMPT4_INDEPENDENT_FAILURE_REVIEW",
+  "task_id": "AOS4-REF-001",
+  "attempt": 4,
+  "review_control_sha": "a6194379bf122797561eb773ccfa485e8de5dbf6",
+  "execution_control_source_sha": "9d48f2e626b51e9592155b8891edf8e442c1abfe",
+  "execution_base_sha": "d8ed009da7c26ceff153ada29ab9e78526d925c7",
+  "terminal_disposition": "VERIFICATION_FAILED",
+  "review_result": "INDEPENDENTLY_ACCEPTED_VERIFICATION_FAILED",
+  "authoritative_contradiction": false,
+  "scenario_1": {
+    "failure_class": "TEST_FIXTURE_CONTRACT_DRIFT",
+    "root_cause": "INVALID_TEST_FIXTURE_DESCRIPTOR",
+    "fault_location": "tests/test_verification.py",
+    "verifier_behavior": "CORRECT_FAIL_CLOSED",
+    "verifier_core_defect_proven": false,
+    "missing_descriptor_control_fields": [
+      "decisions",
+      "evidence",
+      "roadmap"
+    ],
+    "missing_descriptor_authority_fields": [
+      "roadmap_change",
+      "destructive_data"
+    ]
+  },
+  "full_regression": {
+    "configured_timeout_seconds": 180,
+    "attempt_result": "TIMEOUT",
+    "failure_class": "VERIFICATION_TIMEOUT_BUDGET_NOT_ROBUST_ON_OBSERVED_WINDOWS_HOST",
+    "candidate_caused_timeout_proven": false,
+    "hang_proven": false,
+    "observed_clean_windows_control_durations_seconds": [
+      276.5,
+      294.53
+    ],
+    "exact_sha_ci_control_sha": "a6194379bf122797561eb773ccfa485e8de5dbf6",
+    "exact_sha_ci_run_id": 32996165112,
+    "exact_sha_ci_result": "SUCCESS",
+    "recommended_bounded_timeout_seconds": 420,
+    "recommended_timeout_change_implemented": false
+  },
+  "remediation_required": true,
+  "remediation_items": [
+    "TEST_FIXTURE_CONTRACT_DRIFT_INVALID_VALID_DESCRIPTOR_FIXTURE",
+    "FULL_REGRESSION_TIMEOUT_BUDGET_NOT_ROBUST_ON_WINDOWS_HOST"
+  ],
+  "attempt_5_authorized": false,
+  "attempt_5_executed": false,
+  "limitations": [
+    "Review accepts the Attempt #4 VERIFICATION_FAILED result, not the worker implementation.",
+    "No quarantine code was executed during review.",
+    "Timeout candidate causation is not proven.",
+    "420-second timeout is only a bounded remediation recommendation.",
+    "No Attempt #5 authority exists.",
+    "This review does not close AOS-4."
+  ]
+}
