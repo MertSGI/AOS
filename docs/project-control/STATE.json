@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "FULL_REGRESSION_TIMEOUT_600_REMEDIATED_INDEPENDENT_REVIEW_PENDING",
+    "status": "FULL_REGRESSION_TIMEOUT_INDEPENDENTLY_ACCEPTED_CAPABILITY_REATTESTATION_NEXT",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the bounded 600-second full-regression timeout remediation and three fresh Windows runtime observations. If accepted, proceed to a separately governed fresh capability re-attestation for the current dedicated Antigravity CLI identity. Attempt #6 remains unauthorized.",
+    "next_action": "Perform a separately governed fresh capability re-attestation for the current dedicated Antigravity CLI identity. Do not evaluate or authorize Attempt #6 until the fresh current-identity capability proof is independently accepted.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "FULL_REGRESSION_TIMEOUT_600_REMEDIATED_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "FULL_REGRESSION_TIMEOUT_INDEPENDENTLY_ACCEPTED_CAPABILITY_REATTESTATION_NEXT",
             "current_machine_capability_status": "UNPROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -159,7 +159,7 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 6,
-            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT5_MULTI_REMEDIATION",
+            "next_execution_authorization_status": "BLOCKED_ON_CURRENT_CLI_CAPABILITY_REATTESTATION",
             "attempt_5_authorization_id": "AOS4-REF-001-R1-ATTEMPT5-POLICY-20260826T191645Z",
             "attempt_5_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_5_authorization_decision": "AUTO_EXECUTE",
@@ -298,9 +298,19 @@
             "full_regression_timeout_fresh_windows_headroom_seconds": 421.3799,
             "full_regression_timeout_runtime_validation_status": "PASS",
             "full_regression_timeout_robustness_status": "ROBUST_AGAINST_CURRENT_ACCEPTED_AND_THREE_FRESH_WINDOWS_OBSERVATIONS",
-            "full_regression_timeout_remediation_status": "COMPLETE_REVIEW_PENDING",
-            "full_regression_timeout_remediation_required": true,
+            "full_regression_timeout_remediation_status": "INDEPENDENTLY_ACCEPTED",
+            "full_regression_timeout_remediation_required": false,
             "full_regression_timeout_remediation_proof": "docs/proofs/aos4_full_regression_timeout_600_remediation.json",
+            "full_regression_timeout_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "full_regression_timeout_independent_review_result": "PASS",
+            "full_regression_timeout_independent_review_control_sha": "e74f354ad11bfc116596380b0c6b4e245ad42556",
+            "full_regression_timeout_independent_review_proof": "docs/proofs/aos4_full_regression_timeout_600_independent_review.json",
+            "full_regression_timeout_exact_sha_ci_run_id": 33146090542,
+            "full_regression_timeout_exact_sha_ci_job_id": 98767351119,
+            "full_regression_timeout_exact_sha_ci_result": "SUCCESS",
+            "full_regression_timeout_windows_suite_cardinality": 427,
+            "full_regression_timeout_linux_suite_cardinality": 427,
+            "full_regression_timeout_suite_cardinality_consistent": true,
             "attempt_4_authorization_id": "AOS4-REF-001-R1-ATTEMPT4-POLICY-20260826T134149Z",
             "attempt_4_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_4_authorization_decision": "AUTO_EXECUTE",
