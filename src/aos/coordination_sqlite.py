@@ -1,18 +1,16 @@
-"""AOS-5 Distributed Multi-PC Coordination — Stage 11B-R1 SQLite Coordination Backend.
+"""AOS-5 Distributed Multi-PC Coordination — Stage 11B-R2 Final SQLite Coordination Backend.
 
 Durable local SQLite reference implementation of CoordinationBackend:
 - Versioned SQLite storage (schema version 0.1.0)
-- Non-destructive existing store classification prior to DDL mutation
-- Strict capability tag JSON array decoding
-- Strict lease row temporal integrity validation
-- Bounded integer busy timeout validation
-- All SQLite storage errors mapped to CoordinationStorageError
-- Transactional cross-instance atomic claim (BEGIN IMMEDIATE / COMMIT / ROLLBACK)
-- Explicit database path required
-- Restart persistence (registered workers, leases, fencing generations)
-- Non-canonical coordination store isolation (zero Git/project mutation)
+- Strict non-destructive pre-validation of SQLite primary keys:
+  - meta: PRIMARY KEY (key) [pk ordinal 1]
+  - workers: COMPOSITE PRIMARY KEY (worker_id, session_id) [pk ordinals 1, 2]
+  - leases: PRIMARY KEY (task_id) [pk ordinal 1]
+- Strict _parse_worker_row decoder validating registered_at on all worker read paths
+- Full LeaseSnapshot equality binding for concurrent claim results
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import math
@@ -58,6 +56,12 @@ EXPECTED_COLUMNS = {
     },
 }
 
+EXPECTED_PRIMARY_KEYS = {
+    "meta": [("key", 1)],
+    "workers": [("worker_id", 1), ("session_id", 2)],
+    "leases": [("task_id", 1)],
+}
+
 INIT_SCHEMA_SQL_STATEMENTS = [
     """
     CREATE TABLE meta (
@@ -89,6 +93,14 @@ INIT_SCHEMA_SQL_STATEMENTS = [
     );
     """,
 ]
+
+
+@dataclass(frozen=True)
+class WorkerStorageRow:
+    worker_id: str
+    session_id: str
+    capability_tags: FrozenSet[str]
+    registered_at: datetime
 
 
 def _validate_busy_timeout_ms(val: int) -> int:
@@ -155,6 +167,28 @@ def _decode_capability_tags_json(raw_json: str) -> FrozenSet[str]:
     return frozenset(seen)
 
 
+def _parse_worker_row(row: tuple) -> WorkerStorageRow:
+    if len(row) != 4:
+        raise CoordinationStorageError("Corrupt worker row: incorrect column count")
+
+    worker_id, session_id, tags_json, registered_at_str = row
+
+    if not isinstance(worker_id, str) or not worker_id.strip():
+        raise CoordinationStorageError("Corrupt worker_id in worker row")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise CoordinationStorageError("Corrupt session_id in worker row")
+
+    tags = _decode_capability_tags_json(tags_json)
+    registered_at = _iso_to_datetime(registered_at_str)
+
+    return WorkerStorageRow(
+        worker_id=worker_id,
+        session_id=session_id,
+        capability_tags=tags,
+        registered_at=registered_at,
+    )
+
+
 class SQLiteCoordinationBackend:
     """Durable local SQLite reference backend implementing CoordinationBackend protocol."""
 
@@ -199,7 +233,6 @@ class SQLiteCoordinationBackend:
     def _init_db(self) -> None:
         conn = self._connect()
         try:
-            # Check if database file was already non-empty / contained tables before any DDL
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
             existing_tables = {row[0] for row in cursor.fetchall()}
 
@@ -215,20 +248,31 @@ class SQLiteCoordinationBackend:
                 conn.execute("COMMIT;")
                 return
 
-            # EXISTING STORE: Validate structure and schema version BEFORE ANY MUTATION
+            # EXISTING STORE: Validate structure, primary keys, and schema version BEFORE ANY MUTATION
             if "meta" not in existing_tables:
                 raise CoordinationStorageError("Existing database is missing required 'meta' table")
 
-            # Check table presence
             if not EXPECTED_TABLES.issubset(existing_tables):
                 raise CoordinationStorageError("Existing database is missing required AOS tables")
 
-            # Check column structure
+            # Check column structure and primary key contract
             for tbl, req_cols in EXPECTED_COLUMNS.items():
                 cursor = conn.execute(f"PRAGMA table_info({tbl});")
-                cols = {row[1] for row in cursor.fetchall()}
+                table_info = cursor.fetchall()
+                # table_info row: (cid, name, type, notnull, dflt_value, pk)
+                cols = {row[1] for row in table_info}
                 if not req_cols.issubset(cols):
                     raise CoordinationStorageError(f"Existing table '{tbl}' missing required columns")
+
+                pk_cols = sorted(
+                    [(row[1], row[5]) for row in table_info if row[5] > 0],
+                    key=lambda x: x[1],
+                )
+                expected_pks = EXPECTED_PRIMARY_KEYS.get(tbl, [])
+                if pk_cols != expected_pks:
+                    raise CoordinationStorageError(
+                        f"Existing table '{tbl}' primary key structure {pk_cols} does not match expected {expected_pks}"
+                    )
 
             # Check schema version
             cursor = conn.execute("SELECT value FROM meta WHERE key = 'schema_version';")
@@ -268,13 +312,13 @@ class SQLiteCoordinationBackend:
         try:
             conn.execute("BEGIN IMMEDIATE;")
             cursor = conn.execute(
-                "SELECT capability_tags_json FROM workers WHERE worker_id = ? AND session_id = ?;",
+                "SELECT worker_id, session_id, capability_tags_json, registered_at FROM workers WHERE worker_id = ? AND session_id = ?;",
                 (identity.worker_id, identity.session_id),
             )
             row = cursor.fetchone()
             if row is not None:
-                existing_tags = _decode_capability_tags_json(row[0])
-                if existing_tags == identity.capability_tags:
+                worker_row = _parse_worker_row(row)
+                if worker_row.capability_tags == identity.capability_tags:
                     # Idempotent re-registration
                     conn.execute("COMMIT;")
                     return
@@ -311,10 +355,16 @@ class SQLiteCoordinationBackend:
         conn = self._connect()
         try:
             cursor = conn.execute(
-                "SELECT 1 FROM workers WHERE worker_id = ? AND session_id = ?;",
+                "SELECT worker_id, session_id, capability_tags_json, registered_at FROM workers WHERE worker_id = ? AND session_id = ?;",
                 (worker_id.strip(), session_id.strip()),
             )
-            return cursor.fetchone() is not None
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            _parse_worker_row(row)
+            return True
+        except (CoordinationStorageError, InvalidClockError):
+            raise
         except sqlite3.Error as exc:
             raise CoordinationStorageError(f"Database error during is_worker_registered: {exc}") from exc
         finally:
@@ -415,7 +465,7 @@ class SQLiteCoordinationBackend:
 
             # Check registration
             cursor = conn.execute(
-                "SELECT capability_tags_json FROM workers WHERE worker_id = ? AND session_id = ?;",
+                "SELECT worker_id, session_id, capability_tags_json, registered_at FROM workers WHERE worker_id = ? AND session_id = ?;",
                 (identity.worker_id, identity.session_id),
             )
             row = cursor.fetchone()
@@ -423,8 +473,8 @@ class SQLiteCoordinationBackend:
                 conn.execute("ROLLBACK;")
                 raise InvalidIdentityError("Worker identity must be registered prior to claiming tasks")
 
-            registered_tags = _decode_capability_tags_json(row[0])
-            if registered_tags != identity.capability_tags:
+            worker_row = _parse_worker_row(row)
+            if worker_row.capability_tags != identity.capability_tags:
                 conn.execute("ROLLBACK;")
                 raise InvalidIdentityError("Worker identity tags do not match registered identity")
 
