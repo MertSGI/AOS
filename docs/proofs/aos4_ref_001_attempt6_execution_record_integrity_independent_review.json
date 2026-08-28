@@ -1,0 +1,65 @@
+{
+  "schema_version": "0.1.0",
+  "proof_type": "INDEPENDENT_AOS4_ATTEMPT6_EXECUTION_RECORD_INTEGRITY_REVIEW",
+  "reviewed_control_sha": "0639d49eacce96578a463cd4b9008c04659cd5e3",
+  "reviewed_parent_sha": "865b239d8134d33c175d02c8a570ae50995cf436",
+  "reviewed_branch": "feature/aos-4-independent-verification-hold",
+  "reviewed_r1_proof": {
+    "path": "docs/proofs/aos4_ref_001_attempt6_execution_record_integrity_r1.json",
+    "git_blob": "cec8a23096f55bfbaeacff312f42c82ed1513623",
+    "sha256": "670ad65a7d0da3a0dbf6d722e70065d1fcac291ac9c135e76f002dede9c6384b"
+  },
+  "immutable_execution_artifacts": {
+    "raw_execution_git_blob": "4304ec66ef55fa4d6ba62616efd8e446045982ad",
+    "raw_execution_sha256": "5cb9ff363ee3d817863236b8d78df00b31b03947250328de9ae93cd1be7b10a8",
+    "controller_result_git_blob": "4cc95ed0c74e9aa1e363f951b82afecbb431f136",
+    "controller_result_sha256": "3f91dc65cece1ae18438e1333f3caad60be548e384c5c81ba16ba711ca8b51a4"
+  },
+  "accepted_record_integrity": {
+    "historical_ev0045_preserved": true,
+    "corrective_ev0046_appended": true,
+    "temporal_contradiction_explicitly_recorded": true,
+    "authorization_control_source_sha": "6a932c29fdc2c0900a053862fe1da1ba79aa2af7",
+    "execution_carrier_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+    "engine_control_source_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+    "control_sha_semantics_disambiguated": true,
+    "terminal_disposition_bound": true,
+    "raw_execution_proof_bound": true,
+    "controller_result_proof_bound": true,
+    "candidate_identity_bound": true,
+    "candidate_manifest_bound": true,
+    "required_execution_details_complete": true
+  },
+  "candidate": {
+    "candidate_id": "cand_11807a536a5a4af2",
+    "manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
+    "persistence_status": "PERSISTED",
+    "semantic_review_status": "PENDING"
+  },
+  "exact_sha_ci": {
+    "run_id": 33163397548,
+    "job_id": 98822981064,
+    "result": "SUCCESS",
+    "pytest_passed": 442,
+    "pytest_deselected": 1,
+    "pytest_duration_seconds": 8.37,
+    "state_validation": "PASS",
+    "evidence_validation": "PASS"
+  },
+  "independent_review_status": "INDEPENDENTLY_ACCEPTED",
+  "independent_review_result": "PASS",
+  "security_correctness_blocker": false,
+  "authoritative_contradiction": false,
+  "attempt_6_rerun": false,
+  "retry_authorized": false,
+  "candidate_semantic_review_status": "PENDING",
+  "result": "PASS",
+  "limitations": [
+    "this acceptance covers execution-record integrity only",
+    "it does not independently accept candidate source content",
+    "candidate-store contents have not yet been inspected by this stage",
+    "Attempt #6 remains consumed and terminal",
+    "no retry is authorized",
+    "AOS-4 remains open"
+  ]
+}

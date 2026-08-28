@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT6_EXECUTION_RECORD_INTEGRITY_CORRECTED_INDEPENDENT_REVIEW_PENDING",
+    "status": "ATTEMPT6_EXECUTION_RECORD_INDEPENDENTLY_ACCEPTED_CANDIDATE_SEMANTIC_REVIEW_NEXT",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the corrected Attempt #6 canonical execution record against the immutable raw execution result and controller result. Do not rerun Attempt #6, authorize a retry, or accept the candidate until record integrity passes. Candidate semantic/materialized-content review follows separately.",
+    "next_action": "Materialize and canonically record the persisted Attempt #6 candidate manifest and exact four-path diff in a read-only bounded stage. Do not mutate the candidate, rerun Attempt #6, or authorize a retry. Independent semantic review of the materialized candidate follows before any AOS-4 closure.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT6_EXECUTION_RECORD_INTEGRITY_CORRECTED_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "ATTEMPT6_EXECUTION_RECORD_INDEPENDENTLY_ACCEPTED_CANDIDATE_SEMANTIC_REVIEW_NEXT",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -175,7 +175,7 @@
                 "final_retarget_ci_run_id": 32826283683
             },
             "next_execution_attempt_number": 6,
-            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_INDEPENDENT_REVIEW",
+            "next_execution_authorization_status": "BLOCKED_ON_ATTEMPT6_CANDIDATE_SEMANTIC_REVIEW",
             "attempt_6_authorization_id": "AOS4-REF-001-R1-ATTEMPT6-POLICY-20260828T082650Z",
             "attempt_6_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_6_authorization_decision": "AUTO_EXECUTE",
@@ -235,8 +235,15 @@
                 "ATTEMPT6_TERMINAL_PROOF_AND_CANDIDATE_BINDINGS_MISSING_FROM_STATE",
                 "EV0045_REQUIRED_EXECUTION_DETAILS_INCOMPLETE"
             ],
-            "stage_10aa_r1_execution_record_integrity_status": "CORRECTED_REVIEW_PENDING",
+            "stage_10aa_r1_execution_record_integrity_status": "INDEPENDENTLY_ACCEPTED",
             "stage_10aa_r1_execution_record_integrity_proof": "docs/proofs/aos4_ref_001_attempt6_execution_record_integrity_r1.json",
+            "stage_10aa_r1_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+            "stage_10aa_r1_independent_review_result": "PASS",
+            "stage_10aa_r1_independent_review_control_sha": "0639d49eacce96578a463cd4b9008c04659cd5e3",
+            "stage_10aa_r1_independent_review_proof": "docs/proofs/aos4_ref_001_attempt6_execution_record_integrity_independent_review.json",
+            "stage_10aa_record_integrity_defects_resolved": true,
+            "attempt_6_execution_record_integrity_status": "INDEPENDENTLY_ACCEPTED",
+            "attempt_6_candidate_semantic_review_status": "PENDING",
             "attempt_5_authorization_id": "AOS4-REF-001-R1-ATTEMPT5-POLICY-20260826T191645Z",
             "attempt_5_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_5_authorization_decision": "AUTO_EXECUTE",
