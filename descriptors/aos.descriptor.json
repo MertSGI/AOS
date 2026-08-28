@@ -62,6 +62,16 @@
         ],
         "timeout_seconds": 120
       },
+      "aos5_sqlite_coordination_tests": {
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_coordination_sqlite.py"
+        ],
+        "timeout_seconds": 120
+      },
       "aos_full_regression": {
         "argv": [
           "python",
