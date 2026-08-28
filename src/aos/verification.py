@@ -522,7 +522,7 @@ class IndependentVerifier:
             ev_failed = False
             if isinstance(evidence, dict):
                 ev_result = evidence.get("result")
-                # Require evidence.result MUST be EXACTLY "PASS" for closure (Root Finding C)
+                # Require evidence.result MUST be EXACTLY "PASS" for closure
                 if ev_result != "PASS":
                     ev_failed = True
                     errors.append(f"Evidence result is '{ev_result}' (expected PASS)")
@@ -567,10 +567,9 @@ class IndependentVerifier:
             else:
                 checks.append(VerificationCheck("evidence_consistency", "PASS"))
 
-            # 6. Candidate Store & Physical Manifest Binding Integrity (Section 5, 6, 7, 8, 9)
+            # 6. Candidate Store & Physical Manifest Binding Integrity (Stage 10AE-R2 Hardened)
             art_failed = False
             if exec_disposition == "VERIFIED_CANDIDATE":
-                # Root Finding B: Require extensions object and extensions.candidate object
                 ext = execution_result.get("extensions")
                 if not isinstance(ext, dict):
                     art_failed = True
@@ -602,7 +601,7 @@ class IndependentVerifier:
                         art_failed = True
                         errors.append(f"Candidate ID '{cand_id}' is non-canonical or malformed")
 
-                    # Candidate extension binding to execution result (Section 6)
+                    # Candidate extension binding to execution result
                     cand_exec_base = cand_ext.get("execution_base_sha")
                     if cand_exec_base != exec_base_sha:
                         art_failed = True
@@ -618,7 +617,7 @@ class IndependentVerifier:
                         art_failed = True
                         errors.append(f"Candidate extension changed_paths '{cand_paths}' != execution_result changed_paths '{changed_paths}'")
 
-                    # Physical Candidate Store & Manifest Verification (Section 7, 8, 9)
+                    # Physical Candidate Store & Manifest Verification
                     if check_artifacts:
                         if not candidate_store_dir:
                             art_failed = True
@@ -653,7 +652,7 @@ class IndependentVerifier:
                                         art_failed = True
                                         errors.append(f"Candidate manifest SHA mismatch: on-disk '{actual_manifest_sha}' != claimed '{manifest_sha}'")
                                     else:
-                                        # Strict JSON parse of physical manifest (Section 8)
+                                        # Strict JSON parse of physical manifest
                                         try:
                                             manifest_data = load_json_strict(manifest_file)
                                         except Exception as ex:
@@ -696,65 +695,90 @@ class IndependentVerifier:
                                                 art_failed = True
                                                 errors.append("Manifest final_head_sha mismatch")
 
-                                            m_changed = manifest_data.get("changed_paths", [])
-                                            m_path_names = [cp.get("path") for cp in m_changed if isinstance(cp, dict)]
+                                            m_changed = manifest_data.get("changed_paths")
+                                            if not isinstance(m_changed, list):
+                                                art_failed = True
+                                                errors.append("Manifest changed_paths must be a list")
+                                                m_changed = []
+
+                                            m_path_names = []
+                                            for cp in m_changed:
+                                                if isinstance(cp, dict) and isinstance(cp.get("path"), str):
+                                                    m_path_names.append(cp["path"])
+
                                             if m_path_names != changed_paths:
                                                 art_failed = True
                                                 errors.append(f"Manifest changed paths '{m_path_names}' != execution_result changed_paths '{changed_paths}'")
 
-                                            # Physical Candidate Workspace File Byte Verification (Section 9)
+                                            # Physical Candidate Workspace File Byte & State Verification (Section 3 & 4)
                                             workspace_dir = cand_path / "workspace"
                                             for cp in m_changed:
-                                                if isinstance(cp, dict):
-                                                    rel_p_str = cp.get("path")
-                                                    m_st = cp.get("state")
-                                                    if not rel_p_str or not isinstance(rel_p_str, str):
-                                                        art_failed = True
-                                                        errors.append(f"Invalid manifest changed path string: {rel_p_str!r}")
-                                                        continue
+                                                if not isinstance(cp, dict):
+                                                    art_failed = True
+                                                    errors.append(f"Manifest changed_paths record is not a dictionary: {cp!r}")
+                                                    continue
 
-                                                    rel_path_obj = Path(rel_p_str)
-                                                    if rel_path_obj.is_absolute() or ".." in rel_p_str.replace("\\", "/").split("/"):
-                                                        art_failed = True
-                                                        errors.append(f"Manifest path '{rel_p_str}' is absolute or contains traversal")
-                                                        continue
+                                                rel_p_str = cp.get("path")
+                                                if not rel_p_str or not isinstance(rel_p_str, str) or not rel_p_str.strip():
+                                                    art_failed = True
+                                                    errors.append(f"Invalid or empty manifest changed path string: {rel_p_str!r}")
+                                                    continue
 
-                                                    target_ws_path = (workspace_dir / rel_path_obj).resolve()
+                                                rel_path_obj = Path(rel_p_str)
+                                                if rel_path_obj.is_absolute() or ".." in rel_p_str.replace("\\", "/").split("/"):
+                                                    art_failed = True
+                                                    errors.append(f"Manifest path '{rel_p_str}' is absolute or contains traversal")
+                                                    continue
+
+                                                target_ws_path = (workspace_dir / rel_path_obj).resolve()
+                                                try:
+                                                    if not target_ws_path.is_relative_to(workspace_dir.resolve()):
+                                                        art_failed = True
+                                                        errors.append(f"Manifest path '{rel_p_str}' escapes workspace")
+                                                        continue
+                                                except AttributeError:
                                                     try:
-                                                        if not target_ws_path.is_relative_to(workspace_dir.resolve()):
-                                                            art_failed = True
-                                                            errors.append(f"Manifest path '{rel_p_str}' escapes workspace")
-                                                            continue
-                                                    except AttributeError:
-                                                        try:
-                                                            target_ws_path.relative_to(workspace_dir.resolve())
-                                                        except ValueError:
-                                                            art_failed = True
-                                                            errors.append(f"Manifest path '{rel_p_str}' escapes workspace")
-                                                            continue
-
-                                                    if target_ws_path.is_symlink():
+                                                        target_ws_path.relative_to(workspace_dir.resolve())
+                                                    except ValueError:
                                                         art_failed = True
-                                                        errors.append(f"Manifest path '{rel_p_str}' is a symlink")
+                                                        errors.append(f"Manifest path '{rel_p_str}' escapes workspace")
                                                         continue
 
-                                                    if m_st == "PRESENT":
+                                                if target_ws_path.is_symlink():
+                                                    art_failed = True
+                                                    errors.append(f"Manifest path '{rel_p_str}' is a symlink")
+                                                    continue
+
+                                                m_st = cp.get("state")
+                                                if m_st == "PRESENT":
+                                                    sz = cp.get("size_bytes")
+                                                    sh = cp.get("sha256")
+                                                    if not isinstance(sz, int) or isinstance(sz, bool) or sz < 0:
+                                                        art_failed = True
+                                                        errors.append(f"Manifest PRESENT record size_bytes invalid for '{rel_p_str}': {sz!r}")
+                                                    elif not isinstance(sh, str) or not SHA256_REGEX.match(sh):
+                                                        art_failed = True
+                                                        errors.append(f"Manifest PRESENT record sha256 invalid for '{rel_p_str}': {sh!r}")
+                                                    else:
                                                         if not target_ws_path.exists() or not target_ws_path.is_file():
                                                             art_failed = True
                                                             errors.append(f"Candidate file missing or not a regular file: '{rel_p_str}'")
                                                         else:
                                                             act_sz = len(target_ws_path.read_bytes())
                                                             act_hash = _compute_file_sha256(target_ws_path)
-                                                            if act_sz != cp.get("size_bytes"):
+                                                            if act_sz != sz:
                                                                 art_failed = True
-                                                                errors.append(f"Candidate file size mismatch for '{rel_p_str}': actual {act_sz} != manifest {cp.get('size_bytes')}")
-                                                            if act_hash != cp.get("sha256"):
+                                                                errors.append(f"Candidate file size mismatch for '{rel_p_str}': actual {act_sz} != manifest {sz}")
+                                                            if act_hash != sh:
                                                                 art_failed = True
-                                                                errors.append(f"Candidate file sha256 mismatch for '{rel_p_str}': actual {act_hash} != manifest {cp.get('sha256')}")
-                                                    elif m_st == "DELETED":
-                                                        if target_ws_path.exists():
-                                                            art_failed = True
-                                                            errors.append(f"Candidate DELETED file actually exists: '{rel_p_str}'")
+                                                                errors.append(f"Candidate file sha256 mismatch for '{rel_p_str}': actual {act_hash} != manifest {sh}")
+                                                elif m_st == "DELETED":
+                                                    if target_ws_path.exists():
+                                                        art_failed = True
+                                                        errors.append(f"Candidate DELETED file actually exists: '{rel_p_str}'")
+                                                else:
+                                                    art_failed = True
+                                                    errors.append(f"Unsupported manifest changed-path state '{m_st}' for '{rel_p_str}' (expected PRESENT or DELETED)")
 
             if art_failed:
                 checks.append(VerificationCheck("candidate_and_artifact_integrity", "FAIL", "Candidate/artifact integrity check failed"))
@@ -824,7 +848,7 @@ class IndependentVerifier:
                 checks.append(VerificationCheck("evidence_artifact_integrity", "PASS"))
 
         except Exception as ex:
-            # Section 4: Defense-in-depth exception fail-closed boundary
+            # Defense-in-depth exception fail-closed boundary
             err_msg = f"Unexpected Exception during semantic verification: {ex.__class__.__name__}"
             errors.append(err_msg)
             checks.append(VerificationCheck("verifier_fail_closed_boundary", "FAIL", err_msg))

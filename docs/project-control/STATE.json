@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS4_VERIFIER_TOTAL_FAIL_CLOSED_HARDENED_FINAL_SOURCE_REVIEW_PENDING",
+  "status": "AOS4_FINAL_MANIFEST_FAIL_CLOSED_CORRECTED_INDEPENDENT_CLOSURE_REVIEW_PENDING",
   "current_gate": "AOS-4",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review the final AOS-4 verifier fail-closed trust boundary, candidate manifest binding, adversarial malformed-input regressions, preserved six-scenario matrix, and exact-SHA CI. If no substantive security/correctness blocker remains, proceed directly to AOS-4 closure. Do not create another candidate or rerun Attempt #6.",
+  "next_action": "Independently review the exact final manifest fail-closed correction, candidate-specific regression isolation, canonical state coherence, and exact-SHA CI. If PASS with no authoritative contradiction, close AOS-4 directly. Do not perform further general AOS-4 hardening.",
   "implementation_started": true,
   "extensions": {
     "aos3_controlled_execution": {
@@ -571,7 +571,7 @@
     "attempt_6_candidate_materialization_patch": "docs/proofs/aos4_ref_001_attempt6_candidate.patch",
     "attempt_6_candidate_materialization_patch_sha256": "1662bb216192d6e4ae284ad1558d05c361920fa2089d4387096d52c8fd3871a5",
     "attempt_6_candidate_semantic_review_status": "HOLD_REMEDIATED_IN_SOURCE_REVIEW_PENDING",
-    "next_execution_authorization_status": "BLOCKED_ON_AOS4_FINAL_SOURCE_REVIEW",
+    "next_execution_authorization_status": "BLOCKED_ON_AOS4_FINAL_CLOSURE_REVIEW",
     "attempt_6_candidate_materialization_v1_manifest_integrity": "PASS",
     "attempt_6_candidate_materialization_v1_patch_completeness": "INCOMPLETE_FOR_SEMANTIC_REVIEW",
     "attempt_6_candidate_snapshot_bundle_status": "COMPLETE_INDEPENDENT_SEMANTIC_REVIEW_PENDING",
@@ -582,7 +582,7 @@
       "DECLARED_EVIDENCE_ARTIFACT_ABSENCE_IS_NOT_VERIFIED"
     ],
     "aos4_verification_foundation_semantic_remediation_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
-    "aos4_required_scenario_matrix_implementation_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
+    "aos4_required_scenario_matrix_implementation_status": "COMPLETE_INDEPENDENT_CLOSURE_REVIEW_PENDING",
     "attempt_6_authorization_status": "CONSUMED",
     "attempt_6_authorization_consumed": true,
     "attempt_6_terminal": true,
@@ -590,7 +590,12 @@
     "retry_authorized": false,
     "stage_10ae_independent_review_result": "HOLD",
     "stage_10ae_independent_review_root_blocker": "VERIFIER_FAIL_CLOSED_TRUST_BOUNDARY_NOT_TOTAL",
-    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING"
+    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
+    "reference_status": "AOS4_FINAL_MANIFEST_FAIL_CLOSED_CORRECTED_INDEPENDENT_CLOSURE_REVIEW_PENDING",
+    "stage_10ae_r1_transaction_result": "PASS",
+    "stage_10ae_r1_independent_review_result": "HOLD",
+    "stage_10ae_r1_independent_review_blocker": "UNRECOGNIZED_CANDIDATE_MANIFEST_STATE_CAN_BYPASS_BYTE_VERIFICATION",
+    "stage_10ae_r2_manifest_fail_closed_status": "COMPLETE_INDEPENDENT_CLOSURE_REVIEW_PENDING"
   },
   "accepted_gates": [
     {

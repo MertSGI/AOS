@@ -2,8 +2,8 @@
 
 Verifies deterministic independent verification contracts, verifier boundaries,
 fail-closed semantics for malformed, stale, scope-invalid, missing-artifact,
-and contradictory inputs, and validates that executor results alone cannot authorize
-canonical closure.
+unsupported manifest states, and contradictory inputs, and validates that executor results
+alone cannot authorize canonical closure.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def make_valid_descriptor(
         "project_id": project_id,
         "repository": repo,
         "control_ref": control_ref,
-        "description": "AOS self-reference descriptor for generic AOS-4 R1 independent verification control",
+        "description": "AOS self-reference descriptor for generic AOS-4 R2 independent verification control",
         "control": {
             "state": "docs/project-control/STATE.json",
             "decisions": "docs/project-control/DECISIONS.md",
@@ -325,8 +325,9 @@ def create_real_temp_candidate_and_artifacts(
     corrupt_file_sha: bool = False,
     corrupt_file_size: bool = False,
     deleted_file_exists: bool = False,
+    unknown_manifest_state: bool = False,
 ) -> tuple[Path, Path, str]:
-    """Helper to create genuine physical temp candidate store and artifact root matching full contract (Section 14)."""
+    """Helper to create genuine physical temp candidate store and artifact root matching full contract."""
     cand_store_dir = tmp_path / "candidate_store"
     cand_dir = cand_store_dir / candidate_id
     workspace_dir = cand_dir / "workspace"
@@ -340,7 +341,19 @@ def create_real_temp_candidate_and_artifacts(
     ]
 
     manifest_changed_records = []
-    for rel_p in paths_list:
+    for idx, rel_p in enumerate(paths_list):
+        if unknown_manifest_state and idx == 0:
+            p = workspace_dir / rel_p
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"content")
+            manifest_changed_records.append({
+                "path": rel_p,
+                "state": "UNKNOWN",
+                "size_bytes": 7,
+                "sha256": hashlib.sha256(b"content").hexdigest(),
+            })
+            continue
+
         if deleted_file_exists and rel_p == "tests/test_verification.py":
             p = workspace_dir / rel_p
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -428,7 +441,7 @@ class TestCanonicalFixtureValidation:
 
 
 class TestAOS4RequiredSixScenarioMatrix:
-    """Canonical AOS-4 Required Scenario Matrix Tests (Section 15)."""
+    """Canonical AOS-4 Required Scenario Matrix Tests."""
 
     def test_aos4_required_scenario_1_valid_pass(self, tmp_path):
         cand_id = "cand_0000000000000001"
@@ -671,62 +684,209 @@ class TestMalformedNestedInputRegressionMatrix:
 
 
 class TestMissingAndSpoofedCandidateRegressionMatrix:
-    """Section 12: Missing or spoofed candidate store & manifest regressions."""
+    """Missing or spoofed candidate store & manifest regressions (Section 5 & 6)."""
 
-    def test_a_missing_extensions_holds(self):
-        exec_res = make_valid_execution_result()
+    def test_manifest_unknown_state_holds(self, tmp_path):
+        """Authoritative regression: unrecognized physical manifest changed-path state MUST fail closed (Section 5)."""
+        cand_id = "cand_0000000000000099"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(
+            tmp_path, candidate_id=cand_id, unknown_manifest_state=True
+        )
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
+        verifier = IndependentVerifier()
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
+
+        assert res.disposition == "HOLD"
+        assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
+
+    def test_a_missing_extensions_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
         del exec_res["extensions"]
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
-    def test_b_extensions_empty_dict_holds(self):
-        exec_res = make_valid_execution_result()
+    def test_b_extensions_empty_dict_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
         exec_res["extensions"] = {}
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
-    def test_c_candidate_extension_missing_holds(self):
-        exec_res = make_valid_execution_result()
+    def test_c_candidate_extension_missing_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
         exec_res["extensions"] = {"other": 123}
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
-    def test_d_candidate_id_escape_holds(self):
-        exec_res = make_valid_execution_result(candidate_id="../escape")
+    def test_d_candidate_id_escape_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id="../escape", manifest_sha256=actual_manifest_sha)
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
-    def test_e_candidate_extension_base_sha_differs_holds(self):
-        exec_res = make_valid_execution_result()
+    def test_e_candidate_extension_base_sha_differs_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
         exec_res["extensions"]["candidate"]["execution_base_sha"] = "0" * 40
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
-    def test_f_candidate_extension_control_sha_differs_holds(self):
-        exec_res = make_valid_execution_result()
+    def test_f_candidate_extension_control_sha_differs_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
         exec_res["extensions"]["candidate"]["control_source_sha"] = "0" * 40
-        verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
-        assert res.disposition == "HOLD"
-        assert res.authorizes_canonical_closure is False
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
 
-    def test_g_candidate_extension_changed_paths_differs_holds(self):
-        exec_res = make_valid_execution_result()
-        exec_res["extensions"]["candidate"]["changed_paths"] = ["different.py"]
         verifier = IndependentVerifier()
-        res = verifier.verify(execution_result=exec_res)
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
         assert res.disposition == "HOLD"
         assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
+
+    def test_g_candidate_extension_changed_paths_differs_holds(self, tmp_path):
+        cand_id = "cand_0000000000000016"
+        cand_store_dir, artifact_root, actual_manifest_sha = create_real_temp_candidate_and_artifacts(tmp_path, candidate_id=cand_id)
+        desc = make_valid_descriptor()
+        task = make_valid_task()
+        exec_res = make_valid_execution_result(candidate_id=cand_id, manifest_sha256=actual_manifest_sha)
+        exec_res["extensions"]["candidate"]["changed_paths"] = ["different.py"]
+        evidence = make_valid_evidence()
+        snapshot = make_valid_snapshot()
+
+        verifier = IndependentVerifier()
+        res = verifier.verify(
+            execution_result=exec_res,
+            task=task,
+            descriptor=desc,
+            evidence=evidence,
+            snapshot=snapshot,
+            candidate_store_dir=cand_store_dir,
+            artifact_root=artifact_root,
+            check_artifacts=True,
+        )
+        assert res.disposition == "HOLD"
+        assert res.authorizes_canonical_closure is False
+        assert any("candidate_and_artifact_integrity" in c.check_id and c.status == "FAIL" for c in res.checks)
 
     def test_h_physical_manifest_candidate_id_differs_holds(self, tmp_path):
         cand_id = "cand_0000000000000008"
@@ -918,7 +1078,7 @@ class TestMissingAndSpoofedCandidateRegressionMatrix:
 
 
 class TestUnknownEvidenceResultRegression:
-    """Section 13: Non-PASS evidence result (e.g. UNKNOWN) MUST hold."""
+    """Non-PASS evidence result (e.g. UNKNOWN) MUST hold."""
 
     def test_unknown_evidence_result_holds(self, tmp_path):
         cand_id = "cand_0000000000000015"
