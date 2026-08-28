@@ -7,7 +7,7 @@
         "working_name_status": "PROVISIONAL",
         "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
     },
-    "status": "ATTEMPT6_VERIFIED_CANDIDATE_INDEPENDENT_REVIEW_PENDING",
+    "status": "ATTEMPT6_EXECUTION_RECORD_INTEGRITY_CORRECTED_INDEPENDENT_REVIEW_PENDING",
     "current_gate": "AOS-4",
     "delivery_train": [
         "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
         "evidence_waiver",
         "retry_ceiling_exceeded"
     ],
-    "next_action": "Independently review the exact Attempt #6 canonical preflight result, raw ControlledExecutionEngine result, worker/verification evidence, candidate or quarantine persistence evidence, and terminal disposition. Do not authorize a retry or close AOS-4 until that independent review is complete.",
+    "next_action": "Independently review the corrected Attempt #6 canonical execution record against the immutable raw execution result and controller result. Do not rerun Attempt #6, authorize a retry, or accept the candidate until record integrity passes. Candidate semantic/materialized-content review follows separately.",
     "implementation_started": true,
     "extensions": {
         "aos3_controlled_execution": {
@@ -114,7 +114,7 @@
             "contradiction_must_hold": true,
             "evidence_exact_revision_required": true,
             "reference_task": "tasks/aos4-reference-task.json",
-            "reference_status": "ATTEMPT6_VERIFIED_CANDIDATE_INDEPENDENT_REVIEW_PENDING",
+            "reference_status": "ATTEMPT6_EXECUTION_RECORD_INTEGRITY_CORRECTED_INDEPENDENT_REVIEW_PENDING",
             "current_machine_capability_status": "PROVEN",
             "current_machine_capability_prior_identity_status": "HISTORICALLY_PROVEN",
             "current_machine_capability_prior_identity_version": "1.1.20",
@@ -194,6 +194,30 @@
             "attempt_6_worker_execution_actual": 1,
             "attempt_6_retry_actual": 0,
             "attempt_6_terminal": true,
+            "attempt_6_terminal_disposition": "VERIFIED_CANDIDATE",
+            "attempt_6_execution_carrier_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+            "attempt_6_engine_control_source_sha": "9ea6229a9fbf2284e472773aefb984827e1ed2b5",
+            "attempt_6_raw_execution_proof": "docs/proofs/aos4_ref_001_attempt6_raw_execution.json",
+            "attempt_6_raw_execution_proof_sha256": "5cb9ff363ee3d817863236b8d78df00b31b03947250328de9ae93cd1be7b10a8",
+            "attempt_6_controller_result_proof": "docs/proofs/aos4_ref_001_attempt6_controller_result.json",
+            "attempt_6_controller_result_proof_sha256": "3f91dc65cece1ae18438e1333f3caad60be548e384c5c81ba16ba711ca8b51a4",
+            "attempt_6_worker_exit_code": 0,
+            "attempt_6_worker_timed_out": false,
+            "attempt_6_worker_mutation_attempted": true,
+            "attempt_6_changed_paths": [
+                "schemas/v0.1/verification_result.schema.json",
+                "src/aos/validate.py",
+                "src/aos/verification.py",
+                "tests/test_verification.py"
+            ],
+            "attempt_6_scope_valid": true,
+            "attempt_6_scope_violations": [],
+            "attempt_6_foundation_test_check_status": "PASS",
+            "attempt_6_full_regression_check_status": "PASS",
+            "attempt_6_candidate_persistence_check_status": "PASS",
+            "attempt_6_candidate_persistence_status": "PERSISTED",
+            "attempt_6_candidate_id": "cand_11807a536a5a4af2",
+            "attempt_6_candidate_manifest_sha256": "a69eb33141096c96fb524341790c9708b595635a33f2c17ff1a4e39aac8a310b",
             "attempt_6_candidate_status": "VERIFIED_CANDIDATE_CREATED",
             "attempt_6_quarantine_status": "NOT_CREATED",
             "attempt_6_pre_engine_gate_required": true,
@@ -201,6 +225,18 @@
             "attempt_6_direct_engine_invocation_allowed": false,
             "attempt_6_authorization_carrier_required": true,
             "attempt_6_authorization_carrier_control_source_sha": "6a932c29fdc2c0900a053862fe1da1ba79aa2af7",
+            "stage_10aa_transaction_result": "PASS",
+            "stage_10aa_live_execution_result": "VERIFIED_CANDIDATE",
+            "stage_10aa_independent_review_result": "HOLD",
+            "stage_10aa_independent_review_primary_classification": "ATTEMPT6_CANONICAL_EXECUTION_RECORD_CONTRADICTORY_AND_INCOMPLETE",
+            "stage_10aa_independent_review_findings": [
+                "EV0045_TIMESTAMP_PRECEDES_EXECUTION_START_AND_TERMINAL_RESULT",
+                "EV0045_ENGINE_CONTROL_SOURCE_SHA_MISRECORDED_AS_AUTHORIZATION_PARENT",
+                "ATTEMPT6_TERMINAL_PROOF_AND_CANDIDATE_BINDINGS_MISSING_FROM_STATE",
+                "EV0045_REQUIRED_EXECUTION_DETAILS_INCOMPLETE"
+            ],
+            "stage_10aa_r1_execution_record_integrity_status": "CORRECTED_REVIEW_PENDING",
+            "stage_10aa_r1_execution_record_integrity_proof": "docs/proofs/aos4_ref_001_attempt6_execution_record_integrity_r1.json",
             "attempt_5_authorization_id": "AOS4-REF-001-R1-ATTEMPT5-POLICY-20260826T191645Z",
             "attempt_5_authorization_type": "DEC_022_POLICY_AUTONOMOUS",
             "attempt_5_authorization_decision": "AUTO_EXECUTE",
@@ -520,12 +556,7 @@
             "attempt_1_candidate_status": "NOT_PERSISTED",
             "current_execution_proof": "docs/proofs/aos4_ref_001_execution.json",
             "current_execution_max": 1,
-            "current_execution_retry_max": 0,
-            "attempt_6_terminal_disposition": "VERIFIED_CANDIDATE",
-            "attempt_6_raw_execution_proof": "docs/proofs/aos4_ref_001_attempt6_raw_execution.json",
-            "attempt_6_raw_execution_proof_sha256": "5cb9ff363ee3d817863236b8d78df00b31b03947250328de9ae93cd1be7b10a8",
-            "attempt_6_controller_result_proof": "docs/proofs/aos4_ref_001_attempt6_controller_result.json",
-            "attempt_6_controller_result_proof_sha256": "3f91dc65cece1ae18438e1333f3caad60be548e384c5c81ba16ba711ca8b51a4"
+            "current_execution_retry_max": 0
         }
     },
     "accepted_gates": [
