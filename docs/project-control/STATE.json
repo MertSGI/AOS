@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_SQLITE_DURABLE_BACKEND_R1_REVIEW_PENDING",
+  "status": "AOS5_SQLITE_DURABLE_BACKEND_R2_FINAL_REVIEW_PENDING",
   "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,14 +68,14 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review the corrected AOS-5 SQLite durable coordination backend at the exact R1 source SHA, including non-destructive schema/version validation, strict persisted capability/lease decoding, complete storage corruption fail-closed matrix, exact persisted-winner binding under concurrent claims, preserved Stage 11A foundation, evidence integrity, and exact-SHA CI. If accepted, proceed directly to the bounded Postgres/Supabase distributed backend contract stage.",
+  "next_action": "Independently review the final AOS-5 SQLite durable coordination backend R2 at its exact source SHA, limited to required SQLite primary-key compatibility validation, strict persisted worker registered_at decoding across worker read paths, full LeaseSnapshot winner/loser binding under concurrency, preserved R1 storage-integrity behavior, exact evidence binding, and exact-SHA CI. If accepted, proceed directly to the Postgres/Supabase distributed backend contract stage.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
-      "status": "SQLITE_DURABLE_BACKEND_R1_REVIEW_PENDING",
+      "status": "SQLITE_DURABLE_BACKEND_R2_FINAL_REVIEW_PENDING",
       "control_branch": "feature/aos-5-distributed-coordination",
       "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
-      "next_action_execution_base_sha": "bcebca5bbe09a30dff90c7305991954bc2d6a7c5",
+      "next_action_execution_base_sha": "280e3f8b83c92ec68126349330b98a048435f54f",
       "stage_11a_implementation_sha": "cc80b1a4e3ae05244284f855c7a569a7142917e0",
       "stage_11a_transaction_result": "PASS",
       "stage_11a_exact_sha_ci_result": "SUCCESS",
@@ -112,14 +112,22 @@
       ],
       "stage_11b_r1_source_sha": "bcebca5bbe09a30dff90c7305991954bc2d6a7c5",
       "stage_11b_r1_status": "SQLITE_STORAGE_INTEGRITY_CORRECTED_REVIEW_PENDING",
+      "stage_11b_r1_independent_review_result": "HOLD",
+      "stage_11b_r1_independent_review_findings": [
+        "SQLITE_PRIMARY_KEY_STRUCTURE_NOT_VALIDATED",
+        "PERSISTED_WORKER_REGISTERED_AT_NOT_FAIL_CLOSED_ON_READ",
+        "CONCURRENT_RESULT_FULL_LEASE_EPOCH_BINDING_INCOMPLETE"
+      ],
+      "stage_11b_r2_source_sha": "280e3f8b83c92ec68126349330b98a048435f54f",
+      "stage_11b_r2_status": "FINAL_SQLITE_CONTRACT_IMPLEMENTED_REVIEW_PENDING",
       "foundation_scope": "worker identity, worker registration, lease ownership, heartbeat/expiry, atomic same-task claim, expiry recovery, stale-owner fencing",
       "reference_backend": "IN_MEMORY",
-      "sqlite_backend_status": "R1_IMPLEMENTED_REVIEW_PENDING",
+      "sqlite_backend_status": "R2_FINAL_IMPLEMENTED_REVIEW_PENDING",
       "distributed_backend_status": "NOT_IMPLEMENTED",
       "postgres_supabase_backend_status": "NOT_IMPLEMENTED",
       "sqlite_coordination_is_canonical": false,
       "sqlite_generation_scope": "SURVIVING_COORDINATION_STORE_HISTORY",
-      "independent_review_status": "PENDING_11B_R1",
+      "independent_review_status": "PENDING_11B_R2",
       "canonical_git_truth_preserved": true,
       "lari_mutation_allowed": false
     },
