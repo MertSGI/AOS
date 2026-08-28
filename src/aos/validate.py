@@ -31,6 +31,7 @@ TYPE_TO_SCHEMA = {
     "controlled_execution_result": "controlled_execution_result.schema.json",
     "worker_capability_attestation": "worker_capability_attestation.schema.json",
     "execution_authorization": "execution_authorization.schema.json",
+    "verification_result": "verification_result.schema.json",
 }
 
 
