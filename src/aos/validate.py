@@ -68,12 +68,26 @@ class ValidationResult:
         }
 
 
+class DuplicateJSONKeyError(ValueError):
+    """Exception raised when a JSON object contains duplicate keys."""
+    pass
+
+
+def _reject_duplicate_object_pairs(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONKeyError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
 def load_schema(schema_filename: str) -> Dict[str, Any]:
     schema_path = SCHEMA_DIR / schema_filename
     if not schema_path.is_file():
         raise FileNotFoundError(f"Schema file not found: {schema_path}")
     with open(schema_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return json.load(f, object_pairs_hook=_reject_duplicate_object_pairs)
 
 
 def validate_document(doc_type: str, data: Any) -> ValidationResult:
@@ -114,7 +128,7 @@ def validate_file(doc_type: str, file_path: str | Path) -> Tuple[ValidationResul
                 all_valid = True
                 all_errors = []
                 for idx, line in enumerate(lines, start=1):
-                    item = json.loads(line)
+                    item = json.loads(line, object_pairs_hook=_reject_duplicate_object_pairs)
                     res = validate_document(doc_type, item)
                     if not res.is_valid:
                         all_valid = False
@@ -126,9 +140,12 @@ def validate_file(doc_type: str, file_path: str | Path) -> Tuple[ValidationResul
                             )
                 return ValidationResult(all_valid, doc_type, all_errors), (0 if all_valid else 1)
             else:
-                data = json.load(f)
+                data = json.load(f, object_pairs_hook=_reject_duplicate_object_pairs)
                 res = validate_document(doc_type, data)
                 return res, (0 if res.is_valid else 1)
+    except DuplicateJSONKeyError as e:
+        print(f"Duplicate JSON key error in {path}: {e}", file=sys.stderr)
+        return ValidationResult(False, doc_type, [ValidationErrorDetails(str(e), "", "duplicate_json_key")]), 1
     except json.JSONDecodeError as jde:
         print(f"JSON decode error in {path}: {jde}", file=sys.stderr)
         return ValidationResult(False, doc_type, [ValidationErrorDetails(str(jde), "", "json_decode")]), 2
