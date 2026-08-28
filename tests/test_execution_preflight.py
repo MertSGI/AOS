@@ -1238,3 +1238,143 @@ def test_canonical_live_execution_controller_no_direct_engine_call_in_source():
 
     class_src = ast.unparse(canonical_class)
     assert ".engine.execute(" not in class_src, "CanonicalLiveExecutionController must not call .engine.execute directly"
+
+
+class TestStrictDuplicateJSONKeyPreflight:
+    """Regression tests for strict duplicate JSON key detection in live preflight evaluation."""
+
+    def test_duplicate_authorization_decision_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        dup_auth = '''{
+          "schema_version": "0.1.0",
+          "authorization_id": "AOS4-REF-001-R1-ATTEMPT6-POLICY-20260827T200000Z",
+          "project_id": "test_project",
+          "task_id": "TASK-001",
+          "gate": "AOS-4",
+          "risk_class": "R1",
+          "decision": "HUMAN_REQUIRED",
+          "decision": "AUTO_EXECUTE",
+          "authority_source": "POLICY_AUTONOMOUS",
+          "reason_codes": ["TEST_REASON"],
+          "control_source_sha": "1111111111111111111111111111111111111111",
+          "execution_base_sha": "2222222222222222222222222222222222222222",
+          "timestamp": "2026-08-27T20:00:00Z"
+        }'''
+        env["auth_file"].write_text(dup_auth, encoding="utf-8")
+        req = make_request(env)
+
+        gate = make_gate(env)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "authorization_schema" and c.status == "FAIL" for c in res.checks)
+        assert any("duplicate JSON key" in e or "Duplicate JSON object key" in e for e in res.errors)
+
+    def test_duplicate_authorization_id_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        dup_auth = '''{
+          "schema_version": "0.1.0",
+          "authorization_id": "ID_FIRST",
+          "authorization_id": "AOS4-REF-001-R1-ATTEMPT6-POLICY-20260827T200000Z",
+          "project_id": "test_project",
+          "task_id": "TASK-001",
+          "gate": "AOS-4",
+          "risk_class": "R1",
+          "decision": "AUTO_EXECUTE",
+          "authority_source": "POLICY_AUTONOMOUS",
+          "reason_codes": ["TEST_REASON"],
+          "control_source_sha": "1111111111111111111111111111111111111111",
+          "execution_base_sha": "2222222222222222222222222222222222222222",
+          "timestamp": "2026-08-27T20:00:00Z"
+        }'''
+        env["auth_file"].write_text(dup_auth, encoding="utf-8")
+        req = make_request(env)
+
+        gate = make_gate(env)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "authorization_schema" and c.status == "FAIL" for c in res.checks)
+
+    def test_duplicate_state_authorization_status_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        state_text = env["state_file"].read_text(encoding="utf-8")
+        dup_state = state_text.replace(
+            '"next_execution_authorization_status": "POLICY_AUTHORIZED"',
+            '"next_execution_authorization_status": "BLOCKED_ON_CURRENT_CLI_CAPABILITY_INDEPENDENT_REVIEW",\n            "next_execution_authorization_status": "POLICY_AUTHORIZED"'
+        )
+        env["state_file"].write_text(dup_state, encoding="utf-8")
+        req = make_request(env)
+
+        gate = make_gate(env)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "canonical_state_freshness" and c.status == "FAIL" for c in res.checks)
+
+    def test_duplicate_state_consumed_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        state_text = env["state_file"].read_text(encoding="utf-8")
+        dup_state = state_text.replace(
+            '"attempt_6_authorization_consumed": false',
+            '"attempt_6_authorization_consumed": true,\n            "attempt_6_authorization_consumed": false'
+        )
+        env["state_file"].write_text(dup_state, encoding="utf-8")
+        req = make_request(env)
+
+        gate = make_gate(env)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "canonical_state_freshness" and c.status == "FAIL" for c in res.checks)
+
+    def test_duplicate_state_nested_key_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        state_text = env["state_file"].read_text(encoding="utf-8")
+        dup_state = state_text.replace(
+            '"working_name_status": "PROVISIONAL"',
+            '"working_name_status": "PROVISIONAL",\n        "working_name_status": "PROVISIONAL"'
+        )
+        env["state_file"].write_text(dup_state, encoding="utf-8")
+        req = make_request(env)
+
+        gate = make_gate(env)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "canonical_state_freshness" and c.status == "FAIL" for c in res.checks)
+
+    def test_duplicate_attestation_capability_status_rejected(self, tmp_path):
+        env = make_fixture_env(tmp_path)
+        att_text = env["cap_store"].read_text(encoding="utf-8")
+        dup_att = att_text.replace(
+            '"capability_status": "PROVEN"',
+            '"capability_status": "UNPROVEN",\n  "capability_status": "PROVEN"'
+        )
+        env["cap_store"].write_text(dup_att, encoding="utf-8")
+        req = make_request(env)
+
+        version_resolver = MagicMock()
+        cap_resolver = MagicMock()
+
+        gate = make_gate(env, cli_version_resolver=version_resolver, capability_resolver=cap_resolver)
+        res = gate.evaluate(req)
+
+        assert res.status == "HOLD"
+        assert res.engine_may_execute is False
+        assert any(c.check_id == "capability_attestation_schema" and c.status == "FAIL" for c in res.checks)
+        assert version_resolver.call_count == 0
+        assert cap_resolver.call_count == 0
+
+    def test_no_ordinary_json_load_for_authority_paths_in_gate_source(self):
+        src_file = Path(ep_mod.__file__)
+        src_text = src_file.read_text(encoding="utf-8")
+        assert "parsed_auth = json.load(" not in src_text
+        assert "parsed_state = json.load(" not in src_text
+        assert "parsed_attestation = json.load(" not in src_text
+        assert "load_json_strict" in src_text

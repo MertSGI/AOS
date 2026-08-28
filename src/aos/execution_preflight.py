@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from aos.validate import validate_document
+from aos.validate import DuplicateJSONKeyError, load_json_strict, validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
     RUNTIME_ENVIRONMENT_PROFILE_VERSION,
@@ -243,13 +243,14 @@ class PreEngineExecutionGate:
 
         # 2. authorization_schema
         try:
-            with open(request.authorization_artifact_path, "r", encoding="utf-8") as f:
-                parsed_auth = json.load(f)
+            parsed_auth = load_json_strict(request.authorization_artifact_path)
             val_auth = validate_document("execution_authorization", parsed_auth)
             if not val_auth.is_valid:
                 err_msg = "; ".join(e.message for e in val_auth.errors)
                 return _fail("authorization_schema", f"Authorization artifact schema invalid: {err_msg}")
             _pass("authorization_schema")
+        except DuplicateJSONKeyError as e:
+            return _fail("authorization_schema", f"Authorization artifact duplicate JSON key error: {e}")
         except json.JSONDecodeError as jde:
             return _fail("authorization_schema", f"Authorization artifact JSON decode error: {jde}")
         except Exception as e:
@@ -276,8 +277,7 @@ class PreEngineExecutionGate:
 
         # 4. canonical_state_freshness (State schema validation + freshness semantics)
         try:
-            with open(request.canonical_state_path, "r", encoding="utf-8") as f:
-                parsed_state = json.load(f)
+            parsed_state = load_json_strict(request.canonical_state_path)
 
             val_state = validate_document("state", parsed_state)
             if not val_state.is_valid:
@@ -448,8 +448,7 @@ class PreEngineExecutionGate:
             if _is_path_indirection(store_path):
                 return _fail("capability_attestation_schema", f"Capability store path is a symlink, junction, or reparse point: {store_path}")
 
-            with open(store_path, "r", encoding="utf-8") as f:
-                parsed_attestation = json.load(f)
+            parsed_attestation = load_json_strict(store_path)
 
             val_att = validate_document("worker_capability_attestation", parsed_attestation)
             if not val_att.is_valid:
@@ -467,6 +466,10 @@ class PreEngineExecutionGate:
 
             parsed_attestation["store_path"] = store_path
             _pass("capability_attestation_schema")
+        except DuplicateJSONKeyError as e:
+            return _fail("capability_attestation_schema", f"Capability attestation duplicate JSON key error: {e}")
+        except json.JSONDecodeError as jde:
+            return _fail("capability_attestation_schema", f"Capability attestation JSON decode error: {jde}")
         except Exception as e:
             return _fail("capability_attestation_schema", f"Capability attestation check error: {e}")
 
