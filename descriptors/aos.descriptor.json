@@ -72,6 +72,18 @@
         ],
         "timeout_seconds": 120
       },
+      "aos5_postgres_coordination_contract_tests": {
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_coordination_postgres.py",
+          "-m",
+          "not postgres_integration"
+        ],
+        "timeout_seconds": 120
+      },
       "aos_full_regression": {
         "argv": [
           "python",
