@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS4_CLOSED_PROVEN_AOS5_READY",
+  "status": "AOS5_COORDINATION_FOUNDATION_IMPLEMENTED_REVIEW_PENDING",
   "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,9 +68,23 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Begin AOS-5 Distributed Multi-PC Coordination from the canonical roadmap. Start with one bounded coordination-foundation stage covering worker identity, lease ownership, heartbeat/expiry semantics, and deterministic concurrent claim behavior. Do not mutate LARI during AOS-5 foundation work.",
+  "next_action": "Independently review the AOS-5 coordination foundation at its exact source SHA. If accepted, proceed to the next bounded AOS-5 durable coordination backend contract stage. Do not begin SQLite/Postgres/Supabase implementation before independent acceptance.",
   "implementation_started": true,
   "extensions": {
+    "aos5_distributed_coordination": {
+      "status": "FOUNDATION_IMPLEMENTED_REVIEW_PENDING",
+      "control_branch": "feature/aos-5-distributed-coordination",
+      "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
+      "next_action_execution_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
+      "foundation_scope": "worker identity, worker registration, lease ownership, heartbeat/expiry, atomic same-task claim, expiry recovery, stale-owner fencing",
+      "reference_backend": "IN_MEMORY",
+      "distributed_backend_status": "NOT_IMPLEMENTED",
+      "sqlite_backend_status": "NOT_IMPLEMENTED",
+      "postgres_supabase_backend_status": "NOT_IMPLEMENTED",
+      "independent_review_status": "PENDING",
+      "canonical_git_truth_preserved": true,
+      "lari_mutation_allowed": false
+    },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
       "worker_adapter": "antigravity",
