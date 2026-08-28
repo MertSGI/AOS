@@ -1,19 +1,20 @@
-"""AOS-5 Distributed Multi-PC Coordination — Stage 11A-R1 Coordination Foundation Contract Correction.
+"""AOS-5 Distributed Multi-PC Coordination — Stage 11A-R2 Final Foundation Integrity & Input Boundary.
 
 Pure Python standard-library backend-agnostic coordination foundation:
 - WorkerIdentity (immutable worker & session distinction, capability tags)
 - Worker Registration (keyed by worker_id + session_id tuple)
 - Lease Model (immutable LeaseSnapshot, fencing token / generation, stored per-epoch ttl_seconds)
 - Authoritative Time Contract (dependency-injected clock, UTC timezone-aware)
+- Safe Expiry Construction (handles extreme values, timedelta overflow without raw platform leaks)
 - Atomic Claim Contract & In-Memory Reference Backend
 - Heartbeat Contract (uses stored lease epoch TTL, caller cannot supply TTL)
 - Release Contract (expiry-aware using backend clock, expired lease release fails)
 - Expiry / Recovery & Stale-Owner Fencing
-- Strict Fail-Closed Input Validation (TTL & generation validation)
+- Strict Fail-Closed Input Validation (guarded float, isfinite, positive TTL, non-bool generation)
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import math
 import threading
@@ -29,7 +30,7 @@ class InvalidIdentityError(CoordinationError):
 
 
 class InvalidInputError(CoordinationError):
-    """Raised when task, worker, session, generation, or TTL input is malformed."""
+    """Raised when task, worker, session, generation, or TTL input is malformed or non-representable."""
 
 
 class InvalidClockError(CoordinationError):
@@ -53,11 +54,16 @@ def _validate_ttl(ttl_seconds: float) -> float:
         raise InvalidInputError("ttl_seconds must not be a boolean")
     if not isinstance(ttl_seconds, (int, float)):
         raise InvalidInputError("ttl_seconds must be a numeric value")
-    if math.isnan(ttl_seconds) or math.isinf(ttl_seconds):
+    try:
+        val = float(ttl_seconds)
+    except (OverflowError, ValueError, TypeError) as exc:
+        raise InvalidInputError("ttl_seconds cannot be converted to float") from exc
+
+    if not math.isfinite(val):
         raise InvalidInputError("ttl_seconds must be a finite number")
-    if ttl_seconds <= 0:
+    if val <= 0:
         raise InvalidInputError("ttl_seconds must be a positive number")
-    return float(ttl_seconds)
+    return val
 
 
 def _validate_generation(generation: int) -> int:
@@ -66,6 +72,15 @@ def _validate_generation(generation: int) -> int:
     if not isinstance(generation, int) or generation <= 0:
         raise InvalidInputError("generation must be a positive integer")
     return generation
+
+
+def _compute_safe_expiry(now: datetime, ttl_seconds: float) -> datetime:
+    try:
+        delta = timedelta(seconds=ttl_seconds)
+        expires_at = now + delta
+        return expires_at
+    except (OverflowError, ValueError, OSError) as exc:
+        raise InvalidInputError("TTL calculation resulted in datetime overflow") from exc
 
 
 @dataclass(frozen=True)
@@ -180,6 +195,7 @@ class InMemoryCoordinationBackend:
                 raise InvalidIdentityError("Worker identity must be registered prior to claiming tasks")
 
             now = self._now()
+            expires_at = _compute_safe_expiry(now, valid_ttl)
             current_lease = self._leases.get(task_id)
 
             if current_lease is not None:
@@ -206,8 +222,6 @@ class InMemoryCoordinationBackend:
             next_gen = self._task_generations.get(task_id, 0) + 1
             self._lease_counter += 1
             new_lease_id = f"lease-{task_id}-{next_gen}-{self._lease_counter}"
-
-            expires_at = datetime.fromtimestamp(now.timestamp() + valid_ttl, tz=timezone.utc)
 
             new_lease = LeaseSnapshot(
                 task_id=task_id,
@@ -285,8 +299,10 @@ class InMemoryCoordinationBackend:
                 self._leases[task_id] = updated_expired
                 return None
 
-            # Successful heartbeat: uses backend authoritative now + stored lease epoch ttl_seconds
-            new_expires_at = datetime.fromtimestamp(now.timestamp() + current.ttl_seconds, tz=timezone.utc)
+            # Compute new expires_at safely BEFORE mutating state
+            new_expires_at = _compute_safe_expiry(now, current.ttl_seconds)
+
+            # Successful heartbeat: update last_heartbeat_at and expires_at
             updated_lease = LeaseSnapshot(
                 task_id=current.task_id,
                 worker_id=current.worker_id,

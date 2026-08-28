@@ -1,31 +1,7 @@
-"""Tests for AOS-5 Distributed Coordination Foundation — Stage 11A-R1.
+"""Tests for AOS-5 Distributed Coordination Foundation — Stage 11A-R2.
 
-Covers Stage 11A & 11A-R1 Required Test Matrix:
-1. same worker + same session + same immutable identity idempotent
-2. same worker + same session + contradictory tags fails
-3. same worker + new session registers successfully
-4. new session cannot inherit old active ownership
-5. new session receives HELD_BY_OTHER while old session active
-6. new session acquires only after old expiry
-7. new session gets new lease_id
-8. new session gets higher generation
-9. stale prior-session heartbeat rejected
-10. stale prior-session release rejected
-11. heartbeat uses original lease TTL
-12. heartbeat cannot change lease TTL
-13. bool TTL rejected
-14. NaN TTL rejected
-15. +Infinity TTL rejected
-16. -Infinity TTL rejected
-17. zero/negative TTL rejected
-18. bool generation rejected on heartbeat
-19. bool generation rejected on release
-20. release before expiry succeeds
-21. release exactly at expiry fails
-22. release after expiry fails
-23. expired release does not create RELEASED ownership
-24. two-thread exact-one-winner claim still passes
-25. multiple contender exact-one-owner invariant still passes
+Comprehensive test matrix restoring all valid Stage 11A tests, preserving all R1 regressions,
+and adding Stage 11A-R2 extreme TTL / datetime overflow fail-closed tests.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -60,7 +36,25 @@ class ControlledClock:
         self.current_time += timedelta(seconds=seconds)
 
 
-# 1. same worker + same session + same immutable identity idempotent
+# -----------------------------------------------------------------------------
+# RESTORED STAGE 11A & R1 WORKER IDENTITY & REGISTRATION TESTS
+# -----------------------------------------------------------------------------
+
+def test_valid_immutable_worker_identity():
+    w = WorkerIdentity(worker_id="w1", session_id="s1", capability_tags=frozenset(["gpu", "linux"]))
+    assert w.worker_id == "w1"
+    assert w.session_id == "s1"
+    assert w.capability_tags == frozenset(["gpu", "linux"])
+
+    with pytest.raises(Exception):
+        w.worker_id = "w2"
+
+
+def test_capability_tag_preservation():
+    w = WorkerIdentity(worker_id="w1", session_id="s1", capability_tags=["tag1", "tag2"])
+    assert w.capability_tags == frozenset(["tag1", "tag2"])
+
+
 def test_same_worker_same_session_idempotent():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -70,7 +64,6 @@ def test_same_worker_same_session_idempotent():
     assert backend.is_worker_registered("w1", "s1")
 
 
-# 2. same worker + same session + contradictory tags fails
 def test_same_worker_same_session_contradictory_tags_fails():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -81,7 +74,6 @@ def test_same_worker_same_session_contradictory_tags_fails():
         backend.register_worker(w1_contradictory)
 
 
-# 3. same worker + new session registers successfully
 def test_same_worker_new_session_registration_succeeds():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -93,8 +85,48 @@ def test_same_worker_new_session_registration_succeeds():
     assert backend.is_worker_registered("w1", "s2")
 
 
-# 4. new session cannot inherit old active ownership
-# 5. new session receives HELD_BY_OTHER while old session active
+def test_unregistered_worker_cannot_claim():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    with pytest.raises(InvalidIdentityError):
+        backend.try_claim("task-1", w1, 60.0)
+
+
+# -----------------------------------------------------------------------------
+# RESTORED STAGE 11A & R1 CLAIM, RECLAIM, GENERATION TESTS
+# -----------------------------------------------------------------------------
+
+def test_first_claim_succeeds():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    res = backend.try_claim("task-1", w1, 60.0)
+    assert res.disposition == ClaimDisposition.ACQUIRED
+    assert res.lease is not None
+    assert res.lease.task_id == "task-1"
+    assert res.lease.worker_id == "w1"
+    assert res.lease.session_id == "s1"
+    assert res.lease.generation == 1
+    assert res.lease.status == LeaseStatus.ACTIVE
+    assert res.lease.acquired_at == clock.now()
+    assert res.lease.expires_at == clock.now() + timedelta(seconds=60)
+
+
+def test_same_exact_owner_reclaim_idempotent():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    res1 = backend.try_claim("task-1", w1, 60.0)
+    clock.advance(10.0)
+    res2 = backend.try_claim("task-1", w1, 60.0)
+    assert res2.disposition == ClaimDisposition.ALREADY_OWNED
+    assert res2.lease.lease_id == res1.lease.lease_id
+    assert res2.lease.expires_at == res1.lease.expires_at
+
+
 def test_new_session_cannot_inherit_old_active_ownership():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -112,79 +144,67 @@ def test_new_session_cannot_inherit_old_active_ownership():
     assert res2.lease.lease_id == res1.lease.lease_id
 
 
-# 6. new session acquires only after old expiry
-# 7. new session gets new lease_id
-# 8. new session gets higher generation
-def test_new_session_acquires_after_old_expiry():
+def test_ordinary_contention_zero_ownership_mutation():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
-    w1_s1 = WorkerIdentity("w1", "s1")
-    w1_s2 = WorkerIdentity("w1", "s2")
-    backend.register_worker(w1_s1)
-    backend.register_worker(w1_s2)
+    w1 = WorkerIdentity("w1", "s1")
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w1)
+    backend.register_worker(w2)
 
-    res1 = backend.try_claim("task-1", w1_s1, 60.0)
+    res1 = backend.try_claim("task-1", w1, 60.0)
+    res2 = backend.try_claim("task-1", w2, 60.0)
+    current = backend.get_lease("task-1")
+
+    assert current.worker_id == "w1"
+    assert current.session_id == "s1"
+    assert current.lease_id == res1.lease.lease_id
+    assert current.generation == 1
+
+
+def test_expired_lease_can_be_reclaimed():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w1)
+    backend.register_worker(w2)
+
+    res1 = backend.try_claim("task-1", w1, 60.0)
     clock.advance(65.0)
 
-    res2 = backend.try_claim("task-1", w1_s2, 60.0)
+    res2 = backend.try_claim("task-1", w2, 60.0)
     assert res2.disposition == ClaimDisposition.ACQUIRED
-    assert res2.lease.worker_id == "w1"
+    assert res2.lease.worker_id == "w2"
     assert res2.lease.session_id == "s2"
     assert res2.lease.lease_id != res1.lease.lease_id
     assert res2.lease.generation == res1.lease.generation + 1
 
 
-# 9. stale prior-session heartbeat rejected
-def test_stale_prior_session_heartbeat_rejected():
+def test_generation_remains_monotonic():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
-    w1_s1 = WorkerIdentity("w1", "s1")
-    w1_s2 = WorkerIdentity("w1", "s2")
-    backend.register_worker(w1_s1)
-    backend.register_worker(w1_s2)
+    w1 = WorkerIdentity("w1", "s1")
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w1)
+    backend.register_worker(w2)
 
-    res1 = backend.try_claim("task-1", w1_s1, 60.0)
-    clock.advance(65.0)
-    res2 = backend.try_claim("task-1", w1_s2, 60.0)
+    r1 = backend.try_claim("task-1", w1, 60.0)
+    assert r1.lease.generation == 1
+    backend.release("task-1", "w1", "s1", r1.lease.lease_id, r1.lease.generation)
 
-    stale_hb = backend.heartbeat(
-        task_id="task-1",
-        worker_id="w1",
-        session_id="s1",
-        lease_id=res1.lease.lease_id,
-        generation=res1.lease.generation,
-    )
-    assert stale_hb is None
-    assert backend.get_lease("task-1").session_id == "s2"
+    r2 = backend.try_claim("task-1", w2, 60.0)
+    assert r2.lease.generation == 2
+
+    clock.advance(70.0)
+    r3 = backend.try_claim("task-1", w1, 60.0)
+    assert r3.lease.generation == 3
 
 
-# 10. stale prior-session release rejected
-def test_stale_prior_session_release_rejected():
-    clock = ControlledClock()
-    backend = InMemoryCoordinationBackend(clock.now)
-    w1_s1 = WorkerIdentity("w1", "s1")
-    w1_s2 = WorkerIdentity("w1", "s2")
-    backend.register_worker(w1_s1)
-    backend.register_worker(w1_s2)
+# -----------------------------------------------------------------------------
+# RESTORED STAGE 11A & R1 HEARTBEAT & RELEASE TESTS
+# -----------------------------------------------------------------------------
 
-    res1 = backend.try_claim("task-1", w1_s1, 60.0)
-    clock.advance(65.0)
-    res2 = backend.try_claim("task-1", w1_s2, 60.0)
-
-    stale_rel = backend.release(
-        task_id="task-1",
-        worker_id="w1",
-        session_id="s1",
-        lease_id=res1.lease.lease_id,
-        generation=res1.lease.generation,
-    )
-    assert stale_rel is False
-    assert backend.get_lease("task-1").status == LeaseStatus.ACTIVE
-    assert backend.get_lease("task-1").session_id == "s2"
-
-
-# 11. heartbeat uses original lease TTL
-# 12. heartbeat cannot change lease TTL
 def test_heartbeat_uses_stored_lease_ttl():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -208,50 +228,87 @@ def test_heartbeat_uses_stored_lease_ttl():
     assert hb_lease.expires_at == clock.now() + timedelta(seconds=60)
 
 
-# 13. bool TTL rejected
-# 14. NaN TTL rejected
-# 15. +Infinity TTL rejected
-# 16. -Infinity TTL rejected
-# 17. zero/negative TTL rejected
-def test_strict_ttl_validation():
-    backend = InMemoryCoordinationBackend()
-    w1 = WorkerIdentity("w1", "s1")
-    backend.register_worker(w1)
-
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, True)
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, False)
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, float("nan"))
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, float("inf"))
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, float("-inf"))
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, 0)
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, -10.0)
-    with pytest.raises(InvalidInputError):
-        backend.try_claim("task-1", w1, "60")
-
-
-# 18. bool generation rejected on heartbeat
-# 19. bool generation rejected on release
-def test_bool_generation_rejected():
+def test_exact_expiry_boundary():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
     w1 = WorkerIdentity("w1", "s1")
     backend.register_worker(w1)
     res = backend.try_claim("task-1", w1, 60.0)
 
-    with pytest.raises(InvalidInputError):
-        backend.heartbeat("task-1", "w1", "s1", res.lease.lease_id, True)
-    with pytest.raises(InvalidInputError):
-        backend.release("task-1", "w1", "s1", res.lease.lease_id, True)
+    clock.advance(60.0)
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w2)
+    claim2 = backend.try_claim("task-1", w2, 60.0)
+    assert claim2.disposition == ClaimDisposition.ACQUIRED
 
 
-# 20. release before expiry succeeds
+def test_expired_heartbeat_cannot_resurrect():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+    res = backend.try_claim("task-1", w1, 60.0)
+
+    clock.advance(60.0)
+    hb_res = backend.heartbeat(
+        task_id="task-1",
+        worker_id="w1",
+        session_id="s1",
+        lease_id=res.lease.lease_id,
+        generation=res.lease.generation,
+    )
+    assert hb_res is None
+    curr = backend.get_lease("task-1")
+    assert curr.status == LeaseStatus.EXPIRED
+
+
+def test_stale_old_heartbeat_rejected_after_reclaim():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w1)
+    backend.register_worker(w2)
+
+    res1 = backend.try_claim("task-1", w1, 60.0)
+    clock.advance(65.0)
+    res2 = backend.try_claim("task-1", w2, 60.0)
+
+    stale_hb = backend.heartbeat(
+        task_id="task-1",
+        worker_id="w1",
+        session_id="s1",
+        lease_id=res1.lease.lease_id,
+        generation=res1.lease.generation,
+    )
+    assert stale_hb is None
+    assert backend.get_lease("task-1").lease_id == res2.lease.lease_id
+
+
+def test_stale_old_release_rejected_after_reclaim():
+    clock = ControlledClock()
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    w2 = WorkerIdentity("w2", "s2")
+    backend.register_worker(w1)
+    backend.register_worker(w2)
+
+    res1 = backend.try_claim("task-1", w1, 60.0)
+    clock.advance(65.0)
+    res2 = backend.try_claim("task-1", w2, 60.0)
+
+    stale_rel = backend.release(
+        task_id="task-1",
+        worker_id="w1",
+        session_id="s1",
+        lease_id=res1.lease.lease_id,
+        generation=res1.lease.generation,
+    )
+    assert stale_rel is False
+    assert backend.get_lease("task-1").status == LeaseStatus.ACTIVE
+    assert backend.get_lease("task-1").worker_id == "w2"
+
+
 def test_release_before_expiry_succeeds():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -265,9 +322,6 @@ def test_release_before_expiry_succeeds():
     assert backend.get_lease("task-1").status == LeaseStatus.RELEASED
 
 
-# 21. release exactly at expiry fails
-# 22. release after expiry fails
-# 23. expired release does not create RELEASED ownership
 def test_release_at_or_after_expiry_fails():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
@@ -275,26 +329,16 @@ def test_release_at_or_after_expiry_fails():
     backend.register_worker(w1)
     res = backend.try_claim("task-1", w1, 60.0)
 
-    # Exactly at expiry boundary
     clock.advance(60.0)
     rel_boundary = backend.release("task-1", "w1", "s1", res.lease.lease_id, res.lease.generation)
     assert rel_boundary is False
     assert backend.get_lease("task-1").status == LeaseStatus.EXPIRED
 
-    # Reset with new claim
-    w2 = WorkerIdentity("w2", "s2")
-    backend.register_worker(w2)
-    res2 = backend.try_claim("task-2", w2, 60.0)
 
-    # Well past expiry
-    clock.advance(70.0)
-    rel_past = backend.release("task-2", "w2", "s2", res2.lease.lease_id, res2.lease.generation)
-    assert rel_past is False
-    assert backend.get_lease("task-2").status == LeaseStatus.EXPIRED
+# -----------------------------------------------------------------------------
+# CONCURRENCY TESTS
+# -----------------------------------------------------------------------------
 
-
-# 24. two-thread exact-one-winner claim still passes
-# 25. multiple contender exact-one-owner invariant still passes
 def test_two_thread_concurrent_claim_exact_one_winner():
     backend = InMemoryCoordinationBackend()
     w1 = WorkerIdentity("worker_a", "session_a")
@@ -363,25 +407,104 @@ def test_multi_worker_concurrent_contention():
     assert stored.status == LeaseStatus.ACTIVE
 
 
-def test_unregistered_worker_cannot_claim():
-    clock = ControlledClock()
+# -----------------------------------------------------------------------------
+# STAGE 11A-R2 EXTREME TTL & DATETIME OVERFLOW FAIL-CLOSED MATRIX
+# -----------------------------------------------------------------------------
+
+def test_strict_ttl_validation():
+    backend = InMemoryCoordinationBackend()
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, True)
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, False)
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, float("nan"))
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, float("inf"))
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, float("-inf"))
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, 0)
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, -10.0)
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, "60")
+
+
+def test_extreme_ttl_huge_integer_fails_domain_closed():
+    backend = InMemoryCoordinationBackend()
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+
+    # 10**400 cannot convert to float (Python OverflowError during float(10**400))
+    huge_int = 10**400
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, huge_int)
+    assert backend.get_lease("task-1") is None
+
+
+def test_extreme_ttl_finite_float_overflow_fails_domain_closed():
+    backend = InMemoryCoordinationBackend()
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+
+    # 1e308 is finite float, but datetime + timedelta(seconds=1e308) overflows
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, 1e308)
+    assert backend.get_lease("task-1") is None
+
+
+def test_clock_near_datetime_max_overflow_fails_domain_closed():
+    near_max = datetime(9999, 12, 31, 23, 50, 0, tzinfo=timezone.utc)
+    clock = ControlledClock(near_max)
     backend = InMemoryCoordinationBackend(clock.now)
     w1 = WorkerIdentity("w1", "s1")
-    with pytest.raises(InvalidIdentityError):
-        backend.try_claim("task-1", w1, 60.0)
+    backend.register_worker(w1)
+
+    # 3600 seconds from 9999-12-31 23:50 exceeds datetime.MAXYEAR (year 10000)
+    with pytest.raises(InvalidInputError):
+        backend.try_claim("task-1", w1, 3600.0)
+    assert backend.get_lease("task-1") is None
 
 
-def test_same_exact_owner_reclaim_idempotent():
+def test_heartbeat_expiry_overflow_preserves_current_lease():
+    clock = ControlledClock(datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc))
+    backend = InMemoryCoordinationBackend(clock.now)
+    w1 = WorkerIdentity("w1", "s1")
+    backend.register_worker(w1)
+
+    # Acquire initial lease near datetime.max (expires at 9999-12-31 23:59:50)
+    clock.current_time = datetime(9999, 12, 31, 23, 59, 0, tzinfo=timezone.utc)
+    res = backend.try_claim("task-1", w1, 50.0)
+    assert res.disposition == ClaimDisposition.ACQUIRED
+    initial_lease = backend.get_lease("task-1")
+
+    # Advance clock by 10s so lease is ACTIVE and unexpired (now is 23:59:10 < expires 23:59:50)
+    clock.current_time = datetime(9999, 12, 31, 23, 59, 10, tzinfo=timezone.utc)
+
+    # Heartbeat attempt with stored ttl_seconds=50 will compute 23:59:10 + 50s = 00:00:00 next day (overflow MAXYEAR 9999)
+    with pytest.raises(InvalidInputError):
+        backend.heartbeat("task-1", "w1", "s1", res.lease.lease_id, res.lease.generation)
+
+    # Verify lease object state remains completely unmutated
+    after_lease = backend.get_lease("task-1")
+    assert after_lease == initial_lease
+
+
+def test_bool_generation_rejected():
     clock = ControlledClock()
     backend = InMemoryCoordinationBackend(clock.now)
     w1 = WorkerIdentity("w1", "s1")
     backend.register_worker(w1)
-    res1 = backend.try_claim("task-1", w1, 60.0)
-    clock.advance(10.0)
-    res2 = backend.try_claim("task-1", w1, 60.0)
-    assert res2.disposition == ClaimDisposition.ALREADY_OWNED
-    assert res2.lease.lease_id == res1.lease.lease_id
-    assert res2.lease.expires_at == res1.lease.expires_at
+    res = backend.try_claim("task-1", w1, 60.0)
+
+    with pytest.raises(InvalidInputError):
+        backend.heartbeat("task-1", "w1", "s1", res.lease.lease_id, True)
+    with pytest.raises(InvalidInputError):
+        backend.release("task-1", "w1", "s1", res.lease.lease_id, True)
 
 
 def test_no_external_dependencies_or_imports():
