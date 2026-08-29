@@ -131,6 +131,9 @@ def check_git_readiness(required_sha: str, required_branch: str) -> Dict[str, An
 def validate_proof_request_dict(req: Dict[str, Any]) -> Dict[str, Any]:
     check_forbidden_secret_keys(req)
 
+    if "start_at_utc" in req and isinstance(req["start_at_utc"], str):
+        parse_utc_datetime(req["start_at_utc"])
+
     is_valid, errors = validate_proof_artifact(req)
     if not is_valid:
         raise ValueError(f"Proof request failed schema validation: {errors}")

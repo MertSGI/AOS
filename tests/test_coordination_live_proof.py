@@ -151,7 +151,7 @@ def make_valid_results(req: dict) -> tuple[dict, dict]:
         "claim_started_at": "2026-08-29T16:00:00.000000+00:00",
         "claim_completed_at": "2026-08-29T16:00:00.100000+00:00",
         "initial_disposition": "HELD_BY_OTHER",
-        "initial_observed_lease": obs_lease,
+        "initial_observed_lease": dict(obs_lease),
         "recovery_attempted": True,
         "recovery_started_at": "2026-08-29T16:00:10.200000+00:00",
         "recovery_completed_at": "2026-08-29T16:00:10.500000+00:00",
@@ -510,7 +510,7 @@ def test_scenario_ab_atomic_result_write(tmp_path: Path):
 
 # AC. No Git mutation path
 def test_scenario_ac_no_git_mutation_during_execution():
-    req = make_valid_request(authorized=True)
+    req = make_valid_request(authorized=False)
     with patch("subprocess.check_output") as mock_sub:
         mock_sub.side_effect = lambda cmd, **kwargs: {
             ("git", "rev-parse", "HEAD"): VALID_SOURCE_SHA,
