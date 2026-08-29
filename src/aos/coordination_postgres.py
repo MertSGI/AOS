@@ -96,11 +96,9 @@ def _validate_namespace(namespace_id: str) -> str:
 
 
 def _sanitize_dsn_for_logging(dsn: str) -> str:
-    if not isinstance(dsn, str):
-        return "<invalid dsn>"
-    # Scrub password if present in DSN
-    import re
-    return re.sub(r":([^:@]+)@", ":*****@", dsn)
+    if not isinstance(dsn, str) or not dsn.strip():
+        return "<empty-dsn>"
+    return "<redacted-postgresql-dsn>"
 
 
 def _iso_to_datetime(val_dt: Union[str, datetime]) -> datetime:
@@ -226,8 +224,8 @@ class PostgresCoordinationBackend:
                 return self._connect_factory(self._dsn)
             except CoordinationStorageError:
                 raise
-            except Exception as exc:
-                raise CoordinationStorageError(f"Failed to connect to PostgreSQL at '{self._sanitized_dsn}'") from exc
+            except Exception:
+                raise CoordinationStorageError("Failed to connect to PostgreSQL coordination backend") from None
 
         import psycopg
         try:
@@ -237,8 +235,8 @@ class PostgresCoordinationBackend:
                 cur.execute(f"SET statement_timeout = {self._statement_timeout_ms};")
             conn.commit()
             return conn
-        except Exception as exc:
-            raise CoordinationStorageError(f"Failed to connect to PostgreSQL at '{self._sanitized_dsn}'") from exc
+        except Exception:
+            raise CoordinationStorageError("Failed to connect to PostgreSQL coordination backend") from None
 
     def _init_db(self) -> None:
         conn = self._connect()
@@ -337,31 +335,34 @@ class PostgresCoordinationBackend:
                 db_now = self._get_db_now(cur)
                 cur.execute(
                     """
+                    INSERT INTO aos_coordination_workers (namespace_id, worker_id, session_id, capability_tags, registered_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (namespace_id, worker_id, session_id) DO NOTHING;
+                    """,
+                    (self._namespace_id, identity.worker_id, identity.session_id, tags_json, db_now),
+                )
+
+                cur.execute(
+                    """
                     SELECT namespace_id, worker_id, session_id, capability_tags, registered_at
                     FROM aos_coordination_workers
-                    WHERE namespace_id = %s AND worker_id = %s AND session_id = %s;
+                    WHERE namespace_id = %s AND worker_id = %s AND session_id = %s
+                    FOR UPDATE;
                     """,
                     (self._namespace_id, identity.worker_id, identity.session_id),
                 )
                 row = cur.fetchone()
-                if row is not None:
-                    worker_row = _parse_worker_row(row)
-                    if worker_row.capability_tags == identity.capability_tags:
-                        conn.commit()
-                        return
-                    else:
-                        conn.rollback()
-                        raise InvalidIdentityError(
-                            f"Contradictory identity registration for worker ({identity.worker_id}, {identity.session_id})"
-                        )
+                if row is None:
+                    conn.rollback()
+                    raise CoordinationStorageError("Failed to retrieve worker registration row")
 
-                cur.execute(
-                    """
-                    INSERT INTO aos_coordination_workers (namespace_id, worker_id, session_id, capability_tags, registered_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s);
-                    """,
-                    (self._namespace_id, identity.worker_id, identity.session_id, tags_json, db_now),
-                )
+                worker_row = _parse_worker_row(row)
+                if worker_row.capability_tags != identity.capability_tags:
+                    conn.rollback()
+                    raise InvalidIdentityError(
+                        f"Contradictory identity registration for worker ({identity.worker_id}, {identity.session_id})"
+                    )
+
             conn.commit()
         except (InvalidIdentityError, InvalidInputError, InvalidClockError, CoordinationStorageError):
             conn.rollback()
@@ -527,6 +528,9 @@ class PostgresCoordinationBackend:
                     """,
                     (self._namespace_id, task_id),
                 )
+                if cur.fetchone() is None:
+                    conn.rollback()
+                    raise CoordinationStorageError(f"Task lock row missing for task '{task_id}' in namespace '{self._namespace_id}'")
 
                 # 3. Check registration
                 cur.execute(
@@ -689,6 +693,9 @@ class PostgresCoordinationBackend:
                     """,
                     (self._namespace_id, task_id),
                 )
+                if cur.fetchone() is None:
+                    conn.rollback()
+                    raise CoordinationStorageError(f"Task lock row missing for task '{task_id}' in namespace '{self._namespace_id}'")
 
                 cur.execute(
                     """
@@ -791,6 +798,9 @@ class PostgresCoordinationBackend:
                     """,
                     (self._namespace_id, task_id),
                 )
+                if cur.fetchone() is None:
+                    conn.rollback()
+                    raise CoordinationStorageError(f"Task lock row missing for task '{task_id}' in namespace '{self._namespace_id}'")
 
                 cur.execute(
                     """

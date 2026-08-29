@@ -38,7 +38,48 @@ def test_dsn_sanitization_scrubs_passwords():
     dsn = "postgresql://user:super_secret_pass@localhost:5432/mydb"
     sanitized = _sanitize_dsn_for_logging(dsn)
     assert "super_secret_pass" not in sanitized
-    assert "*****" in sanitized
+    assert sanitized == "<redacted-postgresql-dsn>"
+
+
+def test_dsn_sanitization_total_redaction():
+    uri_dsn = "postgresql://user:URI_SECRET@example.invalid:5432/db"
+    kw_dsn = "host=example.invalid port=5432 dbname=db user=user password=KEYWORD_SECRET"
+    spaced_dsn = "host=example.invalid port=5432 dbname=db user=user password='SPACED SECRET'"
+
+    for dsn in (uri_dsn, kw_dsn, spaced_dsn):
+        sanitized = _sanitize_dsn_for_logging(dsn)
+        assert "URI_SECRET" not in sanitized
+        assert "KEYWORD_SECRET" not in sanitized
+        assert "SPACED SECRET" not in sanitized
+        assert dsn not in sanitized
+        assert sanitized == "<redacted-postgresql-dsn>"
+
+
+def test_connect_factory_exception_discards_secret_cause():
+    secret_dsn = "postgresql://user:TOP_SECRET_PASS@example.invalid:5432/db"
+
+    def leaky_factory(dsn: str):
+        raise RuntimeError(f"Leaky connection failed for dsn: {dsn}")
+
+    with pytest.raises(CoordinationStorageError) as exc_info:
+        PostgresCoordinationBackend(
+            dsn=secret_dsn,
+            namespace_id="ns1",
+            connect_factory=leaky_factory,
+        )
+
+    exc = exc_info.value
+    err_str = str(exc)
+    err_repr = repr(exc)
+
+    import traceback
+    tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+    assert "TOP_SECRET_PASS" not in err_str
+    assert "TOP_SECRET_PASS" not in err_repr
+    assert "TOP_SECRET_PASS" not in tb_str
+    assert secret_dsn not in err_str
+    assert exc.__cause__ is None
 
 
 def test_invalid_dsn_or_namespace_fails_closed():
@@ -112,23 +153,13 @@ class TestPostgresCoordinationIntegration:
     def setup_database_schema(self):
         """Apply migration schema to real PostgreSQL test service before tests."""
         import psycopg
-        conn = None
-        dsns_to_try = [
-            POSTGRES_TEST_DSN,
-            "postgresql://aos:aos_ci_test@127.0.0.1:5432/aos_coordination_test",
-            "postgresql://aos:aos_ci_test@localhost:5432/aos_coordination_test",
-        ]
-        for dsn in dsns_to_try:
-            if not dsn:
-                continue
-            try:
-                conn = psycopg.connect(dsn, autocommit=True)
-                break
-            except Exception:
-                pass
+        if not POSTGRES_TEST_DSN:
+            pytest.skip("AOS_POSTGRES_TEST_DSN not set")
 
-        if conn is None:
-            raise RuntimeError(f"Could not connect to PostgreSQL using DSN {POSTGRES_TEST_DSN}")
+        try:
+            conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        except Exception:
+            raise RuntimeError("Could not connect to PostgreSQL test service")
         
         # Read and execute migration file
         migration_sql_path = Path(__file__).parent.parent / "sql" / "aos5_coordination_postgres_v0_1_0.sql"
@@ -458,3 +489,198 @@ class TestPostgresCoordinationIntegration:
         assert stored is not None
         assert stored.task_id == sql_id
         assert stored.worker_id == w1.worker_id
+
+    def test_concurrent_same_identity_same_tags_registration_idempotent(self):
+        import threading
+        from threading import Barrier
+
+        w1 = WorkerIdentity("w1", "s1", ["tag1", "tag2"])
+        b1 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        b2 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        barrier = Barrier(2)
+
+        errors = []
+
+        def worker_reg(backend: PostgresCoordinationBackend):
+            try:
+                barrier.wait(timeout=5.0)
+                backend.register_worker(w1)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker_reg, args=(b1,))
+        t2 = threading.Thread(target=worker_reg, args=(b2,))
+
+        t1.start()
+        t2.start()
+        t1.join(timeout=10.0)
+        t2.join(timeout=10.0)
+
+        assert len(errors) == 0
+        assert b1.is_worker_registered("w1", "s1") is True
+        assert b2.is_worker_registered("w1", "s1") is True
+
+        import psycopg
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT namespace_id, worker_id, session_id, capability_tags, registered_at FROM aos_coordination_workers WHERE namespace_id = 'ns1' AND worker_id = 'w1' AND session_id = 's1';"
+            )
+            rows = cur.fetchall()
+        conn.close()
+
+        assert len(rows) == 1
+        persisted_row = _parse_worker_row(rows[0])
+        assert persisted_row.capability_tags == w1.capability_tags
+
+    def test_concurrent_same_identity_contradictory_tags_deterministic(self):
+        import threading
+        from threading import Barrier
+
+        w_a = WorkerIdentity("w1", "s1", ["tag_a"])
+        w_b = WorkerIdentity("w1", "s1", ["tag_b"])
+
+        b1 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        b2 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        barrier = Barrier(2)
+
+        successes = []
+        invalid_identity_errors = []
+        storage_errors = []
+
+        def reg_thread(backend: PostgresCoordinationBackend, identity: WorkerIdentity):
+            try:
+                barrier.wait(timeout=5.0)
+                backend.register_worker(identity)
+                successes.append(identity)
+            except InvalidIdentityError as e:
+                invalid_identity_errors.append(e)
+            except CoordinationStorageError as e:
+                storage_errors.append(e)
+
+        t1 = threading.Thread(target=reg_thread, args=(b1, w_a))
+        t2 = threading.Thread(target=reg_thread, args=(b2, w_b))
+
+        t1.start()
+        t2.start()
+        t1.join(timeout=10.0)
+        t2.join(timeout=10.0)
+
+        assert len(storage_errors) == 0
+        assert len(successes) == 1
+        assert len(invalid_identity_errors) == 1
+
+        import psycopg
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT namespace_id, worker_id, session_id, capability_tags, registered_at FROM aos_coordination_workers WHERE namespace_id = 'ns1' AND worker_id = 'w1' AND session_id = 's1';"
+            )
+            rows = cur.fetchall()
+        conn.close()
+
+        assert len(rows) == 1
+        persisted_row = _parse_worker_row(rows[0])
+        assert persisted_row.capability_tags == successes[0].capability_tags
+
+    def test_missing_task_lock_fails_closed_for_owner_operations(self):
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1 = WorkerIdentity("w1", "s1")
+        backend.register_worker(w1)
+
+        claim_res = backend.try_claim("task-1", w1, 60.0)
+        assert claim_res.disposition == ClaimDisposition.ACQUIRED
+        original_lease = claim_res.lease
+
+        import psycopg
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM aos_coordination_task_locks WHERE namespace_id = 'ns1' AND task_id = 'task-1';")
+        conn.close()
+
+        with pytest.raises(CoordinationStorageError):
+            backend.heartbeat("task-1", "w1", "s1", original_lease.lease_id, original_lease.generation)
+
+        with pytest.raises(CoordinationStorageError):
+            backend.release("task-1", "w1", "s1", original_lease.lease_id, original_lease.generation)
+
+        # Verify persisted lease row remains unchanged
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT namespace_id, task_id, worker_id, session_id, lease_id, acquired_at, last_heartbeat_at, expires_at, ttl_seconds, generation, status FROM aos_coordination_leases WHERE namespace_id = 'ns1' AND task_id = 'task-1';"
+            )
+            row = cur.fetchone()
+        conn.close()
+
+        assert row is not None
+        persisted_lease = backend._parse_lease_row(row)
+        assert persisted_lease.worker_id == "w1"
+        assert persisted_lease.session_id == "s1"
+        assert persisted_lease.lease_id == original_lease.lease_id
+        assert persisted_lease.generation == original_lease.generation
+        assert persisted_lease.status == LeaseStatus.ACTIVE
+
+    def test_sequential_same_worker_same_tags_reregistration_idempotent(self):
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1 = WorkerIdentity("w1", "s1", ["t1", "t2"])
+        backend.register_worker(w1)
+        backend.register_worker(w1)
+        assert backend.is_worker_registered("w1", "s1") is True
+
+    def test_same_worker_new_session_registration_allowed(self):
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1_s1 = WorkerIdentity("w1", "s1", ["t1"])
+        w1_s2 = WorkerIdentity("w1", "s2", ["t2"])
+        backend.register_worker(w1_s1)
+        backend.register_worker(w1_s2)
+        assert backend.is_worker_registered("w1", "s1") is True
+        assert backend.is_worker_registered("w1", "s2") is True
+
+    def test_lease_survives_backend_reopen(self):
+        b1 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1 = WorkerIdentity("w1", "s1")
+        b1.register_worker(w1)
+        claim_res = b1.try_claim("task-reopen", w1, 60.0)
+
+        b2 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        reopened_lease = b2.get_lease("task-reopen")
+        assert reopened_lease == claim_res.lease
+
+    def test_database_authoritative_clock(self):
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1 = WorkerIdentity("w1", "s1")
+        backend.register_worker(w1)
+
+        import psycopg
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT clock_timestamp();")
+            server_before = cur.fetchone()[0]
+
+        res = backend.try_claim("clock-task", w1, 60.0)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT clock_timestamp();")
+            server_after = cur.fetchone()[0]
+        conn.close()
+
+        assert server_before <= res.lease.acquired_at <= server_after
+
+    def test_heartbeat_stored_ttl_persistence(self):
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        w1 = WorkerIdentity("w1", "s1")
+        backend.register_worker(w1)
+
+        res1 = backend.try_claim("ttl-task", w1, 45.0)
+        hb = backend.heartbeat("ttl-task", "w1", "s1", res1.lease.lease_id, res1.lease.generation)
+
+        assert hb is not None
+        assert hb.ttl_seconds == 45.0
+        assert hb.generation == res1.lease.generation
+        assert hb.lease_id == res1.lease.lease_id
+        assert abs((hb.expires_at - hb.last_heartbeat_at).total_seconds() - 45.0) < 1.0
+
+        b2 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
+        reopened_lease = b2.get_lease("ttl-task")
+        assert reopened_lease == hb
