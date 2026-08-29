@@ -29,6 +29,11 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Install AOS package and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[postgres]"
+
       - name: Verify repository and Git readiness
         run: |
           python -c "
@@ -64,7 +69,11 @@ jobs:
           import datetime, json, os, sys
           from pathlib import Path
           from aos.validate import load_json_strict
-          from aos.coordination_live_proof import validate_proof_request_dict, execute_dry_run
+          from aos.coordination_live_proof import (
+              validate_proof_request_dict,
+              execute_dry_run,
+              check_forbidden_secret_keys,
+          )
 
           auth_path = Path('docs/project-control/AOS5_LIVE_PROOF_AUTHORIZATION.json')
           if not auth_path.is_file():
@@ -72,8 +81,36 @@ jobs:
               sys.exit(1)
 
           auth_data = load_json_strict(auth_path)
-          
-          # Require exact non-secret authority contract
+
+          # Require exact top-level authorization key set
+          expected_keys = {
+              'schema_version',
+              'artifact_type',
+              'gate',
+              'authorized',
+              'authorization_id',
+              'provider',
+              'provider_project_id',
+              'environment_class',
+              'production_mutation_allowed',
+              'destructive_operations_allowed',
+              'billing_activation_allowed',
+              'secret_publication_allowed',
+              'lari_access_allowed',
+              'approved_harness_carrier_sha',
+          }
+
+          actual_keys = set(auth_data.keys())
+          if actual_keys != expected_keys:
+              missing = expected_keys - actual_keys
+              unknown = actual_keys - expected_keys
+              print(f'Authorization keyset mismatch: missing={missing}, unknown={unknown}')
+              sys.exit(1)
+
+          # Check forbidden secret-like keys
+          check_forbidden_secret_keys(auth_data)
+
+          # Require exact semantic values
           if auth_data.get('schema_version') != '0.1.0':
               sys.exit(1)
           if auth_data.get('artifact_type') != 'AOS5_LIVE_PROOF_AUTHORIZATION':
@@ -103,18 +140,11 @@ jobs:
           if auth_data.get('approved_harness_carrier_sha') != 'cc43b5d13d886bf4beb27c2d41361063efd63fe0':
               sys.exit(1)
 
-          # Check forbidden secret-like keys in authorization JSON
-          forbidden_keys = {'dsn', 'password', 'token', 'credential', 'database_url', 'api_key'}
-          for k in auth_data.keys():
-              if k.lower() in forbidden_keys:
-                  print(f'Forbidden secret key in authorization: {k}')
-                  sys.exit(1)
-
           # Construct runtime proof request outside Git worktree
           run_id = '${{ github.run_id }}'
           run_attempt = '${{ github.run_attempt }}'
           start_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=110)
-          
+
           request_dict = {
               'schema_version': '0.1.0',
               'artifact_type': 'AOS5_MULTI_MACHINE_PROOF_REQUEST',
@@ -151,7 +181,7 @@ jobs:
           }
 
           validate_proof_request_dict(request_dict)
-          
+
           # Perform dry-run validation for both roles
           res_a = execute_dry_run(request_dict, 'worker_a')
           res_b = execute_dry_run(request_dict, 'worker_b')
@@ -219,9 +249,10 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Install dependencies
+      - name: Install AOS package and dependencies
         run: |
-          pip install psycopg2-binary jsonschema
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[postgres]"
 
       - name: Download Proof Request Artifact
         uses: actions/download-artifact@v4
@@ -257,9 +288,10 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Install dependencies
+      - name: Install AOS package and dependencies
         run: |
-          pip install jsonschema
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[postgres]"
 
       - name: Download Proof Request Artifact
         uses: actions/download-artifact@v4
