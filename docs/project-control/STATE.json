@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_POSTGRES_SEMANTIC_R3_REVIEW_PENDING",
+  "status": "AOS5_POSTGRES_DSN_R4_REVIEW_PENDING",
   "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,14 +68,14 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Independently review Stage 11C-R3 at its exact source and carrier. Limit the review to atomic concurrent worker registration, DSN secret non-disclosure, task-lock integrity for heartbeat/release, restored canonical human-gate defaults, completed real-Postgres semantic regressions, evidence binding, and exact-SHA CI. If all pass, independently accept the Postgres distributed backend and proceed directly to the bounded hosted/distributed multi-machine proof stage.",
+  "next_action": "Independently review Stage 11C-R4 at the exact source and carrier. Verify that all injected connect_factory Exception subclasses, including CoordinationStorageError, are converted to a generic credential-free domain error with no cause chain. Reconfirm exact-SHA CI and the existing real PostgreSQL integration suite. If PASS, independently accept the PostgreSQL distributed backend and proceed directly to the hosted real multi-machine coordination proof.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
-      "status": "AOS5_POSTGRES_SEMANTIC_R3_REVIEW_PENDING",
+      "status": "AOS5_POSTGRES_DSN_R4_REVIEW_PENDING",
       "control_branch": "feature/aos-5-distributed-coordination",
       "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
-      "next_action_execution_base_sha": "c66c965ef0696d9e895350ca9046c9ed8775bfc6",
+      "next_action_execution_base_sha": "8ed189017b74a5c4cd0e28829f629e13c523bad7",
       "stage_11a_implementation_sha": "cc80b1a4e3ae05244284f855c7a569a7142917e0",
       "stage_11a_transaction_result": "PASS",
       "stage_11a_exact_sha_ci_result": "SUCCESS",
@@ -173,6 +173,20 @@
         "HUMAN_GATE_DEFAULT_UNAUTHORIZED_WEAKENING"
       ],
       "stage_11c_r3_source_sha": "c66c965ef0696d9e895350ca9046c9ed8775bfc6",
+      "stage_11c_r3_carrier_sha": "659f6fd9774cbdfbdf0c5e0b0be452faf117162f",
+      "stage_11c_r3_exact_sha_ci_run_id": 33250432622,
+      "stage_11c_r3_exact_sha_ci_job_id": 99095069709,
+      "stage_11c_r3_exact_sha_ci_result": "SUCCESS",
+      "stage_11c_r3_postgres_integration_selected": 24,
+      "stage_11c_r3_postgres_integration_passed": 24,
+      "stage_11c_r3_postgres_integration_failed": 0,
+      "stage_11c_r3_postgres_integration_skipped": 0,
+      "stage_11c_r3_independent_semantic_review_result": "HOLD",
+      "stage_11c_r3_independent_semantic_review_findings": [
+        "CONNECT_FACTORY_COORDINATION_STORAGE_ERROR_CAN_LEAK_DSN_SECRET"
+      ],
+      "stage_11c_r4_source_sha": "8ed189017b74a5c4cd0e28829f629e13c523bad7",
+      "stage_11c_r4_status": "DSN_EXCEPTION_BOUNDARY_CORRECTED_REVIEW_PENDING",
       "stage_11c_r3_status": "SEMANTIC_CLOSURE_IMPLEMENTED_REVIEW_PENDING",
       "stage_11c_r2_status": "REAL_POSTGRES_PROOF_CORRECTED_REVIEW_PENDING",
       "stage_11c_r1_status": "EXACT_CI_PROOF_CORRECTED_REVIEW_PENDING",
@@ -181,12 +195,12 @@
       "foundation_scope": "worker identity, worker registration, lease ownership, heartbeat/expiry, atomic same-task claim, expiry recovery, stale-owner fencing",
       "reference_backend": "IN_MEMORY",
       "sqlite_backend_status": "INDEPENDENTLY_ACCEPTED",
-      "postgres_backend_status": "R3_SEMANTIC_CLOSURE_REVIEW_PENDING",
+      "postgres_backend_status": "R4_DSN_EXCEPTION_BOUNDARY_REVIEW_PENDING",
       "postgres_supabase_backend_status": "POSTGRES_IMPLEMENTED_SUPABASE_NOT_CONNECTED",
       "distributed_backend_status": "POSTGRES_IMPLEMENTED_REVIEW_PENDING",
       "real_multi_pc_status": "NOT_PERFORMED",
       "supabase_live_status": "NOT_CONNECTED",
-      "independent_review_status": "PENDING_11C_R3",
+      "independent_review_status": "PENDING_11C_R4",
       "canonical_git_truth_preserved": true,
       "lari_mutation_allowed": false
     },
