@@ -6,17 +6,25 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import platform
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from aos.coordination import CoordinationStorageError, WorkerIdentity
+from aos.coordination import (
+    ClaimDisposition,
+    ClaimResult,
+    CoordinationStorageError,
+    LeaseSnapshot,
+    LeaseStatus,
+    WorkerIdentity,
+)
 from aos.validate import DuplicateJSONKeyError, load_json_strict, loads_json_strict
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent / "schemas" / "v0.1" / "aos5_multi_machine_proof.schema.json"
@@ -30,6 +38,11 @@ FORBIDDEN_SECRET_KEYS = {
     "credential",
     "api_key",
 }
+
+START_STALE_TOLERANCE_SECONDS = 5.0
+MAX_START_WAIT_SECONDS = 120.0
+PEER_REGISTRATION_TIMEOUT_SECONDS = 30.0
+RECOVERY_GRACE_SECONDS = 15.0
 
 
 def load_proof_schema() -> Dict[str, Any]:
@@ -70,8 +83,13 @@ def parse_utc_datetime(iso_str: str) -> datetime.datetime:
     return dt.astimezone(datetime.timezone.utc)
 
 
-def compute_proof_scoped_machine_fingerprint(proof_id: str, machine_label: str) -> str:
-    raw_identity = f"{proof_id}:{machine_label}:{platform.node()}:{sys.platform}"
+def compute_proof_scoped_machine_fingerprint(proof_id: str) -> str:
+    node = platform.node().strip()
+    sys_name = platform.system().strip()
+    mach = platform.machine().strip()
+    if not node or not sys_name or not mach:
+        raise CoordinationStorageError("Fail closed: missing local machine identity material for fingerprint")
+    raw_identity = f"{proof_id}:{node}:{sys_name}:{mach}"
     return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
 
 
@@ -101,9 +119,7 @@ def check_git_readiness(required_sha: str, required_branch: str) -> Dict[str, An
         status_out = subprocess.check_output(
             ["git", "status", "--porcelain"], text=True, stderr=subprocess.PIPE
         ).strip()
-        # Only untracked runtime dir allowed if any, otherwise check if modified tracked files exist
-        lines = [line for line in status_out.splitlines() if line and not line.startswith("?? .aos-runtime")]
-        is_clean = len(lines) == 0
+        is_clean = (status_out == "")
     except Exception as e:
         raise RuntimeError(f"Git readiness check failed checking status: {e}") from e
 
@@ -241,18 +257,65 @@ def write_worker_result_atomic(result_dict: Dict[str, Any], output_path: str | P
     temp_file.replace(out_file)
 
 
+def _serialize_lease_snapshot(lease: LeaseSnapshot) -> Dict[str, Any]:
+    if not isinstance(lease, LeaseSnapshot):
+        raise CoordinationStorageError(f"Expected canonical LeaseSnapshot, got {type(lease).__name__}")
+
+    if isinstance(lease.acquired_at, datetime.datetime):
+        acq_at = lease.acquired_at.isoformat()
+    else:
+        acq_at = str(lease.acquired_at)
+
+    if isinstance(lease.expires_at, datetime.datetime):
+        exp_at = lease.expires_at.isoformat()
+    else:
+        exp_at = str(lease.expires_at)
+
+    status_str = lease.status.value if hasattr(lease.status, "value") else str(lease.status)
+
+    return {
+        "owner_worker_id": str(lease.worker_id),
+        "owner_session_id": str(lease.session_id),
+        "lease_id": str(lease.lease_id),
+        "generation": int(lease.generation),
+        "acquired_at": acq_at,
+        "expires_at": exp_at,
+        "ttl_seconds": float(lease.ttl_seconds),
+        "status": status_str,
+    }
+
+
 def run_live_worker(
     request_dict: Dict[str, Any],
     role: str,
     output_path: Optional[str | Path] = None,
     backend_override: Any = None,
-    time_func: Any = None,
-    sleep_func: Any = None,
+    time_func: Optional[Callable[[], float]] = None,
+    monotonic_func: Optional[Callable[[], float]] = None,
+    sleep_func: Optional[Callable[[float], None]] = None,
 ) -> Dict[str, Any]:
     validate_proof_request_dict(request_dict)
 
     if not request_dict.get("authorized", False):
         raise CoordinationStorageError("Live proof execution HOLD: request.authorized is false")
+
+    _time = time_func or time.time
+    _monotonic = monotonic_func or time.monotonic
+    _sleep = sleep_func or time.sleep
+
+    start_dt = parse_utc_datetime(request_dict["start_at_utc"])
+    start_ts = start_dt.timestamp()
+    now_ts = _time()
+    start_delay = start_ts - now_ts
+
+    if start_delay < -START_STALE_TOLERANCE_SECONDS:
+        raise CoordinationStorageError(
+            f"Live proof execution HOLD: Request start_at_utc is stale ({start_delay:.1f}s < -{START_STALE_TOLERANCE_SECONDS}s)"
+        )
+    if start_delay > MAX_START_WAIT_SECONDS:
+        raise CoordinationStorageError(
+            f"Live proof execution HOLD: Request start_at_utc is too far in future ({start_delay:.1f}s > {MAX_START_WAIT_SECONDS}s)"
+        )
 
     git_info = check_git_readiness(
         required_sha=request_dict["source_sha"],
@@ -285,12 +348,7 @@ def run_live_worker(
         except Exception as e:
             raise CoordinationStorageError("Failed to connect to PostgreSQL coordination backend") from None
 
-    _time = time_func or time.time
-    _sleep = sleep_func or time.sleep
-
-    fingerprint = compute_proof_scoped_machine_fingerprint(
-        request_dict["proof_id"], current_worker["machine_label"]
-    )
+    fingerprint = compute_proof_scoped_machine_fingerprint(request_dict["proof_id"])
 
     curr_identity = WorkerIdentity(
         worker_id=current_worker["worker_id"],
@@ -303,23 +361,25 @@ def run_live_worker(
 
     backend.register_worker(curr_identity)
 
-    # Wait boundedly for peer worker registration
+    # Bounded wait for peer worker registration
     peer_registered = False
-    peer_wait_deadline = _time() + 30.0
-    while _time() < peer_wait_deadline:
+    peer_wait_deadline = _monotonic() + PEER_REGISTRATION_TIMEOUT_SECONDS
+    while _monotonic() < peer_wait_deadline:
         if backend.is_worker_registered(peer_identity.worker_id, peer_identity.session_id):
             peer_registered = True
             break
-        _sleep(0.1)
+        _sleep(0.05)
 
     if not peer_registered:
-        raise CoordinationStorageError("Live proof execution HOLD: Peer worker registration not observed within timeout")
+        raise CoordinationStorageError("Live proof execution HOLD: Peer worker registration not observed within monotonic timeout")
 
-    # Wait boundedly until start_at_utc
-    start_dt = parse_utc_datetime(request_dict["start_at_utc"])
-    start_ts = start_dt.timestamp()
-    while _time() < start_ts:
-        _sleep(0.05)
+    # Bounded wait until start_at_utc if in future
+    if start_delay > 0:
+        start_wait_deadline = _monotonic() + start_delay + 1.0
+        while _time() < start_ts:
+            if _monotonic() > start_wait_deadline:
+                raise CoordinationStorageError("Live proof execution HOLD: Timed out waiting for start_at_utc")
+            _sleep(0.05)
 
     claim_start_dt = datetime.datetime.fromtimestamp(_time(), tz=datetime.timezone.utc)
     claim_start_iso = claim_start_dt.isoformat()
@@ -336,22 +396,29 @@ def run_live_worker(
     claim_end_dt = datetime.datetime.fromtimestamp(_time(), tz=datetime.timezone.utc)
     claim_end_iso = claim_end_dt.isoformat()
 
-    initial_disposition = initial_claim["status"]
-    observed_lease = initial_claim["lease"]
+    if not isinstance(initial_claim, ClaimResult):
+        raise CoordinationStorageError("Claim result is not a canonical ClaimResult instance")
 
-    obs_lease_dict = {
-        "owner_worker_id": observed_lease["owner_worker_id"],
-        "owner_session_id": observed_lease["owner_session_id"],
-        "lease_id": observed_lease["lease_id"],
-        "generation": int(observed_lease["generation"]),
-        "acquired_at": observed_lease["acquired_at"],
-        "expires_at": observed_lease["expires_at"],
-        "ttl_seconds": float(observed_lease["ttl_seconds"]),
-        "status": observed_lease["status"],
-    }
+    disposition = initial_claim.disposition
+    if disposition not in (ClaimDisposition.ACQUIRED, ClaimDisposition.HELD_BY_OTHER):
+        raise CoordinationStorageError(f"Unexpected initial claim disposition: {disposition}")
 
-    if initial_disposition == "ACQUIRED":
-        # Initial winner: NO heartbeat, NO release
+    obs_lease_snapshot = initial_claim.lease
+    if not isinstance(obs_lease_snapshot, LeaseSnapshot):
+        raise CoordinationStorageError("Initial claim lease is not a canonical LeaseSnapshot instance")
+
+    if obs_lease_snapshot.status != LeaseStatus.ACTIVE:
+        raise CoordinationStorageError(f"Initial lease status must be ACTIVE, found {obs_lease_snapshot.status}")
+
+    if not math.isfinite(obs_lease_snapshot.ttl_seconds) or obs_lease_snapshot.ttl_seconds <= 0:
+        raise CoordinationStorageError("Initial lease ttl_seconds must be finite and positive")
+
+    obs_lease_dict = _serialize_lease_snapshot(obs_lease_snapshot)
+
+    if disposition == ClaimDisposition.ACQUIRED:
+        if obs_lease_snapshot.worker_id != current_worker["worker_id"] or obs_lease_snapshot.session_id != current_worker["session_id"]:
+            raise CoordinationStorageError("ACQUIRED initial lease owner does not match current worker")
+
         result = {
             "schema_version": "0.1.0",
             "artifact_type": "AOS5_MULTI_MACHINE_WORKER_RESULT",
@@ -384,19 +451,30 @@ def run_live_worker(
             "worker_terminal_role": "INITIAL_WINNER_NO_RELEASE",
         }
     else:
-        # Initial loser: Wait until observed lease expires, then recover
-        exp_dt = parse_utc_datetime(observed_lease["expires_at"])
+        if obs_lease_snapshot.worker_id != peer_worker["worker_id"] or obs_lease_snapshot.session_id != peer_worker["session_id"]:
+            raise CoordinationStorageError("HELD_BY_OTHER initial lease owner does not match peer worker")
+
+        exp_val = obs_lease_snapshot.expires_at
+        if isinstance(exp_val, datetime.datetime):
+            exp_dt = exp_val if exp_val.tzinfo is not None else exp_val.replace(tzinfo=datetime.timezone.utc)
+        else:
+            exp_dt = parse_utc_datetime(str(exp_val))
+
         exp_ts = exp_dt.timestamp()
+        if exp_ts > _time() + request_dict["ttl_seconds"] + RECOVERY_GRACE_SECONDS + 30.0:
+            raise CoordinationStorageError("Live proof execution HOLD: Observed lease expiry is implausibly far in future")
 
         rec_start_dt = datetime.datetime.fromtimestamp(_time(), tz=datetime.timezone.utc)
         rec_start_iso = rec_start_dt.isoformat()
 
-        # Wait boundedly for lease expiry
-        expiry_deadline = exp_ts + request_dict["ttl_seconds"] + 10.0
+        wait_seconds = max(0.0, exp_ts - _time())
+        max_recovery_wait = wait_seconds + RECOVERY_GRACE_SECONDS
+        rec_deadline = _monotonic() + max_recovery_wait
+
         while _time() < exp_ts:
-            if _time() > expiry_deadline:
-                raise CoordinationStorageError("Live proof execution HOLD: Observed lease recovery timed out waiting for expiry")
-            _sleep(0.1)
+            if _monotonic() >= rec_deadline:
+                raise CoordinationStorageError("Live proof execution HOLD: Timed out waiting for initial lease expiry during recovery")
+            _sleep(0.05)
 
         try:
             recovery_claim = backend.try_claim(
@@ -410,20 +488,29 @@ def run_live_worker(
         rec_end_dt = datetime.datetime.fromtimestamp(_time(), tz=datetime.timezone.utc)
         rec_end_iso = rec_end_dt.isoformat()
 
-        if recovery_claim["status"] != "ACQUIRED":
-            raise CoordinationStorageError(f"Live proof execution HOLD: Recovery claim failed with status {recovery_claim['status']}")
+        if not isinstance(recovery_claim, ClaimResult):
+            raise CoordinationStorageError("Recovery claim result is not a canonical ClaimResult instance")
 
-        rec_lease = recovery_claim["lease"]
-        rec_lease_dict = {
-            "owner_worker_id": rec_lease["owner_worker_id"],
-            "owner_session_id": rec_lease["owner_session_id"],
-            "lease_id": rec_lease["lease_id"],
-            "generation": int(rec_lease["generation"]),
-            "acquired_at": rec_lease["acquired_at"],
-            "expires_at": rec_lease["expires_at"],
-            "ttl_seconds": float(rec_lease["ttl_seconds"]),
-            "status": rec_lease["status"],
-        }
+        if recovery_claim.disposition != ClaimDisposition.ACQUIRED:
+            raise CoordinationStorageError(f"Live proof execution HOLD: Recovery claim failed with disposition {recovery_claim.disposition}")
+
+        rec_lease_snapshot = recovery_claim.lease
+        if not isinstance(rec_lease_snapshot, LeaseSnapshot):
+            raise CoordinationStorageError("Recovery lease is not a canonical LeaseSnapshot instance")
+
+        if rec_lease_snapshot.status != LeaseStatus.ACTIVE:
+            raise CoordinationStorageError(f"Recovery lease status must be ACTIVE, found {rec_lease_snapshot.status}")
+
+        if rec_lease_snapshot.worker_id != current_worker["worker_id"] or rec_lease_snapshot.session_id != current_worker["session_id"]:
+            raise CoordinationStorageError("Recovery lease owner does not match current worker (initial loser)")
+
+        if rec_lease_snapshot.lease_id == obs_lease_snapshot.lease_id:
+            raise CoordinationStorageError("Recovery lease_id must not equal initial lease_id")
+
+        if rec_lease_snapshot.generation <= obs_lease_snapshot.generation:
+            raise CoordinationStorageError(f"Recovery generation {rec_lease_snapshot.generation} must be strictly greater than initial generation {obs_lease_snapshot.generation}")
+
+        rec_lease_dict = _serialize_lease_snapshot(rec_lease_snapshot)
 
         result = {
             "schema_version": "0.1.0",
@@ -466,7 +553,6 @@ def run_live_worker(
 def verify_pair_results(req: Dict[str, Any], result_a: Dict[str, Any], result_b: Dict[str, Any]) -> Dict[str, Any]:
     reasons: List[str] = []
 
-    # Pure offline checks
     check_forbidden_secret_keys(result_a)
     check_forbidden_secret_keys(result_b)
 
@@ -492,10 +578,33 @@ def verify_pair_results(req: Dict[str, Any], result_a: Dict[str, Any], result_b:
         if result_b.get(key) != req.get(key):
             reasons.append(f"Result B {key} '{result_b.get(key)}' does not match request '{req.get(key)}'")
 
-    # Verify roles are worker_a and worker_b
     roles = {result_a.get("role"), result_b.get("role")}
     if roles != {"worker_a", "worker_b"}:
         reasons.append(f"Result pair roles must be exactly {{'worker_a', 'worker_b'}}, found {roles}")
+
+    # Bind result identities to request
+    request_workers = {w.get("role"): w for w in req.get("workers", []) if isinstance(w, dict)}
+    if "worker_a" not in request_workers or "worker_b" not in request_workers:
+        reasons.append("Request workers array must contain worker_a and worker_b entries")
+
+    for res, name in [(result_a, "Result A"), (result_b, "Result B")]:
+        role = res.get("role")
+        req_w = request_workers.get(role)
+        if req_w:
+            if res.get("worker_id") != req_w.get("worker_id"):
+                reasons.append(f"{name} worker_id '{res.get('worker_id')}' does not match request worker_id '{req_w.get('worker_id')}' for role '{role}'")
+            if res.get("session_id") != req_w.get("session_id"):
+                reasons.append(f"{name} session_id '{res.get('session_id')}' does not match request session_id '{req_w.get('session_id')}' for role '{role}'")
+            if res.get("machine_label") != req_w.get("machine_label"):
+                reasons.append(f"{name} machine_label '{res.get('machine_label')}' does not match request machine_label '{req_w.get('machine_label')}' for role '{role}'")
+
+        peer_role = "worker_b" if role == "worker_a" else "worker_a"
+        req_peer = request_workers.get(peer_role)
+        if req_peer:
+            if res.get("peer_worker_id") != req_peer.get("worker_id"):
+                reasons.append(f"{name} peer_worker_id '{res.get('peer_worker_id')}' does not match request worker_id '{req_peer.get('worker_id')}' for peer role '{peer_role}'")
+            if res.get("peer_session_id") != req_peer.get("session_id"):
+                reasons.append(f"{name} peer_session_id '{res.get('peer_session_id')}' does not match request session_id '{req_peer.get('session_id')}' for peer role '{peer_role}'")
 
     # Determine winner and loser objects
     if result_a.get("initial_disposition") == "ACQUIRED":
