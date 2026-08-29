@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import math
-from typing import Callable, FrozenSet, Optional, Tuple
+from typing import Callable, FrozenSet, Optional, Tuple, Union
 
 from aos.coordination import (
     ClaimDisposition,
@@ -192,8 +192,8 @@ class PostgresCoordinationBackend:
         self,
         dsn: str,
         namespace_id: str,
-        lock_timeout_ms: int = 5000,
-        statement_timeout_ms: int = 5000,
+        lock_timeout_ms: int = 30000,
+        statement_timeout_ms: int = 30000,
         connect_factory: Optional[Callable[[str], object]] = None,
     ) -> None:
         if not isinstance(dsn, str) or not dsn.strip():
@@ -231,10 +231,10 @@ class PostgresCoordinationBackend:
 
         import psycopg
         dsns_to_try = [self._dsn]
-        if "127.0.0.1" not in self._dsn:
-            dsns_to_try.append(self._dsn.replace("@postgres:5432/", "@127.0.0.1:5432/").replace("@localhost:5432/", "@127.0.0.1:5432/"))
-        if "localhost" not in self._dsn:
-            dsns_to_try.append(self._dsn.replace("@postgres:5432/", "@localhost:5432/").replace("@127.0.0.1:5432/", "@localhost:5432/"))
+        if "127.0.0.1" in self._dsn:
+            dsns_to_try.append(self._dsn.replace("127.0.0.1", "localhost"))
+        elif "localhost" in self._dsn:
+            dsns_to_try.append(self._dsn.replace("localhost", "127.0.0.1"))
 
         last_exc = None
         for dsn in dsns_to_try:
@@ -290,6 +290,7 @@ class PostgresCoordinationBackend:
                           ON tc.constraint_name = kcu.constraint_name
                          AND tc.table_schema = kcu.table_schema
                          AND tc.constraint_schema = kcu.constraint_schema
+                         AND tc.table_name = kcu.table_name
                         WHERE tc.constraint_type = 'PRIMARY KEY'
                           AND tc.table_schema = 'public'
                           AND tc.table_name = %s
@@ -366,7 +367,7 @@ class PostgresCoordinationBackend:
                 cur.execute(
                     """
                     INSERT INTO aos_coordination_workers (namespace_id, worker_id, session_id, capability_tags, registered_at)
-                    VALUES (%s, %s, %s, %s, %s);
+                    VALUES (%s, %s, %s, %s::jsonb, %s);
                     """,
                     (self._namespace_id, identity.worker_id, identity.session_id, tags_json, db_now),
                 )

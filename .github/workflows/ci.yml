@@ -45,30 +45,32 @@ jobs:
         run: |
           python -c "
           import os, psycopg
-          dsns = [
-              'postgresql://aos:aos_ci_test@127.0.0.1:5432/aos_coordination_test',
-              'postgresql://aos:aos_ci_test@localhost:5432/aos_coordination_test',
-              'postgresql://aos:aos_ci_test@postgres:5432/aos_coordination_test'
-          ]
-          connected = False
-          for dsn in dsns:
-              try:
-                  conn = psycopg.connect(dsn)
-                  print(f'SUCCESS connecting with: {dsn}')
-                  conn.close()
-                  connected = True
-                  break
-              except Exception as e:
-                  print(f'FAILED connecting with {dsn}: {e}')
-          if not connected:
-              raise RuntimeError('Could not connect to PostgreSQL with any DSN!')
+          dsn = os.environ.get('AOS_POSTGRES_TEST_DSN')
+          if not dsn:
+              raise RuntimeError('AOS_POSTGRES_TEST_DSN environment variable not set')
+          try:
+              conn = psycopg.connect(dsn)
+              print('PostgreSQL connectivity: PASS')
+              conn.close()
+          except Exception:
+              raise RuntimeError('PostgreSQL connectivity check failed')
           "
 
-      - name: Run pytest schema validation tests
+      - name: Run offline/non-Postgres pytest suite
         run: |
           python -m pytest -v --tb=short -m "not postgres_integration"
 
+      - name: Run Postgres integration tests
+        run: |
+          python -m pytest -v --tb=short \
+            tests/test_coordination_postgres.py \
+            -m "postgres_integration"
+
+      - name: Run full canonical pytest suite
+        run: |
+          python -m pytest -v --tb=short
+
       - name: Validate canonical state and evidence files
         run: |
-          python -m src.aos.validate state docs/project-control/STATE.json
-          python -m src.aos.validate evidence docs/project-control/EVIDENCE.jsonl
+          python -m aos.validate state docs/project-control/STATE.json
+          python -m aos.validate evidence docs/project-control/EVIDENCE.jsonl

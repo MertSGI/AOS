@@ -305,7 +305,7 @@ class TestPostgresCoordinationIntegration:
         conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE aos_coordination_workers SET capability_tags = 'invalid-json' WHERE namespace_id = 'ns1' AND worker_id = 'w1';"
+                "UPDATE aos_coordination_workers SET capability_tags = '{\"invalid\": \"shape\"}' WHERE namespace_id = 'ns1' AND worker_id = 'w1';"
             )
         conn.close()
 
