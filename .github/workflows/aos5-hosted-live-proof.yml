@@ -1,0 +1,345 @@
+name: AOS-5 Hosted Multi-Machine Live Proof
+
+on:
+  push:
+    branches:
+      - feature/aos-5-distributed-coordination
+    paths:
+      - docs/project-control/AOS5_LIVE_PROOF_AUTHORIZATION.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aos5-hosted-live-proof
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Preflight & Proof Request Generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Verify repository and Git readiness
+        run: |
+          python -c "
+          import os, subprocess, sys
+          
+          repo = '${{ github.repository }}'
+          if repo != 'MertSGI/AOS':
+              print(f'Repo mismatch: {repo}')
+              sys.exit(1)
+              
+          ref_name = '${{ github.ref_name }}'
+          if ref_name != 'feature/aos-5-distributed-coordination':
+              print(f'Ref name mismatch: {ref_name}')
+              sys.exit(1)
+              
+          head_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          github_sha = '${{ github.sha }}'
+          if head_sha != github_sha:
+              print(f'HEAD SHA {head_sha} does not match github.sha {github_sha}')
+              sys.exit(1)
+              
+          status = subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
+          if status != '':
+              print(f'Worktree is dirty: {status}')
+              sys.exit(1)
+              
+          print('Git preflight checks passed successfully.')
+          "
+
+      - name: Validate Authority & Generate Proof Request
+        run: |
+          python -c "
+          import datetime, json, os, sys
+          from pathlib import Path
+          from aos.validate import load_json_strict
+          from aos.coordination_live_proof import validate_proof_request_dict, execute_dry_run
+
+          auth_path = Path('docs/project-control/AOS5_LIVE_PROOF_AUTHORIZATION.json')
+          if not auth_path.is_file():
+              print('Authorization file missing')
+              sys.exit(1)
+
+          auth_data = load_json_strict(auth_path)
+          
+          # Require exact non-secret authority contract
+          if auth_data.get('schema_version') != '0.1.0':
+              sys.exit(1)
+          if auth_data.get('artifact_type') != 'AOS5_LIVE_PROOF_AUTHORIZATION':
+              sys.exit(1)
+          if auth_data.get('gate') != 'AOS-5':
+              sys.exit(1)
+          if auth_data.get('authorized') is not True:
+              sys.exit(1)
+          if not auth_data.get('authorization_id'):
+              sys.exit(1)
+          if auth_data.get('provider') != 'NEON_POSTGRES':
+              sys.exit(1)
+          if auth_data.get('provider_project_id') != 'weathered-flower-55573540':
+              sys.exit(1)
+          if auth_data.get('environment_class') != 'NONPRODUCTION_HOSTED_TEST':
+              sys.exit(1)
+          if auth_data.get('production_mutation_allowed') is not False:
+              sys.exit(1)
+          if auth_data.get('destructive_operations_allowed') is not False:
+              sys.exit(1)
+          if auth_data.get('billing_activation_allowed') is not False:
+              sys.exit(1)
+          if auth_data.get('secret_publication_allowed') is not False:
+              sys.exit(1)
+          if auth_data.get('lari_access_allowed') is not False:
+              sys.exit(1)
+          if auth_data.get('approved_harness_carrier_sha') != 'cc43b5d13d886bf4beb27c2d41361063efd63fe0':
+              sys.exit(1)
+
+          # Check forbidden secret-like keys in authorization JSON
+          forbidden_keys = {'dsn', 'password', 'token', 'credential', 'database_url', 'api_key'}
+          for k in auth_data.keys():
+              if k.lower() in forbidden_keys:
+                  print(f'Forbidden secret key in authorization: {k}')
+                  sys.exit(1)
+
+          # Construct runtime proof request outside Git worktree
+          run_id = '${{ github.run_id }}'
+          run_attempt = '${{ github.run_attempt }}'
+          start_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=110)
+          
+          request_dict = {
+              'schema_version': '0.1.0',
+              'artifact_type': 'AOS5_MULTI_MACHINE_PROOF_REQUEST',
+              'gate': 'AOS-5',
+              'proof_id': f'PROOF-{run_id}-{run_attempt}',
+              'authorization_id': auth_data['authorization_id'],
+              'authorized': True,
+              'backend_kind': 'POSTGRES',
+              'environment_class': 'NONPRODUCTION_HOSTED_TEST',
+              'source_sha': '${{ github.sha }}',
+              'control_branch': 'feature/aos-5-distributed-coordination',
+              'namespace_id': f'ns_proof_{run_id}',
+              'task_id': f'task_proof_{run_id}',
+              'ttl_seconds': 15.0,
+              'start_at_utc': start_dt.isoformat(),
+              'expected_worker_count': 2,
+              'workers': [
+                  {
+                      'role': 'worker_a',
+                      'worker_id': f'w_a_{run_id}',
+                      'session_id': f's_a_{run_id}',
+                      'machine_label': f'runner_a_job_{run_id}'
+                  },
+                  {
+                      'role': 'worker_b',
+                      'worker_id': f'w_b_{run_id}',
+                      'session_id': f's_b_{run_id}',
+                      'machine_label': f'runner_b_job_{run_id}'
+                  }
+              ],
+              'production_mutation_allowed': False,
+              'destructive_operations_allowed': False,
+              'billing_activation_allowed': False
+          }
+
+          validate_proof_request_dict(request_dict)
+          
+          # Perform dry-run validation for both roles
+          res_a = execute_dry_run(request_dict, 'worker_a')
+          res_b = execute_dry_run(request_dict, 'worker_b')
+          if res_a['backend_calls'] != 0 or res_b['backend_calls'] != 0:
+              sys.exit(1)
+
+          runner_temp = os.environ.get('RUNNER_TEMP', '/tmp')
+          out_file = Path(runner_temp) / 'proof_request.json'
+          out_file.write_text(json.dumps(request_dict, indent=2) + '\n', encoding='utf-8')
+          print(f'Proof request generated successfully at {out_file}')
+          "
+
+      - name: Upload Proof Request Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-request
+          path: ${{ runner.temp }}/proof_request.json
+
+  worker-live-execution:
+    name: Live Execution (${{ matrix.role }})
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: aos5-live-proof
+    strategy:
+      max-parallel: 2
+      matrix:
+        role: [worker_a, worker_b]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Materialize feature branch and check readiness
+        run: |
+          git checkout -B feature/aos-5-distributed-coordination ${{ github.sha }}
+          CURR_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          HEAD_SHA=$(git rev-parse HEAD)
+          ORIGIN_SHA=$(git rev-parse origin/feature/aos-5-distributed-coordination)
+          STATUS_OUT=$(git status --porcelain)
+
+          if [ "$CURR_BRANCH" != "feature/aos-5-distributed-coordination" ]; then
+            echo "Branch mismatch: $CURR_BRANCH"
+            exit 1
+          fi
+
+          if [ "$HEAD_SHA" != "${{ github.sha }}" ]; then
+            echo "HEAD SHA mismatch: $HEAD_SHA"
+            exit 1
+          fi
+
+          if [ "$ORIGIN_SHA" != "${{ github.sha }}" ]; then
+            echo "Origin SHA mismatch: $ORIGIN_SHA"
+            exit 1
+          fi
+
+          if [ -n "$STATUS_OUT" ]; then
+            echo "Worktree not clean: $STATUS_OUT"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary jsonschema
+
+      - name: Download Proof Request Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: proof-request
+          path: ${{ runner.temp }}
+
+      - name: Run Live Worker Execution
+        env:
+          AOS_POSTGRES_LIVE_DSN: ${{ secrets.AOS_POSTGRES_LIVE_DSN }}
+        run: |
+          python -m aos.coordination_live_proof \
+            --request-file "${{ runner.temp }}/proof_request.json" \
+            --role "${{ matrix.role }}" \
+            --output-file "${{ runner.temp }}/worker_result_${{ matrix.role }}.json"
+
+      - name: Upload Worker Result Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.role }}
+          path: ${{ runner.temp }}/worker_result_${{ matrix.role }}.json
+
+  verify-proof:
+    name: Verify Proof Results
+    needs: worker-live-execution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          pip install jsonschema
+
+      - name: Download Proof Request Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: proof-request
+          path: ${{ runner.temp }}
+
+      - name: Download Worker A Result Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: result-worker_a
+          path: ${{ runner.temp }}
+
+      - name: Download Worker B Result Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: result-worker_b
+          path: ${{ runner.temp }}
+
+      - name: Run Pair Verification
+        run: |
+          python -c "
+          import json, os, sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from aos.coordination_live_proof import verify_pair_results, parse_utc_datetime
+
+          runner_temp = Path(os.environ.get('RUNNER_TEMP', '/tmp'))
+          req = json.loads((runner_temp / 'proof_request.json').read_text(encoding='utf-8'))
+          res_a = json.loads((runner_temp / 'worker_result_worker_a.json').read_text(encoding='utf-8'))
+          res_b = json.loads((runner_temp / 'worker_result_worker_b.json').read_text(encoding='utf-8'))
+
+          verification = verify_pair_results(req, res_a, res_b)
+          if not verification['is_valid'] or verification['status'] != 'PASS':
+              print(f'Pair verification failed: {verification}')
+              sys.exit(1)
+
+          start_a = parse_utc_datetime(res_a['claim_started_at']).timestamp()
+          start_b = parse_utc_datetime(res_b['claim_started_at']).timestamp()
+          delta_seconds = abs(start_a - start_b)
+
+          if delta_seconds > 5.0:
+              print(f'Claim start delta {delta_seconds:.3f}s exceeds max 5.0s')
+              sys.exit(1)
+
+          fp_a = res_a['proof_scoped_machine_fingerprint_sha256']
+          fp_b = res_b['proof_scoped_machine_fingerprint_sha256']
+          if fp_a == fp_b:
+              print('Machine fingerprints must be distinct')
+              sys.exit(1)
+
+          winner = res_a if res_a['initial_disposition'] == 'ACQUIRED' else res_b
+          loser = res_b if res_a['initial_disposition'] == 'ACQUIRED' else res_a
+
+          w_lease = winner['initial_observed_lease']
+          rec_lease = loser['recovery_lease']
+
+          summary = {
+              'proof_id': req['proof_id'],
+              'source_sha': req['source_sha'],
+              'authorization_id': req['authorization_id'],
+              'pair_verifier_status': 'PASS',
+              'claim_start_delta_seconds': delta_seconds,
+              'machine_fingerprints_distinct': True,
+              'initial_winner_role': winner['role'],
+              'initial_loser_role': loser['role'],
+              'initial_lease_id': w_lease['lease_id'],
+              'initial_generation': w_lease['generation'],
+              'recovery_lease_id': rec_lease['lease_id'],
+              'recovery_generation': rec_lease['generation'],
+              'recovery_owner_role': loser['role']
+          }
+
+          out_file = runner_temp / 'pair-verification.json'
+          out_file.write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
+          print('Pair verification completed successfully.')
+          "
+
+      - name: Upload Pair Verification Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pair-verification
+          path: ${{ runner.temp }}/pair-verification.json
