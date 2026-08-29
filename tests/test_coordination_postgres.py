@@ -55,31 +55,42 @@ def test_dsn_sanitization_total_redaction():
         assert sanitized == "<redacted-postgresql-dsn>"
 
 
-def test_connect_factory_exception_discards_secret_cause():
-    secret_dsn = "postgresql://user:TOP_SECRET_PASS@example.invalid:5432/db"
+def test_connect_factory_exception_matrix_seals_all_secrets():
+    secret_dsn = "postgresql://user:COORD_STORAGE_SECRET@example.invalid:5432/db"
 
-    def leaky_factory(dsn: str):
-        raise RuntimeError(f"Leaky connection failed for dsn: {dsn}")
+    def leaky_runtime(dsn: str):
+        raise RuntimeError(f"Leaky RuntimeError with dsn: {dsn}")
 
-    with pytest.raises(CoordinationStorageError) as exc_info:
-        PostgresCoordinationBackend(
-            dsn=secret_dsn,
-            namespace_id="ns1",
-            connect_factory=leaky_factory,
-        )
+    def leaky_value(dsn: str):
+        raise ValueError(f"Leaky ValueError with dsn: {dsn}")
 
-    exc = exc_info.value
-    err_str = str(exc)
-    err_repr = repr(exc)
+    def leaky_storage(dsn: str):
+        raise CoordinationStorageError(f"Leaky CoordinationStorageError with dsn: {dsn}")
 
-    import traceback
-    tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    for factory in (leaky_runtime, leaky_value, leaky_storage):
+        with pytest.raises(CoordinationStorageError) as exc_info:
+            PostgresCoordinationBackend(
+                dsn=secret_dsn,
+                namespace_id="ns1",
+                connect_factory=factory,
+            )
 
-    assert "TOP_SECRET_PASS" not in err_str
-    assert "TOP_SECRET_PASS" not in err_repr
-    assert "TOP_SECRET_PASS" not in tb_str
-    assert secret_dsn not in err_str
-    assert exc.__cause__ is None
+        exc = exc_info.value
+        err_str = str(exc)
+        err_repr = repr(exc)
+
+        import traceback
+        tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+        assert type(exc) is CoordinationStorageError
+        assert err_str == "Failed to connect to PostgreSQL coordination backend"
+        assert "COORD_STORAGE_SECRET" not in err_str
+        assert secret_dsn not in err_str
+        assert "COORD_STORAGE_SECRET" not in err_repr
+        assert secret_dsn not in err_repr
+        assert "COORD_STORAGE_SECRET" not in tb_str
+        assert secret_dsn not in tb_str
+        assert exc.__cause__ is None
 
 
 def test_invalid_dsn_or_namespace_fails_closed():

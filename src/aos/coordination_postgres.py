@@ -222,8 +222,6 @@ class PostgresCoordinationBackend:
         if self._connect_factory is not None:
             try:
                 return self._connect_factory(self._dsn)
-            except CoordinationStorageError:
-                raise
             except Exception:
                 raise CoordinationStorageError("Failed to connect to PostgreSQL coordination backend") from None
 
