@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/aos5_multi_machine_proof.schema.json",
+  "title": "AOS-5 Multi-Machine Proof Harness Schema",
+  "oneOf": [
+    { "$ref": "#/$defs/ProofRequest" },
+    { "$ref": "#/$defs/WorkerResult" }
+  ],
+  "$defs": {
+    "ProofWorkerEntry": {
+      "type": "object",
+      "required": [
+        "role",
+        "worker_id",
+        "session_id",
+        "machine_label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["worker_a", "worker_b"]
+        },
+        "worker_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "machine_label": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ObservedLease": {
+      "type": "object",
+      "required": [
+        "owner_worker_id",
+        "owner_session_id",
+        "lease_id",
+        "generation",
+        "acquired_at",
+        "expires_at",
+        "ttl_seconds",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "owner_worker_id": { "type": "string", "minLength": 1 },
+        "owner_session_id": { "type": "string", "minLength": 1 },
+        "lease_id": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "acquired_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "ttl_seconds": { "type": "number", "minimum": 0.001 },
+        "status": { "type": "string", "enum": ["ACTIVE"] }
+      }
+    },
+    "ProofRequest": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "artifact_type",
+        "gate",
+        "proof_id",
+        "authorization_id",
+        "authorized",
+        "backend_kind",
+        "environment_class",
+        "source_sha",
+        "control_branch",
+        "namespace_id",
+        "task_id",
+        "ttl_seconds",
+        "start_at_utc",
+        "expected_worker_count",
+        "workers",
+        "production_mutation_allowed",
+        "destructive_operations_allowed",
+        "billing_activation_allowed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string", "const": "0.1.0" },
+        "artifact_type": { "type": "string", "const": "AOS5_MULTI_MACHINE_PROOF_REQUEST" },
+        "gate": { "type": "string", "const": "AOS-5" },
+        "proof_id": { "type": "string", "minLength": 1 },
+        "authorization_id": { "type": "string", "minLength": 1 },
+        "authorized": { "type": "boolean" },
+        "backend_kind": { "type": "string", "const": "POSTGRES" },
+        "environment_class": { "type": "string", "const": "NONPRODUCTION_HOSTED_TEST" },
+        "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "control_branch": { "type": "string", "const": "feature/aos-5-distributed-coordination" },
+        "namespace_id": { "type": "string", "minLength": 1 },
+        "task_id": { "type": "string", "minLength": 1 },
+        "ttl_seconds": { "type": "number", "minimum": 5, "maximum": 120 },
+        "start_at_utc": { "type": "string", "format": "date-time" },
+        "expected_worker_count": { "type": "integer", "const": 2 },
+        "workers": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/ProofWorkerEntry" }
+        },
+        "production_mutation_allowed": { "type": "boolean", "const": false },
+        "destructive_operations_allowed": { "type": "boolean", "const": false },
+        "billing_activation_allowed": { "type": "boolean", "const": false }
+      }
+    },
+    "WorkerResult": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "artifact_type",
+        "gate",
+        "proof_id",
+        "source_sha",
+        "control_branch",
+        "namespace_id",
+        "task_id",
+        "role",
+        "worker_id",
+        "session_id",
+        "machine_label",
+        "proof_scoped_machine_fingerprint_sha256",
+        "git_head_sha",
+        "git_origin_branch_sha",
+        "working_tree_clean",
+        "peer_registration_observed",
+        "peer_worker_id",
+        "peer_session_id",
+        "claim_started_at",
+        "claim_completed_at",
+        "initial_disposition",
+        "initial_observed_lease",
+        "recovery_attempted",
+        "recovery_started_at",
+        "recovery_completed_at",
+        "recovery_disposition",
+        "recovery_lease",
+        "worker_terminal_role"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string", "const": "0.1.0" },
+        "artifact_type": { "type": "string", "const": "AOS5_MULTI_MACHINE_WORKER_RESULT" },
+        "gate": { "type": "string", "const": "AOS-5" },
+        "proof_id": { "type": "string", "minLength": 1 },
+        "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "control_branch": { "type": "string", "const": "feature/aos-5-distributed-coordination" },
+        "namespace_id": { "type": "string", "minLength": 1 },
+        "task_id": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["worker_a", "worker_b"] },
+        "worker_id": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "machine_label": { "type": "string", "minLength": 1 },
+        "proof_scoped_machine_fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "git_head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "git_origin_branch_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "working_tree_clean": { "type": "boolean" },
+        "peer_registration_observed": { "type": "boolean" },
+        "peer_worker_id": { "type": "string", "minLength": 1 },
+        "peer_session_id": { "type": "string", "minLength": 1 },
+        "claim_started_at": { "type": "string", "format": "date-time" },
+        "claim_completed_at": { "type": "string", "format": "date-time" },
+        "initial_disposition": { "type": "string", "enum": ["ACQUIRED", "HELD_BY_OTHER"] },
+        "initial_observed_lease": { "$ref": "#/$defs/ObservedLease" },
+        "recovery_attempted": { "type": "boolean" },
+        "recovery_started_at": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "recovery_completed_at": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "recovery_disposition": {
+          "type": ["string", "null"],
+          "enum": ["ACQUIRED", null]
+        },
+        "recovery_lease": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/ObservedLease" }
+          ]
+        },
+        "worker_terminal_role": {
+          "type": "string",
+          "enum": ["INITIAL_WINNER_NO_RELEASE", "INITIAL_LOSER_RECOVERED", "HOLD"]
+        }
+      }
+    }
+  }
+}
