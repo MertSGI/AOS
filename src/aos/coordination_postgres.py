@@ -230,24 +230,15 @@ class PostgresCoordinationBackend:
                 raise CoordinationStorageError(f"Failed to connect to PostgreSQL at '{self._sanitized_dsn}'") from exc
 
         import psycopg
-        dsns_to_try = [self._dsn]
-        if "127.0.0.1" in self._dsn:
-            dsns_to_try.append(self._dsn.replace("127.0.0.1", "localhost"))
-        elif "localhost" in self._dsn:
-            dsns_to_try.append(self._dsn.replace("localhost", "127.0.0.1"))
-
-        last_exc = None
-        for dsn in dsns_to_try:
-            try:
-                conn = psycopg.connect(dsn, autocommit=False)
-                with conn.cursor() as cur:
-                    cur.execute(f"SET lock_timeout = {self._lock_timeout_ms};")
-                    cur.execute(f"SET statement_timeout = {self._statement_timeout_ms};")
-                conn.commit()
-                return conn
-            except Exception as exc:
-                last_exc = exc
-        raise CoordinationStorageError(f"Failed to connect to PostgreSQL at '{self._sanitized_dsn}'") from last_exc
+        try:
+            conn = psycopg.connect(self._dsn, autocommit=False)
+            with conn.cursor() as cur:
+                cur.execute(f"SET lock_timeout = {self._lock_timeout_ms};")
+                cur.execute(f"SET statement_timeout = {self._statement_timeout_ms};")
+            conn.commit()
+            return conn
+        except Exception as exc:
+            raise CoordinationStorageError(f"Failed to connect to PostgreSQL at '{self._sanitized_dsn}'") from exc
 
     def _init_db(self) -> None:
         conn = self._connect()

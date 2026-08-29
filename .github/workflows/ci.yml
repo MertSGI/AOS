@@ -58,7 +58,8 @@ jobs:
 
       - name: Run offline/non-Postgres pytest suite
         run: |
-          python -m pytest -v --tb=short -m "not postgres_integration"
+          python -m pytest -v --tb=short \
+            -m "not postgres_integration and not live_read_only"
 
       - name: Run Postgres integration tests
         run: |

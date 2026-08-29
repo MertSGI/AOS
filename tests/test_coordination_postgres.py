@@ -243,14 +243,25 @@ class TestPostgresCoordinationIntegration:
         assert hb is not None
         assert hb.last_heartbeat_at >= res1.lease.last_heartbeat_at
 
-        # Manually set lease to expired in DB
+        # Manually set lease to a valid, internally consistent expired timeline in DB
         import psycopg
         conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE aos_coordination_leases SET expires_at = '2000-01-01T00:00:00Z' WHERE namespace_id = 'ns1' AND task_id = 'task-1';"
+                """
+                UPDATE aos_coordination_leases
+                SET acquired_at = '2000-01-01T00:00:00+00:00',
+                    last_heartbeat_at = '2000-01-01T00:00:30+00:00',
+                    expires_at = '2000-01-01T00:01:00+00:00'
+                WHERE namespace_id = 'ns1' AND task_id = 'task-1';
+                """
             )
         conn.close()
+
+        # Prove persisted expired row parses successfully before recovery claim
+        expired_lease = backend.get_lease("task-1")
+        assert expired_lease is not None
+        assert expired_lease.acquired_at <= expired_lease.last_heartbeat_at < expired_lease.expires_at
 
         # Recovery claim by w2
         res2 = backend.try_claim("task-1", w2, 60.0)
@@ -262,6 +273,7 @@ class TestPostgresCoordinationIntegration:
         # Stale heartbeat/release rejected
         assert backend.heartbeat("task-1", "w1", "s1", res1.lease.lease_id, res1.lease.generation) is None
         assert backend.release("task-1", "w1", "s1", res1.lease.lease_id, res1.lease.generation) is False
+        assert backend.get_lease("task-1").worker_id == "w2"
 
     def test_release_and_new_epoch(self):
         backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
@@ -325,10 +337,24 @@ class TestPostgresCoordinationIntegration:
         conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE aos_coordination_leases SET generation = %s, expires_at = '2000-01-01T00:00:00Z' WHERE namespace_id = 'ns1' AND task_id = 'task-1';",
+                """
+                UPDATE aos_coordination_leases
+                SET generation = %s,
+                    acquired_at = '2000-01-01T00:00:00+00:00',
+                    last_heartbeat_at = '2000-01-01T00:00:30+00:00',
+                    expires_at = '2000-01-01T00:01:00+00:00'
+                WHERE namespace_id = 'ns1' AND task_id = 'task-1';
+                """,
                 (BIGINT_MAX,),
             )
         conn.close()
+
+        # Prove parsed lease succeeds before overflow claim
+        overflow_lease = backend.get_lease("task-1")
+        assert overflow_lease is not None
+        assert overflow_lease.generation == BIGINT_MAX
+        assert overflow_lease.status == LeaseStatus.ACTIVE
+        assert overflow_lease.acquired_at <= overflow_lease.last_heartbeat_at < overflow_lease.expires_at
 
         with pytest.raises(CoordinationStorageError):
             backend.try_claim("task-1", w2, 60.0)
