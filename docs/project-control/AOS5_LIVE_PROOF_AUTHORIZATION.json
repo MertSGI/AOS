@@ -3,7 +3,7 @@
   "artifact_type": "AOS5_LIVE_PROOF_AUTHORIZATION",
   "gate": "AOS-5",
   "authorized": true,
-  "authorization_id": "AOS5-STAGE11D-B4-20260830-001",
+  "authorization_id": "AOS5-STAGE11D-B5-20260830-001",
   "provider": "NEON_POSTGRES",
   "provider_project_id": "weathered-flower-55573540",
   "environment_class": "NONPRODUCTION_HOSTED_TEST",
