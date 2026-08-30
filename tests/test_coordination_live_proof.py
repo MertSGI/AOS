@@ -686,7 +686,11 @@ def test_regression_already_owned_initial_disposition_rejected():
 
 # 5. SAME_PHYSICAL_MACHINE_DIFFERENT_LABEL_SAME_FINGERPRINT
 def test_regression_same_physical_machine_different_label_same_fingerprint():
-    with patch("platform.node", return_value="test-node"), patch("platform.system", return_value="Linux"), patch("platform.machine", return_value="x86_64"):
+    boot_uuid = "11111111-2222-3333-4444-555555555555"
+    with patch("platform.node", return_value="test-node"), \
+         patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid):
         fp1 = compute_proof_scoped_machine_fingerprint("PROOF-100")
         fp2 = compute_proof_scoped_machine_fingerprint("PROOF-100")
         assert fp1 == fp2
@@ -705,10 +709,18 @@ def test_regression_pair_same_physical_machine_rejected():
 
 # 7. DIFFERENT_MACHINE_IDENTITY_DIFFERENT_FINGERPRINT
 def test_regression_different_machine_identity_different_fingerprint():
-    with patch("platform.node", return_value="node-A"), patch("platform.system", return_value="Linux"), patch("platform.machine", return_value="x86_64"):
+    boot_uuid_a = "11111111-2222-3333-4444-555555555555"
+    boot_uuid_b = "99999999-8888-7777-6666-555555555555"
+    with patch("platform.node", return_value="node-A"), \
+         patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid_a):
         fp_a = compute_proof_scoped_machine_fingerprint("PROOF-100")
 
-    with patch("platform.node", return_value="node-B"), patch("platform.system", return_value="Linux"), patch("platform.machine", return_value="x86_64"):
+    with patch("platform.node", return_value="node-B"), \
+         patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid_b):
         fp_b = compute_proof_scoped_machine_fingerprint("PROOF-100")
 
     assert fp_a != fp_b
@@ -1010,3 +1022,139 @@ def test_regression_recovery_nonincreasing_generation_rejected_in_live_path():
         with pytest.raises(CoordinationStorageError) as exc_info:
             run_live_worker(req, "worker_b", backend_override=mock_backend, time_func=now_fn, sleep_func=lambda s: None)
         assert "Recovery generation" in str(exc_info.value) and "must be strictly greater" in str(exc_info.value)
+
+
+# =====================================================================
+# STAGE 11D-B4-R1 LINUX MACHINE INSTANCE IDENTITY TESTS
+# =====================================================================
+
+def test_linux_same_boot_id_same_fingerprint():
+    boot_uuid = "11111111-2222-3333-4444-555555555555"
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid):
+        fp1 = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        fp2 = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        assert fp1 == fp2
+
+
+def test_linux_different_boot_id_distinct_fingerprint():
+    boot_uuid_a = "11111111-2222-3333-4444-555555555555"
+    boot_uuid_b = "99999999-8888-7777-6666-555555555555"
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"):
+        with patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid_a):
+            fp_a = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        with patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid_b):
+            fp_b = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        assert fp_a != fp_b
+
+
+def test_linux_different_hostname_same_boot_id_same_fingerprint():
+    boot_uuid = "11111111-2222-3333-4444-555555555555"
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid):
+        with patch("platform.node", return_value="runner-host-alpha"):
+            fp1 = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        with patch("platform.node", return_value="runner-host-beta"):
+            fp2 = compute_proof_scoped_machine_fingerprint("PROOF-123")
+        assert fp1 == fp2, "Different hostname on same Linux boot_id must yield identical fingerprint"
+
+
+def test_linux_boot_id_missing_fails_closed(tmp_path):
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof.Path.is_file", return_value=False):
+        with pytest.raises(CoordinationStorageError) as exc_info:
+            compute_proof_scoped_machine_fingerprint("PROOF-123")
+        assert "boot_id" in str(exc_info.value)
+
+
+def test_linux_boot_id_malformed_fails_closed():
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof.Path.is_file", return_value=True), \
+         patch("aos.coordination_live_proof.Path.read_text", return_value="not-a-valid-uuid"):
+        with pytest.raises(CoordinationStorageError) as exc_info:
+            compute_proof_scoped_machine_fingerprint("PROOF-123")
+        assert "malformed" in str(exc_info.value).lower() or "boot_id" in str(exc_info.value).lower()
+
+
+def test_request_machine_label_does_not_affect_fingerprint():
+    boot_uuid = "11111111-2222-3333-4444-555555555555"
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid):
+        fp1 = compute_proof_scoped_machine_fingerprint("PROOF-XYZ")
+
+    req1 = make_valid_request()
+    req1["proof_id"] = "PROOF-XYZ"
+    req2 = make_valid_request()
+    req2["proof_id"] = "PROOF-XYZ"
+    req1["workers"][0]["machine_label"] = "label_1"
+    req2["workers"][0]["machine_label"] = "label_2"
+
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=boot_uuid):
+        fp2 = compute_proof_scoped_machine_fingerprint(req1["proof_id"])
+
+    assert fp1 == fp2
+
+
+def test_pair_same_machine_fingerprint_still_hold():
+    req = make_valid_request()
+    res_a, res_b = make_valid_results(req)
+    res_b["proof_scoped_machine_fingerprint_sha256"] = res_a["proof_scoped_machine_fingerprint_sha256"]
+    ver = verify_pair_results(req, res_a, res_b)
+    assert ver["is_valid"] is False
+    assert ver["status"] == "HOLD"
+    assert "Machine fingerprints must be distinct" in ver["reasons"]
+
+
+def test_pair_distinct_machine_fingerprint_pass():
+    req = make_valid_request()
+    res_a, res_b = make_valid_results(req)
+    assert res_a["proof_scoped_machine_fingerprint_sha256"] != res_b["proof_scoped_machine_fingerprint_sha256"]
+    ver = verify_pair_results(req, res_a, res_b)
+    assert ver["is_valid"] is True
+    assert ver["status"] == "PASS"
+
+
+def test_raw_boot_id_not_present_in_worker_result():
+    raw_boot_uuid = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+    req = make_valid_request(authorized=True, start_at_utc="2026-08-29T16:00:00Z")
+    mock_backend = MagicMock()
+    mock_backend.is_worker_registered.return_value = True
+
+    lease = LeaseSnapshot(
+        task_id="task_proof_test",
+        worker_id="w_a",
+        session_id="s_a",
+        lease_id="lease_01",
+        acquired_at=datetime.datetime(2026, 8, 29, 16, 0, 0, tzinfo=datetime.timezone.utc),
+        last_heartbeat_at=datetime.datetime(2026, 8, 29, 16, 0, 0, tzinfo=datetime.timezone.utc),
+        expires_at=datetime.datetime(2026, 8, 29, 16, 0, 15, tzinfo=datetime.timezone.utc),
+        ttl_seconds=15.0,
+        generation=1,
+        status=LeaseStatus.ACTIVE,
+    )
+    mock_backend.try_claim.return_value = ClaimResult(disposition=ClaimDisposition.ACQUIRED, lease=lease)
+
+    fake_clock = [1788019200.0]
+
+    def now_fn():
+        fake_clock[0] += 1.0
+        return fake_clock[0]
+
+    with patch("platform.system", return_value="Linux"), \
+         patch("platform.machine", return_value="x86_64"), \
+         patch("aos.coordination_live_proof._read_linux_boot_id", return_value=raw_boot_uuid), \
+         patch("aos.coordination_live_proof.check_git_readiness") as mock_git:
+        mock_git.return_value = {"is_ready": True, "head_sha": VALID_SOURCE_SHA, "origin_sha": VALID_SOURCE_SHA, "branch": VALID_BRANCH, "is_clean": True, "reasons": []}
+        res = run_live_worker(req, "worker_a", backend_override=mock_backend, time_func=now_fn, sleep_func=lambda s: None)
+
+    res_str = json.dumps(res)
+    assert raw_boot_uuid not in res_str, "Raw boot ID must never be present in worker result JSON"
+    assert "proof_scoped_machine_fingerprint_sha256" in res

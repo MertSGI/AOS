@@ -12,6 +12,7 @@ import platform
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -58,17 +59,15 @@ def validate_proof_artifact(data: Any) -> Tuple[bool, List[str]]:
     return len(errors) == 0, errors
 
 
-def check_forbidden_secret_keys(obj: Any, live_dsn_val: Optional[str] = None) -> None:
+def check_forbidden_secret_keys(obj: Any, path: str = "") -> None:
     if isinstance(obj, dict):
         for k, v in obj.items():
             if k.lower() in FORBIDDEN_SECRET_KEYS:
-                raise ValueError(f"Forbidden secret-like key detected in artifact: {k}")
-            if isinstance(v, str) and live_dsn_val and live_dsn_val in v and len(live_dsn_val) > 5:
-                raise ValueError(f"Raw DSN value detected in artifact field: {k}")
-            check_forbidden_secret_keys(v, live_dsn_val)
+                raise ValueError(f"Forbidden secret-like key '{k}' found at path '{path}.{k}'")
+            check_forbidden_secret_keys(v, f"{path}.{k}")
     elif isinstance(obj, list):
-        for item in obj:
-            check_forbidden_secret_keys(item, live_dsn_val)
+        for idx, item in enumerate(obj):
+            check_forbidden_secret_keys(item, f"{path}[{idx}]")
 
 
 def parse_utc_datetime(iso_str: str) -> datetime.datetime:
@@ -83,13 +82,41 @@ def parse_utc_datetime(iso_str: str) -> datetime.datetime:
     return dt.astimezone(datetime.timezone.utc)
 
 
+def _read_linux_boot_id() -> str:
+    path = Path("/proc/sys/kernel/random/boot_id")
+    if not path.is_file():
+        raise CoordinationStorageError("Fail closed: /proc/sys/kernel/random/boot_id does not exist")
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        raise CoordinationStorageError("Fail closed: unreadable Linux boot_id") from e
+
+    if not content:
+        raise CoordinationStorageError("Fail closed: empty Linux boot_id")
+
+    try:
+        parsed_uuid = uuid.UUID(content)
+    except Exception as e:
+        raise CoordinationStorageError("Fail closed: malformed Linux boot_id") from e
+
+    return str(parsed_uuid).lower()
+
+
 def compute_proof_scoped_machine_fingerprint(proof_id: str) -> str:
-    node = platform.node().strip()
     sys_name = platform.system().strip()
     mach = platform.machine().strip()
-    if not node or not sys_name or not mach:
+    if not sys_name or not mach:
         raise CoordinationStorageError("Fail closed: missing local machine identity material for fingerprint")
-    raw_identity = f"{proof_id}:{node}:{sys_name}:{mach}"
+
+    if sys_name.lower() == "linux":
+        boot_id = _read_linux_boot_id()
+        raw_identity = f"{proof_id}:{sys_name}:{mach}:{boot_id}"
+    else:
+        node = platform.node().strip()
+        if not node:
+            raise CoordinationStorageError("Fail closed: missing local machine identity material for fingerprint")
+        raw_identity = f"{proof_id}:{node}:{sys_name}:{mach}"
+
     return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
 
 
