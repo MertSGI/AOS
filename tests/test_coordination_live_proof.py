@@ -1158,3 +1158,96 @@ def test_raw_boot_id_not_present_in_worker_result():
     res_str = json.dumps(res)
     assert raw_boot_uuid not in res_str, "Raw boot ID must never be present in worker result JSON"
     assert "proof_scoped_machine_fingerprint_sha256" in res
+
+
+# =====================================================================
+# STAGE 11D-B4-R2 RAW DSN ARTIFACT GUARD RESTORATION TESTS
+# =====================================================================
+
+TEST_LIVE_DSN = "postgresql://proof_user:super_secret_password_12345@ep-weathered-flower-55573540.us-east-2.aws.neon.tech/aos-coordination-proof?sslmode=require"
+
+
+def test_raw_dsn_in_allowed_top_level_string_rejected(tmp_path):
+    req = make_valid_request()
+    res_a, _ = make_valid_results(req)
+    res_a["machine_label"] = TEST_LIVE_DSN
+    out_file = tmp_path / "result_a.json"
+
+    with pytest.raises(ValueError) as exc_info:
+        write_worker_result_atomic(res_a, out_file, live_dsn=TEST_LIVE_DSN)
+
+    assert not out_file.exists(), "Output file must NOT be written when raw DSN is detected"
+    assert TEST_LIVE_DSN not in str(exc_info.value), "Exception string must NOT leak raw DSN"
+    assert "Raw DSN value detected" in str(exc_info.value)
+    assert "machine_label" in str(exc_info.value)
+
+
+def test_raw_dsn_embedded_in_allowed_string_rejected(tmp_path):
+    req = make_valid_request()
+    res_a, _ = make_valid_results(req)
+    res_a["machine_label"] = "prefix-" + TEST_LIVE_DSN + "-suffix"
+    out_file = tmp_path / "result_a.json"
+
+    with pytest.raises(ValueError) as exc_info:
+        write_worker_result_atomic(res_a, out_file, live_dsn=TEST_LIVE_DSN)
+
+    assert not out_file.exists(), "Output file must NOT be written when embedded raw DSN is detected"
+    assert TEST_LIVE_DSN not in str(exc_info.value), "Exception string must NOT leak raw DSN"
+    assert "Raw DSN value detected" in str(exc_info.value)
+
+
+def test_raw_dsn_in_nested_value_rejected(tmp_path):
+    req = make_valid_request()
+    res_a, _ = make_valid_results(req)
+    res_a["initial_observed_lease"]["owner_worker_id"] = TEST_LIVE_DSN
+    out_file = tmp_path / "result_a.json"
+
+    with pytest.raises(ValueError) as exc_info:
+        write_worker_result_atomic(res_a, out_file, live_dsn=TEST_LIVE_DSN)
+
+    assert not out_file.exists(), "Output file must NOT be written when raw DSN is in nested dict"
+    assert TEST_LIVE_DSN not in str(exc_info.value), "Exception string must NOT leak raw DSN"
+    assert "initial_observed_lease.owner_worker_id" in str(exc_info.value)
+
+
+def test_raw_dsn_in_list_string_rejected():
+    obj = {"items": ["normal_value", TEST_LIVE_DSN]}
+    with pytest.raises(ValueError) as exc_info:
+        check_forbidden_secret_keys(obj, live_dsn_val=TEST_LIVE_DSN, path="")
+
+    assert TEST_LIVE_DSN not in str(exc_info.value), "Exception string must NOT leak raw DSN"
+    assert "items[1]" in str(exc_info.value)
+
+
+def test_forbidden_key_with_live_dsn_does_not_leak_dsn_in_exception():
+    obj = {"dsn": "some_value"}
+    with pytest.raises(ValueError) as exc_info:
+        check_forbidden_secret_keys(obj, live_dsn_val=TEST_LIVE_DSN, path="")
+
+    assert TEST_LIVE_DSN not in str(exc_info.value), "Exception string must NOT contain live_dsn"
+    assert "Forbidden secret-like key 'dsn'" in str(exc_info.value)
+
+
+def test_no_live_dsn_value_preserves_key_only_guard():
+    req = make_valid_request()
+    res_a, _ = make_valid_results(req)
+    res_a["machine_label"] = "ordinary_string_label"
+    # Ordinary string with live_dsn_val=None must not raise
+    check_forbidden_secret_keys(res_a, live_dsn_val=None, path="")
+
+    # Forbidden key with live_dsn_val=None must still be rejected
+    res_a["password"] = "secret"
+    with pytest.raises(ValueError) as exc_info:
+        check_forbidden_secret_keys(res_a, live_dsn_val=None, path="")
+    assert "Forbidden secret-like key 'password'" in str(exc_info.value)
+
+
+def test_safe_result_writes_successfully_with_live_dsn_guard(tmp_path):
+    req = make_valid_request()
+    res_a, _ = make_valid_results(req)
+    out_file = tmp_path / "result_a.json"
+
+    write_worker_result_atomic(res_a, out_file, live_dsn=TEST_LIVE_DSN)
+    assert out_file.exists(), "Safe worker result must be written successfully"
+    written_data = json.loads(out_file.read_text(encoding="utf-8"))
+    assert written_data["artifact_type"] == "AOS5_MULTI_MACHINE_WORKER_RESULT"

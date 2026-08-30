@@ -59,15 +59,24 @@ def validate_proof_artifact(data: Any) -> Tuple[bool, List[str]]:
     return len(errors) == 0, errors
 
 
-def check_forbidden_secret_keys(obj: Any, path: str = "") -> None:
+def check_forbidden_secret_keys(
+    obj: Any,
+    live_dsn_val: Optional[str] = None,
+    path: str = "",
+) -> None:
     if isinstance(obj, dict):
         for k, v in obj.items():
+            child_path = f"{path}.{k}" if path else k
             if k.lower() in FORBIDDEN_SECRET_KEYS:
-                raise ValueError(f"Forbidden secret-like key '{k}' found at path '{path}.{k}'")
-            check_forbidden_secret_keys(v, f"{path}.{k}")
+                raise ValueError(f"Forbidden secret-like key '{k}' found at path '{child_path}'")
+            check_forbidden_secret_keys(v, live_dsn_val=live_dsn_val, path=child_path)
     elif isinstance(obj, list):
         for idx, item in enumerate(obj):
-            check_forbidden_secret_keys(item, f"{path}[{idx}]")
+            child_path = f"{path}[{idx}]"
+            check_forbidden_secret_keys(item, live_dsn_val=live_dsn_val, path=child_path)
+    elif isinstance(obj, str):
+        if live_dsn_val is not None and len(live_dsn_val) > 5 and live_dsn_val in obj:
+            raise ValueError(f"Raw DSN value detected in artifact at path '{path}'")
 
 
 def parse_utc_datetime(iso_str: str) -> datetime.datetime:
@@ -267,7 +276,7 @@ def execute_dry_run(request_dict: Dict[str, Any], role: str) -> Dict[str, Any]:
 
 
 def write_worker_result_atomic(result_dict: Dict[str, Any], output_path: str | Path, live_dsn: Optional[str] = None) -> None:
-    check_forbidden_secret_keys(result_dict, live_dsn)
+    check_forbidden_secret_keys(result_dict, live_dsn_val=live_dsn, path="")
 
     is_valid, errors = validate_proof_artifact(result_dict)
     if not is_valid:
