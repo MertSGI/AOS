@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "artifact_type": "AOS5_LIVE_PROOF_AUTHORIZATION",
+  "gate": "AOS-5",
+  "authorized": true,
+  "authorization_id": "AOS5-STAGE11D-B4-20260830-001",
+  "provider": "NEON_POSTGRES",
+  "provider_project_id": "weathered-flower-55573540",
+  "environment_class": "NONPRODUCTION_HOSTED_TEST",
+  "production_mutation_allowed": false,
+  "destructive_operations_allowed": false,
+  "billing_activation_allowed": false,
+  "secret_publication_allowed": false,
+  "lari_access_allowed": false,
+  "approved_harness_carrier_sha": "cc43b5d13d886bf4beb27c2d41361063efd63fe0"
+}
