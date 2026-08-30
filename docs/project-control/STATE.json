@@ -1,13 +1,13 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-08-30T17:35:00Z",
+  "updated_at": "2026-08-30T19:00:00Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_HOSTED_MULTI_MACHINE_LIVE_PROOF_INDEPENDENTLY_ACCEPTED",
+  "status": "AOS5_EXIT_CONTRACT_INDEPENDENTLY_PROVEN_MAIN_INTEGRATION_PENDING",
   "current_gate": "AOS-5",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,14 +68,14 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Perform the final AOS-5 canonical-history isolation exit review/proof: coordination storage loss or unavailability must not mutate or corrupt canonical Git/GitHub history. Do not use a destructive hosted operation without separate human authorization.",
+  "next_action": "Perform final controlled integration of the independently proven AOS-5 feature branch into main. Do not begin AOS-6/LARI pilot operations until AOS-5 main integration is independently verified and the LARI controller has provided current-state guidance.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
-      "status": "AOS5_MACHINE_INSTANCE_FINGERPRINT_R2_REVIEW_PENDING",
+      "status": "AOS5_EXIT_CONTRACT_INDEPENDENTLY_PROVEN_MAIN_INTEGRATION_PENDING",
       "control_branch": "feature/aos-5-distributed-coordination",
       "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
-      "next_action_execution_base_sha": "58d0d672f969e31bd8874557faffe630233a93b4",
+      "next_action_execution_base_sha": "7c2ee04f4b656d93291c58c2de47e53a84c54b56",
       "stage_11a_implementation_sha": "cc80b1a4e3ae05244284f855c7a569a7142917e0",
       "stage_11a_transaction_result": "PASS",
       "stage_11a_exact_sha_ci_result": "SUCCESS",
@@ -266,7 +266,7 @@
       "real_multi_pc_status": "INDEPENDENTLY_PROVEN_ON_TWO_GITHUB_HOSTED_RUNNERS",
       "supabase_live_status": "NOT_CONNECTED",
       "lari_status": "NO_ACCESS_NO_MUTATION",
-      "independent_review_status": "HOSTED_LIVE_PROOF_ACCEPTED_FINAL_AOS5_ISOLATION_EXIT_PENDING",
+      "independent_review_status": "AOS5_EXIT_PROVEN_MAIN_INTEGRATION_PENDING",
       "canonical_git_truth_preserved": true,
       "lari_mutation_allowed": false,
       "stage_11d_b5_trigger_sha": "58d0d672f969e31bd8874557faffe630233a93b4",
@@ -300,7 +300,26 @@
       "hosted_expiry_recovery_status": "INDEPENDENTLY_PROVEN",
       "hosted_machine_instance_independence_status": "INDEPENDENTLY_PROVEN",
       "hosted_multi_machine_proof_status": "INDEPENDENTLY_ACCEPTED",
-      "stage_11d_status": "HOSTED_MULTI_MACHINE_LIVE_PROOF_COMPLETE"
+      "stage_11d_status": "HOSTED_MULTI_MACHINE_LIVE_PROOF_COMPLETE",
+      "stage_11e_initial_sha": "1a1e2687020cd2c6ea19dc8ed34abc884553facd",
+      "stage_11e_initial_ci_run_id": 33326306017,
+      "stage_11e_initial_ci_job_id": 99296928804,
+      "stage_11e_initial_result": "HOLD",
+      "stage_11e_initial_finding": "FULL_WORKTREE_CLEAN_PRECONDITION_INCOMPATIBLE_WITH_CANONICAL_CI_RUNTIME_ARTIFACT",
+      "stage_11e_r1_sha": "7c2ee04f4b656d93291c58c2de47e53a84c54b56",
+      "stage_11e_r1_ci_run_id": 33326653518,
+      "stage_11e_r1_ci_job_id": 99297879383,
+      "stage_11e_r1_ci_result": "SUCCESS",
+      "stage_11e_r1_postgres_selected": 25,
+      "stage_11e_r1_postgres_passed": 25,
+      "stage_11e_r1_postgres_failed": 0,
+      "stage_11e_r1_isolation_test": "PASS",
+      "stage_11e_r1_independent_review_result": "PASS",
+      "stage_11e_r1_independent_review_status": "INDEPENDENTLY_ACCEPTED",
+      "coordination_store_loss_canonical_git_isolation": "INDEPENDENTLY_PROVEN",
+      "aos5_exit_contract": "INDEPENDENTLY_PROVEN",
+      "stage_11e_status": "COMPLETE",
+      "main_integration_status": "PENDING"
     },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
