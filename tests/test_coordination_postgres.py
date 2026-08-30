@@ -698,7 +698,6 @@ class TestPostgresCoordinationIntegration:
 
     def test_coordination_store_loss_preserves_canonical_git_history(self):
         import hashlib
-        import os
         import subprocess
         from pathlib import Path
 
@@ -706,7 +705,12 @@ class TestPostgresCoordinationIntegration:
             head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
             tree_sha = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
             show_ref = subprocess.check_output(["git", "show-ref", "--head"], text=True).strip()
-            status_out = subprocess.check_output(["git", "status", "--porcelain=v1"], text=True).strip()
+            tracked_status = subprocess.check_output(
+                ["git", "status", "--porcelain=v1", "--untracked-files=no"], text=True
+            ).strip()
+            full_status = subprocess.check_output(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"], text=True
+            ).strip()
 
             state_bytes = Path("docs/project-control/STATE.json").read_bytes()
             state_sha256 = hashlib.sha256(state_bytes).hexdigest()
@@ -718,13 +722,14 @@ class TestPostgresCoordinationIntegration:
                 "head_sha": head_sha,
                 "tree_sha": tree_sha,
                 "show_ref": show_ref,
-                "status_out": status_out,
+                "tracked_status": tracked_status,
+                "full_status": full_status,
                 "state_sha256": state_sha256,
                 "evidence_sha256": evidence_sha256,
             }
 
         pre_snapshot = capture_git_snapshot()
-        assert pre_snapshot["status_out"] == "", "Working tree must be clean before proof"
+        assert pre_snapshot["tracked_status"] == "", "Tracked canonical worktree must be clean before proof"
 
         backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns_canonical_git_isolation")
         w1 = WorkerIdentity("w1", "s1")
@@ -757,6 +762,8 @@ class TestPostgresCoordinationIntegration:
         assert post_snapshot["head_sha"] == pre_snapshot["head_sha"]
         assert post_snapshot["tree_sha"] == pre_snapshot["tree_sha"]
         assert post_snapshot["show_ref"] == pre_snapshot["show_ref"]
-        assert post_snapshot["status_out"] == pre_snapshot["status_out"]
+        assert post_snapshot["tracked_status"] == pre_snapshot["tracked_status"]
+        assert post_snapshot["tracked_status"] == ""
+        assert post_snapshot["full_status"] == pre_snapshot["full_status"]
         assert post_snapshot["state_sha256"] == pre_snapshot["state_sha256"]
         assert post_snapshot["evidence_sha256"] == pre_snapshot["evidence_sha256"]
