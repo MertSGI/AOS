@@ -695,3 +695,68 @@ class TestPostgresCoordinationIntegration:
         b2 = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns1")
         reopened_lease = b2.get_lease("ttl-task")
         assert reopened_lease == hb
+
+    def test_coordination_store_loss_preserves_canonical_git_history(self):
+        import hashlib
+        import os
+        import subprocess
+        from pathlib import Path
+
+        def capture_git_snapshot():
+            head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+            tree_sha = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+            show_ref = subprocess.check_output(["git", "show-ref", "--head"], text=True).strip()
+            status_out = subprocess.check_output(["git", "status", "--porcelain=v1"], text=True).strip()
+
+            state_bytes = Path("docs/project-control/STATE.json").read_bytes()
+            state_sha256 = hashlib.sha256(state_bytes).hexdigest()
+
+            evidence_bytes = Path("docs/project-control/EVIDENCE.jsonl").read_bytes()
+            evidence_sha256 = hashlib.sha256(evidence_bytes).hexdigest()
+
+            return {
+                "head_sha": head_sha,
+                "tree_sha": tree_sha,
+                "show_ref": show_ref,
+                "status_out": status_out,
+                "state_sha256": state_sha256,
+                "evidence_sha256": evidence_sha256,
+            }
+
+        pre_snapshot = capture_git_snapshot()
+        assert pre_snapshot["status_out"] == "", "Working tree must be clean before proof"
+
+        backend = PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns_canonical_git_isolation")
+        w1 = WorkerIdentity("w1", "s1")
+        backend.register_worker(w1)
+
+        claim_res = backend.try_claim("task-git-isolation", w1, 60.0)
+        assert claim_res.disposition == ClaimDisposition.ACQUIRED
+        assert claim_res.lease is not None
+        assert claim_res.lease.status == LeaseStatus.ACTIVE
+
+        import psycopg
+        conn = psycopg.connect(POSTGRES_TEST_DSN, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                DROP TABLE IF EXISTS aos_coordination_leases CASCADE;
+                DROP TABLE IF EXISTS aos_coordination_task_locks CASCADE;
+                DROP TABLE IF EXISTS aos_coordination_workers CASCADE;
+                DROP TABLE IF EXISTS aos_coordination_meta CASCADE;
+            """)
+        conn.close()
+
+        with pytest.raises(CoordinationStorageError):
+            PostgresCoordinationBackend(POSTGRES_TEST_DSN, namespace_id="ns_canonical_git_isolation")
+
+        with pytest.raises(CoordinationStorageError):
+            backend.get_lease("task-git-isolation")
+
+        post_snapshot = capture_git_snapshot()
+
+        assert post_snapshot["head_sha"] == pre_snapshot["head_sha"]
+        assert post_snapshot["tree_sha"] == pre_snapshot["tree_sha"]
+        assert post_snapshot["show_ref"] == pre_snapshot["show_ref"]
+        assert post_snapshot["status_out"] == pre_snapshot["status_out"]
+        assert post_snapshot["state_sha256"] == pre_snapshot["state_sha256"]
+        assert post_snapshot["evidence_sha256"] == pre_snapshot["evidence_sha256"]
