@@ -1,13 +1,13 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-08-31T05:10:00Z",
+  "updated_at": "2026-08-31T05:50:45Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_MAIN_INTEGRATED_CLOSED_PROVEN",
+  "status": "AOS6_LARI_CANONICAL_RECONCILIATION_HOLD_READ_ONLY_ALLOWED",
   "current_gate": "AOS-6",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "AOS-5 is MAIN_INTEGRATED_CLOSED_PROVEN. Before any AOS-6 LARI-related operation, obtain current-state guidance from the separate LARI controller/project conversation and reconcile the current LARI control head, branch, safe state, and authorized next action. Do not mutate LARI from the AOS controller before that cross-controller coordination is complete.",
+  "next_action": "Perform Controller-owned read-only shadow reconciliation against exact LARI source SHA 1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b. Do not treat that SHA as execution authority. Do not begin AOS-6 controlled pilot until the LARI canonical control plane is reconciled or the LARI Controller issues a separate explicit isolated-pilot authorization.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
@@ -342,6 +342,69 @@
       "stage_11f_status": "COMPLETE",
       "aos5_closure_status": "MAIN_INTEGRATED_CLOSED_PROVEN",
       "aos6_status": "NOT_STARTED_LARI_CONTROLLER_GUIDANCE_REQUIRED"
+    },
+    "aos6_lari_controlled_pilot": {
+      "status": "READ_ONLY_RECONCILIATION_HOLD",
+      "stage_12a_status": "CROSS_CONTROLLER_RECONCILIATION_BINDING",
+      "aos5_dependency": "MAIN_INTEGRATED_CLOSED_PROVEN",
+      "lari_closed_proven_baseline_sha": "6e8d423083d44510c8446c7a858c26d1555cac0c",
+      "lari_candidate_branch": "feature/lari-health-tourism-slice3-lead-ops-ai-assist",
+      "lari_candidate_sha": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b",
+      "lari_candidate_merge_base_sha": "6e8d423083d44510c8446c7a858c26d1555cac0c",
+      "lari_candidate_ahead_by": 25,
+      "lari_candidate_behind_by": 0,
+      "lari_control_ref": "control/lari-project-control-plane",
+      "lari_control_sha": "6690e611dd9f05ece7eb4f2b646988c2bdb0a89a",
+      "canonical_state_current_status": "HEALTH_TOURISM_SLICE2_CLOSED_PROVEN",
+      "controller_current_status": "HEALTH_TOURISM_SLICE3_IN_PROGRESS",
+      "canonical_state_reconciled": false,
+      "authoritative_state_contradiction": true,
+      "e2_authorized": false,
+      "e3_authorized": false,
+      "pilot_execution_authorized": false,
+      "read_only_shadow_reconciliation_authorized": true,
+      "read_only_allowed_exact_lari_sha": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b",
+      "lari_repo_mutation_allowed": false,
+      "supabase_access_allowed": false,
+      "vercel_access_allowed": false,
+      "env_secret_access_allowed": false,
+      "shared_runtime_probe_allowed": false,
+      "stage_12a_decision": "HOLD_CONTROLLED_PILOT_CONTINUE_READ_ONLY_RECONCILIATION",
+      "controller_guidance": {
+        "slice3_status": "IN_PROGRESS",
+        "latest_e3_controller_review": "REJECTED",
+        "product_runtime_defect": "NOT_PROVEN",
+        "primary_failure": "FIXTURE_HARNESS_DEFECT",
+        "evidence_telemetry_integrity": "FAILED",
+        "production": "NO_GO",
+        "candidate_stage": "E2_ACCEPTED__E3_EVIDENCE_CORRECTION_PENDING",
+        "slice3_closed_proven": false,
+        "e2_currently_authorized": false,
+        "e3_currently_authorized": false,
+        "execution_currently_in_flight": false
+      },
+      "canonical_control_plane_reconciliation": {
+        "lari_canonical_state_reconciled": false,
+        "slice3_controller_state_materialized": false,
+        "aos6_controlled_pilot_execution_allowed": false,
+        "aos6_read_only_shadow_reconciliation_allowed": true,
+        "aos6_allowed_exact_source_sha_for_read_only_comparison": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b"
+      },
+      "authority_contradiction": {
+        "controller_reported_state": "HEALTH_TOURISM_SLICE3_IN_PROGRESS",
+        "version_control_canonical_state": "HEALTH_TOURISM_SLICE2_CLOSED_PROVEN",
+        "authoritative_state_contradiction": true,
+        "classification": "CANONICAL_CONTROL_PLANE_NOT_YET_RECONCILED_WITH_CURRENT_CONTROLLER_STATE",
+        "fails_closed_for": [
+          "task_execution_authority",
+          "pilot_implementation",
+          "e3_execution",
+          "lari_mutation",
+          "control_plane_mutation_initiated_from_aos"
+        ],
+        "does_not_block": "READ_ONLY_REMOTE_SOURCE_COMPARISON",
+        "read_only_allowed_against_sha": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b"
+      }
     },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
