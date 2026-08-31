@@ -1,14 +1,14 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-08-30T19:00:00Z",
+  "updated_at": "2026-08-31T05:10:00Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS5_EXIT_CONTRACT_INDEPENDENTLY_PROVEN_MAIN_INTEGRATION_PENDING",
-  "current_gate": "AOS-5",
+  "status": "AOS5_MAIN_INTEGRATED_CLOSED_PROVEN",
+  "current_gate": "AOS-6",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
     "AOS-1 Canonical Memory & Schemas",
@@ -68,11 +68,11 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Perform final controlled integration of the independently proven AOS-5 feature branch into main. Do not begin AOS-6/LARI pilot operations until AOS-5 main integration is independently verified and the LARI controller has provided current-state guidance.",
+  "next_action": "AOS-5 is MAIN_INTEGRATED_CLOSED_PROVEN. Before any AOS-6 LARI-related operation, obtain current-state guidance from the separate LARI controller/project conversation and reconcile the current LARI control head, branch, safe state, and authorized next action. Do not mutate LARI from the AOS controller before that cross-controller coordination is complete.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
-      "status": "AOS5_EXIT_CONTRACT_INDEPENDENTLY_PROVEN_MAIN_INTEGRATION_PENDING",
+      "status": "MAIN_INTEGRATED_CLOSED_PROVEN",
       "control_branch": "feature/aos-5-distributed-coordination",
       "main_base_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
       "next_action_execution_base_sha": "7c2ee04f4b656d93291c58c2de47e53a84c54b56",
@@ -266,7 +266,7 @@
       "real_multi_pc_status": "INDEPENDENTLY_PROVEN_ON_TWO_GITHUB_HOSTED_RUNNERS",
       "supabase_live_status": "NOT_CONNECTED",
       "lari_status": "NO_ACCESS_NO_MUTATION",
-      "independent_review_status": "AOS5_EXIT_PROVEN_MAIN_INTEGRATION_PENDING",
+      "independent_review_status": "MAIN_INTEGRATION_INDEPENDENTLY_ACCEPTED",
       "canonical_git_truth_preserved": true,
       "lari_mutation_allowed": false,
       "stage_11d_b5_trigger_sha": "58d0d672f969e31bd8874557faffe630233a93b4",
@@ -319,7 +319,29 @@
       "coordination_store_loss_canonical_git_isolation": "INDEPENDENTLY_PROVEN",
       "aos5_exit_contract": "INDEPENDENTLY_PROVEN",
       "stage_11e_status": "COMPLETE",
-      "main_integration_status": "PENDING"
+      "main_integration_status": "INDEPENDENTLY_ACCEPTED_FAST_FORWARD",
+      "main_integration_mode": "FAST_FORWARD_ONLY",
+      "planned_main_integration_mode": "GITHUB_PR_MERGE_COMMIT",
+      "planned_merge_commit_contract": "NOT_SATISFIED_NONBLOCKING_PROCESS_DEVIATION",
+      "main_integration_process_deviation": "PR_AND_MERGE_COMMIT_PATH_NOT_USED",
+      "previous_main_sha": "27973bd9036a4a6a544711b5c9417600637dc249",
+      "accepted_feature_carrier_sha": "e5a820ea59448ac596a701d7be3ffcbb48de76b2",
+      "canonical_main_integration_sha": "e5a820ea59448ac596a701d7be3ffcbb48de76b2",
+      "previous_main_ancestor_status": "PROVEN",
+      "feature_carrier_identity_status": "EXACT_MATCH_TO_CANONICAL_MAIN",
+      "main_ci_run_id": 33358784154,
+      "main_ci_job_id": 99385939301,
+      "main_ci_result": "SUCCESS",
+      "main_ci_postgres_selected": 25,
+      "main_ci_postgres_passed": 25,
+      "main_ci_postgres_failed": 0,
+      "main_ci_isolation_test": "PASS",
+      "main_ci_full_pytest": "639 passed, 26 deselected",
+      "main_ci_state_validation": "PASS",
+      "main_ci_evidence_validation": "PASS",
+      "stage_11f_status": "COMPLETE",
+      "aos5_closure_status": "MAIN_INTEGRATED_CLOSED_PROVEN",
+      "aos6_status": "NOT_STARTED_LARI_CONTROLLER_GUIDANCE_REQUIRED"
     },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
@@ -902,6 +924,15 @@
       "verified_sha": "5a8e7023d244b145dd6e7442dc3d876107cb0601",
       "closed_at": "2026-08-28T14:45:00Z",
       "reopen_condition": "Authoritative contradiction in independent-verifier fail-closed behavior, candidate/evidence binding, required scenario behavior, exact-revision integrity, or accepted AOS-4 evidence."
+    },
+    {
+      "gate": "AOS-5",
+      "name": "Distributed Multi-PC Coordination",
+      "status": "CLOSED_PROVEN",
+      "evidence_level": "E2_EXECUTABLE_EXACT_REVISION_PROVEN",
+      "verified_sha": "e5a820ea59448ac596a701d7be3ffcbb48de76b2",
+      "closed_at": "2026-08-31T05:10:00Z",
+      "reopen_condition": "Authoritative contradiction in multi-PC coordination, lease ownership/expiry, distributed backend, machine identity, pair verification, or canonical Git isolation."
     }
   ]
 }
