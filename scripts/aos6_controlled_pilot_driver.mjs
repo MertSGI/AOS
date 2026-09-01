@@ -129,7 +129,7 @@ async function runDriver() {
   if (unsafeCheck === false) {
     unsafeGroundingResult = "PASS";
   } else {
-    console.error('[AOS6 Driver] Unsafe grounding check failed! Reply was marked grounded when it should be ungrounded.');
+    console.error('[AOS6 Driver] Unsafe grounding check failed!');
   }
 
   // B. Safe coordinator-request language accepted
@@ -138,7 +138,7 @@ async function runDriver() {
   if (safeCheck === true) {
     safeGroundingResult = "PASS";
   } else {
-    console.error('[AOS6 Driver] Safe grounding check failed! Reply was marked ungrounded.');
+    console.error('[AOS6 Driver] Safe grounding check failed!');
   }
 
   // C. Localization matrix (lowercase locale codes: en, tr, de, ru, ar)
@@ -155,11 +155,11 @@ async function runDriver() {
     localizedOutputs.add(resp);
   }
 
-  // Ensure outputs are non-empty and localized (not all defaulting to single English string)
-  if (localizationOk && localizedOutputs.size >= 2) {
+  // Require EXACTLY 5 distinct outputs for this candidate
+  if (localizationOk && localizedOutputs.size === 5) {
     localizationResult = "PASS";
   } else {
-    console.error(`[AOS6 Driver] Localization check failed. Output count=${localizedOutputs.size}`);
+    console.error(`[AOS6 Driver] Localization check failed. Distinct output count=${localizedOutputs.size}`);
   }
 
   // D. No-key provider call (must return success=false, errorCode="AI_PROVIDER_UNAVAILABLE", statusCode=503)
@@ -204,7 +204,7 @@ async function runDriver() {
     console.error('[AOS6 Driver] Mock success provider test failed:', mockSuccessRes);
   }
 
-  // F. Mock fetch failure provider path (must catch exception and return statusCode=503, errorCode="AI_PROVIDER_UNAVAILABLE", without leaking sentinel)
+  // F. Mock fetch failure provider path
   const MOCK_SENTINEL_POISON = "SECRET_MOCK_SENTINEL_EXCEPTION_POISON_12345";
   const mockFetchFailure = async (url, options) => {
     mockProviderCallCount += 1;
@@ -231,7 +231,7 @@ async function runDriver() {
       !sentinelLeaked) {
     mockProviderFailureResult = "PASS";
   } else {
-    console.error('[AOS6 Driver] Mock failure provider test failed or sentinel leaked:', mockFailRes, 'sentinelLeaked:', sentinelLeaked);
+    console.error('[AOS6 Driver] Mock failure provider test failed:', mockFailRes);
   }
 
   const allPass = (

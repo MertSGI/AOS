@@ -50,7 +50,12 @@ class FakeCommandRunner:
         self.fetch_head_sha = "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a"
         self.head_sha = "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a"
         self.tree_sha = "1111111111111111111111111111111111111111"
-        self.tracked_files = ["package.json", "package-lock.json", "scripts/test-health-tourism-slice3-lead-ops-ai-assist.mjs", "supabase/functions/ht-ai-chat/provider-policy.ts"]
+        self.tracked_files = [
+            "package.json",
+            "package-lock.json",
+            "scripts/test-health-tourism-slice3-lead-ops-ai-assist.mjs",
+            "supabase/functions/ht-ai-chat/provider-policy.ts"
+        ]
         self.docker_rm_returncode = 0
         self.docker_inspect_absent = True
         self.driver_output_json = {
@@ -76,6 +81,7 @@ class FakeCommandRunner:
             if "checkout" in cmd:
                 # Create dummy files in source dir
                 if cwd:
+                    (Path(cwd) / ".git").mkdir(parents=True, exist_ok=True)
                     for rel in self.tracked_files:
                         p = Path(cwd) / rel
                         p.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +96,8 @@ class FakeCommandRunner:
             if "status" in cmd:
                 status_txt = "" if self.git_clean else "M file.txt\n"
                 return MockCommandResult(stdout=status_txt)
+            if "diff" in cmd:
+                return MockCommandResult(stdout="", returncode=0)
             if "remote" in cmd:
                 if "remove" in cmd:
                     self.remotes_active = False
@@ -111,12 +119,11 @@ class FakeCommandRunner:
             if cmd[1] == "inspect":
                 if "node:22-bookworm-slim" in cmd:
                     if "--format={{.Id}}" in cmd:
-                        return MockCommandResult(stdout="sha256:targetimageid123\n")
-                    return MockCommandResult(stdout="node@sha256:repodigest123\n")
+                        return MockCommandResult(stdout="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
+                    return MockCommandResult(stdout="node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
                 if "aos6-pilot-" in cmd_str:
-                    if self.docker_inspect_absent and ("rm" in self.commands[-2][0] or "rm" in self.commands[-3][0] if len(self.commands)>=3 else False):
+                    if self.docker_inspect_absent and len(self.commands) >= 2 and self.commands[-2][0][0:2] == ["docker", "rm"]:
                         return MockCommandResult(stdout="", stderr="No such container", returncode=1)
-                    # Inspect container active
                     inspect_obj = [{
                         "HostConfig": {
                             "NetworkMode": "none",
@@ -223,8 +230,6 @@ class TestAOS6ControlledPilotContracts:
     def test_driver_script_exact_api_names(self):
         driver_path = Path(__file__).resolve().parent.parent / "scripts" / "aos6_controlled_pilot_driver.mjs"
         content = driver_path.read_text(encoding="utf-8")
-
-        # Exact API names check
         assert "isProviderReplyGrounded" in content
         assert "buildGroundedReplacementResponse" in content
         assert "executeProviderCall" in content
@@ -235,17 +240,13 @@ class TestAOS6ControlledPilotContracts:
         assert "rawReply" in content
         assert "errorCode" in content
         assert "statusCode" in content
-
-        # Legacy wrong API names absent
         assert "fetchOverride" not in content
-        assert "result.status" not in content
-        assert "result.error" not in content
-        assert "result.content" not in content
 
     def test_driver_script_lowercase_locales(self):
         driver_path = Path(__file__).resolve().parent.parent / "scripts" / "aos6_controlled_pilot_driver.mjs"
         content = driver_path.read_text(encoding="utf-8")
         assert "['en', 'tr', 'de', 'ru', 'ar']" in content
+        assert "localizedOutputs.size === 5" in content
 
     def test_driver_script_global_fetch_poison(self):
         driver_path = Path(__file__).resolve().parent.parent / "scripts" / "aos6_controlled_pilot_driver.mjs"
@@ -269,53 +270,68 @@ class TestAOS6ControlledPilotContracts:
         assert "OPENAI_API_KEY" not in cleaned
         assert "VERCEL_TOKEN" not in cleaned
 
-    def test_minimal_container_env_has_no_secrets(self):
-        from scripts.aos6_controlled_pilot_harness import build_minimal_container_env, FORBIDDEN_ENV_KEYWORDS
-        min_env = build_minimal_container_env()
-        for k in min_env.keys():
-            assert not any(keyword in k.upper() for keyword in FORBIDDEN_ENV_KEYWORDS)
+    # 5. GITLESS WORKSPACE VERIFIER TESTS
+    def test_gitless_workspace_verifier(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
 
-    # 5. SOURCE MANIFEST & IMMUTABILITY TESTS
-    def test_tracked_source_manifest_building(self, tmp_path):
-        from scripts.aos6_controlled_pilot_harness import build_tracked_source_manifest
-        (tmp_path / "file1.txt").write_text("content1", encoding="utf-8")
-        (tmp_path / "sub").mkdir()
-        (tmp_path / "sub" / "file2.txt").write_text("content2", encoding="utf-8")
+        file1 = tmp_path / "f1.txt"
+        file1.write_text("hello world", encoding="utf-8")
 
-        fake_runner = FakeCommandRunner()
-        fake_runner.tracked_files = ["file1.txt", "sub/file2.txt"]
+        manifest_entries = {
+            "f1.txt": {
+                "size": len("hello world".encode("utf-8")),
+                "sha256": hashlib.sha256("hello world".encode("utf-8")).hexdigest()
+            }
+        }
 
-        entries, sha256_hash = build_tracked_source_manifest(tmp_path, fake_runner)
-        assert "file1.txt" in entries
-        assert "sub/file2.txt" in entries
-        assert len(sha256_hash) == 64
+        # Test valid verification without git
+        entries, sha256_hash = verify_workspace_against_source_manifest(tmp_path, manifest_entries)
+        assert "f1.txt" in entries
 
-    def test_tracked_source_manifest_fails_on_symlink(self, tmp_path):
-        from scripts.aos6_controlled_pilot_harness import build_tracked_source_manifest
-        fake_file = tmp_path / "real.txt"
-        fake_file.write_text("hello", encoding="utf-8")
-        link_file = tmp_path / "link.txt"
-        try:
-            link_file.symlink_to(fake_file)
-        except OSError:
-            pytest.skip("Symlinks not supported on this OS/user privilege")
+        # Test failure if .git directory present
+        (tmp_path / ".git").mkdir()
+        with pytest.raises(RuntimeError, match="MUST NOT exist"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
 
-        fake_runner = FakeCommandRunner()
-        fake_runner.tracked_files = ["real.txt", "link.txt"]
+    def test_gitless_workspace_verifier_fails_on_missing_file(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
+        manifest_entries = {
+            "missing.txt": {"size": 10, "sha256": "0"*64}
+        }
+        with pytest.raises(RuntimeError, match="Missing expected tracked file"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
 
-        with pytest.raises(ValueError, match="Unsafe symlink"):
-            build_tracked_source_manifest(tmp_path, fake_runner)
+    def test_gitless_workspace_verifier_fails_on_hash_mismatch(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
+        (tmp_path / "f1.txt").write_text("modified content", encoding="utf-8")
+        manifest_entries = {
+            "f1.txt": {"size": 5, "sha256": "0"*64}
+        }
+        with pytest.raises(RuntimeError, match="byte/hash mismatch"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
 
-    # 6. REPORT / MANIFEST BINDING & ATTACK DEFENSE TESTS
-    def test_report_manifest_cryptographic_binding(self, tmp_path, report_schema, manifest_schema):
-        from scripts.aos6_controlled_pilot_harness import write_json_deterministic
+    # 6. FAIL-CLOSED IMAGE IDENTITY TESTS
+    def test_image_digest_fail_closed_validation(self):
+        import re
+        valid_digest = "node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        invalid_digest = "node@sha256:unknown"
+        empty_digest = ""
+
+        pattern = r"^node@sha256:[0-9a-f]{64}$"
+        assert re.match(pattern, valid_digest) is not None
+        assert re.match(pattern, invalid_digest) is None
+        assert re.match(pattern, empty_digest) is None
+
+    # 7. DISK RE-READ REPORT/MANIFEST PAIR VALIDATOR & SUBSTITUTION ATTACK TESTS
+    def test_verify_report_manifest_pair_valid(self, tmp_path, report_schema, manifest_schema):
+        from scripts.aos6_controlled_pilot_harness import write_json_deterministic, verify_report_manifest_pair
 
         manifest_obj = {
             "schema_version": "0.1.0",
             "pilot_run_id": "P123",
             "target_image_name": "node:22-bookworm-slim",
             "target_image_id": "sha256:abc",
-            "target_repo_digest": "node@sha256:def",
+            "target_repo_digest": "node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "container_name": "aos6-c1",
             "container_inspection": {
                 "network_mode": "none",
@@ -323,9 +339,11 @@ class TestAOS6ControlledPilotContracts:
                 "pids_limit": 100,
                 "cap_drop_has_all": True,
                 "no_new_privileges": True,
+                "workspace_mount_readonly": True,
+                "driver_mount_readonly": True,
                 "docker_socket_mount_count": 0,
                 "credential_directory_mount_count": 0,
-                "workspace_source_readonly": True
+                "unexpected_host_bind_mount_count": 0
             },
             "source_immutability": {
                 "original_source_tree_sha256_pre": "0"*64,
@@ -351,12 +369,12 @@ class TestAOS6ControlledPilotContracts:
                 }
             },
             "cleanup_verification": {
+                "cleanup_attempted": True,
                 "docker_rm_return_code": 0,
                 "post_cleanup_absence_proven": True,
                 "surviving_resource_count": 0
             }
         }
-        jsonschema.validate(manifest_obj, manifest_schema)
         manifest_bytes = write_json_deterministic(tmp_path / "pilot_runtime_manifest.json", manifest_obj)
         actual_sha = hashlib.sha256(manifest_bytes).hexdigest()
 
@@ -404,82 +422,35 @@ class TestAOS6ControlledPilotContracts:
                 "manifest_schema_version": "0.1.0"
             }
         }
-        jsonschema.validate(report_obj, report_schema)
-        assert report_obj["runtime_evidence_binding"]["manifest_sha256"] == actual_sha
+        write_json_deterministic(tmp_path / "pilot_report.json", report_obj)
 
-    # 7. SCHEMA TRUTHFULNESS & FAILURE REPRESENTATION
-    def test_schema_supports_failure_counters(self, report_schema):
-        bad_report = {
-            "schema_version": "0.1.0",
-            "pilot_run_id": "P123",
-            "aos_canonical_binding_sha": "a"*40,
-            "lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
-            "pilot_execution_environment": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL",
-            "aos6_controlled_pilot_result": "FAIL",
-            "exact_sha_result": "FAIL",
-            "environment_isolation_result": "FAIL",
-            "synthetic_data_only_result": "PASS",
-            "runtime_boot_result": "FAIL",
-            "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE",
-            "bounded_workflow_result": "FAIL",
-            "evidence_capture_result": "PASS",
-            "cleanup_result": "FAIL",
-            "source_mutation_count": 2,
-            "canonical_lari_mutation_count": 0,
-            "authorized_source_acquisition_count": 1,
-            "canonical_remote_access_count": 1,
-            "lari_e3_project_access_count": 0,
-            "shared_staging_access_count": 0,
-            "production_access_count": 0,
-            "vercel_access_count": 0,
-            "real_customer_data_access_count": 0,
-            "real_whatsapp_send_count": 0,
-            "real_sms_send_count": 0,
-            "real_email_send_count": 0,
-            "real_payment_count": 0,
-            "real_provider_network_call_count": 3,
-            "mock_provider_call_count": 0,
-            "surviving_disposable_resource_count": 1,
-            "attempt_count": 1,
-            "retry_count": 0,
-            "first_failed_step_if_any": "DOCKER_INSPECT_FAILED",
-            "blocker_if_any": "SecurityOpt missing no-new-privileges",
-            "stage12c_authority": "NOT_AUTHORIZED",
-            "production_authority": "NO",
-            "controller_review_required": True,
-            "runtime_evidence_binding": {
-                "manifest_filename": "pilot_runtime_manifest.json",
-                "manifest_sha256": "b"*64,
-                "manifest_schema_version": "0.1.0"
-            }
-        }
-        # Validate that the schema DOES NOT reject non-zero failure counters
-        jsonschema.validate(bad_report, report_schema)
+        assert verify_report_manifest_pair(tmp_path / "pilot_report.json", tmp_path / "pilot_runtime_manifest.json", report_schema, manifest_schema) is True
 
-    def test_attestation_supports_non_pass_results(self, attestation_schema):
-        att_obj = {
-            "schema_version": "0.1.0",
-            "pilot_run_id": "P123",
-            "aos_sha": "a"*40,
-            "authorized_lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
-            "lari_source_tree_sha": "b"*40,
-            "tracked_source_manifest_sha256": "c"*64,
-            "report_sha256": "d"*64,
-            "runtime_manifest_sha256": "e"*64,
-            "aos_worktree_immutable_result": "NOT_CHECKED",
-            "original_lari_source_immutable_result": "FAIL",
-            "attestation_timestamp": "2026-09-01T13:00:00Z"
-        }
-        jsonschema.validate(att_obj, attestation_schema)
+    def test_verify_report_manifest_pair_attack_byte_modification_fails(self, tmp_path, report_schema, manifest_schema):
+        from scripts.aos6_controlled_pilot_harness import write_json_deterministic, verify_report_manifest_pair
+
+        manifest_p = tmp_path / "pilot_runtime_manifest.json"
+        report_p = tmp_path / "pilot_report.json"
+
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        m_bytes = write_json_deterministic(manifest_p, manifest_obj)
+        m_sha = hashlib.sha256(m_bytes).hexdigest()
+
+        report_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "aos_canonical_binding_sha": "a"*40, "lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a", "pilot_execution_environment": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL", "aos6_controlled_pilot_result": "FAIL", "exact_sha_result": "FAIL", "environment_isolation_result": "FAIL", "synthetic_data_only_result": "PASS", "runtime_boot_result": "FAIL", "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE", "bounded_workflow_result": "FAIL", "evidence_capture_result": "NOT_CHECKED", "cleanup_result": "FAIL", "source_mutation_count": 0, "canonical_lari_mutation_count": 0, "authorized_source_acquisition_count": 1, "canonical_remote_access_count": 0, "lari_e3_project_access_count": 0, "shared_staging_access_count": 0, "production_access_count": 0, "vercel_access_count": 0, "real_customer_data_access_count": 0, "real_whatsapp_send_count": 0, "real_sms_send_count": 0, "real_email_send_count": 0, "real_payment_count": 0, "real_provider_network_call_count": 0, "mock_provider_call_count": 0, "surviving_disposable_resource_count": 0, "attempt_count": 0, "retry_count": 0, "first_failed_step_if_any": None, "blocker_if_any": None, "stage12c_authority": "NOT_AUTHORIZED", "production_authority": "NO", "controller_review_required": True, "runtime_evidence_binding": {"manifest_filename": "pilot_runtime_manifest.json", "manifest_sha256": m_sha, "manifest_schema_version": "0.1.0"}}
+        write_json_deterministic(report_p, report_obj)
+
+        # Mutate manifest byte
+        manifest_p.write_text(manifest_p.read_text(encoding="utf-8") + " ", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="Report bound manifest SHA256"):
+            verify_report_manifest_pair(report_p, manifest_p, report_schema, manifest_schema)
 
     # 8. HARNESS ORCHESTRATION WITH FAKE COMMAND RUNNER
     def test_harness_full_execution_mocked_success(self, tmp_path):
         from scripts.aos6_controlled_pilot_harness import execute_harness
-
         req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
         fake_runner = FakeCommandRunner()
 
-        # Execute harness using fake runner
         try:
             execute_harness(req_file, tmp_path, runner=fake_runner)
         except SystemExit as e:

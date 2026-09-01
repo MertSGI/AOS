@@ -19,10 +19,10 @@
   "properties": {
     "schema_version": { "type": "string", "const": "0.1.0" },
     "pilot_run_id": { "type": "string" },
-    "target_image_name": { "type": "string", "const": "node:22-bookworm-slim" },
-    "target_image_id": { "type": "string" },
-    "target_repo_digest": { "type": "string" },
-    "container_name": { "type": "string" },
+    "target_image_name": { "type": ["string", "null"] },
+    "target_image_id": { "type": ["string", "null"] },
+    "target_repo_digest": { "type": ["string", "null"] },
+    "container_name": { "type": ["string", "null"] },
     "container_inspection": {
       "type": "object",
       "additionalProperties": false,
@@ -32,19 +32,23 @@
         "pids_limit",
         "cap_drop_has_all",
         "no_new_privileges",
+        "workspace_mount_readonly",
+        "driver_mount_readonly",
         "docker_socket_mount_count",
         "credential_directory_mount_count",
-        "workspace_source_readonly"
+        "unexpected_host_bind_mount_count"
       ],
       "properties": {
-        "network_mode": { "type": "string", "const": "none" },
-        "readonly_rootfs": { "type": "boolean", "const": true },
-        "pids_limit": { "type": "integer", "const": 100 },
-        "cap_drop_has_all": { "type": "boolean", "const": true },
-        "no_new_privileges": { "type": "boolean", "const": true },
-        "docker_socket_mount_count": { "type": "integer", "const": 0 },
-        "credential_directory_mount_count": { "type": "integer", "const": 0 },
-        "workspace_source_readonly": { "type": "boolean", "const": true }
+        "network_mode": { "type": ["string", "null"] },
+        "readonly_rootfs": { "type": ["boolean", "null"] },
+        "pids_limit": { "type": ["integer", "null"] },
+        "cap_drop_has_all": { "type": ["boolean", "null"] },
+        "no_new_privileges": { "type": ["boolean", "null"] },
+        "workspace_mount_readonly": { "type": ["boolean", "null"] },
+        "driver_mount_readonly": { "type": ["boolean", "null"] },
+        "docker_socket_mount_count": { "type": ["integer", "null"] },
+        "credential_directory_mount_count": { "type": ["integer", "null"] },
+        "unexpected_host_bind_mount_count": { "type": ["integer", "null"] }
       }
     },
     "source_immutability": {
@@ -52,9 +56,9 @@
       "additionalProperties": false,
       "required": ["original_source_tree_sha256_pre", "original_source_tree_sha256_post", "immutable"],
       "properties": {
-        "original_source_tree_sha256_pre": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "original_source_tree_sha256_post": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "immutable": { "type": "boolean", "const": true }
+        "original_source_tree_sha256_pre": { "type": ["string", "null"] },
+        "original_source_tree_sha256_post": { "type": ["string", "null"] },
+        "immutable": { "type": ["boolean", "null"] }
       }
     },
     "dependency_preparation": {
@@ -62,10 +66,10 @@
       "additionalProperties": false,
       "required": ["location", "command", "result", "lifecycle_scripts_disabled"],
       "properties": {
-        "location": { "type": "string", "const": "DISPOSABLE_WORKSPACE_COPY" },
-        "command": { "type": "string", "const": "npm ci --ignore-scripts --no-audit --no-fund" },
-        "result": { "type": "string", "const": "PASS" },
-        "lifecycle_scripts_disabled": { "type": "boolean", "const": true }
+        "location": { "type": ["string", "null"] },
+        "command": { "type": ["string", "null"] },
+        "result": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
+        "lifecycle_scripts_disabled": { "type": ["boolean", "null"] }
       }
     },
     "workflow_execution": {
@@ -77,8 +81,8 @@
         "step_p3_grounded_policy_matrix"
       ],
       "properties": {
-        "step_p1_static_qa": { "type": "string", "const": "PASS" },
-        "step_p2_policy_boot": { "type": "string", "const": "PASS" },
+        "step_p1_static_qa": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
+        "step_p2_policy_boot": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
         "step_p3_grounded_policy_matrix": {
           "type": "object",
           "additionalProperties": false,
@@ -91,12 +95,12 @@
             "mock_fetch_exception_503_produced"
           ],
           "properties": {
-            "unsafe_promise_rejected": { "type": "boolean", "const": true },
-            "safe_request_accepted": { "type": "boolean", "const": true },
-            "localized_responses_produced": { "type": "boolean", "const": true },
-            "missing_key_503_produced": { "type": "boolean", "const": true },
-            "mock_fetch_success_produced": { "type": "boolean", "const": true },
-            "mock_fetch_exception_503_produced": { "type": "boolean", "const": true }
+            "unsafe_promise_rejected": { "type": ["boolean", "null"] },
+            "safe_request_accepted": { "type": ["boolean", "null"] },
+            "localized_responses_produced": { "type": ["boolean", "null"] },
+            "missing_key_503_produced": { "type": ["boolean", "null"] },
+            "mock_fetch_success_produced": { "type": ["boolean", "null"] },
+            "mock_fetch_exception_503_produced": { "type": ["boolean", "null"] }
           }
         }
       }
@@ -104,11 +108,12 @@
     "cleanup_verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["docker_rm_return_code", "post_cleanup_absence_proven", "surviving_resource_count"],
+      "required": ["cleanup_attempted", "docker_rm_return_code", "post_cleanup_absence_proven", "surviving_resource_count"],
       "properties": {
-        "docker_rm_return_code": { "type": "integer", "const": 0 },
-        "post_cleanup_absence_proven": { "type": "boolean", "const": true },
-        "surviving_resource_count": { "type": "integer", "const": 0 }
+        "cleanup_attempted": { "type": "boolean" },
+        "docker_rm_return_code": { "type": ["integer", "null"] },
+        "post_cleanup_absence_proven": { "type": ["boolean", "null"] },
+        "surviving_resource_count": { "type": ["integer", "null"] }
       }
     }
   }

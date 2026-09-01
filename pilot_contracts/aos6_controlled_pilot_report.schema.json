@@ -54,7 +54,7 @@
     "runtime_boot_result": { "type": "string", "enum": ["PASS", "FAIL"] },
     "runtime_boot_class": { "type": "string", "const": "NODE_TSX_PRODUCT_POLICY_MODULE" },
     "bounded_workflow_result": { "type": "string", "enum": ["PASS", "FAIL"] },
-    "evidence_capture_result": { "type": "string", "enum": ["PASS", "FAIL"] },
+    "evidence_capture_result": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
     "cleanup_result": { "type": "string", "enum": ["PASS", "FAIL"] },
     "source_mutation_count": { "type": "integer", "minimum": 0 },
     "canonical_lari_mutation_count": { "type": "integer", "minimum": 0 },
