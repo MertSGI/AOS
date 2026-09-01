@@ -52,8 +52,10 @@ jobs:
         run: |
           docker pull postgres:16
           IMG_ID=$(docker inspect --format='{{.Id}}' postgres:16)
+          REPO_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' postgres:16 || echo "postgres@sha256:unknown")
           echo "POSTGRES_IMAGE_ID=$IMG_ID" >> $GITHUB_ENV
-          echo "Docker image postgres:16 acquired successfully."
+          echo "POSTGRES_REPO_DIGEST=$REPO_DIGEST" >> $GITHUB_ENV
+          echo "Docker image postgres:16 acquired successfully with ID $IMG_ID."
 
       - name: Mark Disposable Execution Boundary Sealed
         run: |
@@ -65,7 +67,9 @@ jobs:
           python -m aos.hosted_disposable_rehearsal \
             tests/fixtures/hosted_disposable_rehearsal/request.valid.json \
             --fixture-root tests/fixtures/hosted_disposable_rehearsal \
-            --output-dir ${{ runner.temp }}/aos-hosted-disposable-rehearsal
+            --output-dir ${{ runner.temp }}/aos-hosted-disposable-rehearsal \
+            --postgres-image-id "$POSTGRES_IMAGE_ID" \
+            --postgres-repo-digest "$POSTGRES_REPO_DIGEST"
 
       - name: Validate Generated R3 Rehearsal Report
         run: |
@@ -78,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aos6-hosted-disposable-rehearsal-report
-          path: ${{ runner.temp }}/aos-hosted-disposable-rehearsal/report.json
+          path: ${{ runner.temp }}/aos-hosted-disposable-rehearsal/
           retention-days: 7
 
       - name: Verify AOS Source Immutability

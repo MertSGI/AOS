@@ -34,6 +34,7 @@ TYPE_TO_SCHEMA = {
     "verification_result": "verification_result.schema.json",
     "rehearsal_report": "rehearsal_report.schema.json",
     "hosted_disposable_rehearsal_request": "hosted_disposable_rehearsal_request.schema.json",
+    "hosted_runtime_manifest": "hosted_runtime_manifest.schema.json",
 }
 
 

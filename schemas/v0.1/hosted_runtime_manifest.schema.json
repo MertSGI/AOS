@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/hosted_runtime_manifest.schema.json",
+  "title": "AOS Hosted Runtime Manifest Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "aos_source_sha",
+    "request_sha256",
+    "runtime_profile",
+    "postgres_requested_image",
+    "resolved_postgres_image_id",
+    "resolved_postgres_repo_digest",
+    "fixture_sha256_map",
+    "target_container_network_mode",
+    "host_volume_mount_count",
+    "docker_socket_mount_count",
+    "migration_attempt_counts",
+    "expected_mutation_verification",
+    "fatal_failure_detected",
+    "failed_step_attempt_count",
+    "automatic_retry_count",
+    "downstream_step_execution_count",
+    "downstream_sentinel_present",
+    "pre_migration_scope_state_hash",
+    "post_migration_scope_state_hash",
+    "post_rollback_scope_state_hash",
+    "rollback_state_verification",
+    "disposable_resource_created_count",
+    "disposable_resource_cleaned_count",
+    "orphan_resource_count",
+    "aos_worktree_immutable"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "aos_source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "request_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtime_profile": {
+      "type": "string",
+      "enum": [
+        "POSTGRES_16_DISPOSABLE"
+      ]
+    },
+    "postgres_requested_image": {
+      "type": "string"
+    },
+    "resolved_postgres_image_id": {
+      "type": "string"
+    },
+    "resolved_postgres_repo_digest": {
+      "type": "string"
+    },
+    "fixture_sha256_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "target_container_network_mode": {
+      "type": "string",
+      "enum": [
+        "none"
+      ]
+    },
+    "host_volume_mount_count": {
+      "type": "integer",
+      "const": 0
+    },
+    "docker_socket_mount_count": {
+      "type": "integer",
+      "const": 0
+    },
+    "migration_attempt_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "expected_mutation_verification": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "fatal_failure_detected": {
+      "type": "string",
+      "enum": [
+        "YES",
+        "NO"
+      ]
+    },
+    "failed_step_attempt_count": {
+      "type": "integer",
+      "const": 1
+    },
+    "automatic_retry_count": {
+      "type": "integer",
+      "const": 0
+    },
+    "downstream_step_execution_count": {
+      "type": "integer",
+      "const": 0
+    },
+    "downstream_sentinel_present": {
+      "type": "string",
+      "enum": [
+        "NO",
+        "YES"
+      ]
+    },
+    "pre_migration_scope_state_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "post_migration_scope_state_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "post_rollback_scope_state_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rollback_state_verification": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "disposable_resource_created_count": {
+      "type": "integer"
+    },
+    "disposable_resource_cleaned_count": {
+      "type": "integer"
+    },
+    "orphan_resource_count": {
+      "type": "integer",
+      "const": 0
+    },
+    "aos_worktree_immutable": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    }
+  }
+}
