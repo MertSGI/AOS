@@ -2,6 +2,7 @@
 """
 AOS6 Controlled Pilot Harness CLI (Python 3.12+)
 Full production orchestration harness for isolated controlled pilot.
+PREP-1.3 Final Readiness Guard Closure.
 """
 
 import json
@@ -67,6 +68,27 @@ def build_minimal_container_env():
         "DISPOSABLE_WORKSPACE_DIR": "/workspace"
     }
 
+def capture_aos_start_sha(runner):
+    res = runner.run(["git", "rev-parse", "HEAD"])
+    sha = res.stdout.strip()
+    if not re.match(r"^[0-9a-f]{40}$", sha):
+        raise RuntimeError(f"Invalid aos_start_sha format: '{sha}'")
+    return sha
+
+def verify_aos_immutability(aos_start_sha, runner):
+    try:
+        res_head = runner.run(["git", "rev-parse", "HEAD"])
+        final_sha = res_head.stdout.strip()
+        res_status = runner.run(["git", "status", "--porcelain=v1", "--untracked-files=all"])
+        status_out = res_status.stdout.strip()
+        res_diff = runner.run(["git", "diff", "--exit-code"], check=False)
+        diff_rc = res_diff.returncode
+        if final_sha == aos_start_sha and not status_out and diff_rc == 0:
+            return True, final_sha
+        return False, final_sha
+    except Exception:
+        return False, None
+
 def validate_request(request_data, request_schema):
     validate_against_schema(request_data, request_schema)
     if request_data.get("source_sha") != AUTHORIZED_SOURCE_SHA:
@@ -131,16 +153,48 @@ def verify_workspace_against_source_manifest(workspace_dir, source_manifest_entr
     if dot_git.exists():
         raise RuntimeError(".git directory MUST NOT exist in disposable workspace!")
 
-    ws_entries = {}
-    aggregate_sha = hashlib.sha256()
+    expected_files = set()
+    expected_dirs = {Path(".")}
 
-    # Iterate expected tracked files only (no git commands)
-    for rel_path, expected_info in sorted(source_manifest_entries.items()):
+    for rel_path in source_manifest_entries.keys():
         p = Path(rel_path)
         if p.is_absolute() or ".." in p.parts:
             raise ValueError(f"Invalid path in manifest entries: {rel_path}")
+        expected_files.add(p)
+        curr = p.parent
+        while curr != Path(".") and curr != Path(""):
+            expected_dirs.add(curr)
+            curr = curr.parent
 
+    # Enumerate workspace recursively without following symlinks
+    for root, dirs, files in os.walk(ws_path, followlinks=False):
+        rel_root = Path(root).relative_to(ws_path)
+        if rel_root not in expected_dirs:
+            raise RuntimeError(f"Unexpected directory in disposable workspace: {rel_root}")
+
+        for d in dirs:
+            dir_p = rel_root / d
+            full_d = ws_path / dir_p
+            if full_d.is_symlink():
+                raise RuntimeError(f"Symlink directory forbidden in workspace: {dir_p}")
+            if dir_p not in expected_dirs:
+                raise RuntimeError(f"Unexpected directory in workspace: {dir_p}")
+
+        for f in files:
+            file_p = rel_root / f
+            full_f = ws_path / file_p
+            if full_f.is_symlink():
+                raise RuntimeError(f"Symlink file forbidden in workspace: {file_p}")
+            if file_p not in expected_files:
+                raise RuntimeError(f"Unexpected file in workspace: {file_p}")
+
+    ws_entries = {}
+    aggregate_sha = hashlib.sha256()
+
+    for rel_path, expected_info in sorted(source_manifest_entries.items()):
+        p = Path(rel_path)
         full_p = ws_path / p
+
         if not full_p.exists():
             raise RuntimeError(f"Missing expected tracked file in workspace: {rel_path}")
         if full_p.is_symlink():
@@ -164,6 +218,243 @@ def verify_workspace_against_source_manifest(workspace_dir, source_manifest_entr
 
     return ws_entries, aggregate_sha.hexdigest()
 
+def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_path):
+    if not isinstance(inspect_data, (dict, list)):
+        raise RuntimeError("Docker inspect data must be a dict or list")
+    if isinstance(inspect_data, list):
+        if len(inspect_data) == 0:
+            raise RuntimeError("Docker inspect array is empty")
+        inspect_obj = inspect_data[0]
+    else:
+        inspect_obj = inspect_data
+
+    if not isinstance(inspect_obj, dict):
+        raise RuntimeError("Docker inspect element is not an object")
+
+    if "HostConfig" not in inspect_obj or not isinstance(inspect_obj["HostConfig"], dict):
+        raise RuntimeError("HostConfig missing or invalid in docker inspect")
+    if "Mounts" not in inspect_obj or not isinstance(inspect_obj["Mounts"], list):
+        raise RuntimeError("Mounts missing or invalid in docker inspect")
+
+    host_config = inspect_obj["HostConfig"]
+    net_mode = host_config.get("NetworkMode")
+    readonly_root = host_config.get("ReadonlyRootfs")
+    pids_lim = host_config.get("PidsLimit")
+    cap_drop = host_config.get("CapDrop") or []
+    sec_opt = host_config.get("SecurityOpt") or []
+    mounts = inspect_obj["Mounts"]
+
+    if net_mode != "none":
+        raise RuntimeError(f"NetworkMode must be 'none', got '{net_mode}'")
+    if readonly_root is not True:
+        raise RuntimeError(f"ReadonlyRootfs must be true, got '{readonly_root}'")
+    if pids_lim != 100:
+        raise RuntimeError(f"PidsLimit must be 100, got '{pids_lim}'")
+
+    cap_drop_has_all = any(str(c).upper() == "ALL" for c in cap_drop)
+    if not cap_drop_has_all:
+        raise RuntimeError("CapDrop MUST contain 'ALL'")
+
+    no_new_priv = "no-new-privileges" in sec_opt
+    if not no_new_priv:
+        raise RuntimeError("SecurityOpt MUST contain 'no-new-privileges'")
+
+    ws_dest = "/workspace"
+    drv_dest = "/aos-driver/aos6_controlled_pilot_driver.mjs"
+    expected_destinations = {ws_dest, drv_dest}
+
+    ws_mounts = [m for m in mounts if m.get("Destination") == ws_dest]
+    drv_mounts = [m for m in mounts if m.get("Destination") == drv_dest]
+
+    if len(ws_mounts) != 1:
+        raise RuntimeError(f"Workspace mount count at '{ws_dest}' must be exactly 1, got {len(ws_mounts)}")
+    if len(drv_mounts) != 1:
+        raise RuntimeError(f"Driver mount count at '{drv_dest}' must be exactly 1, got {len(drv_mounts)}")
+    if len(mounts) != 2:
+        raise RuntimeError(f"Total mount count must be exactly 2, got {len(mounts)}")
+
+    ws_m = ws_mounts[0]
+    drv_m = drv_mounts[0]
+
+    if ws_m.get("Type") != "bind":
+        raise RuntimeError(f"Workspace mount Type must be 'bind', got '{ws_m.get('Type')}'")
+    if ws_m.get("RW") is not False:
+        raise RuntimeError("Workspace mount MUST be read-only (RW=false)")
+    ws_src_res = Path(ws_m.get("Source", "")).resolve()
+    ws_expected_res = Path(temp_workspace_dir).resolve()
+    if ws_src_res != ws_expected_res:
+        raise RuntimeError(f"Workspace mount Source '{ws_src_res}' != expected '{ws_expected_res}'")
+
+    if drv_m.get("Type") != "bind":
+        raise RuntimeError(f"Driver mount Type must be 'bind', got '{drv_m.get('Type')}'")
+    if drv_m.get("RW") is not False:
+        raise RuntimeError("Driver mount MUST be read-only (RW=false)")
+    drv_src_res = Path(drv_m.get("Source", "")).resolve()
+    drv_expected_res = Path(driver_src_path).resolve()
+    if drv_src_res != drv_expected_res:
+        raise RuntimeError(f"Driver mount Source '{drv_src_res}' != expected '{drv_expected_res}'")
+
+    docker_socket_count = sum(1 for m in mounts if "docker.sock" in str(m.get("Source", "")) or "docker.sock" in str(m.get("Destination", "")))
+    if docker_socket_count > 0:
+        raise RuntimeError("Docker socket mount detected!")
+
+    cred_mount_count = sum(1 for m in mounts if any(k in str(m.get("Source", "")) or k in str(m.get("Destination", "")) for k in [".ssh", ".aws", ".gcp", "supabase", "vercel"]))
+    if cred_mount_count > 0:
+        raise RuntimeError("Credential directory mount detected!")
+
+    unexpected_bind_count = sum(1 for m in mounts if m.get("Destination") not in expected_destinations)
+    if unexpected_bind_count > 0:
+        raise RuntimeError(f"Unexpected bind mount count: {unexpected_bind_count}")
+
+    return {
+        "network_mode": net_mode,
+        "readonly_rootfs": readonly_root,
+        "pids_limit": pids_lim,
+        "cap_drop_has_all": cap_drop_has_all,
+        "no_new_privileges": no_new_priv,
+        "workspace_mount_readonly": True,
+        "driver_mount_readonly": True,
+        "docker_socket_mount_count": docker_socket_count,
+        "credential_directory_mount_count": cred_mount_count,
+        "unexpected_host_bind_mount_count": unexpected_bind_count
+    }
+
+def parse_and_validate_driver_terminal_result(output_text):
+    result_lines = [line for line in output_text.splitlines() if line.startswith("AOS6_PILOT_DRIVER_RESULT=")]
+    if len(result_lines) == 0:
+        raise RuntimeError("Zero AOS6_PILOT_DRIVER_RESULT terminal lines found")
+    if len(result_lines) > 1:
+        raise RuntimeError(f"Multiple AOS6_PILOT_DRIVER_RESULT lines found: {len(result_lines)}")
+
+    raw_json = result_lines[0].split("=", 1)[1]
+    try:
+        res_obj = json.loads(raw_json)
+    except Exception as e:
+        raise RuntimeError(f"Malformed JSON in driver terminal result: {e}")
+
+    if not isinstance(res_obj, dict):
+        raise RuntimeError("Driver terminal result JSON is not an object")
+
+    base_keys = {
+        "product_static_qa_attempt_count",
+        "product_static_qa_result",
+        "policy_module_boot_result",
+        "unsafe_grounding_result",
+        "safe_grounding_result",
+        "localization_result",
+        "no_key_provider_result",
+        "mock_provider_success_result",
+        "mock_provider_failure_result",
+        "mock_provider_call_count",
+        "real_provider_network_call_count",
+        "bounded_workflow_result"
+    }
+
+    actual_keys = set(res_obj.keys())
+    bounded_res = res_obj.get("bounded_workflow_result")
+
+    if bounded_res == "PASS":
+        if actual_keys != base_keys:
+            missing = base_keys - actual_keys
+            extra = actual_keys - base_keys
+            raise RuntimeError(f"Exact key mismatch in successful driver result. Missing: {missing}, Extra: {extra}")
+    else:
+        allowed = base_keys | {"error"}
+        if not base_keys.issubset(actual_keys) or not actual_keys.issubset(allowed):
+            missing = base_keys - actual_keys
+            extra = actual_keys - allowed
+            raise RuntimeError(f"Exact key mismatch in failure driver result. Missing: {missing}, Extra: {extra}")
+
+    int_keys = {"product_static_qa_attempt_count", "mock_provider_call_count", "real_provider_network_call_count"}
+    enum_keys = {
+        "product_static_qa_result",
+        "policy_module_boot_result",
+        "unsafe_grounding_result",
+        "safe_grounding_result",
+        "localization_result",
+        "no_key_provider_result",
+        "mock_provider_success_result",
+        "mock_provider_failure_result",
+        "bounded_workflow_result"
+    }
+
+    for k in int_keys:
+        v = res_obj[k]
+        if type(v) is not int:
+            raise RuntimeError(f"Driver result key '{k}' must be int, got {type(v).__name__}")
+
+    for k in enum_keys:
+        v = res_obj[k]
+        if v not in ("PASS", "FAIL", "NOT_RUN"):
+            raise RuntimeError(f"Driver result key '{k}' invalid enum value: '{v}'")
+
+    if "error" in res_obj and not isinstance(res_obj["error"], str):
+        raise RuntimeError("Driver result key 'error' must be str")
+
+    return res_obj
+
+def derive_pilot_result(obs):
+    checks = [
+        obs.get("primary_failure") is None,
+        obs.get("secondary_cleanup_failure") is None,
+        obs.get("authorized_source_acquisition_count") == 1,
+        obs.get("exact_source_head") == AUTHORIZED_SOURCE_SHA,
+        obs.get("source_baseline_manifest_exists") is True,
+        obs.get("workspace_verification") == "PASS",
+        obs.get("dependency_preparation") == "PASS",
+        obs.get("target_image_id_valid") is True,
+        obs.get("target_repo_digest_valid") is True,
+        obs.get("container_inspection_exists") is True,
+        obs.get("network_mode") == "none",
+        obs.get("readonly_rootfs") is True,
+        obs.get("pids_limit") == 100,
+        obs.get("cap_drop_has_all") is True,
+        obs.get("no_new_privileges") is True,
+        obs.get("workspace_mount_exact_ro") is True,
+        obs.get("driver_mount_exact_ro") is True,
+        obs.get("docker_socket_count") == 0,
+        obs.get("credential_mount_count") == 0,
+        obs.get("unexpected_bind_count") == 0,
+        obs.get("driver_result_exact_key_validation") == "PASS",
+        obs.get("product_static_qa_attempt_count") == 1,
+        obs.get("product_static_qa_result") == "PASS",
+        obs.get("policy_module_boot_result") == "PASS",
+        obs.get("unsafe_grounding_result") == "PASS",
+        obs.get("safe_grounding_result") == "PASS",
+        obs.get("localization_result") == "PASS",
+        obs.get("no_key_provider_result") == "PASS",
+        obs.get("mock_provider_success_result") == "PASS",
+        obs.get("mock_provider_failure_result") == "PASS",
+        obs.get("bounded_workflow_result") == "PASS",
+        obs.get("mock_provider_call_count") == 2,
+        obs.get("real_provider_network_call_count") == 0,
+        obs.get("synthetic_data_only_result") == "PASS",
+        obs.get("source_mutation_count") == 0,
+        obs.get("canonical_lari_mutation_count") == 0,
+        obs.get("canonical_remote_access_count") == 0,
+        obs.get("lari_e3_project_access_count") == 0,
+        obs.get("shared_staging_access_count") == 0,
+        obs.get("production_access_count") == 0,
+        obs.get("vercel_access_count") == 0,
+        obs.get("real_customer_data_access_count") == 0,
+        obs.get("real_whatsapp_send_count") == 0,
+        obs.get("real_sms_send_count") == 0,
+        obs.get("real_email_send_count") == 0,
+        obs.get("real_payment_count") == 0,
+        obs.get("attempt_count") == 1,
+        obs.get("retry_count") == 0,
+        obs.get("resource_created_count") == 1,
+        obs.get("cleanup_attempt_count") == 1,
+        obs.get("cleanup_success_count") == 1,
+        obs.get("cleanup_failure_count") == 0,
+        obs.get("surviving_disposable_resource_count") == 0,
+        obs.get("original_lari_source_final_immutability") == "PASS",
+        obs.get("aos_exact_start_sha_final_immutability") == "PASS",
+        obs.get("final_report_manifest_verification") == "PASS",
+        obs.get("evidence_capture_result") == "PASS",
+    ]
+    return "PASS" if all(checks) else "FAIL"
+
 def verify_report_manifest_pair(report_path, manifest_path, report_schema, manifest_schema):
     """Disk re-read validator for report <-> manifest pair substitution defense."""
     report_file = Path(report_path).resolve()
@@ -185,6 +476,9 @@ def verify_report_manifest_pair(report_path, manifest_path, report_schema, manif
     recomputed_sha = hashlib.sha256(manifest_bytes).hexdigest()
 
     binding = report_data.get("runtime_evidence_binding", {})
+    if set(binding.keys()) != {"manifest_filename", "manifest_sha256", "manifest_schema_version"}:
+        raise RuntimeError("runtime_evidence_binding has unknown or missing fields")
+
     claimed_filename = binding.get("manifest_filename")
     claimed_sha = binding.get("manifest_sha256")
     claimed_ver = binding.get("manifest_schema_version")
@@ -201,6 +495,8 @@ def verify_report_manifest_pair(report_path, manifest_path, report_schema, manif
 def execute_harness(request_path, output_dir, runner=None):
     if runner is None:
         runner = CommandRunner()
+
+    aos_start_sha = capture_aos_start_sha(runner)
 
     req_path = Path(request_path).resolve()
     out_dir = Path(output_dir).resolve()
@@ -252,13 +548,18 @@ def execute_harness(request_path, output_dir, runner=None):
     temp_source_dir = temp_base / "source"
     temp_workspace_dir = temp_base / "workspace"
 
-    # Initial unpopulated observation states (NO FABRICATED PROOF)
     target_image_id = None
     target_repo_digest = None
     container_inspection_obs = None
     immut_ok = None
+    ws_verified = "FAIL"
     dep_prep_result = "NOT_CHECKED"
     driver_result = None
+    driver_val_res = "FAIL"
+    exact_source_head = None
+    source_manifest_before_sha256 = None
+    source_tree_sha = None
+    final_sha256 = None
 
     try:
         # Phase 1: Source Acquisition
@@ -267,7 +568,7 @@ def execute_harness(request_path, output_dir, runner=None):
         runner.run(["git", "init"], cwd=temp_source_dir)
         runner.run(["git", "remote", "add", "source", FIXED_SOURCE_REPO_URL], cwd=temp_source_dir)
 
-        fetch_res = runner.run(["git", "fetch", "--no-tags", "--depth=1", "source", AUTHORIZED_SOURCE_SHA], cwd=temp_source_dir)
+        runner.run(["git", "fetch", "--no-tags", "--depth=1", "source", AUTHORIZED_SOURCE_SHA], cwd=temp_source_dir)
         authorized_source_acquisition_count = 1
 
         fetch_head_sha = runner.run(["git", "rev-parse", "FETCH_HEAD"], cwd=temp_source_dir).stdout.strip()
@@ -275,9 +576,9 @@ def execute_harness(request_path, output_dir, runner=None):
             raise RuntimeError(f"FETCH_HEAD SHA mismatch: {fetch_head_sha} != {AUTHORIZED_SOURCE_SHA}")
 
         runner.run(["git", "checkout", "--detach", AUTHORIZED_SOURCE_SHA], cwd=temp_source_dir)
-        head_sha = runner.run(["git", "rev-parse", "HEAD"], cwd=temp_source_dir).stdout.strip()
-        if head_sha != AUTHORIZED_SOURCE_SHA:
-            raise RuntimeError(f"HEAD SHA mismatch after checkout: {head_sha} != {AUTHORIZED_SOURCE_SHA}")
+        exact_source_head = runner.run(["git", "rev-parse", "HEAD"], cwd=temp_source_dir).stdout.strip()
+        if exact_source_head != AUTHORIZED_SOURCE_SHA:
+            raise RuntimeError(f"HEAD SHA mismatch after checkout: {exact_source_head} != {AUTHORIZED_SOURCE_SHA}")
 
         source_tree_sha = runner.run(["git", "rev-parse", "HEAD^{tree}"], cwd=temp_source_dir).stdout.strip()
 
@@ -303,10 +604,10 @@ def execute_harness(request_path, output_dir, runner=None):
             dst_f.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_f, dst_f)
 
-        # Gitless workspace verification against authoritative source manifest
         ws_manifest_entries, ws_sha256 = verify_workspace_against_source_manifest(temp_workspace_dir, source_manifest_entries)
         if ws_sha256 != source_manifest_before_sha256:
             raise RuntimeError("Disposable workspace copy sha256 does not match original source manifest!")
+        ws_verified = "PASS"
 
         # Phase 4: Dependency Preparation
         print("[AOS6 Harness] Phase 4: Dependency Preparation...")
@@ -314,7 +615,7 @@ def execute_harness(request_path, output_dir, runner=None):
         if not lockfile.exists():
             raise RuntimeError("package-lock.json missing in workspace!")
 
-        dep_res = runner.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=temp_workspace_dir)
+        runner.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=temp_workspace_dir)
         dep_prep_result = "PASS"
 
         # Phase 5: Image Acquisition & Fail-Closed Resolution
@@ -364,69 +665,20 @@ def execute_harness(request_path, output_dir, runner=None):
         print("[AOS6 Harness] Phase 7: Actual Docker Inspection...")
         inspect_res = runner.run(["docker", "inspect", container_name])
         try:
-            inspect_data = json.loads(inspect_res.stdout)[0]
+            raw_inspect = json.loads(inspect_res.stdout)
         except Exception as e:
             raise RuntimeError(f"Failed to parse docker inspect JSON: {e}")
 
-        host_config = inspect_data.get("HostConfig", {})
-        net_mode = host_config.get("NetworkMode", None)
-        readonly_root = host_config.get("ReadonlyRootfs", None)
-        pids_lim = host_config.get("PidsLimit", None)
-        cap_drop = host_config.get("CapDrop", []) or []
-        sec_opt = host_config.get("SecurityOpt", []) or []
-        mounts = inspect_data.get("Mounts", []) or []
-
-        cap_drop_has_all = "ALL" in [c.upper() for c in cap_drop]
-        no_new_priv = "no-new-privileges" in sec_opt
-        docker_socket_count = sum(1 for m in mounts if "docker.sock" in m.get("Source", ""))
-        cred_mount_count = sum(1 for m in mounts if any(k in m.get("Source", "") for k in [".ssh", ".aws", ".gcp", "supabase", "vercel"]))
-
-        ws_mount_ro = any(m.get("Destination") == "/workspace" and m.get("RW") is False for m in mounts)
-        drv_mount_ro = any(m.get("Destination") == "/aos-driver/aos6_controlled_pilot_driver.mjs" and m.get("RW") is False for m in mounts)
-
-        # Check for any unexpected host bind mounts beyond workspace and driver
-        expected_destinations = {"/workspace", "/aos-driver/aos6_controlled_pilot_driver.mjs"}
-        unexpected_bind_count = sum(1 for m in mounts if m.get("Destination") not in expected_destinations)
-
-        if (net_mode != "none" or
-            readonly_root is not True or
-            pids_lim != 100 or
-            not cap_drop_has_all or
-            not no_new_priv or
-            docker_socket_count > 0 or
-            cred_mount_count > 0 or
-            not ws_mount_ro or
-            not drv_mount_ro or
-            unexpected_bind_count > 0):
-            raise RuntimeError("Docker inspect security parameters validation failed!")
-
-        container_inspection_obs = {
-            "network_mode": net_mode,
-            "readonly_rootfs": readonly_root,
-            "pids_limit": pids_lim,
-            "cap_drop_has_all": cap_drop_has_all,
-            "no_new_privileges": no_new_priv,
-            "workspace_mount_readonly": ws_mount_ro,
-            "driver_mount_readonly": drv_mount_ro,
-            "docker_socket_mount_count": docker_socket_count,
-            "credential_directory_mount_count": cred_mount_count,
-            "unexpected_host_bind_mount_count": unexpected_bind_count
-        }
+        container_inspection_obs = validate_docker_inspect_data(raw_inspect, temp_workspace_dir, driver_src_path)
 
         # Phase 8: Bounded Execution & Exactly-Once Terminal Result Verification
         print("[AOS6 Harness] Phase 8: Executing Target Container...")
         attempt_count = 1
         start_res = runner.run(["docker", "start", "-a", container_name], check=False)
 
-        result_lines = [line for line in (start_res.stdout + "\n" + start_res.stderr).splitlines() if line.startswith("AOS6_PILOT_DRIVER_RESULT=")]
-        if len(result_lines) != 1:
-            raise RuntimeError(f"Terminal driver result MUST occur exactly once! Found count={len(result_lines)}")
-
-        raw_json = result_lines[0].split("=", 1)[1]
-        try:
-            driver_result = json.loads(raw_json)
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse terminal driver JSON: {e}")
+        combined_out = start_res.stdout + "\n" + start_res.stderr
+        driver_result = parse_and_validate_driver_terminal_result(combined_out)
+        driver_val_res = "PASS"
 
         mock_provider_call_count = driver_result.get("mock_provider_call_count", 0)
         real_provider_network_call_count = driver_result.get("real_provider_network_call_count", 0)
@@ -495,11 +747,8 @@ def execute_harness(request_path, output_dir, runner=None):
 
     # Phase 11: Final AOS Immutability Verification
     print("[AOS6 Harness] Phase 11: Final AOS Immutability Proof...")
-    aos_sha = runner.run(["git", "rev-parse", "HEAD"]).stdout.strip()
-    aos_status = runner.run(["git", "status", "--porcelain=v1", "--untracked-files=all"]).stdout.strip()
-    aos_diff_res = runner.run(["git", "diff", "--exit-code"], check=False)
-
-    aos_immut = "PASS" if (not aos_status and aos_diff_res.returncode == 0) else "FAIL"
+    aos_immut_bool, final_aos_sha = verify_aos_immutability(aos_start_sha, runner)
+    aos_immut = "PASS" if aos_immut_bool else "FAIL"
 
     # Derived Synthetic and Evidence Results
     synthetic_data_only_result = "PASS" if (
@@ -515,29 +764,75 @@ def execute_harness(request_path, output_dir, runner=None):
         vercel_access_count == 0
     ) else "FAIL"
 
-    # Complete PASS Derivation
-    aos6_result = "FAIL"
-    pass_conditions = {
-        "primary_failure": primary_failure is None,
-        "secondary_cleanup_failure": secondary_cleanup_failure is None,
-        "immut_ok": immut_ok is True,
-        "aos_immut": aos_immut == "PASS",
-        "driver_result": driver_result is not None,
-        "bounded_workflow_result": driver_result and driver_result.get("bounded_workflow_result") == "PASS",
-        "real_provider_network_call_count": real_provider_network_call_count == 0,
-        "mock_provider_call_count": mock_provider_call_count == 2,
-        "surviving_disposable_resource_count": surviving_disposable_resource_count == 0,
-        "attempt_count": attempt_count == 1,
-        "retry_count": retry_count == 0
-    }
-    if all(pass_conditions.values()):
-        aos6_result = "PASS"
+    final_pair_verified = False
 
-    # Build Runtime Manifest
+    observations = {
+        "primary_failure": primary_failure,
+        "secondary_cleanup_failure": secondary_cleanup_failure,
+        "authorized_source_acquisition_count": authorized_source_acquisition_count,
+        "exact_source_head": exact_source_head,
+        "source_baseline_manifest_exists": source_manifest_before_sha256 is not None,
+        "workspace_verification": ws_verified,
+        "dependency_preparation": dep_prep_result,
+        "target_image_id_valid": target_image_id is not None,
+        "target_repo_digest_valid": target_repo_digest is not None,
+        "container_inspection_exists": container_inspection_obs is not None,
+        "network_mode": container_inspection_obs.get("network_mode") if container_inspection_obs else None,
+        "readonly_rootfs": container_inspection_obs.get("readonly_rootfs") if container_inspection_obs else None,
+        "pids_limit": container_inspection_obs.get("pids_limit") if container_inspection_obs else None,
+        "cap_drop_has_all": container_inspection_obs.get("cap_drop_has_all") if container_inspection_obs else None,
+        "no_new_privileges": container_inspection_obs.get("no_new_privileges") if container_inspection_obs else None,
+        "workspace_mount_exact_ro": container_inspection_obs.get("workspace_mount_readonly") if container_inspection_obs else None,
+        "driver_mount_exact_ro": container_inspection_obs.get("driver_mount_readonly") if container_inspection_obs else None,
+        "docker_socket_count": container_inspection_obs.get("docker_socket_mount_count") if container_inspection_obs else None,
+        "credential_mount_count": container_inspection_obs.get("credential_directory_mount_count") if container_inspection_obs else None,
+        "unexpected_bind_count": container_inspection_obs.get("unexpected_host_bind_mount_count") if container_inspection_obs else None,
+        "driver_result_exact_key_validation": driver_val_res,
+        "product_static_qa_attempt_count": driver_result.get("product_static_qa_attempt_count") if driver_result else 0,
+        "product_static_qa_result": driver_result.get("product_static_qa_result") if driver_result else "FAIL",
+        "policy_module_boot_result": driver_result.get("policy_module_boot_result") if driver_result else "FAIL",
+        "unsafe_grounding_result": driver_result.get("unsafe_grounding_result") if driver_result else "FAIL",
+        "safe_grounding_result": driver_result.get("safe_grounding_result") if driver_result else "FAIL",
+        "localization_result": driver_result.get("localization_result") if driver_result else "FAIL",
+        "no_key_provider_result": driver_result.get("no_key_provider_result") if driver_result else "FAIL",
+        "mock_provider_success_result": driver_result.get("mock_provider_success_result") if driver_result else "FAIL",
+        "mock_provider_failure_result": driver_result.get("mock_provider_failure_result") if driver_result else "FAIL",
+        "bounded_workflow_result": driver_result.get("bounded_workflow_result") if driver_result else "FAIL",
+        "mock_provider_call_count": mock_provider_call_count,
+        "real_provider_network_call_count": real_provider_network_call_count,
+        "synthetic_data_only_result": synthetic_data_only_result,
+        "source_mutation_count": source_mutation_count,
+        "canonical_lari_mutation_count": canonical_lari_mutation_count,
+        "canonical_remote_access_count": canonical_remote_access_count,
+        "lari_e3_project_access_count": lari_e3_project_access_count,
+        "shared_staging_access_count": shared_staging_access_count,
+        "production_access_count": production_access_count,
+        "vercel_access_count": vercel_access_count,
+        "real_customer_data_access_count": real_customer_data_access_count,
+        "real_whatsapp_send_count": real_whatsapp_send_count,
+        "real_sms_send_count": real_sms_send_count,
+        "real_email_send_count": real_email_send_count,
+        "real_payment_count": real_payment_count,
+        "attempt_count": attempt_count,
+        "retry_count": retry_count,
+        "resource_created_count": resource_created_count,
+        "cleanup_attempt_count": cleanup_attempt_count,
+        "cleanup_success_count": cleanup_success_count,
+        "cleanup_failure_count": cleanup_failure_count,
+        "surviving_disposable_resource_count": surviving_disposable_resource_count,
+        "original_lari_source_final_immutability": "PASS" if immut_ok else "FAIL",
+        "aos_exact_start_sha_final_immutability": aos_immut,
+        "final_report_manifest_verification": "NOT_CHECKED",
+        "evidence_capture_result": "NOT_CHECKED"
+    }
+
+    aos6_result = "FAIL"
+
+    # 1. Build & write Runtime Manifest
     manifest_obj = {
         "schema_version": "0.1.0",
         "pilot_run_id": pilot_run_id,
-        "target_image_name": TARGET_IMAGE_NAME if 'resolved_img_id' in locals() else None,
+        "target_image_name": TARGET_IMAGE_NAME if target_image_id else None,
         "target_image_id": target_image_id,
         "target_repo_digest": target_repo_digest,
         "container_name": container_name if resource_created_count > 0 else None,
@@ -554,13 +849,13 @@ def execute_harness(request_path, output_dir, runner=None):
             "unexpected_host_bind_mount_count": None
         },
         "source_immutability": {
-            "original_source_tree_sha256_pre": source_manifest_before_sha256 if 'source_manifest_before_sha256' in locals() else None,
+            "original_source_tree_sha256_pre": source_manifest_before_sha256,
             "original_source_tree_sha256_post": final_sha256 if 'final_sha256' in locals() else None,
             "immutable": immut_ok
         },
         "dependency_preparation": {
-            "location": "DISPOSABLE_WORKSPACE_COPY" if 'source_manifest_before_sha256' in locals() else None,
-            "command": "npm ci --ignore-scripts --no-audit --no-fund" if 'source_manifest_before_sha256' in locals() else None,
+            "location": "DISPOSABLE_WORKSPACE_COPY" if dep_prep_result == "PASS" else None,
+            "command": "npm ci --ignore-scripts --no-audit --no-fund" if dep_prep_result == "PASS" else None,
             "result": dep_prep_result,
             "lifecycle_scripts_disabled": True if dep_prep_result == "PASS" else None
         },
@@ -588,21 +883,21 @@ def execute_harness(request_path, output_dir, runner=None):
     manifest_bytes = write_json_deterministic(out_dir / "pilot_runtime_manifest.json", manifest_obj)
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
 
-    # Build Report
+    # 2. Build initial Report (evidence_capture_result = "NOT_CHECKED")
     report_obj = {
         "schema_version": "0.1.0",
         "pilot_run_id": pilot_run_id,
-        "aos_canonical_binding_sha": aos_sha,
+        "aos_canonical_binding_sha": aos_start_sha,
         "lari_source_sha": AUTHORIZED_SOURCE_SHA,
         "pilot_execution_environment": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL",
-        "aos6_controlled_pilot_result": aos6_result,
-        "exact_sha_result": "PASS" if 'head_sha' in locals() and head_sha == AUTHORIZED_SOURCE_SHA else "FAIL",
+        "aos6_controlled_pilot_result": "FAIL",
+        "exact_sha_result": "PASS" if exact_source_head == AUTHORIZED_SOURCE_SHA else "FAIL",
         "environment_isolation_result": "PASS" if container_inspection_obs else "FAIL",
         "synthetic_data_only_result": synthetic_data_only_result,
         "runtime_boot_result": driver_result.get("policy_module_boot_result", "FAIL") if driver_result else "FAIL",
         "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE",
         "bounded_workflow_result": driver_result.get("bounded_workflow_result", "FAIL") if driver_result else "FAIL",
-        "evidence_capture_result": "NOT_CHECKED", # Set after pair validation below
+        "evidence_capture_result": "NOT_CHECKED",
         "cleanup_result": "PASS" if cleanup_success_count == 1 else "FAIL",
         "source_mutation_count": source_mutation_count,
         "canonical_lari_mutation_count": canonical_lari_mutation_count,
@@ -635,25 +930,46 @@ def execute_harness(request_path, output_dir, runner=None):
     }
 
     validate_against_schema(report_obj, report_schema)
-    report_bytes = write_json_deterministic(out_dir / "pilot_report.json", report_obj)
-    report_sha256 = hashlib.sha256(report_bytes).hexdigest()
+    write_json_deterministic(out_dir / "pilot_report.json", report_obj)
 
-    # Disk Re-Read Pair Validator Defense Check
-    pair_ok = verify_report_manifest_pair(out_dir / "pilot_report.json", out_dir / "pilot_runtime_manifest.json", report_schema, manifest_schema)
-    if pair_ok:
-        report_obj["evidence_capture_result"] = "PASS"
+    # 3. Two-stage verification: verify initial report & manifest on disk
+    try:
+        if verify_report_manifest_pair(out_dir / "pilot_report.json", out_dir / "pilot_runtime_manifest.json", report_schema, manifest_schema):
+            observations["final_report_manifest_verification"] = "PASS"
+            observations["evidence_capture_result"] = "PASS"
+
+            aos6_result = derive_pilot_result(observations)
+            report_obj["aos6_controlled_pilot_result"] = aos6_result
+            report_obj["evidence_capture_result"] = "PASS"
+
+            validate_against_schema(report_obj, report_schema)
+            write_json_deterministic(out_dir / "pilot_report.json", report_obj)
+
+            if verify_report_manifest_pair(out_dir / "pilot_report.json", out_dir / "pilot_runtime_manifest.json", report_schema, manifest_schema):
+                final_pair_verified = True
+    except Exception as pair_err:
+        print(f"[AOS6 Harness] Final pair re-validation failed: {pair_err}", file=sys.stderr)
+
+    if not final_pair_verified:
+        observations["final_report_manifest_verification"] = "FAIL"
+        observations["evidence_capture_result"] = "FAIL"
+        aos6_result = "FAIL"
+        report_obj["aos6_controlled_pilot_result"] = "FAIL"
+        report_obj["evidence_capture_result"] = "FAIL"
+        validate_against_schema(report_obj, report_schema)
         write_json_deterministic(out_dir / "pilot_report.json", report_obj)
-        report_sha256 = hashlib.sha256((out_dir / "pilot_report.json").read_bytes()).hexdigest()
 
-    # Build Attestation
+    final_report_bytes = (out_dir / "pilot_report.json").read_bytes()
+    final_report_sha256 = hashlib.sha256(final_report_bytes).hexdigest()
+
     attestation_obj = {
         "schema_version": "0.1.0",
         "pilot_run_id": pilot_run_id,
-        "aos_sha": aos_sha,
+        "aos_sha": aos_start_sha,
         "authorized_lari_source_sha": AUTHORIZED_SOURCE_SHA,
-        "lari_source_tree_sha": source_tree_sha if 'source_tree_sha' in locals() else "0"*40,
-        "tracked_source_manifest_sha256": source_manifest_before_sha256 if 'source_manifest_before_sha256' in locals() else "0"*64,
-        "report_sha256": report_sha256,
+        "lari_source_tree_sha": source_tree_sha if 'source_tree_sha' in locals() and source_tree_sha else "0"*40,
+        "tracked_source_manifest_sha256": source_manifest_before_sha256 if source_manifest_before_sha256 else "0"*64,
+        "report_sha256": final_report_sha256,
         "runtime_manifest_sha256": manifest_sha256,
         "aos_worktree_immutable_result": aos_immut,
         "original_lari_source_immutable_result": "PASS" if immut_ok else "FAIL",

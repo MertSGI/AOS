@@ -58,6 +58,7 @@ class FakeCommandRunner:
         ]
         self.docker_rm_returncode = 0
         self.docker_inspect_absent = True
+        self.created_mounts = []
         self.driver_output_json = {
             "product_static_qa_attempt_count": 1,
             "product_static_qa_result": "PASS",
@@ -115,6 +116,24 @@ class FakeCommandRunner:
             if cmd[1] == "pull":
                 return MockCommandResult(stdout="Pulled image\n")
             if cmd[1] == "create":
+                self.created_mounts = []
+                for i, arg in enumerate(cmd):
+                    if arg == "-v":
+                        val = cmd[i + 1]
+                        if val.endswith(":ro") or val.endswith(":rw"):
+                            parts = val.rsplit(":", 2)
+                            src, dest = parts[0], parts[1]
+                            rw = val.endswith(":rw")
+                        else:
+                            parts = val.rsplit(":", 1)
+                            src, dest = parts[0], parts[1]
+                            rw = True
+                        self.created_mounts.append({
+                            "Type": "bind",
+                            "Source": src,
+                            "Destination": dest,
+                            "RW": rw
+                        })
                 return MockCommandResult(stdout="container123\n")
             if cmd[1] == "inspect":
                 if "node:22-bookworm-slim" in cmd:
@@ -132,9 +151,9 @@ class FakeCommandRunner:
                             "CapDrop": ["ALL"],
                             "SecurityOpt": ["no-new-privileges"]
                         },
-                        "Mounts": [
-                            {"Destination": "/workspace", "RW": False, "Source": "/tmp/ws"},
-                            {"Destination": "/aos-driver/aos6_controlled_pilot_driver.mjs", "RW": False, "Source": "/tmp/drv"}
+                        "Mounts": self.created_mounts if self.created_mounts else [
+                            {"Type": "bind", "Destination": "/workspace", "RW": False, "Source": "/tmp/ws"},
+                            {"Type": "bind", "Destination": "/aos-driver/aos6_controlled_pilot_driver.mjs", "RW": False, "Source": "/tmp/drv"}
                         ]
                     }]
                     return MockCommandResult(stdout=json.dumps(inspect_obj))
@@ -145,6 +164,7 @@ class FakeCommandRunner:
                 return MockCommandResult(stdout="", returncode=self.docker_rm_returncode)
 
         return MockCommandResult()
+
 
 
 class TestAOS6ControlledPilotContracts:
@@ -270,7 +290,48 @@ class TestAOS6ControlledPilotContracts:
         assert "OPENAI_API_KEY" not in cleaned
         assert "VERCEL_TOKEN" not in cleaned
 
-    # 5. GITLESS WORKSPACE VERIFIER TESTS
+    # 5. AOS START SHA & IMMUTABILITY TESTS (Section 3 Matrix)
+    def test_aos_start_sha_valid_format(self):
+        from scripts.aos6_controlled_pilot_harness import capture_aos_start_sha
+        runner = FakeCommandRunner()
+        runner.head_sha = "87a32a951e49b82372f3dfff164e805e4d3ff926"
+        sha = capture_aos_start_sha(runner)
+        assert sha == "87a32a951e49b82372f3dfff164e805e4d3ff926"
+
+    def test_aos_start_sha_invalid_format_fails(self):
+        from scripts.aos6_controlled_pilot_harness import capture_aos_start_sha
+        runner = FakeCommandRunner()
+        runner.head_sha = "not-a-sha"
+        with pytest.raises(RuntimeError, match="Invalid aos_start_sha format"):
+            capture_aos_start_sha(runner)
+
+    def test_aos_immutability_exact_unchanged_passes(self):
+        from scripts.aos6_controlled_pilot_harness import verify_aos_immutability
+        runner = FakeCommandRunner()
+        start_sha = "87a32a951e49b82372f3dfff164e805e4d3ff926"
+        runner.head_sha = start_sha
+        ok, final_sha = verify_aos_immutability(start_sha, runner)
+        assert ok is True
+        assert final_sha == start_sha
+
+    def test_aos_immutability_changed_head_fails(self):
+        from scripts.aos6_controlled_pilot_harness import verify_aos_immutability
+        runner = FakeCommandRunner()
+        start_sha = "87a32a951e49b82372f3dfff164e805e4d3ff926"
+        runner.head_sha = "1111111111111111111111111111111111111111"
+        ok, _ = verify_aos_immutability(start_sha, runner)
+        assert ok is False
+
+    def test_aos_immutability_dirty_status_fails(self):
+        from scripts.aos6_controlled_pilot_harness import verify_aos_immutability
+        runner = FakeCommandRunner()
+        start_sha = "87a32a951e49b82372f3dfff164e805e4d3ff926"
+        runner.head_sha = start_sha
+        runner.git_clean = False
+        ok, _ = verify_aos_immutability(start_sha, runner)
+        assert ok is False
+
+    # 6. GITLESS WORKSPACE VERIFIER TESTS (Section 4 Matrix)
     def test_gitless_workspace_verifier(self, tmp_path):
         from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
 
@@ -284,11 +345,9 @@ class TestAOS6ControlledPilotContracts:
             }
         }
 
-        # Test valid verification without git
         entries, sha256_hash = verify_workspace_against_source_manifest(tmp_path, manifest_entries)
         assert "f1.txt" in entries
 
-        # Test failure if .git directory present
         (tmp_path / ".git").mkdir()
         with pytest.raises(RuntimeError, match="MUST NOT exist"):
             verify_workspace_against_source_manifest(tmp_path, manifest_entries)
@@ -310,7 +369,43 @@ class TestAOS6ControlledPilotContracts:
         with pytest.raises(RuntimeError, match="byte/hash mismatch"):
             verify_workspace_against_source_manifest(tmp_path, manifest_entries)
 
-    # 6. FAIL-CLOSED IMAGE IDENTITY TESTS
+    def test_gitless_workspace_verifier_fails_on_unexpected_file(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
+        (tmp_path / "f1.txt").write_text("hello", encoding="utf-8")
+        (tmp_path / "untracked.txt").write_text("extra", encoding="utf-8")
+        manifest_entries = {
+            "f1.txt": {"size": 5, "sha256": hashlib.sha256("hello".encode("utf-8")).hexdigest()}
+        }
+        with pytest.raises(RuntimeError, match="Unexpected file in workspace"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
+
+    def test_gitless_workspace_verifier_fails_on_unexpected_dir(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
+        (tmp_path / "f1.txt").write_text("hello", encoding="utf-8")
+        (tmp_path / "extra_dir").mkdir()
+        manifest_entries = {
+            "f1.txt": {"size": 5, "sha256": hashlib.sha256("hello".encode("utf-8")).hexdigest()}
+        }
+        with pytest.raises(RuntimeError, match="Unexpected directory in workspace"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
+
+    def test_gitless_workspace_verifier_fails_on_symlink(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import verify_workspace_against_source_manifest
+        target = tmp_path / "target.txt"
+        target.write_text("target", encoding="utf-8")
+        sym = tmp_path / "f1.txt"
+        try:
+            sym.symlink_to(target)
+        except OSError:
+            pytest.skip("Symlinks not supported in current environment")
+
+        manifest_entries = {
+            "f1.txt": {"size": 6, "sha256": hashlib.sha256("target".encode("utf-8")).hexdigest()}
+        }
+        with pytest.raises(RuntimeError, match="Symlink"):
+            verify_workspace_against_source_manifest(tmp_path, manifest_entries)
+
+    # 7. FAIL-CLOSED IMAGE IDENTITY TESTS
     def test_image_digest_fail_closed_validation(self):
         import re
         valid_digest = "node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -322,7 +417,359 @@ class TestAOS6ControlledPilotContracts:
         assert re.match(pattern, invalid_digest) is None
         assert re.match(pattern, empty_digest) is None
 
-    # 7. DISK RE-READ REPORT/MANIFEST PAIR VALIDATOR & SUBSTITUTION ATTACK TESTS
+    # 8. DOCKER MOUNT IDENTITY & INSPECTION SECURITY MATRIX (Section 5 & 10)
+    @pytest.fixture
+    def valid_inspect_obj(self, tmp_path):
+        ws_dir = tmp_path / "ws"
+        drv_file = tmp_path / "driver.mjs"
+        ws_dir.mkdir()
+        drv_file.write_text("// driver", encoding="utf-8")
+        return [{
+            "HostConfig": {
+                "NetworkMode": "none",
+                "ReadonlyRootfs": True,
+                "PidsLimit": 100,
+                "CapDrop": ["ALL"],
+                "SecurityOpt": ["no-new-privileges"]
+            },
+            "Mounts": [
+                {"Type": "bind", "Destination": "/workspace", "RW": False, "Source": str(ws_dir)},
+                {"Type": "bind", "Destination": "/aos-driver/aos6_controlled_pilot_driver.mjs", "RW": False, "Source": str(drv_file)}
+            ]
+        }], ws_dir, drv_file
+
+    def test_docker_inspect_valid_passes(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        res = validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+        assert res["network_mode"] == "none"
+        assert res["readonly_rootfs"] is True
+        assert res["pids_limit"] == 100
+
+    def test_docker_inspect_network_mode_bridge_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["NetworkMode"] = "bridge"
+        with pytest.raises(RuntimeError, match="NetworkMode must be 'none'"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_readonly_rootfs_false_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["ReadonlyRootfs"] = False
+        with pytest.raises(RuntimeError, match="ReadonlyRootfs must be true"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_pids_limit_wrong_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["PidsLimit"] = 200
+        with pytest.raises(RuntimeError, match="PidsLimit must be 100"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_cap_drop_missing_all_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["CapDrop"] = ["NET_ADMIN"]
+        with pytest.raises(RuntimeError, match="CapDrop MUST contain 'ALL'"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_no_new_privileges_missing_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["SecurityOpt"] = []
+        with pytest.raises(RuntimeError, match="SecurityOpt MUST contain 'no-new-privileges'"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_workspace_rw_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"][0]["RW"] = True
+        with pytest.raises(RuntimeError, match="Workspace mount MUST be read-only"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_driver_rw_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"][1]["RW"] = True
+        with pytest.raises(RuntimeError, match="Driver mount MUST be read-only"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_workspace_wrong_source_fails(self, valid_inspect_obj, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        wrong_dir = tmp_path / "wrong_ws"
+        wrong_dir.mkdir()
+        inspect_data[0]["Mounts"][0]["Source"] = str(wrong_dir)
+        with pytest.raises(RuntimeError, match="Workspace mount Source"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_named_volume_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"][0]["Type"] = "volume"
+        with pytest.raises(RuntimeError, match="Workspace mount Type must be 'bind'"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_duplicate_mount_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append(copy.deepcopy(inspect_data[0]["Mounts"][0]))
+        with pytest.raises(RuntimeError, match="Workspace mount count"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_unexpected_bind_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append({
+            "Type": "bind", "Destination": "/extra", "RW": False, "Source": "/tmp"
+        })
+        with pytest.raises(RuntimeError, match="Total mount count must be exactly 2"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_docker_socket_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"][0]["Source"] = "/var/run/docker.sock"
+        with pytest.raises(RuntimeError):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_inspect_credential_mount_fails(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"][0]["Source"] = "/home/user/.ssh"
+        with pytest.raises(RuntimeError):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    # 9. DRIVER TERMINAL RESULT CONTRACT TESTS (Section 6 & 11)
+    def test_driver_terminal_result_one_valid_passes(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        res_obj = {
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "PASS",
+            "policy_module_boot_result": "PASS",
+            "unsafe_grounding_result": "PASS",
+            "safe_grounding_result": "PASS",
+            "localization_result": "PASS",
+            "no_key_provider_result": "PASS",
+            "mock_provider_success_result": "PASS",
+            "mock_provider_failure_result": "PASS",
+            "mock_provider_call_count": 2,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "PASS"
+        }
+        text = f"Some log\nAOS6_PILOT_DRIVER_RESULT={json.dumps(res_obj)}\nDone"
+        parsed = parse_and_validate_driver_terminal_result(text)
+        assert parsed["bounded_workflow_result"] == "PASS"
+
+    def test_driver_terminal_result_zero_lines_fails(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        with pytest.raises(RuntimeError, match="Zero AOS6_PILOT_DRIVER_RESULT"):
+            parse_and_validate_driver_terminal_result("No driver result line here")
+
+    def test_driver_terminal_result_duplicate_lines_fails(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        line = "AOS6_PILOT_DRIVER_RESULT={}"
+        with pytest.raises(RuntimeError, match="Multiple AOS6_PILOT_DRIVER_RESULT"):
+            parse_and_validate_driver_terminal_result(f"{line}\n{line}")
+
+    def test_driver_terminal_result_missing_key_fails(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        res_obj = {
+            "product_static_qa_attempt_count": 1,
+            "bounded_workflow_result": "PASS"
+        }
+        text = f"AOS6_PILOT_DRIVER_RESULT={json.dumps(res_obj)}"
+        with pytest.raises(RuntimeError, match="Exact key mismatch"):
+            parse_and_validate_driver_terminal_result(text)
+
+    def test_driver_terminal_result_unknown_key_fails(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        res_obj = {
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "PASS",
+            "policy_module_boot_result": "PASS",
+            "unsafe_grounding_result": "PASS",
+            "safe_grounding_result": "PASS",
+            "localization_result": "PASS",
+            "no_key_provider_result": "PASS",
+            "mock_provider_success_result": "PASS",
+            "mock_provider_failure_result": "PASS",
+            "mock_provider_call_count": 2,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "PASS",
+            "unknown_extra_key": True
+        }
+        text = f"AOS6_PILOT_DRIVER_RESULT={json.dumps(res_obj)}"
+        with pytest.raises(RuntimeError, match="Exact key mismatch"):
+            parse_and_validate_driver_terminal_result(text)
+
+    def test_driver_terminal_result_failure_with_error_passes(self):
+        from scripts.aos6_controlled_pilot_harness import parse_and_validate_driver_terminal_result
+        res_obj = {
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "FAIL",
+            "policy_module_boot_result": "NOT_RUN",
+            "unsafe_grounding_result": "NOT_RUN",
+            "safe_grounding_result": "NOT_RUN",
+            "localization_result": "NOT_RUN",
+            "no_key_provider_result": "NOT_RUN",
+            "mock_provider_success_result": "NOT_RUN",
+            "mock_provider_failure_result": "NOT_RUN",
+            "mock_provider_call_count": 0,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "FAIL",
+            "error": "STEP_P1_STATIC_QA_FAILED"
+        }
+        text = f"AOS6_PILOT_DRIVER_RESULT={json.dumps(res_obj)}"
+        parsed = parse_and_validate_driver_terminal_result(text)
+        assert parsed["bounded_workflow_result"] == "FAIL"
+        assert parsed["error"] == "STEP_P1_STATIC_QA_FAILED"
+
+    # 10. PASS DERIVATION TRUTH TABLE TESTS (Section 7)
+    def test_derive_pilot_result_all_valid_passes(self):
+        from scripts.aos6_controlled_pilot_harness import derive_pilot_result
+        obs = {
+            "primary_failure": None,
+            "secondary_cleanup_failure": None,
+            "authorized_source_acquisition_count": 1,
+            "exact_source_head": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
+            "source_baseline_manifest_exists": True,
+            "workspace_verification": "PASS",
+            "dependency_preparation": "PASS",
+            "target_image_id_valid": True,
+            "target_repo_digest_valid": True,
+            "container_inspection_exists": True,
+            "network_mode": "none",
+            "readonly_rootfs": True,
+            "pids_limit": 100,
+            "cap_drop_has_all": True,
+            "no_new_privileges": True,
+            "workspace_mount_exact_ro": True,
+            "driver_mount_exact_ro": True,
+            "docker_socket_count": 0,
+            "credential_mount_count": 0,
+            "unexpected_bind_count": 0,
+            "driver_result_exact_key_validation": "PASS",
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "PASS",
+            "policy_module_boot_result": "PASS",
+            "unsafe_grounding_result": "PASS",
+            "safe_grounding_result": "PASS",
+            "localization_result": "PASS",
+            "no_key_provider_result": "PASS",
+            "mock_provider_success_result": "PASS",
+            "mock_provider_failure_result": "PASS",
+            "bounded_workflow_result": "PASS",
+            "mock_provider_call_count": 2,
+            "real_provider_network_call_count": 0,
+            "synthetic_data_only_result": "PASS",
+            "source_mutation_count": 0,
+            "canonical_lari_mutation_count": 0,
+            "canonical_remote_access_count": 0,
+            "lari_e3_project_access_count": 0,
+            "shared_staging_access_count": 0,
+            "production_access_count": 0,
+            "vercel_access_count": 0,
+            "real_customer_data_access_count": 0,
+            "real_whatsapp_send_count": 0,
+            "real_sms_send_count": 0,
+            "real_email_send_count": 0,
+            "real_payment_count": 0,
+            "attempt_count": 1,
+            "retry_count": 0,
+            "resource_created_count": 1,
+            "cleanup_attempt_count": 1,
+            "cleanup_success_count": 1,
+            "cleanup_failure_count": 0,
+            "surviving_disposable_resource_count": 0,
+            "original_lari_source_final_immutability": "PASS",
+            "aos_exact_start_sha_final_immutability": "PASS",
+            "final_report_manifest_verification": "PASS",
+            "evidence_capture_result": "PASS"
+        }
+        assert derive_pilot_result(obs) == "PASS"
+
+    def test_derive_pilot_result_any_failed_condition_returns_fail(self):
+        from scripts.aos6_controlled_pilot_harness import derive_pilot_result
+        base_obs = {
+            "primary_failure": None,
+            "secondary_cleanup_failure": None,
+            "authorized_source_acquisition_count": 1,
+            "exact_source_head": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
+            "source_baseline_manifest_exists": True,
+            "workspace_verification": "PASS",
+            "dependency_preparation": "PASS",
+            "target_image_id_valid": True,
+            "target_repo_digest_valid": True,
+            "container_inspection_exists": True,
+            "network_mode": "none",
+            "readonly_rootfs": True,
+            "pids_limit": 100,
+            "cap_drop_has_all": True,
+            "no_new_privileges": True,
+            "workspace_mount_exact_ro": True,
+            "driver_mount_exact_ro": True,
+            "docker_socket_count": 0,
+            "credential_mount_count": 0,
+            "unexpected_bind_count": 0,
+            "driver_result_exact_key_validation": "PASS",
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "PASS",
+            "policy_module_boot_result": "PASS",
+            "unsafe_grounding_result": "PASS",
+            "safe_grounding_result": "PASS",
+            "localization_result": "PASS",
+            "no_key_provider_result": "PASS",
+            "mock_provider_success_result": "PASS",
+            "mock_provider_failure_result": "PASS",
+            "bounded_workflow_result": "PASS",
+            "mock_provider_call_count": 2,
+            "real_provider_network_call_count": 0,
+            "synthetic_data_only_result": "PASS",
+            "source_mutation_count": 0,
+            "canonical_lari_mutation_count": 0,
+            "canonical_remote_access_count": 0,
+            "lari_e3_project_access_count": 0,
+            "shared_staging_access_count": 0,
+            "production_access_count": 0,
+            "vercel_access_count": 0,
+            "real_customer_data_access_count": 0,
+            "real_whatsapp_send_count": 0,
+            "real_sms_send_count": 0,
+            "real_email_send_count": 0,
+            "real_payment_count": 0,
+            "attempt_count": 1,
+            "retry_count": 0,
+            "resource_created_count": 1,
+            "cleanup_attempt_count": 1,
+            "cleanup_success_count": 1,
+            "cleanup_failure_count": 0,
+            "surviving_disposable_resource_count": 0,
+            "original_lari_source_final_immutability": "PASS",
+            "aos_exact_start_sha_final_immutability": "PASS",
+            "final_report_manifest_verification": "PASS",
+            "evidence_capture_result": "PASS"
+        }
+
+        # Mutate each field one by one to verify fail closed
+        bad_obs1 = copy.deepcopy(base_obs)
+        bad_obs1["primary_failure"] = "Some error"
+        assert derive_pilot_result(bad_obs1) == "FAIL"
+
+        bad_obs2 = copy.deepcopy(base_obs)
+        bad_obs2["mock_provider_call_count"] = 1
+        assert derive_pilot_result(bad_obs2) == "FAIL"
+
+        bad_obs3 = copy.deepcopy(base_obs)
+        bad_obs3["real_provider_network_call_count"] = 1
+        assert derive_pilot_result(bad_obs3) == "FAIL"
+
+        bad_obs4 = copy.deepcopy(base_obs)
+        bad_obs4["surviving_disposable_resource_count"] = 1
+        assert derive_pilot_result(bad_obs4) == "FAIL"
+
+    # 11. DISK RE-READ REPORT/MANIFEST PAIR VALIDATOR & SUBSTITUTION ATTACK TESTS (Section 8 & 9)
     def test_verify_report_manifest_pair_valid(self, tmp_path, report_schema, manifest_schema):
         from scripts.aos6_controlled_pilot_harness import write_json_deterministic, verify_report_manifest_pair
 
@@ -439,13 +886,27 @@ class TestAOS6ControlledPilotContracts:
         report_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "aos_canonical_binding_sha": "a"*40, "lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a", "pilot_execution_environment": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL", "aos6_controlled_pilot_result": "FAIL", "exact_sha_result": "FAIL", "environment_isolation_result": "FAIL", "synthetic_data_only_result": "PASS", "runtime_boot_result": "FAIL", "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE", "bounded_workflow_result": "FAIL", "evidence_capture_result": "NOT_CHECKED", "cleanup_result": "FAIL", "source_mutation_count": 0, "canonical_lari_mutation_count": 0, "authorized_source_acquisition_count": 1, "canonical_remote_access_count": 0, "lari_e3_project_access_count": 0, "shared_staging_access_count": 0, "production_access_count": 0, "vercel_access_count": 0, "real_customer_data_access_count": 0, "real_whatsapp_send_count": 0, "real_sms_send_count": 0, "real_email_send_count": 0, "real_payment_count": 0, "real_provider_network_call_count": 0, "mock_provider_call_count": 0, "surviving_disposable_resource_count": 0, "attempt_count": 0, "retry_count": 0, "first_failed_step_if_any": None, "blocker_if_any": None, "stage12c_authority": "NOT_AUTHORIZED", "production_authority": "NO", "controller_review_required": True, "runtime_evidence_binding": {"manifest_filename": "pilot_runtime_manifest.json", "manifest_sha256": m_sha, "manifest_schema_version": "0.1.0"}}
         write_json_deterministic(report_p, report_obj)
 
-        # Mutate manifest byte
         manifest_p.write_text(manifest_p.read_text(encoding="utf-8") + " ", encoding="utf-8")
 
         with pytest.raises(RuntimeError, match="Report bound manifest SHA256"):
             verify_report_manifest_pair(report_p, manifest_p, report_schema, manifest_schema)
 
-    # 8. HARNESS ORCHESTRATION WITH FAKE COMMAND RUNNER
+    def test_verify_report_manifest_pair_unknown_binding_field_fails(self, tmp_path, report_schema, manifest_schema):
+        from scripts.aos6_controlled_pilot_harness import write_json_deterministic, verify_report_manifest_pair
+        manifest_p = tmp_path / "pilot_runtime_manifest.json"
+        report_p = tmp_path / "pilot_report.json"
+
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        m_bytes = write_json_deterministic(manifest_p, manifest_obj)
+        m_sha = hashlib.sha256(m_bytes).hexdigest()
+
+        report_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "aos_canonical_binding_sha": "a"*40, "lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a", "pilot_execution_environment": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL", "aos6_controlled_pilot_result": "FAIL", "exact_sha_result": "FAIL", "environment_isolation_result": "FAIL", "synthetic_data_only_result": "PASS", "runtime_boot_result": "FAIL", "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE", "bounded_workflow_result": "FAIL", "evidence_capture_result": "NOT_CHECKED", "cleanup_result": "FAIL", "source_mutation_count": 0, "canonical_lari_mutation_count": 0, "authorized_source_acquisition_count": 1, "canonical_remote_access_count": 0, "lari_e3_project_access_count": 0, "shared_staging_access_count": 0, "production_access_count": 0, "vercel_access_count": 0, "real_customer_data_access_count": 0, "real_whatsapp_send_count": 0, "real_sms_send_count": 0, "real_email_send_count": 0, "real_payment_count": 0, "real_provider_network_call_count": 0, "mock_provider_call_count": 0, "surviving_disposable_resource_count": 0, "attempt_count": 0, "retry_count": 0, "first_failed_step_if_any": None, "blocker_if_any": None, "stage12c_authority": "NOT_AUTHORIZED", "production_authority": "NO", "controller_review_required": True, "runtime_evidence_binding": {"manifest_filename": "pilot_runtime_manifest.json", "manifest_sha256": m_sha, "manifest_schema_version": "0.1.0", "extra_attack": "poison"}}
+        write_json_deterministic(report_p, report_obj)
+
+        with pytest.raises((RuntimeError, jsonschema.ValidationError)):
+            verify_report_manifest_pair(report_p, manifest_p, report_schema, manifest_schema)
+
+    # 12. HARNESS ORCHESTRATION WITH FAKE COMMAND RUNNER
     def test_harness_full_execution_mocked_success(self, tmp_path):
         from scripts.aos6_controlled_pilot_harness import execute_harness
         req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
@@ -471,3 +932,38 @@ class TestAOS6ControlledPilotContracts:
         assert report["real_provider_network_call_count"] == 0
         assert report["mock_provider_call_count"] == 2
         assert report["surviving_disposable_resource_count"] == 0
+
+    # 13. FAILURE ARTIFACT TRUTHFULNESS TEST (Section 13)
+    def test_early_failure_harness_emits_truthful_valid_artifacts(self, tmp_path, report_schema, manifest_schema, attestation_schema):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+
+        fake_runner = FakeCommandRunner()
+        # Cause git fetch failure in Phase 1
+        fake_runner.fetch_head_sha = "0000000000000000000000000000000000000000"
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        report_p = tmp_path / "pilot_report.json"
+        manifest_p = tmp_path / "pilot_runtime_manifest.json"
+        attest_p = tmp_path / "pilot_attestation.json"
+
+        assert report_p.exists()
+        assert manifest_p.exists()
+        assert attest_p.exists()
+
+        report = json.loads(report_p.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+        attest = json.loads(attest_p.read_text(encoding="utf-8"))
+
+        jsonschema.validate(instance=report, schema=report_schema)
+        jsonschema.validate(instance=manifest, schema=manifest_schema)
+        jsonschema.validate(instance=attest, schema=attestation_schema)
+
+        assert report["aos6_controlled_pilot_result"] != "PASS"
+        assert manifest["container_name"] is None
+        assert manifest["cleanup_verification"]["cleanup_attempted"] is False
+        assert manifest["cleanup_verification"]["docker_rm_return_code"] is None
+        assert report["attempt_count"] == 0
+        assert report["retry_count"] == 0
