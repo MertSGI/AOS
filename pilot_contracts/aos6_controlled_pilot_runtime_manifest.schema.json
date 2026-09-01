@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AOS6ControlledPilotRuntimeManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pilot_run_id",
+    "target_image_name",
+    "target_image_id",
+    "target_repo_digest",
+    "container_name",
+    "container_inspection",
+    "source_immutability",
+    "dependency_preparation",
+    "workflow_execution",
+    "cleanup_verification"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1.0" },
+    "pilot_run_id": { "type": "string" },
+    "target_image_name": { "type": "string", "const": "node:22-bookworm-slim" },
+    "target_image_id": { "type": "string" },
+    "target_repo_digest": { "type": "string" },
+    "container_name": { "type": "string" },
+    "container_inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_mode",
+        "readonly_rootfs",
+        "pids_limit",
+        "cap_drop_has_all",
+        "no_new_privileges",
+        "docker_socket_mount_count",
+        "credential_directory_mount_count",
+        "workspace_source_readonly"
+      ],
+      "properties": {
+        "network_mode": { "type": "string", "const": "none" },
+        "readonly_rootfs": { "type": "boolean", "const": true },
+        "pids_limit": { "type": "integer", "const": 100 },
+        "cap_drop_has_all": { "type": "boolean", "const": true },
+        "no_new_privileges": { "type": "boolean", "const": true },
+        "docker_socket_mount_count": { "type": "integer", "const": 0 },
+        "credential_directory_mount_count": { "type": "integer", "const": 0 },
+        "workspace_source_readonly": { "type": "boolean", "const": true }
+      }
+    },
+    "source_immutability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["original_source_tree_sha256_pre", "original_source_tree_sha256_post", "immutable"],
+      "properties": {
+        "original_source_tree_sha256_pre": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "original_source_tree_sha256_post": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "immutable": { "type": "boolean", "const": true }
+      }
+    },
+    "dependency_preparation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "command", "result", "lifecycle_scripts_disabled"],
+      "properties": {
+        "location": { "type": "string", "const": "DISPOSABLE_WORKSPACE_COPY" },
+        "command": { "type": "string", "const": "npm ci --ignore-scripts --no-audit --no-fund" },
+        "result": { "type": "string", "const": "PASS" },
+        "lifecycle_scripts_disabled": { "type": "boolean", "const": true }
+      }
+    },
+    "workflow_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_p1_static_qa",
+        "step_p2_policy_boot",
+        "step_p3_grounded_policy_matrix"
+      ],
+      "properties": {
+        "step_p1_static_qa": { "type": "string", "const": "PASS" },
+        "step_p2_policy_boot": { "type": "string", "const": "PASS" },
+        "step_p3_grounded_policy_matrix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unsafe_promise_rejected",
+            "safe_request_accepted",
+            "localized_responses_produced",
+            "missing_key_503_produced",
+            "mock_fetch_success_produced",
+            "mock_fetch_exception_503_produced"
+          ],
+          "properties": {
+            "unsafe_promise_rejected": { "type": "boolean", "const": true },
+            "safe_request_accepted": { "type": "boolean", "const": true },
+            "localized_responses_produced": { "type": "boolean", "const": true },
+            "missing_key_503_produced": { "type": "boolean", "const": true },
+            "mock_fetch_success_produced": { "type": "boolean", "const": true },
+            "mock_fetch_exception_503_produced": { "type": "boolean", "const": true }
+          }
+        }
+      }
+    },
+    "cleanup_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["docker_rm_return_code", "post_cleanup_absence_proven", "surviving_resource_count"],
+      "properties": {
+        "docker_rm_return_code": { "type": "integer", "const": 0 },
+        "post_cleanup_absence_proven": { "type": "boolean", "const": true },
+        "surviving_resource_count": { "type": "integer", "const": 0 }
+      }
+    }
+  }
+}

@@ -67,6 +67,11 @@ jobs:
             tests/test_coordination_postgres.py \
             -m "postgres_integration"
 
+      - name: Run non-runtime pilot contract tests
+        run: |
+          python -m pytest -v --tb=short \
+            pilot_contracts/test_aos6_controlled_pilot_contracts.py
+
       - name: Run full canonical pytest suite
         run: |
           python -m pytest -v --tb=short

@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "pilot_id": "AOS6-LARI-ISOLATED-PILOT-1",
+  "source_repository": "MertSGI/Randapp-main",
+  "source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
+  "source_mode": "EXACT_SHA_READ_ONLY",
+  "environment_class": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL",
+  "attempt_limit": 1,
+  "automatic_retry_allowed": false,
+  "canonical_lari_mutation_allowed": false,
+  "stage12c_allowed": false,
+  "production_allowed": false,
+  "real_customer_data_allowed": false,
+  "real_external_communications_allowed": false
+}

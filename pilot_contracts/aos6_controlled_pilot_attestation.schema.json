@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AOS6ControlledPilotAttestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pilot_run_id",
+    "aos_sha",
+    "authorized_lari_source_sha",
+    "lari_source_tree_sha",
+    "tracked_source_manifest_sha256",
+    "report_sha256",
+    "runtime_manifest_sha256",
+    "aos_worktree_immutable_result",
+    "original_lari_source_immutable_result",
+    "attestation_timestamp"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1.0" },
+    "pilot_run_id": { "type": "string" },
+    "aos_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "authorized_lari_source_sha": { "type": "string", "const": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a" },
+    "lari_source_tree_sha": { "type": "string" },
+    "tracked_source_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtime_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "aos_worktree_immutable_result": { "type": "string", "const": "PASS" },
+    "original_lari_source_immutable_result": { "type": "string", "const": "PASS" },
+    "attestation_timestamp": { "type": "string" }
+  }
+}

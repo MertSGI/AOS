@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AOS6ControlledPilotRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pilot_id",
+    "source_repository",
+    "source_sha",
+    "source_mode",
+    "environment_class",
+    "attempt_limit",
+    "automatic_retry_allowed",
+    "canonical_lari_mutation_allowed",
+    "stage12c_allowed",
+    "production_allowed",
+    "real_customer_data_allowed",
+    "real_external_communications_allowed"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "pilot_id": {
+      "type": "string",
+      "const": "AOS6-LARI-ISOLATED-PILOT-1"
+    },
+    "source_repository": {
+      "type": "string",
+      "const": "MertSGI/Randapp-main"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "const": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a"
+    },
+    "source_mode": {
+      "type": "string",
+      "const": "EXACT_SHA_READ_ONLY"
+    },
+    "environment_class": {
+      "type": "string",
+      "const": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL"
+    },
+    "attempt_limit": {
+      "type": "integer",
+      "const": 1
+    },
+    "automatic_retry_allowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "canonical_lari_mutation_allowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "stage12c_allowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "production_allowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "real_customer_data_allowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "real_external_communications_allowed": {
+      "type": "boolean",
+      "const": false
+    }
+  }
+}
