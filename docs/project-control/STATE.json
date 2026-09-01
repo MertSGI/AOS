@@ -7,7 +7,7 @@
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS6_LARI_CANONICAL_RECONCILIATION_ACCEPTED_CONTROLLED_PILOT_HOLD",
+  "status": "AOS6_STAGE12B2_HOSTED_DISPOSABLE_RUNTIME_PROVEN_CONTROLLED_PILOT_HOLD",
   "current_gate": "AOS-6",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "LARI canonical control-plane reconciliation is independently accepted at c9ac79ed710b758a2c22bbfa56154121a58d06b9. Slice 3 remains IN_PROGRESS with E2 accepted and E3 correction in progress. AOS-6 controlled pilot and Stage 12C remain HOLD / unauthorized. Wait for a Controller-accepted Slice 3 runtime state or a separate explicit isolated-pilot authorization. Do not infer execution authority from the candidate SHA.",
+  "next_action": "Stage12B.2 generic AOS hosted disposable runtime rehearsal is independently proven. Canonical execution remained correctly blocked. AOS6 controlled pilot remains HOLD. Stage12C remains unauthorized. Candidate execution authority remains false. A future pilot/execution step requires a separate current authority event from the appropriate Controller boundary. Do not infer LARI runtime acceptance or production readiness from this AOS proof.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
@@ -344,13 +344,20 @@
       "aos6_status": "NOT_STARTED_LARI_CONTROLLER_GUIDANCE_REQUIRED"
     },
     "aos6_lari_controlled_pilot": {
-      "status": "READ_ONLY_RECONCILIATION_HOLD",
+      "status": "STAGE12B2_HOSTED_DISPOSABLE_RUNTIME_PROVEN_CONTROLLED_PILOT_HOLD",
       "stage_12a_status": "INDEPENDENTLY_ACCEPTED",
       "stage_12a_sha": "411123b18e77299c61a77202e2c84495c4d126d2",
       "stage_12b_status": "READ_ONLY_SHADOW_SOURCE_RECONCILIATION_COMPLETE",
       "stage_12b_mode": "CONTROLLER_OWNED_REMOTE_READ_ONLY",
       "stage_12b_1_status": "LARI_CANONICAL_RECONCILIATION_INDEPENDENTLY_ACCEPTED",
       "stage_12b_1_mode": "CONTROLLER_BOUND_GOVERNANCE_ONLY",
+      "stage_12b_2_status": "INDEPENDENTLY_ACCEPTED",
+      "stage_12b_2_mode": "HOSTED_DISPOSABLE_NONPRODUCTION_REHEARSAL",
+      "stage_12b_2_accepted_source_sha": "0af0f96c14d03e241d7f2ed2b2b0b8139fd50f20",
+      "stage_12b_2_hosted_runtime_proof": "INDEPENDENTLY_PROVEN",
+      "stage_12b_2_canonical_execution_decision": "BLOCK_CANONICAL_EXECUTION",
+      "stage_12b_2_lari_access_count": 0,
+      "stage_12b_2_canonical_execution_count": 0,
       "aos5_dependency": "MAIN_INTEGRATED_CLOSED_PROVEN",
       "lari_closed_proven_baseline_sha": "6e8d423083d44510c8446c7a858c26d1555cac0c",
       "lari_candidate_branch": "feature/lari-health-tourism-slice3-lead-ops-ai-assist",
@@ -390,7 +397,7 @@
       "slice3_static_qa_source_contract_present": true,
       "read_only_source_reconciliation": "INDEPENDENTLY_ACCEPTED",
       "shadow_decision": "HOLD_CONTROLLED_PILOT",
-      "shadow_decision_reason": "CANONICAL_CONTROL_STATE_STALE_RELATIVE_TO_CURRENT_SLICE3_CANDIDATE",
+      "shadow_decision_reason": "CONTROLLED_PILOT_AND_STAGE12C_EXECUTION_AUTHORITY_NOT_GRANTED",
       "candidate_execution_authority": false,
       "canonical_reconciliation_sufficient_for_pilot": false,
       "aos6_pilot_disposition": "HOLD",
@@ -411,7 +418,7 @@
       "rollback_required": false,
       "cleanup_required": false,
       "additional_runtime_remediation_required": false,
-      "aos6_progress_status": "CANONICAL_RECONCILIATION_ACCEPTED_WAITING_FOR_RUNTIME_AUTHORITY",
+      "aos6_progress_status": "STAGE12B2_HOSTED_DISPOSABLE_RUNTIME_INDEPENDENTLY_PROVEN_CONTROLLED_PILOT_HOLD",
       "next_authority_event": "CONTROLLER_ACCEPTED_SLICE3_RUNTIME_STATE_OR_SEPARATE_EXPLICIT_ISOLATED_PILOT_AUTHORIZATION",
       "controller_guidance": {
         "slice3_status": "IN_PROGRESS",
