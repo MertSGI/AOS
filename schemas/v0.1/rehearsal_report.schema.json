@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/rehearsal_report.schema.json",
+  "title": "AOS Rehearsal Report Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rehearsal_id",
+    "target_repo",
+    "candidate_sha",
+    "top_level_classification",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "rehearsal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "top_level_classification": {
+      "type": "string",
+      "enum": [
+        "PASS_CANDIDATE",
+        "HOLD_CAPABILITY_NOT_EXECUTED",
+        "FAIL"
+      ]
+    },
+    "blocker": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rehearsal_step"
+      },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "rehearsal_step": {
+      "type": "object",
+      "required": [
+        "step_id",
+        "claim_class",
+        "required_for_pass_candidate",
+        "component",
+        "execution_provenance",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claim_class": {
+          "type": "string",
+          "enum": [
+            "STATIC_INSPECTION",
+            "PLANNING",
+            "AUTHORITY_DECISION",
+            "DISPOSABLE_EXECUTION",
+            "RUNTIME_EXECUTION",
+            "DEPLOYMENT_EXECUTION",
+            "MIGRATION_EXECUTION",
+            "CLEANUP_EXECUTION",
+            "ROLLBACK_EXECUTION"
+          ]
+        },
+        "required_for_pass_candidate": {
+          "type": "boolean"
+        },
+        "component": {
+          "type": "object",
+          "required": [
+            "origin",
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "origin": {
+              "type": "string",
+              "enum": [
+                "AOS_CORE",
+                "REHEARSAL_HARNESS",
+                "EXTERNAL_TOOL",
+                "CONCEPTUAL"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "module": {
+              "type": "string"
+            },
+            "symbol": {
+              "type": "string"
+            },
+            "source_path": {
+              "type": "string"
+            },
+            "source_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "executable_path": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "execution_provenance": {
+          "type": "object",
+          "required": [
+            "executed",
+            "synthetic"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "executed": {
+              "type": "boolean"
+            },
+            "synthetic": {
+              "type": "boolean"
+            },
+            "invocation_identity": {
+              "type": "string"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "result_summary": {
+              "type": "string"
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_EXECUTED"
+          ]
+        },
+        "expected_decision": {
+          "type": "string"
+        },
+        "observed_decision": {
+          "type": "string"
+        },
+        "evidence_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blocker": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
