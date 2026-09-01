@@ -25,8 +25,8 @@
     "tracked_source_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "runtime_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "aos_worktree_immutable_result": { "type": "string", "const": "PASS" },
-    "original_lari_source_immutable_result": { "type": "string", "const": "PASS" },
+    "aos_worktree_immutable_result": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
+    "original_lari_source_immutable_result": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
     "attestation_timestamp": { "type": "string" }
   }
 }

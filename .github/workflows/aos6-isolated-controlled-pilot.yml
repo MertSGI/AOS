@@ -34,14 +34,14 @@ jobs:
           from pathlib import Path
           state = json.loads(Path('docs/project-control/STATE.json').read_text('utf-8'))
           ext = state.get('extensions', {}).get('aos6_lari_controlled_pilot', {})
-          
+
           auth_ok = ext.get('controlled_pilot_authorized') is True
           auth_class = ext.get('controlled_pilot_authority_class') == 'AUTHORIZED_ISOLATED_ONLY'
           exec_count = ext.get('controlled_pilot_execution_count') == 0
           source_sha = ext.get('controlled_pilot_source_sha') == 'cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a'
           stage12c_no = ext.get('stage12c_authorized') is False
           prod_no = ext.get('production_authority') is False
-          
+
           if not (auth_ok and auth_class and exec_count and source_sha and stage12c_no and prod_no):
               print('Canonical AOS STATE authority verification failed!', file=sys.stderr)
               sys.exit(1)
