@@ -136,7 +136,81 @@
             "description": {
               "type": "string"
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "origin": {
+                    "const": "REHEARSAL_HARNESS"
+                  }
+                },
+                "required": [
+                  "origin"
+                ]
+              },
+              "then": {
+                "required": [
+                  "identity_mode"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "identity_mode": {
+                    "const": "FILE_BACKED"
+                  }
+                },
+                "required": [
+                  "identity_mode"
+                ]
+              },
+              "then": {
+                "required": [
+                  "source_path",
+                  "source_sha256"
+                ],
+                "not": {
+                  "required": [
+                    "identity_sha256"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "identity_mode": {
+                    "const": "IN_MEMORY"
+                  }
+                },
+                "required": [
+                  "identity_mode"
+                ]
+              },
+              "then": {
+                "required": [
+                  "description",
+                  "identity_sha256"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "source_path"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "source_sha256"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         },
         "execution_provenance": {
           "type": "object",

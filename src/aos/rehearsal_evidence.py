@@ -151,7 +151,7 @@ def validate_rehearsal_report(
                 )
                 has_fail = True
 
-        # Invariant B & Defect C: Execution claim classes require executed=true, invocation_identity, result_summary, evidence_references for status=PASS
+        # Invariant B: Execution claim classes require executed=true, invocation_identity, result_summary, evidence_references for status=PASS
         if claim_class in EXECUTION_CLAIM_CLASSES:
             if status == "PASS":
                 if not executed:
@@ -214,7 +214,7 @@ def validate_rehearsal_report(
             )
             has_fail = True
 
-        # Invariant E & Defect D: AUTHORITY_DECISION PASS validation
+        # Invariant E: AUTHORITY_DECISION PASS validation
         if claim_class == "AUTHORITY_DECISION":
             exp_dec = step.get("expected_decision")
             obs_dec = step.get("observed_decision")
@@ -285,7 +285,7 @@ def validate_rehearsal_report(
                 )
                 has_fail = True
 
-        # Invariant F & Defect A: AOS_CORE Symbol Level Inspection
+        # Invariant F: AOS_CORE Symbol Level Inspection
         if origin == "AOS_CORE":
             mod_name = component.get("module")
             sym_name = component.get("symbol")
@@ -336,7 +336,6 @@ def validate_rehearsal_report(
                             )
                             has_fail = True
                         else:
-                            # Defect A Fix: Inspect the actual symbol_object implementation, NOT module file
                             symbol_obj = getattr(mod, sym_name)
                             try:
                                 real_symbol_source_file = Path(
@@ -391,7 +390,7 @@ def validate_rehearsal_report(
                                         )
                                         has_fail = True
 
-        # Defect B Fix: REHEARSAL_HARNESS Strict Provenance Validation
+        # Defect Stage 12B.2-R3: Strict REHEARSAL_HARNESS Identity Mode Contract (No inference / No fallbacks)
         elif origin == "REHEARSAL_HARNESS":
             identity_mode = component.get("identity_mode")
             name = component.get("name")
@@ -400,16 +399,35 @@ def validate_rehearsal_report(
             source_sha = component.get("source_sha256")
             identity_sha = component.get("identity_sha256")
 
-            # Fallback/infer if identity_mode not explicitly provided
             if not identity_mode:
-                if source_path_str:
-                    identity_mode = "FILE_BACKED"
-                elif desc and identity_sha:
-                    identity_mode = "IN_MEMORY"
-                else:
-                    identity_mode = "FILE_BACKED"
+                errors.append(
+                    RehearsalEvidenceValidationError(
+                        code="HARNESS_IDENTITY_MODE_MISSING",
+                        message="REHEARSAL_HARNESS component requires explicit identity_mode ('FILE_BACKED' or 'IN_MEMORY')",
+                        step_id=step_id,
+                    )
+                )
+                has_fail = True
+            elif identity_mode not in ("FILE_BACKED", "IN_MEMORY"):
+                errors.append(
+                    RehearsalEvidenceValidationError(
+                        code="HARNESS_IDENTITY_MODE_INVALID",
+                        message=f"Invalid identity_mode '{identity_mode}' for REHEARSAL_HARNESS",
+                        step_id=step_id,
+                    )
+                )
+                has_fail = True
+            elif identity_mode == "FILE_BACKED":
+                if identity_sha:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="HARNESS_IDENTITY_CONTRADICTION",
+                            message="FILE_BACKED REHEARSAL_HARNESS must not contain in-memory identity_sha256",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
 
-            if identity_mode == "FILE_BACKED":
                 if not name or not source_path_str:
                     errors.append(
                         RehearsalEvidenceValidationError(
@@ -439,7 +457,6 @@ def validate_rehearsal_report(
                         )
                         has_fail = True
                     else:
-                        # Path traversal and boundary checks
                         raw_source_path = Path(source_path_str)
                         if raw_source_path.is_absolute() or ".." in raw_source_path.parts:
                             errors.append(
@@ -488,6 +505,16 @@ def validate_rehearsal_report(
                                         has_fail = True
 
             elif identity_mode == "IN_MEMORY":
+                if source_path_str or source_sha:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="HARNESS_IDENTITY_CONTRADICTION",
+                            message="IN_MEMORY REHEARSAL_HARNESS must not contain file-backed source_path or source_sha256",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+
                 if not name or not desc or not identity_sha:
                     errors.append(
                         RehearsalEvidenceValidationError(
@@ -498,7 +525,6 @@ def validate_rehearsal_report(
                     )
                     has_fail = True
                 else:
-                    # Deterministic identity verification: SHA256(UTF-8 bytes of description)
                     expected_identity_sha = hashlib.sha256(desc.encode("utf-8")).hexdigest()
                     if identity_sha.lower() != expected_identity_sha:
                         errors.append(
