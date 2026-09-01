@@ -588,6 +588,21 @@ def validate_rehearsal_report(
     )
 
 
+def validate_report_manifest_binding(report_data: Dict[str, Any], manifest_bytes: bytes) -> bool:
+    """Verify cryptographic binding between report.json and runtime_manifest.json."""
+    binding = report_data.get("runtime_evidence_binding")
+    if not binding:
+        return False
+
+    claimed_sha = binding.get("manifest_sha256")
+    if not claimed_sha:
+        return False
+
+    actual_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    return claimed_sha.lower() == actual_sha.lower()
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="AOS Rehearsal Evidence Provenance CLI Validator")
     parser.add_argument("report_path", type=Path, help="Path to rehearsal report JSON file")

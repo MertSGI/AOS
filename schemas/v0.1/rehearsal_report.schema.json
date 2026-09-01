@@ -40,6 +40,29 @@
     "blocker": {
       "type": "string"
     },
+    "runtime_evidence_binding": {
+      "type": "object",
+      "required": [
+        "manifest_filename",
+        "manifest_sha256",
+        "manifest_schema_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "manifest_filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_schema_version": {
+          "type": "string",
+          "pattern": "^0\\.1(\\.[0-9]+)?$"
+        }
+      }
+    },
     "steps": {
       "type": "array",
       "items": {

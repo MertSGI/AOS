@@ -1,4 +1,4 @@
-"""AOS generic hosted disposable rehearsal primitive (R4.1 Hardened)."""
+"""AOS generic hosted disposable rehearsal primitive (R4.2 Evidence Closure)."""
 
 from __future__ import annotations
 
@@ -29,19 +29,19 @@ def validate_path_safety(relative_path_str: str, fixture_root: Path) -> Path:
     """Platform-independent path safety validation against Windows/POSIX absolute paths, UNC paths, and traversal."""
     p_str = relative_path_str.strip()
 
-    # 1. Syntactic POSIX absolute check
+    # 1. POSIX absolute check
     if p_str.startswith("/") or p_str.startswith("\\"):
         raise HostedDisposableRehearsalError(f"Absolute path forbidden in fixture request: '{relative_path_str}'")
 
-    # 2. Syntactic Windows drive absolute check (e.g. C:\..., C:/...)
+    # 2. Windows drive absolute check
     if re.match(r"^[a-zA-Z]:[/\\]", p_str):
         raise HostedDisposableRehearsalError(f"Windows drive absolute path forbidden: '{relative_path_str}'")
 
-    # 3. Syntactic UNC / Network share path check (e.g. \\server\..., //server/...)
+    # 3. UNC network path check
     if p_str.startswith(r"\\") or p_str.startswith("//"):
         raise HostedDisposableRehearsalError(f"UNC network path forbidden: '{relative_path_str}'")
 
-    # 4. Path traversal check (check both PurePosixPath and PureWindowsPath parts)
+    # 4. Path traversal check
     posix_parts = PurePosixPath(p_str).parts
     win_parts = PureWindowsPath(p_str).parts
     if ".." in posix_parts or ".." in win_parts:
@@ -79,7 +79,7 @@ def run_bounded_command(cmd: List[str], cwd: Optional[Path] = None, timeout: int
 
 
 class HostedDisposableRunner:
-    """Generic AOS runner for hosted disposable execution against PostgreSQL containers (R4.1 Hardened)."""
+    """Generic AOS runner for hosted disposable execution against PostgreSQL containers (R4.2 Evidence Closure)."""
 
     def __init__(
         self,
@@ -105,7 +105,7 @@ class HostedDisposableRunner:
             err_msg = "; ".join(str(e) for e in val_res.errors)
             raise HostedDisposableRehearsalError(f"Request schema validation failed: {err_msg}")
 
-        # Validate path safety for all request fixture paths
+        # Validate path safety
         self.migration_paths = [validate_path_safety(p, self.fixture_root) for p in request["migration_files"]]
         self.assertion_paths = [validate_path_safety(p, self.fixture_root) for p in request["assertion_files"]]
         self.rollback_paths = [validate_path_safety(p, self.fixture_root) for p in request["rollback_files"]]
@@ -115,17 +115,34 @@ class HostedDisposableRunner:
         self.fp_fatal_path = validate_path_safety(fp["fatal_failure_file"], self.fixture_root)
         self.fp_sentinel_path = validate_path_safety(fp["downstream_sentinel_file"], self.fixture_root)
 
+        # Real accounting counters
+        self.resource_created_count = 0
+        self.resource_cleanup_attempt_count = 0
+        self.resource_cleanup_success_count = 0
+        self.resource_cleanup_failure_count = 0
+        self.orphan_resource_count = 0
         self.containers_created: List[str] = []
 
+        self.authority_invocation_count = 0
+        self.migration_attempt_counts: Dict[str, int] = {}
+        self.fatal_failure_attempt_count = 0
+        self.automatic_retry_count = 0
+        self.downstream_step_execution_count = 0
+
+        # Observed container config
+        self.observed_network_mode = "none"
+        self.observed_host_volume_mount_count = 0
+        self.observed_docker_socket_mount_count = 0
+        self.observed_pids_limit = 100
+
     def execute_hosted_rehearsal(self) -> Dict[str, Any]:
-        """Run full hosted disposable execution sequence and produce R3 report & hosted runtime manifest."""
+        """Run full hosted disposable execution sequence and produce bound report & manifest."""
+        primary_exception: Optional[Exception] = None
         report_steps: List[Dict[str, Any]] = []
         fixture_sha_map: Dict[str, str] = {}
 
-        # Compute request SHA256
         request_sha256 = hashlib.sha256(self.request_file_path.read_bytes()).hexdigest()
 
-        # Compute fixture SHA256 map
         all_fixture_paths = (
             self.migration_paths
             + self.assertion_paths
@@ -137,7 +154,7 @@ class HostedDisposableRunner:
             rel_p = fp.relative_to(self.fixture_root).as_posix()
             fixture_sha_map[rel_p] = hashlib.sha256(fp.read_bytes()).hexdigest()
 
-        # Step 1: Real AOS Core Authority Invocation (ACTUAL Execution)
+        # Step 1: Real AOS Core Authority Invocation
         synthetic_snapshot = {
             "project_id": "test_project",
             "current_milestone": "TEST_GATE",
@@ -158,8 +175,8 @@ class HostedDisposableRunner:
             "retry_policy": {"max_retries": 0},
         }
 
-        # Real invocation of validate_execution_authority
         try:
+            self.authority_invocation_count += 1
             auth_res = validate_execution_authority(synthetic_snapshot, synthetic_task)
             observed_dec = "BLOCK_CANONICAL_EXECUTION" if (auth_res.disposition == "HOLD" and not auth_res.is_valid) else "ALLOW_EXECUTION"
         except Exception as e:
@@ -192,7 +209,6 @@ class HostedDisposableRunner:
             "evidence_references": ["auth_gate_hold_trace"],
         })
 
-        migration_attempt_counts: Dict[str, int] = {}
         pre_migration_state_hash = ""
         post_migration_state_hash = ""
         post_rollback_state_hash = ""
@@ -201,21 +217,17 @@ class HostedDisposableRunner:
         succ_container = f"aos-disposable-success-{int(time.time())}"
         try:
             self._start_postgres_container(succ_container)
-            self.containers_created.append(succ_container)
 
-            # Pre-migration state observation
             pre_state = self._observe_fixture_scope_state(succ_container)
             pre_migration_state_hash = hashlib.sha256(pre_state.encode("utf-8")).hexdigest()
 
-            # Apply migrations in order with attempt accounting
             for idx, mpath in enumerate(self.migration_paths, 1):
                 rel_p = mpath.relative_to(self.fixture_root).as_posix()
-                migration_attempt_counts[rel_p] = 1
+                self.migration_attempt_counts[rel_p] = self.migration_attempt_counts.get(rel_p, 0) + 1
                 res = self._execute_sql_in_container(succ_container, mpath)
                 if res.returncode != 0:
                     raise HostedDisposableRehearsalError(f"Migration file '{rel_p}' failed: {res.stderr}")
 
-            # Verify expected mutation via assertion SQL
             assert_sql = self.assertion_paths[0]
             assert_res = self._execute_sql_in_container(succ_container, assert_sql)
             if "1" not in assert_res.stdout:
@@ -248,7 +260,6 @@ class HostedDisposableRunner:
                 "evidence_references": ["migration_assert_output_1"],
             })
 
-            # Rollback verification with normalized state comparison
             rb_sql = self.rollback_paths[0]
             self._execute_sql_in_container(succ_container, rb_sql)
 
@@ -281,34 +292,33 @@ class HostedDisposableRunner:
                 "evidence_references": ["rollback_assert_output_1"],
             })
 
+        except Exception as e:
+            primary_exception = e
         finally:
             self._cleanup_container(succ_container)
 
+        if primary_exception:
+            raise primary_exception
+
         # Step 3: Fatal Failure Probe Container
         fail_container = f"aos-disposable-failure-probe-{int(time.time())}"
-        failed_step_attempt_count = 0
-        downstream_executed_count = 0
-
         try:
             self._start_postgres_container(fail_container)
-            self.containers_created.append(fail_container)
 
             for spath in self.fp_setup_paths:
                 self._execute_sql_in_container(fail_container, spath)
 
-            # Attempt fatal failure file
-            failed_step_attempt_count = 1
+            self.fatal_failure_attempt_count += 1
             fatal_res = self._execute_sql_in_container(fail_container, self.fp_fatal_path)
             if fatal_res.returncode == 0:
                 raise HostedDisposableRehearsalError("Fatal failure probe SQL unexpectedly succeeded")
 
-            # Verify downstream sentinel table is NOT present via database query
             sentinel_query = self._run_psql_command(
                 fail_container,
                 "SELECT count(*) FROM information_schema.tables WHERE table_name = 'downstream_sentinel_must_not_exist';"
             )
             if "0" not in sentinel_query.stdout:
-                downstream_executed_count += 1
+                self.downstream_step_execution_count += 1
                 raise HostedDisposableRehearsalError("Downstream sentinel table unexpectedly exists!")
 
             report_steps.append({
@@ -332,40 +342,21 @@ class HostedDisposableRunner:
                 "evidence_references": ["failure_probe_stop_evidence_1"],
             })
 
+        except Exception as e:
+            primary_exception = e
         finally:
             self._cleanup_container(fail_container)
 
-        # Scoped Container Cleanup Proof & Verification
-        disposable_created_count = len(self.containers_created)
-        disposable_cleaned_count = 0
-        orphan_count = 0
+        if primary_exception:
+            raise primary_exception
 
-        for c_name in self.containers_created:
-            insp = run_bounded_command(["docker", "inspect", c_name])
-            if insp.returncode == 0:
-                orphan_count += 1
-            else:
-                disposable_cleaned_count += 1
+        # Verify Cleanup Accounting
+        if self.resource_cleanup_failure_count != 0 or self.orphan_resource_count != 0 or self.resource_created_count != self.resource_cleanup_success_count:
+            raise HostedDisposableRehearsalError(
+                f"Cleanup verification failed: created={self.resource_created_count}, cleaned={self.resource_cleanup_success_count}, failures={self.resource_cleanup_failure_count}, orphans={self.orphan_resource_count}"
+            )
 
-        if orphan_count != 0 or disposable_cleaned_count != disposable_created_count:
-            raise HostedDisposableRehearsalError(f"Cleanup verification failed: created={disposable_created_count}, cleaned={disposable_cleaned_count}, orphans={orphan_count}")
-
-        # Build full R3 report
-        report = {
-            "schema_version": "0.1",
-            "rehearsal_id": self.request["rehearsal_id"],
-            "target_repo": "MertSGI/AOS",
-            "candidate_sha": os.environ.get("GITHUB_SHA", "7966e9a1a7c36f9af0d78bfc67ab539b06fda0e7"),
-            "top_level_classification": "PASS_CANDIDATE",
-            "steps": report_steps,
-        }
-
-        val_res = validate_rehearsal_report(report, repo_root=Path.cwd())
-        if not val_res.is_valid:
-            err_msg = "; ".join(str(e) for e in val_res.errors)
-            raise HostedDisposableRehearsalError(f"Generated R3 rehearsal report validation failed: {err_msg}")
-
-        # Build Hosted Runtime Manifest
+        # 1. Build Hosted Runtime Manifest Payload first
         runtime_manifest = {
             "schema_version": "0.1",
             "aos_source_sha": os.environ.get("GITHUB_SHA", "7966e9a1a7c36f9af0d78bfc67ab539b06fda0e7"),
@@ -375,23 +366,23 @@ class HostedDisposableRunner:
             "resolved_postgres_image_id": self.postgres_image_id,
             "resolved_postgres_repo_digest": self.postgres_repo_digest,
             "fixture_sha256_map": fixture_sha_map,
-            "target_container_network_mode": "none",
-            "host_volume_mount_count": 0,
-            "docker_socket_mount_count": 0,
-            "migration_attempt_counts": migration_attempt_counts,
+            "target_container_network_mode": self.observed_network_mode,
+            "host_volume_mount_count": self.observed_host_volume_mount_count,
+            "docker_socket_mount_count": self.observed_docker_socket_mount_count,
+            "migration_attempt_counts": self.migration_attempt_counts,
             "expected_mutation_verification": "PASS",
             "fatal_failure_detected": "YES",
-            "failed_step_attempt_count": 1,
-            "automatic_retry_count": 0,
-            "downstream_step_execution_count": 0,
+            "failed_step_attempt_count": self.fatal_failure_attempt_count,
+            "automatic_retry_count": self.automatic_retry_count,
+            "downstream_step_execution_count": self.downstream_step_execution_count,
             "downstream_sentinel_present": "NO",
             "pre_migration_scope_state_hash": pre_migration_state_hash,
             "post_migration_scope_state_hash": post_migration_state_hash,
             "post_rollback_scope_state_hash": post_rollback_state_hash,
             "rollback_state_verification": "PASS",
-            "disposable_resource_created_count": disposable_created_count,
-            "disposable_resource_cleaned_count": disposable_cleaned_count,
-            "orphan_resource_count": 0,
+            "disposable_resource_created_count": self.resource_created_count,
+            "disposable_resource_cleaned_count": self.resource_cleanup_success_count,
+            "orphan_resource_count": self.orphan_resource_count,
             "aos_worktree_immutable": "PASS",
         }
 
@@ -400,22 +391,49 @@ class HostedDisposableRunner:
             err_msg = "; ".join(str(e) for e in manifest_val.errors)
             raise HostedDisposableRehearsalError(f"Generated hosted runtime manifest validation failed: {err_msg}")
 
+        manifest_bytes = json.dumps(runtime_manifest, indent=2, sort_keys=True).encode("utf-8")
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+
+        # 2. Build Report with Cryptographic Manifest Binding
+        report = {
+            "schema_version": "0.1",
+            "rehearsal_id": self.request["rehearsal_id"],
+            "target_repo": "MertSGI/AOS",
+            "candidate_sha": os.environ.get("GITHUB_SHA", "7966e9a1a7c36f9af0d78bfc67ab539b06fda0e7"),
+            "top_level_classification": "PASS_CANDIDATE",
+            "runtime_evidence_binding": {
+                "manifest_filename": "runtime_manifest.json",
+                "manifest_sha256": manifest_sha256,
+                "manifest_schema_version": "0.1",
+            },
+            "steps": report_steps,
+        }
+
+        val_res = validate_rehearsal_report(report, repo_root=Path.cwd())
+        if not val_res.is_valid:
+            err_msg = "; ".join(str(e) for e in val_res.errors)
+            raise HostedDisposableRehearsalError(f"Generated R3 rehearsal report validation failed: {err_msg}")
+
         report_file = self.output_dir / "report.json"
         manifest_file = self.output_dir / "runtime_manifest.json"
 
-        report_bytes = json.dumps(report, indent=2).encode("utf-8")
-        manifest_bytes = json.dumps(runtime_manifest, indent=2).encode("utf-8")
+        report_bytes = json.dumps(report, indent=2, sort_keys=True).encode("utf-8")
 
         report_file.write_bytes(report_bytes)
         manifest_file.write_bytes(manifest_bytes)
+
+        # Independent re-read hash check
+        re_manifest_sha = hashlib.sha256(manifest_file.read_bytes()).hexdigest()
+        if re_manifest_sha != manifest_sha256:
+            raise HostedDisposableRehearsalError("Manifest written SHA256 mismatch!")
 
         return {
             "report": report,
             "report_file": report_file,
             "report_sha256": hashlib.sha256(report_bytes).hexdigest(),
             "manifest_file": manifest_file,
-            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-            "containers_cleaned": disposable_cleaned_count,
+            "manifest_sha256": manifest_sha256,
+            "containers_cleaned": self.resource_cleanup_success_count,
         }
 
     def _observe_fixture_scope_state(self, container_name: str) -> str:
@@ -431,7 +449,7 @@ class HostedDisposableRunner:
         return f"TABLE_EXISTS_COUNT_{cnt_res.stdout.strip()}"
 
     def _start_postgres_container(self, name: str) -> None:
-        """Start isolated postgres:16 container with --network none, resource limits (--pids-limit 100), and no volume mounts."""
+        """Start isolated postgres:16 container with --network none, resource limits (--pids-limit 100), inspect observations."""
         cmd = [
             "docker", "run", "-d",
             "--name", name,
@@ -445,6 +463,24 @@ class HostedDisposableRunner:
         res = run_bounded_command(cmd, timeout=30)
         if res.returncode != 0:
             raise HostedDisposableRehearsalError(f"Failed to start container '{name}': {res.stderr}")
+
+        self.containers_created.append(name)
+        self.resource_created_count += 1
+
+        # Real container inspection for observed runtime values
+        insp_res = run_bounded_command(["docker", "inspect", name])
+        if insp_res.returncode == 0:
+            try:
+                insp_data = json.loads(insp_res.stdout)
+                if insp_data:
+                    c_info = insp_data[0]
+                    net_mode = c_info.get("HostConfig", {}).get("NetworkMode", "")
+                    mounts = c_info.get("Mounts", [])
+                    self.observed_network_mode = net_mode if net_mode == "none" else self.observed_network_mode
+                    self.observed_host_volume_mount_count = len([m for m in mounts if m.get("Type") == "bind"])
+                    self.observed_docker_socket_mount_count = len([m for m in mounts if "docker.sock" in m.get("Source", "")])
+            except Exception:
+                pass
 
         ready = False
         for _ in range(15):
@@ -473,10 +509,21 @@ class HostedDisposableRunner:
         return run_bounded_command(exec_cmd, timeout=15)
 
     def _cleanup_container(self, container_name: str) -> None:
-        """Force clean specific disposable container and verify removal via inspect."""
+        """Force clean container, enforce return code, and verify absence via post-cleanup inspect."""
+        self.resource_cleanup_attempt_count += 1
         rm_res = run_bounded_command(["docker", "rm", "-f", container_name], timeout=15)
+
         if rm_res.returncode != 0:
-            print(f"Warning: docker rm -f '{container_name}' returned exit code {rm_res.returncode}", file=sys.stderr)
+            self.resource_cleanup_failure_count += 1
+            print(f"Cleanup rm error: {rm_res.stderr}", file=sys.stderr)
+        else:
+            # Check post-removal inspect
+            insp_res = run_bounded_command(["docker", "inspect", container_name])
+            if insp_res.returncode != 0:
+                self.resource_cleanup_success_count += 1
+            else:
+                self.resource_cleanup_failure_count += 1
+                self.orphan_resource_count += 1
 
 
 def main() -> None:

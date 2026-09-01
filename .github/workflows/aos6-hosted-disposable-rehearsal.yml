@@ -77,15 +77,55 @@ jobs:
             ${{ runner.temp }}/aos-hosted-disposable-rehearsal/report.json \
             --repo-root .
 
-      - name: Upload Noncanonical Rehearsal Report Artifact
+      - name: Verify Report ↔ Runtime Manifest Cryptographic Binding
+        run: |
+          python -c "
+          import json, hashlib, sys
+          from pathlib import Path
+          report_p = Path('${{ runner.temp }}/aos-hosted-disposable-rehearsal/report.json')
+          manifest_p = Path('${{ runner.temp }}/aos-hosted-disposable-rehearsal/runtime_manifest.json')
+          report = json.loads(report_p.read_text('utf-8'))
+          manifest_bytes = manifest_p.read_bytes()
+          actual_sha = hashlib.sha256(manifest_bytes).hexdigest()
+          claimed_sha = report.get('runtime_evidence_binding', {}).get('manifest_sha256', '')
+          if claimed_sha.lower() != actual_sha.lower():
+              print(f'Binding failed: claimed={claimed_sha} != actual={actual_sha}', file=sys.stderr)
+              sys.exit(1)
+          print('Report ↔ Manifest binding verified successfully.')
+          "
+
+      - name: Verify AOS Source Immutability & Generate Hosted Attestation
+        run: |
+          git status --porcelain=v1 --untracked-files=all
+          git diff --exit-code
+          IMMUTABLE_RES="PASS"
+
+          python -c "
+          import json, hashlib, os
+          from pathlib import Path
+
+          report_bytes = Path('${{ runner.temp }}/aos-hosted-disposable-rehearsal/report.json').read_bytes()
+          manifest_bytes = Path('${{ runner.temp }}/aos-hosted-disposable-rehearsal/runtime_manifest.json').read_bytes()
+
+          attestation = {
+              'schema_version': '0.1',
+              'aos_source_sha': '${{ github.sha }}',
+              'report_sha256': hashlib.sha256(report_bytes).hexdigest(),
+              'runtime_manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
+              'worktree_immutable_result': 'PASS'
+          }
+
+          Path('${{ runner.temp }}/aos-hosted-disposable-rehearsal/hosted_attestation.json').write_text(json.dumps(attestation, indent=2), encoding='utf-8')
+          "
+
+      - name: Validate Hosted Attestation Schema
+        run: |
+          python -m aos.validate hosted_attestation ${{ runner.temp }}/aos-hosted-disposable-rehearsal/hosted_attestation.json
+
+      - name: Upload Noncanonical Rehearsal Artifact Directory
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aos6-hosted-disposable-rehearsal-report
           path: ${{ runner.temp }}/aos-hosted-disposable-rehearsal/
           retention-days: 7
-
-      - name: Verify AOS Source Immutability
-        run: |
-          git status --porcelain=v1 --untracked-files=all
-          git diff --exit-code
