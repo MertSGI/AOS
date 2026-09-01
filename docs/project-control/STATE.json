@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-08-31T11:16:31Z",
+  "updated_at": "2026-09-01T11:00:00Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Stage12B.2 generic AOS hosted disposable runtime rehearsal is independently proven. Canonical execution remained correctly blocked. AOS6 controlled pilot remains HOLD. Stage12C remains unauthorized. Candidate execution authority remains false. A future pilot/execution step requires a separate current authority event from the appropriate Controller boundary. Do not infer LARI runtime acceptance or production readiness from this AOS proof.",
+  "next_action": "Stage12B.2 generic AOS hosted disposable runtime rehearsal remains canonically proven. LARI Controller reports Slice3 IN_PROGRESS; E2 R31 is Controller-accepted; E3 remains IN_PROGRESS; corrected E3-B is authorized/pending execution or Controller review. No new AOS rehearsal is required. Controlled pilot remains HOLD, Stage12C remains unauthorized, candidate execution authority remains false, and BLOCK_CANONICAL_EXECUTION remains required. The next AOS action is WAIT_FOR_LARI_E3_B_CONTROLLER_DECISION. No LARI action should be initiated merely to remain active.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
@@ -422,11 +422,21 @@
       "next_authority_event": "CONTROLLER_ACCEPTED_SLICE3_RUNTIME_STATE_OR_SEPARATE_EXPLICIT_ISOLATED_PILOT_AUTHORIZATION",
       "controller_guidance": {
         "slice3_status": "IN_PROGRESS",
+        "e2_r31": "CONTROLLER_ACCEPTED",
+        "e3_status": "IN_PROGRESS",
+        "previous_e3_a": "REJECTED",
+        "corrected_e3_b": "AUTHORIZED_PENDING_EXECUTION_OR_CONTROLLER_REVIEW",
+        "production": "NO_GO",
+        "new_aos_rehearsal_needed": false,
+        "current_lari_candidate_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
+        "current_lari_control_plane_sha": "c9ac79ed710b758a2c22bbfa56154121a58d06b9",
+        "next_aos_step": "WAIT_FOR_LARI_E3_B_CONTROLLER_DECISION",
+        "block_canonical_execution": "REQUIRED",
+        "authority_update_date": "2026-09-01",
         "latest_e3_controller_review": "REJECTED",
         "product_runtime_defect": "NOT_PROVEN",
         "primary_failure": "FIXTURE_HARNESS_DEFECT",
         "evidence_telemetry_integrity": "FAILED",
-        "production": "NO_GO",
         "candidate_stage": "E2_ACCEPTED__E3_EVIDENCE_CORRECTION_PENDING",
         "slice3_closed_proven": false,
         "e2_currently_authorized": false,
