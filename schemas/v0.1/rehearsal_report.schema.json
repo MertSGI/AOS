@@ -99,6 +99,13 @@
                 "CONCEPTUAL"
               ]
             },
+            "identity_mode": {
+              "type": "string",
+              "enum": [
+                "FILE_BACKED",
+                "IN_MEMORY"
+              ]
+            },
             "name": {
               "type": "string",
               "minLength": 1
@@ -113,6 +120,10 @@
               "type": "string"
             },
             "source_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "identity_sha256": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
             },

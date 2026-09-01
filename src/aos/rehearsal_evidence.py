@@ -81,6 +81,7 @@ class RehearsalEvidenceValidationResult:
 def validate_rehearsal_report(
     report: Dict[str, Any],
     repo_root: Optional[Path | str] = None,
+    harness_root: Optional[Path | str] = None,
 ) -> RehearsalEvidenceValidationResult:
     """Deterministically validate rehearsal report schema, component provenance, and derive classification."""
     errors: List[RehearsalEvidenceValidationError] = []
@@ -102,6 +103,7 @@ def validate_rehearsal_report(
         )
 
     resolved_repo_root = Path(repo_root).resolve() if repo_root else Path.cwd().resolve()
+    resolved_harness_root = Path(harness_root).resolve() if harness_root else None
     steps = report.get("steps", [])
 
     has_fail = False
@@ -117,6 +119,9 @@ def validate_rehearsal_report(
         origin = component.get("origin")
         provenance = step.get("execution_provenance", {})
         executed = provenance.get("executed", False)
+        invocation_identity = provenance.get("invocation_identity")
+        result_summary = provenance.get("result_summary")
+        evidence_references = step.get("evidence_references", [])
         blocker = step.get("blocker")
 
         # Track status
@@ -146,17 +151,45 @@ def validate_rehearsal_report(
                 )
                 has_fail = True
 
-        # Invariant B: Execution claim classes require executed=true for status=PASS
+        # Invariant B & Defect C: Execution claim classes require executed=true, invocation_identity, result_summary, evidence_references for status=PASS
         if claim_class in EXECUTION_CLAIM_CLASSES:
-            if status == "PASS" and not executed:
-                errors.append(
-                    RehearsalEvidenceValidationError(
-                        code="EXECUTION_PASS_WITHOUT_EXECUTION",
-                        message=f"Claim class '{claim_class}' with status=PASS requires executed=true",
-                        step_id=step_id,
+            if status == "PASS":
+                if not executed:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="EXECUTION_PASS_WITHOUT_EXECUTION",
+                            message=f"Claim class '{claim_class}' with status=PASS requires executed=true",
+                            step_id=step_id,
+                        )
                     )
-                )
-                has_fail = True
+                    has_fail = True
+                if not invocation_identity or not str(invocation_identity).strip():
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="EXECUTION_PASS_WITHOUT_INVOCATION_IDENTITY",
+                            message=f"Claim class '{claim_class}' with status=PASS requires non-empty invocation_identity",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not result_summary or not str(result_summary).strip():
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="EXECUTION_PASS_WITHOUT_RESULT_IDENTITY",
+                            message=f"Claim class '{claim_class}' with status=PASS requires non-empty result_summary",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not evidence_references or len(evidence_references) == 0:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="EXECUTION_PASS_WITHOUT_EVIDENCE_REFERENCE",
+                            message=f"Claim class '{claim_class}' with status=PASS requires non-empty evidence_references",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
 
         # Invariant C: CONCEPTUAL component cannot claim execution PASS
         if origin == "CONCEPTUAL":
@@ -171,7 +204,6 @@ def validate_rehearsal_report(
                 has_fail = True
 
         # Invariant D: Evidence class inflation checks
-        # Static inspection cannot yield PASS for execution claim classes
         if claim_class in EXECUTION_CLAIM_CLASSES and not executed and status == "PASS":
             errors.append(
                 RehearsalEvidenceValidationError(
@@ -182,10 +214,67 @@ def validate_rehearsal_report(
             )
             has_fail = True
 
-        # Invariant E: Authority Decision Match
+        # Invariant E & Defect D: AUTHORITY_DECISION PASS validation
         if claim_class == "AUTHORITY_DECISION":
             exp_dec = step.get("expected_decision")
             obs_dec = step.get("observed_decision")
+
+            if status == "PASS":
+                if origin != "AOS_CORE":
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_PASS_HARNESS_ORIGIN_REJECTED",
+                            message=f"AUTHORITY_DECISION with status=PASS requires component.origin == 'AOS_CORE', observed '{origin}'",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not executed:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_PASS_WITHOUT_EXECUTION_REJECTED",
+                            message="AUTHORITY_DECISION with status=PASS requires executed=true",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not invocation_identity or not str(invocation_identity).strip():
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_PASS_WITHOUT_EXECUTION_REJECTED",
+                            message="AUTHORITY_DECISION with status=PASS requires non-empty invocation_identity",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not result_summary or not str(result_summary).strip():
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_PASS_WITHOUT_EXECUTION_REJECTED",
+                            message="AUTHORITY_DECISION with status=PASS requires non-empty result_summary",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not evidence_references or len(evidence_references) == 0:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_PASS_WITHOUT_EVIDENCE_REJECTED",
+                            message="AUTHORITY_DECISION with status=PASS requires non-empty evidence_references",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                if not exp_dec or not obs_dec:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="AUTHORITY_DECISION_MISMATCH",
+                            message="AUTHORITY_DECISION with status=PASS requires non-empty expected_decision and observed_decision",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+
             if exp_dec != obs_dec:
                 errors.append(
                     RehearsalEvidenceValidationError(
@@ -195,16 +284,8 @@ def validate_rehearsal_report(
                     )
                 )
                 has_fail = True
-                if status == "PASS":
-                    errors.append(
-                        RehearsalEvidenceValidationError(
-                            code="AUTHORITY_DECISION_MISMATCH",
-                            message="Status cannot be PASS when expected and observed decisions differ",
-                            step_id=step_id,
-                        )
-                    )
 
-        # Invariant F: Component Origin Verification
+        # Invariant F & Defect A: AOS_CORE Symbol Level Inspection
         if origin == "AOS_CORE":
             mod_name = component.get("module")
             sym_name = component.get("symbol")
@@ -221,7 +302,6 @@ def validate_rehearsal_report(
                 )
                 has_fail = True
             else:
-                # 1. Verify module is part of AOS
                 if not (mod_name == "aos" or mod_name.startswith("aos.")):
                     errors.append(
                         RehearsalEvidenceValidationError(
@@ -232,7 +312,6 @@ def validate_rehearsal_report(
                     )
                     has_fail = True
                 else:
-                    # Try importing module
                     try:
                         mod = importlib.import_module(mod_name)
                     except ImportError as e:
@@ -247,7 +326,6 @@ def validate_rehearsal_report(
                         has_fail = True
 
                     if mod is not None:
-                        # 2. Verify symbol exists
                         if not hasattr(mod, sym_name):
                             errors.append(
                                 RehearsalEvidenceValidationError(
@@ -258,30 +336,32 @@ def validate_rehearsal_report(
                             )
                             has_fail = True
                         else:
-                            # 3. Resolve source file path
+                            # Defect A Fix: Inspect the actual symbol_object implementation, NOT module file
+                            symbol_obj = getattr(mod, sym_name)
                             try:
-                                real_source_file = Path(inspect.getsourcefile(mod) or inspect.getfile(mod)).resolve()
+                                real_symbol_source_file = Path(
+                                    inspect.getsourcefile(symbol_obj) or inspect.getfile(symbol_obj)
+                                ).resolve()
                             except Exception as e:
                                 errors.append(
                                     RehearsalEvidenceValidationError(
-                                        code="CORE_MODULE_UNRESOLVED",
-                                        message=f"Cannot inspect source file for module '{mod_name}': {e}",
+                                        code="CORE_SYMBOL_UNRESOLVED",
+                                        message=f"Cannot inspect source file for symbol '{sym_name}' in module '{mod_name}': {e}",
                                         step_id=step_id,
                                     )
                                 )
-                                real_source_file = None
+                                real_symbol_source_file = None
                                 has_fail = True
 
-                            if real_source_file:
-                                # 4. Check source inside repo
+                            if real_symbol_source_file:
                                 try:
-                                    rel_path = real_source_file.relative_to(resolved_repo_root)
+                                    rel_path = real_symbol_source_file.relative_to(resolved_repo_root)
                                     rel_path_posix = rel_path.as_posix()
                                 except ValueError:
                                     errors.append(
                                         RehearsalEvidenceValidationError(
                                             code="CORE_SOURCE_OUTSIDE_REPO",
-                                            message=f"Source file '{real_source_file}' is outside repository root '{resolved_repo_root}'",
+                                            message=f"Symbol source file '{real_symbol_source_file}' is outside repository root '{resolved_repo_root}'",
                                             step_id=step_id,
                                         )
                                     )
@@ -289,54 +369,142 @@ def validate_rehearsal_report(
                                     has_fail = True
 
                                 if rel_path_posix is not None:
-                                    # 5. Check path matches claimed path
                                     claimed_path_posix = Path(source_path_str).as_posix()
                                     if rel_path_posix != claimed_path_posix:
                                         errors.append(
                                             RehearsalEvidenceValidationError(
                                                 code="CORE_SOURCE_PATH_MISMATCH",
-                                                message=f"Claimed source path '{claimed_path_posix}' != actual resolved path '{rel_path_posix}'",
+                                                message=f"Claimed source path '{claimed_path_posix}' != actual symbol implementation path '{rel_path_posix}'",
                                                 step_id=step_id,
                                             )
                                         )
                                         has_fail = True
 
-                                    # 6. Check source file hash
-                                    actual_sha = hashlib.sha256(real_source_file.read_bytes()).hexdigest()
+                                    actual_sha = hashlib.sha256(real_symbol_source_file.read_bytes()).hexdigest()
                                     if actual_sha != source_sha.lower():
                                         errors.append(
                                             RehearsalEvidenceValidationError(
                                                 code="CORE_SOURCE_HASH_MISMATCH",
-                                                message=f"Claimed source SHA256 '{source_sha}' != actual SHA256 '{actual_sha}'",
+                                                message=f"Claimed source SHA256 '{source_sha}' != actual symbol implementation SHA256 '{actual_sha}'",
                                                 step_id=step_id,
                                             )
                                         )
                                         has_fail = True
 
+        # Defect B Fix: REHEARSAL_HARNESS Strict Provenance Validation
         elif origin == "REHEARSAL_HARNESS":
+            identity_mode = component.get("identity_mode")
             name = component.get("name")
             desc = component.get("description")
-            source_path = component.get("source_path")
+            source_path_str = component.get("source_path")
             source_sha = component.get("source_sha256")
+            identity_sha = component.get("identity_sha256")
 
-            if not name or not (desc or source_path):
-                errors.append(
-                    RehearsalEvidenceValidationError(
-                        code="HARNESS_IDENTITY_INVALID",
-                        message="REHEARSAL_HARNESS component requires name and either description or source_path",
-                        step_id=step_id,
+            # Fallback/infer if identity_mode not explicitly provided
+            if not identity_mode:
+                if source_path_str:
+                    identity_mode = "FILE_BACKED"
+                elif desc and identity_sha:
+                    identity_mode = "IN_MEMORY"
+                else:
+                    identity_mode = "FILE_BACKED"
+
+            if identity_mode == "FILE_BACKED":
+                if not name or not source_path_str:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="HARNESS_IDENTITY_INVALID",
+                            message="FILE_BACKED REHEARSAL_HARNESS requires name and source_path",
+                            step_id=step_id,
+                        )
                     )
-                )
-                has_fail = True
-            elif source_path:
-                harness_file = resolved_repo_root / source_path
-                if harness_file.exists() and harness_file.is_file() and source_sha:
-                    actual_sha = hashlib.sha256(harness_file.read_bytes()).hexdigest()
-                    if actual_sha != source_sha.lower():
+                    has_fail = True
+                elif not source_sha:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="HARNESS_FILE_HASH_REQUIRED",
+                            message="FILE_BACKED REHEARSAL_HARNESS requires source_sha256",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                else:
+                    if not resolved_harness_root:
                         errors.append(
                             RehearsalEvidenceValidationError(
-                                code="HARNESS_IDENTITY_INVALID",
-                                message=f"Harness source SHA256 '{source_sha}' != actual file SHA256 '{actual_sha}'",
+                                code="HARNESS_ROOT_MISSING",
+                                message="Validation of FILE_BACKED REHEARSAL_HARNESS requires harness_root",
+                                step_id=step_id,
+                            )
+                        )
+                        has_fail = True
+                    else:
+                        # Path traversal and boundary checks
+                        raw_source_path = Path(source_path_str)
+                        if raw_source_path.is_absolute() or ".." in raw_source_path.parts:
+                            errors.append(
+                                RehearsalEvidenceValidationError(
+                                    code="HARNESS_PATH_TRAVERSAL",
+                                    message=f"Path traversal or absolute path forbidden in harness source_path '{source_path_str}'",
+                                    step_id=step_id,
+                                )
+                            )
+                            has_fail = True
+                        else:
+                            harness_file = (resolved_harness_root / raw_source_path).resolve()
+                            try:
+                                harness_file.relative_to(resolved_harness_root)
+                            except ValueError:
+                                errors.append(
+                                    RehearsalEvidenceValidationError(
+                                        code="HARNESS_OUTSIDE_ROOT",
+                                        message=f"Harness source file '{harness_file}' resolves outside harness_root '{resolved_harness_root}'",
+                                        step_id=step_id,
+                                    )
+                                )
+                                harness_file = None
+                                has_fail = True
+
+                            if harness_file:
+                                if not harness_file.exists() or not harness_file.is_file():
+                                    errors.append(
+                                        RehearsalEvidenceValidationError(
+                                            code="HARNESS_FILE_MISSING",
+                                            message=f"Harness source file not found or not regular file: '{harness_file}'",
+                                            step_id=step_id,
+                                        )
+                                    )
+                                    has_fail = True
+                                else:
+                                    actual_sha = hashlib.sha256(harness_file.read_bytes()).hexdigest()
+                                    if actual_sha != source_sha.lower():
+                                        errors.append(
+                                            RehearsalEvidenceValidationError(
+                                                code="HARNESS_FILE_HASH_MISMATCH",
+                                                message=f"Harness source SHA256 '{source_sha}' != actual SHA256 '{actual_sha}'",
+                                                step_id=step_id,
+                                            )
+                                        )
+                                        has_fail = True
+
+            elif identity_mode == "IN_MEMORY":
+                if not name or not desc or not identity_sha:
+                    errors.append(
+                        RehearsalEvidenceValidationError(
+                            code="IN_MEMORY_HARNESS_IDENTITY_INVALID",
+                            message="IN_MEMORY REHEARSAL_HARNESS requires name, description, and identity_sha256",
+                            step_id=step_id,
+                        )
+                    )
+                    has_fail = True
+                else:
+                    # Deterministic identity verification: SHA256(UTF-8 bytes of description)
+                    expected_identity_sha = hashlib.sha256(desc.encode("utf-8")).hexdigest()
+                    if identity_sha.lower() != expected_identity_sha:
+                        errors.append(
+                            RehearsalEvidenceValidationError(
+                                code="IN_MEMORY_HARNESS_HASH_MISMATCH",
+                                message=f"Claimed identity_sha256 '{identity_sha}' != expected recomputed identity SHA256 '{expected_identity_sha}'",
                                 step_id=step_id,
                             )
                         )
@@ -398,6 +566,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AOS Rehearsal Evidence Provenance CLI Validator")
     parser.add_argument("report_path", type=Path, help="Path to rehearsal report JSON file")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd(), help="Path to canonical AOS repository root")
+    parser.add_argument("--harness-root", type=Path, default=None, help="Path to rehearsal harness root")
     args = parser.parse_args()
 
     try:
@@ -406,7 +575,7 @@ def main() -> None:
         print(f"Error loading JSON report file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    result = validate_rehearsal_report(report_data, repo_root=args.repo_root)
+    result = validate_rehearsal_report(report_data, repo_root=args.repo_root, harness_root=args.harness_root)
 
     print(json.dumps(result.to_dict(), indent=2))
     if not result.is_valid:
