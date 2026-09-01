@@ -33,6 +33,7 @@ TYPE_TO_SCHEMA = {
     "execution_authorization": "execution_authorization.schema.json",
     "verification_result": "verification_result.schema.json",
     "rehearsal_report": "rehearsal_report.schema.json",
+    "hosted_disposable_rehearsal_request": "hosted_disposable_rehearsal_request.schema.json",
 }
 
 

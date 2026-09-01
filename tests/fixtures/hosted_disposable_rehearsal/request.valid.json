@@ -1,0 +1,33 @@
+{
+  "schema_version": "0.1",
+  "rehearsal_id": "aos-hosted-disposable-rehearsal-001",
+  "runtime_profile": "POSTGRES_16_DISPOSABLE",
+  "migration_files": [
+    "migrations/001_create_rehearsal_items.sql",
+    "migrations/002_insert_rehearsal_item.sql"
+  ],
+  "assertion_files": [
+    "assertions/assert_rehearsal_items.sql"
+  ],
+  "rollback_files": [
+    "rollback/rollback_rehearsal_items.sql"
+  ],
+  "failure_probe": {
+    "setup_files": [
+      "failure_probe/001_setup.sql"
+    ],
+    "fatal_failure_file": "failure_probe/002_fatal_failure.sql",
+    "downstream_sentinel_file": "failure_probe/003_downstream_sentinel.sql"
+  },
+  "required_capabilities": [
+    "DISPOSABLE_DB_EXECUTION",
+    "DETERMINISTIC_SQL_SEQUENCE",
+    "EXPECTED_MUTATION_VERIFICATION",
+    "FATAL_FAILURE_STOP",
+    "NO_AUTOMATIC_RETRY",
+    "DOWNSTREAM_SENTINEL_SUPPRESSION",
+    "SCOPED_ROLLBACK",
+    "SCOPED_CLEANUP",
+    "R3_EVIDENCE_GENERATION"
+  ]
+}

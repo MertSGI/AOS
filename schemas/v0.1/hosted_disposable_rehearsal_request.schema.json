@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/hosted_disposable_rehearsal_request.schema.json",
+  "title": "AOS Hosted Disposable Rehearsal Request Schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rehearsal_id",
+    "runtime_profile",
+    "migration_files",
+    "assertion_files",
+    "rollback_files",
+    "failure_probe",
+    "required_capabilities"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "rehearsal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_profile": {
+      "type": "string",
+      "enum": [
+        "POSTGRES_16_DISPOSABLE"
+      ]
+    },
+    "migration_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "assertion_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "rollback_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "failure_probe": {
+      "type": "object",
+      "required": [
+        "setup_files",
+        "fatal_failure_file",
+        "downstream_sentinel_file"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "setup_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fatal_failure_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "downstream_sentinel_file": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
