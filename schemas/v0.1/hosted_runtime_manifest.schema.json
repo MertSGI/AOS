@@ -28,8 +28,7 @@
     "rollback_state_verification",
     "disposable_resource_created_count",
     "disposable_resource_cleaned_count",
-    "orphan_resource_count",
-    "aos_worktree_immutable"
+    "orphan_resource_count"
   ],
   "additionalProperties": false,
   "properties": {
@@ -148,13 +147,6 @@
     "orphan_resource_count": {
       "type": "integer",
       "const": 0
-    },
-    "aos_worktree_immutable": {
-      "type": "string",
-      "enum": [
-        "PASS",
-        "FAIL"
-      ]
     }
   }
 }

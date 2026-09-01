@@ -129,11 +129,12 @@ class HostedDisposableRunner:
         self.automatic_retry_count = 0
         self.downstream_step_execution_count = 0
 
-        # Observed container config
-        self.observed_network_mode = "none"
-        self.observed_host_volume_mount_count = 0
-        self.observed_docker_socket_mount_count = 0
-        self.observed_pids_limit = 100
+        # Observed container config (initialized to None before inspect)
+        self.observed_network_mode: Optional[str] = None
+        self.observed_host_volume_mount_count: Optional[int] = None
+        self.observed_docker_socket_mount_count: Optional[int] = None
+        self.observed_pids_limit: Optional[int] = None
+        self.container_runtime_inspection_count = 0
 
     def execute_hosted_rehearsal(self) -> Dict[str, Any]:
         """Run full hosted disposable execution sequence and produce bound report & manifest."""
@@ -298,6 +299,9 @@ class HostedDisposableRunner:
             self._cleanup_container(succ_container)
 
         if primary_exception:
+            if self.resource_cleanup_failure_count != 0 or self.orphan_resource_count != 0:
+                cleanup_err = f"Secondary cleanup failure: failures={self.resource_cleanup_failure_count}, orphans={self.orphan_resource_count}"
+                raise HostedDisposableRehearsalError(f"{primary_exception} [{cleanup_err}]") from primary_exception
             raise primary_exception
 
         # Step 3: Fatal Failure Probe Container
@@ -348,6 +352,9 @@ class HostedDisposableRunner:
             self._cleanup_container(fail_container)
 
         if primary_exception:
+            if self.resource_cleanup_failure_count != 0 or self.orphan_resource_count != 0:
+                cleanup_err = f"Secondary cleanup failure: failures={self.resource_cleanup_failure_count}, orphans={self.orphan_resource_count}"
+                raise HostedDisposableRehearsalError(f"{primary_exception} [{cleanup_err}]") from primary_exception
             raise primary_exception
 
         # Verify Cleanup Accounting
@@ -383,7 +390,6 @@ class HostedDisposableRunner:
             "disposable_resource_created_count": self.resource_created_count,
             "disposable_resource_cleaned_count": self.resource_cleanup_success_count,
             "orphan_resource_count": self.orphan_resource_count,
-            "aos_worktree_immutable": "PASS",
         }
 
         manifest_val = validate_document("hosted_runtime_manifest", runtime_manifest)
@@ -467,20 +473,43 @@ class HostedDisposableRunner:
         self.containers_created.append(name)
         self.resource_created_count += 1
 
-        # Real container inspection for observed runtime values
+        # Strict container inspection and policy enforcement
         insp_res = run_bounded_command(["docker", "inspect", name])
-        if insp_res.returncode == 0:
-            try:
-                insp_data = json.loads(insp_res.stdout)
-                if insp_data:
-                    c_info = insp_data[0]
-                    net_mode = c_info.get("HostConfig", {}).get("NetworkMode", "")
-                    mounts = c_info.get("Mounts", [])
-                    self.observed_network_mode = net_mode if net_mode == "none" else self.observed_network_mode
-                    self.observed_host_volume_mount_count = len([m for m in mounts if m.get("Type") == "bind"])
-                    self.observed_docker_socket_mount_count = len([m for m in mounts if "docker.sock" in m.get("Source", "")])
-            except Exception:
-                pass
+        if insp_res.returncode != 0:
+            raise HostedDisposableRehearsalError(f"docker inspect for container '{name}' returned nonzero exit code {insp_res.returncode}")
+
+        try:
+            insp_data = json.loads(insp_res.stdout)
+            if not isinstance(insp_data, list) or not insp_data:
+                raise HostedDisposableRehearsalError(f"docker inspect returned invalid/empty array: {insp_res.stdout}")
+            c_info = insp_data[0]
+            host_config = c_info.get("HostConfig", {})
+            net_mode = host_config.get("NetworkMode", "")
+            pids_limit = host_config.get("PidsLimit")
+            mounts = c_info.get("Mounts", [])
+        except Exception as e:
+            if isinstance(e, HostedDisposableRehearsalError):
+                raise e
+            raise HostedDisposableRehearsalError(f"Failed to parse docker inspect output for '{name}': {e}")
+
+        host_bind_mount_count = len([m for m in mounts if m.get("Type") == "bind"])
+        docker_socket_mount_count = len([m for m in mounts if "docker.sock" in m.get("Source", "")])
+
+        # Enforce security policy rules immediately
+        if net_mode != "none":
+            raise HostedDisposableRehearsalError(f"Container '{name}' network mode is '{net_mode}', expected 'none'")
+        if host_bind_mount_count != 0:
+            raise HostedDisposableRehearsalError(f"Container '{name}' has {host_bind_mount_count} host bind mounts, expected 0")
+        if docker_socket_mount_count != 0:
+            raise HostedDisposableRehearsalError(f"Container '{name}' has {docker_socket_mount_count} docker.sock mounts, expected 0")
+        if pids_limit != 100:
+            raise HostedDisposableRehearsalError(f"Container '{name}' pids_limit is {pids_limit}, expected 100")
+
+        self.observed_network_mode = net_mode
+        self.observed_host_volume_mount_count = host_bind_mount_count
+        self.observed_docker_socket_mount_count = docker_socket_mount_count
+        self.observed_pids_limit = pids_limit
+        self.container_runtime_inspection_count += 1
 
         ready = False
         for _ in range(15):
