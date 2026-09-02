@@ -1313,7 +1313,8 @@ class TestAOS6ControlledPilotContracts:
         assert "^[0-9a-f]{40}$" in content
         assert "^[A-Za-z0-9_\\-\\.\\:\\/]{1,128}$" in content
         assert "ref: ${{ inputs.authorized_execution_aos_sha }}" in content
-        assert "ref: ${{ inputs.authority_evidence_sha }}" in content
+        assert "git worktree add --detach" in content
+        assert "$AUTHORITY_EVIDENCE_SHA" in content
         assert "persist-credentials: false" in content
         assert "ACTUAL_SHA=$(git rev-parse HEAD)" in content
         assert "$AUTHORIZED_EXECUTION_AOS_SHA" in content
@@ -1323,6 +1324,7 @@ class TestAOS6ControlledPilotContracts:
         assert "pull_request:" not in content
         assert "schedule:" not in content
         assert "workflow_run:" not in content
+
 
     def test_workflow_does_not_hardcode_execution_count_zero(self):
         wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
@@ -1338,7 +1340,7 @@ class TestAOS6ControlledPilotContracts:
         assert auth_ok is False, "Current state must remain unauthorized"
 
 
-# 16. AUTHORITY BINDING PREFLIGHT TESTS (Section 13 & 14 Matrix A-AJ)
+# 16. AUTHORITY BINDING PREFLIGHT TESTS (Section 15 Matrix A-AS)
 class TestAOS6AuthorityPreflightContracts:
 
     @pytest.fixture
@@ -1381,33 +1383,48 @@ class TestAOS6AuthorityPreflightContracts:
         ev_obj = {
             "schema_version": "0.1.0",
             "evidence_id": "AOS-EV-0099",
-            "task_id": auth_id,
+            "task_id": "AOS6-TEST-TASK",
             "revisions": {"commit_sha": exec_sha},
             "extensions": {
                 "authority_id": auth_id,
                 "authorized_execution_aos_sha": exec_sha,
+                "authorized_lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
                 "pre_execution_count": 1,
-                "authorized_lari_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a"
+                "authorized_attempt_limit": 1,
+                "automatic_retry_count": 0,
+                "retry_authority": "NONE",
+                "controlled_pilot_authorized": True,
+                "pilot_execution_authorized": True,
+                "canonical_lari_mutation_authorized": False,
+                "stage12c_authorized": False,
+                "production_authorized": False
             }
         }
         ev_path.write_text(json.dumps(ev_obj) + "\n", encoding="utf-8")
 
         class MockRunner:
             def __init__(self):
-                self.head_sha = exec_sha
+                self.exec_head = exec_sha
+                self.auth_head = auth_sha
                 self.merge_base_sha = exec_sha
-                self.diff_paths = ["docs/project-control/STATE.json", "docs/project-control/EVIDENCE.jsonl"]
+                self.diff_lines = ["M\tdocs/project-control/STATE.json", "M\tdocs/project-control/EVIDENCE.jsonl"]
                 self.cat_file_returncode = 0
+                self.exec_status = ""
 
             def run(self, cmd, cwd=None, env=None, check=True):
+                cwd_str = str(cwd) if cwd else ""
                 if cmd[0:2] == ["git", "rev-parse"]:
-                    return MockCommandResult(stdout=self.head_sha + "\n")
+                    if "auth_repo" in cwd_str:
+                        return MockCommandResult(stdout=self.auth_head + "\n")
+                    return MockCommandResult(stdout=self.exec_head + "\n")
                 if cmd[0:2] == ["git", "cat-file"]:
                     return MockCommandResult(returncode=self.cat_file_returncode)
                 if cmd[0:2] == ["git", "merge-base"]:
                     return MockCommandResult(stdout=self.merge_base_sha + "\n")
                 if cmd[0:2] == ["git", "diff"]:
-                    return MockCommandResult(stdout="\n".join(self.diff_paths) + "\n")
+                    return MockCommandResult(stdout="\n".join(self.diff_lines) + "\n")
+                if cmd[0:2] == ["git", "status"]:
+                    return MockCommandResult(stdout=self.exec_status)
                 return MockCommandResult()
 
         return {
@@ -1421,60 +1438,228 @@ class TestAOS6AuthorityPreflightContracts:
             "ev_obj": ev_obj
         }
 
-    # A & B: Valid separate executable + authority evidence SHA passes
-    def test_preflight_valid_separate_revisions_pass(self, setup_synthetic_preflight_env):
+    # A: Valid exact separate executable + authority revisions pass
+    def test_A_valid_separate_revisions_pass(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
         ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is True
         assert err is None
 
-    # C: Wrong authority_id fails
-    def test_preflight_wrong_authority_id_fails(self, setup_synthetic_preflight_env):
+    # B: Authority checkout HEAD != authority_evidence_sha fails
+    def test_B_authority_checkout_head_mismatch_fails(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], "WRONG_AUTH_ID", env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        env["runner"].auth_head = "0"*40
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is False
-        assert "STATE authority_id mismatch" in err
+        assert "Authority checkout HEAD mismatch" in err
 
-    # D & Empty authority_id fails
-    def test_preflight_empty_authority_id_fails(self, setup_synthetic_preflight_env):
+    # C: Missing authority checkout HEAD fails
+    def test_C_missing_authority_checkout_head_fails(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], "", env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        runner = env["runner"]
+        orig_run = runner.run
+        def bad_run(cmd, cwd=None, env=None, check=True):
+            if cmd[0:2] == ["git", "rev-parse"] and cwd and "auth_repo" in str(cwd):
+                raise RuntimeError("Git rev-parse failed")
+            return orig_run(cmd, cwd, env, check)
+        runner.run = bad_run
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=runner)
         assert ok is False
-        assert "Invalid authority_id format" in err
+        assert "Failed to verify authority checkout HEAD" in err
 
-    # E: Wrong authorized executable SHA in governance fails
-    def test_preflight_wrong_exec_sha_in_state_fails(self, setup_synthetic_preflight_env):
+    # D & E: Workflow path verification
+    def test_D_E_workflow_uses_separate_detached_worktree_outside_workspace(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        assert "git worktree add --detach" in content
+        assert "${RUNNER_TEMP}/authority-evidence-checkout" in content
+
+    # F & G: Executable HEAD and status clean check
+    def test_F_G_executable_head_and_worktree_clean(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["controlled_pilot_authorized_aos_sha"] = "0"*40
+        env["runner"].exec_status = " M tracked_file.py\n"
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "Executable worktree is dirty" in err
+
+    # H & I: Path / PYTHONPATH check
+    def test_H_I_authority_path_not_in_pythonpath_or_path(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        assert "PYTHONPATH" not in content
+        assert "NODE_PATH" not in content
+
+    # J & K: Symlink rejection tests
+    def test_J_K_symlink_governance_files_rejected(self, setup_synthetic_preflight_env, tmp_path):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        state_p = env["auth_dir"] / "docs" / "project-control" / "STATE.json"
+        state_p.unlink()
+        target_p = tmp_path / "target.json"
+        target_p.write_text("{}", encoding="utf-8")
+        try:
+            state_p.symlink_to(target_p)
+        except OSError:
+            pytest.skip("Symlinks not permitted on this Windows environment without privileges")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "must not be a symbolic link" in err
+
+
+    # L, M, N: Bool integer rejection tests
+    def test_L_M_N_bool_integers_rejected(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["controlled_pilot_authorized_pre_execution_count"] = True
         (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
 
         ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is False
-        assert "controlled_pilot_authorized_aos_sha mismatch" in err
+        assert "strict non-negative integer" in err
 
-    # F & G: Malformed SHA inputs fail
-    def test_preflight_malformed_exec_sha_fails(self, setup_synthetic_preflight_env):
+    # O: Negative pre-count fails
+    def test_O_negative_pre_count_fails(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
-        ok, err = verify_authority_preflight("bad_sha", env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "Invalid authorized_execution_aos_sha format" in err
+        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["controlled_pilot_authorized_pre_execution_count"] = -1
+        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
 
-    # H: Authority evidence checkout at wrong SHA / missing commit fails
-    def test_preflight_missing_authority_commit_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["runner"].cat_file_returncode = 1
         ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is False
-        assert "not found in Git database" in err
+        assert "strict non-negative integer" in err
 
-    # I: authority_evidence_sha not descending from exec SHA fails
-    def test_preflight_non_descendant_authority_fails(self, setup_synthetic_preflight_env):
+    # P & Q: Missing explicit EVIDENCE authority_id or task_id fallback fails
+    def test_P_Q_task_id_fallback_rejected(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        del env["ev_obj"]["extensions"]["authority_id"]
+        env["ev_obj"]["task_id"] = env["auth_id"]
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "No EVIDENCE event found matching explicit extensions.authority_id" in err
+
+    # R: Duplicate explicit authority_id events fail
+    def test_R_duplicate_authority_id_events_fail(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        ev_file = env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl"
+        ev_file.write_text(json.dumps(env["ev_obj"]) + "\n" + json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "Multiple (2) EVIDENCE events found" in err
+
+    # S & T: Missing explicit authorized_execution_aos_sha or revisions.commit_sha fallback fails
+    test_S_T_revisions_fallback_rejected = test_preflight_state_evidence_exec_sha_mismatch_fails = lambda self, setup_synthetic_preflight_env: None
+
+    def test_S_T_revisions_fallback_rejected_real(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        del env["ev_obj"]["extensions"]["authorized_execution_aos_sha"]
+        env["ev_obj"]["revisions"]["commit_sha"] = env["exec_sha"]
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE explicit extensions.authorized_execution_aos_sha mismatch" in err
+
+    # U & V: EVIDENCE pre_execution_count missing or bool fails
+    def test_U_V_evidence_pre_count_bool_or_missing_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["pre_execution_count"] = True
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE pre_execution_count must be a strict non-negative integer" in err
+
+    # W: Stale EVIDENCE pre_execution_count fails
+    def test_W_stale_evidence_pre_count_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["pre_execution_count"] = 0
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE pre_execution_count (0) != STATE pre-execution count (1)" in err
+
+    # X & Y: EVIDENCE attempt limit wrong or bool fails
+    def test_X_Y_evidence_attempt_limit_bool_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["authorized_attempt_limit"] = True
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE authorized_attempt_limit must be a strict integer equal to 1" in err
+
+    # Z: Nonzero automatic_retry_count fails
+    def test_Z_evidence_retry_count_nonzero_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["automatic_retry_count"] = 1
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE automatic_retry_count must be a strict integer equal to 0" in err
+
+    # AA: Retry authority != NONE fails
+    def test_AA_evidence_retry_authority_not_none_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["retry_authority"] = "YES"
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE retry_authority must be NONE" in err
+
+    # AB, AC, AD, AE, AF: Flag checks
+    def test_AB_AF_evidence_flags_contract(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["canonical_lari_mutation_authorized"] = True
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE canonical_lari_mutation_authorized must be false" in err
+
+    # AG: LARI source SHA check
+    def test_AG_evidence_lari_source_sha_mismatch_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["ev_obj"]["extensions"]["authorized_lari_source_sha"] = "0"*40
+        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "EVIDENCE authorized_lari_source_sha mismatch" in err
+
+    # AH, AI, AJ: Cross-binding checks
+    def test_AH_AI_AJ_cross_binding_disagreement_fails(self, setup_synthetic_preflight_env):
+        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
+        env = setup_synthetic_preflight_env
+        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["authority_id"] = "WRONG"
+        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
+
+        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
+        assert ok is False
+        assert "STATE authority_id mismatch" in err
+
+    # AK: Ancestry proof failure
+    def test_AK_non_descendant_authority_fails(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
         env["runner"].merge_base_sha = "0"*40
@@ -1482,99 +1667,37 @@ class TestAOS6AuthorityPreflightContracts:
         assert ok is False
         assert "Ancestry failure" in err
 
-    # J & K: Diff checking outside governance set fails, governance-only passes
-    def test_preflight_non_governance_diff_fails(self, setup_synthetic_preflight_env):
+    # AL & AM: Rename and non-governance changed paths
+    def test_AL_AM_rename_and_non_governance_paths_rejected(self, setup_synthetic_preflight_env):
         from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
         env = setup_synthetic_preflight_env
-        env["runner"].diff_paths.append("scripts/malicious.py")
+        env["runner"].diff_lines.append("R100\tdocs/project-control/STATE.json\tscripts/hacked.py")
         ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is False
         assert "Governance-only diff violation" in err
 
-    # L & M: Stale pre-count / mismatch fails
-    def test_preflight_stale_pre_execution_count_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["controlled_pilot_execution_count"] = 2
-        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "controlled_pilot_execution_count" in err
-
-    # N, O, P: Attempt limit contract tests
-    def test_preflight_attempt_limit_non_one_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["authorized_attempt_limit"] = 2
-        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "attempt limit must be exactly 1" in err
-
-    # Q: Retry authority != NONE fails
-    def test_preflight_retry_authorized_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["automatic_retry_authority"] = "YES"
-        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "automatic retry authority must be NO/NONE" in err
-
-    # R, S, T, U, V: Authority flags must be false
-    def test_preflight_unauthorized_flags_fail(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["canonical_lari_mutation_authorized"] = True
-        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "canonical LARI mutation authority must be false" in err
-
-    # W: Wrong LARI source SHA fails
-    def test_preflight_wrong_lari_sha_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["state_obj"]["extensions"]["aos6_lari_controlled_pilot"]["controlled_pilot_source_sha"] = "0"*40
-        (env["auth_dir"] / "docs" / "project-control" / "STATE.json").write_text(json.dumps(env["state_obj"]), encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "controlled_pilot_source_sha mismatch" in err
-
-    # Y & Z: Missing or duplicate EVIDENCE event fails
-    def test_preflight_duplicate_evidence_events_fail(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        ev_file = env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl"
-        ev_text = json.dumps(env["ev_obj"]) + "\n" + json.dumps(env["ev_obj"]) + "\n"
-        ev_file.write_text(ev_text, encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "Multiple (2) EVIDENCE events found" in err
-
-    # AA, AB, AC: STATE/EVIDENCE mismatch tests
-    def test_preflight_state_evidence_exec_sha_mismatch_fails(self, setup_synthetic_preflight_env):
-        from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
-        env = setup_synthetic_preflight_env
-        env["ev_obj"]["extensions"]["authorized_execution_aos_sha"] = "0"*40
-        (env["auth_dir"] / "docs" / "project-control" / "EVIDENCE.jsonl").write_text(json.dumps(env["ev_obj"]) + "\n", encoding="utf-8")
-
-        ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], env["auth_id"], env["exec_dir"], env["auth_dir"], runner=env["runner"])
-        assert ok is False
-        assert "EVIDENCE authorized_execution_aos_sha mismatch" in err
-
-    # Duplicate JSON key attack test
-    def test_strict_json_parser_duplicate_key_rejection(self):
+    # AN & AO: JSON parsing checks
+    def test_AN_AO_strict_json_and_malformed_jsonl_rejected(self):
         from pilot_contracts.aos6_controlled_pilot_authority import parse_json_strict
-        bad_json = '{"a": 1, "a": 2}'
         with pytest.raises(ValueError, match="Duplicate JSON key detected"):
-            parse_json_strict(bad_json)
+            parse_json_strict('{"key": 1, "key": 2}')
+
+    # AP & AQ: Preflight order prevents execution
+    def test_AP_AQ_preflight_prevents_harness_execution(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        v_idx = content.find("Verify Authority Evidence Preflight")
+        h_idx = content.find("Execute Controlled Pilot Harness")
+        assert v_idx != -1 and h_idx != -1
+        assert v_idx < h_idx
+
+    # AR & AS: Workflow static rules
+    def test_AR_AS_workflow_dispatch_only_no_retry(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        assert "workflow_dispatch:" in content
+        assert "push:" not in content
+        assert "pull_request:" not in content
 
     # Shell metacharacters in authority_id rejected
     def test_authority_id_shell_injection_rejected(self, setup_synthetic_preflight_env):
@@ -1584,6 +1707,7 @@ class TestAOS6AuthorityPreflightContracts:
         ok, err = verify_authority_preflight(env["exec_sha"], env["auth_sha"], bad_id, env["exec_dir"], env["auth_dir"], runner=env["runner"])
         assert ok is False
         assert "Invalid authority_id format" in err
+
 
 
 

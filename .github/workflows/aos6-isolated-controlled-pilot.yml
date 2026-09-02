@@ -69,13 +69,18 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout Authority Evidence Revision (Data Only)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.authority_evidence_sha }}
-          path: ${{ runner.temp }}/authority-evidence-checkout
-          persist-credentials: false
-          fetch-depth: 0
+      - name: Create Separate Authority Evidence Detached Worktree
+        env:
+          AUTHORITY_EVIDENCE_SHA: ${{ inputs.authority_evidence_sha }}
+        run: |
+          AUTHORITY_DIR="${RUNNER_TEMP}/authority-evidence-checkout"
+          git worktree add --detach "$AUTHORITY_DIR" "$AUTHORITY_EVIDENCE_SHA"
+          AUTH_HEAD=$(git -C "$AUTHORITY_DIR" rev-parse HEAD)
+          if [ "$AUTH_HEAD" != "$AUTHORITY_EVIDENCE_SHA" ]; then
+            echo "Authority evidence worktree HEAD mismatch!"
+            exit 1
+          fi
+          echo "Detached authority worktree constructed successfully at $AUTHORITY_DIR"
 
       - name: Verify Authority Evidence Preflight
         env:
