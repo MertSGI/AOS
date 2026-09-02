@@ -152,7 +152,10 @@ class FakeCommandRunner:
                             "ReadonlyRootfs": True,
                             "PidsLimit": 100,
                             "CapDrop": ["ALL"],
-                            "SecurityOpt": ["no-new-privileges"]
+                            "SecurityOpt": ["no-new-privileges"],
+                            "Tmpfs": {
+                                "/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"
+                            }
                         },
                         "Mounts": self.created_mounts if self.created_mounts else [
                             {"Type": "bind", "Destination": "/workspace", "RW": False, "Source": "/tmp/ws"},
@@ -433,7 +436,10 @@ class TestAOS6ControlledPilotContracts:
                 "ReadonlyRootfs": True,
                 "PidsLimit": 100,
                 "CapDrop": ["ALL"],
-                "SecurityOpt": ["no-new-privileges"]
+                "SecurityOpt": ["no-new-privileges"],
+                "Tmpfs": {
+                    "/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"
+                }
             },
             "Mounts": [
                 {"Type": "bind", "Destination": "/workspace", "RW": False, "Source": str(ws_dir)},
@@ -448,6 +454,203 @@ class TestAOS6ControlledPilotContracts:
         assert res["network_mode"] == "none"
         assert res["readonly_rootfs"] is True
         assert res["pids_limit"] == 100
+        assert res["tmpfs_mount_count"] == 1
+        assert res["tmpfs_tmp_present"] is True
+        assert res["tmpfs_tmp_read_write"] is True
+        assert res["tmpfs_tmp_noexec"] is True
+        assert res["tmpfs_tmp_nosuid"] is True
+        assert res["tmpfs_tmp_mode_1777"] is True
+        assert res["tmpfs_tmp_size_bytes"] == 67108864
+        assert res["host_tmp_bind_mount_count"] == 0
+        assert res["unexpected_tmpfs_mount_count"] == 0
+
+    # Negative Tmpfs Tests A-T
+    def test_tmpfs_negative_A_host_config_tmpfs_missing(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        del inspect_data[0]["HostConfig"]["Tmpfs"]
+        with pytest.raises(RuntimeError, match="HostConfig.Tmpfs is missing"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_B_tmpfs_empty(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {}
+        with pytest.raises(RuntimeError, match="Tmpfs object is empty"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_C_tmp_missing(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/var/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="/tmp is not present"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_D_only_wrong_destination(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp2": "rw,noexec,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="/tmp is not present"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_E_second_tmpfs_destination(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {
+            "/tmp": "rw,noexec,nosuid,size=67108864,mode=1777",
+            "/var/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"
+        }
+        with pytest.raises(RuntimeError, match="Unexpected second tmpfs destination"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_F_tmp_missing_rw(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "noexec,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="missing 'rw' option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_G_tmp_contains_ro(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "ro,noexec,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="Forbidden security-weakening tmpfs option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_H_tmp_missing_noexec(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="missing 'noexec' option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_I_tmp_contains_exec(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,exec,nosuid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="Forbidden security-weakening tmpfs option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_J_tmp_missing_nosuid(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="missing 'nosuid' option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_K_tmp_contains_suid(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,suid,size=67108864,mode=1777"}
+        with pytest.raises(RuntimeError, match="Forbidden security-weakening tmpfs option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_L_mode_missing(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=67108864"}
+        with pytest.raises(RuntimeError, match="missing or invalid mode=1777"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_M_wrong_mode(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=67108864,mode=0777"}
+        with pytest.raises(RuntimeError, match="missing or invalid mode=1777"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_N_size_missing(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,mode=1777"}
+        with pytest.raises(RuntimeError, match="missing size option"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_O_wrong_smaller_size(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=33554432,mode=1777"}
+        with pytest.raises(RuntimeError, match="size_bytes must be exactly 67108864"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_P_wrong_larger_size(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=134217728,mode=1777"}
+        with pytest.raises(RuntimeError, match="size_bytes must be exactly 67108864"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_Q_size_zero(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=0,mode=1777"}
+        with pytest.raises(RuntimeError, match="size_bytes must be exactly 67108864"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_R_host_tmp_bind_present(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append({
+            "Type": "bind", "Destination": "/tmp", "RW": True, "Source": "/tmp"
+        })
+        with pytest.raises(RuntimeError, match="Host /tmp bind mount detected"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_S_host_tmp_bind_present_alongside_valid_tmpfs(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append({
+            "Type": "bind", "Destination": "/tmp", "RW": True, "Source": "/tmp"
+        })
+        with pytest.raises(RuntimeError, match="Host /tmp bind mount detected"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_T_malformed_tmpfs_inspect_shape(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = ["/tmp"]
+        with pytest.raises(RuntimeError, match="HostConfig.Tmpfs is missing or invalid object"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_duplicate_conflicting_size(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=67108864,size=33554432,mode=1777"}
+        with pytest.raises(RuntimeError, match="Duplicate/conflicting size token"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_tmpfs_negative_duplicate_conflicting_mode(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=67108864,mode=1777,mode=0777"}
+        with pytest.raises(RuntimeError, match="Duplicate/conflicting mode token"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
+    def test_docker_create_command_contains_tmpfs_contract(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+
+        execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        create_cmds = [c[0] for c in fake_runner.commands if len(c[0]) >= 2 and c[0][0:2] == ["docker", "create"]]
+        assert len(create_cmds) == 1
+        cmd = create_cmds[0]
+
+        assert "--tmpfs" in cmd
+        tmpfs_idx = cmd.index("--tmpfs")
+        assert cmd[tmpfs_idx + 1] == "/tmp:rw,noexec,nosuid,size=67108864,mode=1777"
+        assert "--read-only" in cmd
+        assert "--network" in cmd and cmd[cmd.index("--network") + 1] == "none"
+        assert "--cap-drop" in cmd and cmd[cmd.index("--cap-drop") + 1] == "ALL"
+        assert "--security-opt" in cmd and cmd[cmd.index("--security-opt") + 1] == "no-new-privileges"
+        assert "--pids-limit" in cmd and cmd[cmd.index("--pids-limit") + 1] == "100"
+        assert "--memory" in cmd and cmd[cmd.index("--memory") + 1] == "512m"
+        assert "--cpus" in cmd and cmd[cmd.index("--cpus") + 1] == "1.0"
+
+        # Ensure no bind-mounted /tmp
+        bind_mounts = [cmd[i+1] for i, arg in enumerate(cmd) if arg == "-v"]
+        assert not any(": /tmp" in b or b.startswith("/tmp:") or ":/tmp:" in b for b in bind_mounts)
 
     def test_docker_inspect_network_mode_bridge_fails(self, valid_inspect_obj):
         from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
@@ -653,6 +856,15 @@ class TestAOS6ControlledPilotContracts:
             "docker_socket_count": 0,
             "credential_mount_count": 0,
             "unexpected_bind_count": 0,
+            "tmpfs_mount_count": 1,
+            "tmpfs_tmp_present": True,
+            "tmpfs_tmp_read_write": True,
+            "tmpfs_tmp_noexec": True,
+            "tmpfs_tmp_nosuid": True,
+            "tmpfs_tmp_mode_1777": True,
+            "tmpfs_tmp_size_bytes": 67108864,
+            "host_tmp_bind_mount_count": 0,
+            "unexpected_tmpfs_mount_count": 0,
             "driver_result_exact_key_validation": "PASS",
             "product_static_qa_attempt_count": 1,
             "product_static_qa_result": "PASS",
@@ -793,7 +1005,16 @@ class TestAOS6ControlledPilotContracts:
                 "driver_mount_readonly": True,
                 "docker_socket_mount_count": 0,
                 "credential_directory_mount_count": 0,
-                "unexpected_host_bind_mount_count": 0
+                "unexpected_host_bind_mount_count": 0,
+                "tmpfs_mount_count": 1,
+                "tmpfs_tmp_present": True,
+                "tmpfs_tmp_read_write": True,
+                "tmpfs_tmp_noexec": True,
+                "tmpfs_tmp_nosuid": True,
+                "tmpfs_tmp_mode_1777": True,
+                "tmpfs_tmp_size_bytes": 67108864,
+                "host_tmp_bind_mount_count": 0,
+                "unexpected_tmpfs_mount_count": 0
             },
             "source_immutability": {
                 "original_source_tree_sha256_pre": "0"*64,
@@ -895,7 +1116,7 @@ class TestAOS6ControlledPilotContracts:
         manifest_p = tmp_path / "pilot_runtime_manifest.json"
         report_p = tmp_path / "pilot_report.json"
 
-        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None, "tmpfs_mount_count": None, "tmpfs_tmp_present": None, "tmpfs_tmp_read_write": None, "tmpfs_tmp_noexec": None, "tmpfs_tmp_nosuid": None, "tmpfs_tmp_mode_1777": None, "tmpfs_tmp_size_bytes": None, "host_tmp_bind_mount_count": None, "unexpected_tmpfs_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
         m_bytes = write_json_deterministic(manifest_p, manifest_obj)
         m_sha = hashlib.sha256(m_bytes).hexdigest()
 
@@ -912,7 +1133,7 @@ class TestAOS6ControlledPilotContracts:
         manifest_p = tmp_path / "pilot_runtime_manifest.json"
         report_p = tmp_path / "pilot_report.json"
 
-        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None, "tmpfs_mount_count": None, "tmpfs_tmp_present": None, "tmpfs_tmp_read_write": None, "tmpfs_tmp_noexec": None, "tmpfs_tmp_nosuid": None, "tmpfs_tmp_mode_1777": None, "tmpfs_tmp_size_bytes": None, "host_tmp_bind_mount_count": None, "unexpected_tmpfs_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
         m_bytes = write_json_deterministic(manifest_p, manifest_obj)
         m_sha = hashlib.sha256(m_bytes).hexdigest()
 
@@ -1100,7 +1321,7 @@ class TestAOS6ControlledPilotContracts:
             "target_image_id": None,
             "target_repo_digest": None,
             "container_name": None,
-            "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None},
+            "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None, "tmpfs_mount_count": None, "tmpfs_tmp_present": None, "tmpfs_tmp_read_write": None, "tmpfs_tmp_noexec": None, "tmpfs_tmp_nosuid": None, "tmpfs_tmp_mode_1777": None, "tmpfs_tmp_size_bytes": None, "host_tmp_bind_mount_count": None, "unexpected_tmpfs_mount_count": None},
             "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None},
             "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None},
             "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}},

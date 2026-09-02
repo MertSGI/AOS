@@ -37,7 +37,16 @@
         "driver_mount_readonly",
         "docker_socket_mount_count",
         "credential_directory_mount_count",
-        "unexpected_host_bind_mount_count"
+        "unexpected_host_bind_mount_count",
+        "tmpfs_mount_count",
+        "tmpfs_tmp_present",
+        "tmpfs_tmp_read_write",
+        "tmpfs_tmp_noexec",
+        "tmpfs_tmp_nosuid",
+        "tmpfs_tmp_mode_1777",
+        "tmpfs_tmp_size_bytes",
+        "host_tmp_bind_mount_count",
+        "unexpected_tmpfs_mount_count"
       ],
       "properties": {
         "network_mode": { "type": ["string", "null"] },
@@ -49,7 +58,16 @@
         "driver_mount_readonly": { "type": ["boolean", "null"] },
         "docker_socket_mount_count": { "type": ["integer", "null"] },
         "credential_directory_mount_count": { "type": ["integer", "null"] },
-        "unexpected_host_bind_mount_count": { "type": ["integer", "null"] }
+        "unexpected_host_bind_mount_count": { "type": ["integer", "null"] },
+        "tmpfs_mount_count": { "type": ["integer", "null"] },
+        "tmpfs_tmp_present": { "type": ["boolean", "null"] },
+        "tmpfs_tmp_read_write": { "type": ["boolean", "null"] },
+        "tmpfs_tmp_noexec": { "type": ["boolean", "null"] },
+        "tmpfs_tmp_nosuid": { "type": ["boolean", "null"] },
+        "tmpfs_tmp_mode_1777": { "type": ["boolean", "null"] },
+        "tmpfs_tmp_size_bytes": { "type": ["integer", "null"] },
+        "host_tmp_bind_mount_count": { "type": ["integer", "null"] },
+        "unexpected_tmpfs_mount_count": { "type": ["integer", "null"] }
       }
     },
     "source_immutability": {

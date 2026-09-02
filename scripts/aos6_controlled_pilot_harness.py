@@ -270,6 +270,18 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
         raise RuntimeError(f"Workspace mount count at '{ws_dest}' must be exactly 1, got {len(ws_mounts)}")
     if len(drv_mounts) != 1:
         raise RuntimeError(f"Driver mount count at '{drv_dest}' must be exactly 1, got {len(drv_mounts)}")
+    # Check host /tmp bind mounts in Mounts FIRST
+    host_tmp_bind_mount_count = 0
+    for m in mounts:
+        dest = m.get("Destination")
+        if dest is not None:
+            norm_dest = Path(dest).as_posix().rstrip("/")
+            if norm_dest == "/tmp" or dest == "/tmp":
+                host_tmp_bind_mount_count += 1
+
+    if host_tmp_bind_mount_count > 0:
+        raise RuntimeError(f"Host /tmp bind mount detected! Count: {host_tmp_bind_mount_count}")
+
     if len(mounts) != 2:
         raise RuntimeError(f"Total mount count must be exactly 2, got {len(mounts)}")
 
@@ -306,6 +318,87 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
     if unexpected_bind_count > 0:
         raise RuntimeError(f"Unexpected bind mount count: {unexpected_bind_count}")
 
+    # Inspect HostConfig.Tmpfs
+    tmpfs_dict = host_config.get("Tmpfs")
+    if tmpfs_dict is None or not isinstance(tmpfs_dict, dict):
+        raise RuntimeError("HostConfig.Tmpfs is missing or invalid object")
+
+    tmpfs_mount_count = len(tmpfs_dict)
+    if tmpfs_mount_count == 0:
+        raise RuntimeError("Tmpfs object is empty")
+
+    tmpfs_tmp_present = "/tmp" in tmpfs_dict
+    unexpected_tmpfs_mount_count = sum(1 for k in tmpfs_dict.keys() if k != "/tmp")
+
+    if not tmpfs_tmp_present:
+        raise RuntimeError("/tmp is not present in HostConfig.Tmpfs")
+
+    if tmpfs_mount_count > 1 or unexpected_tmpfs_mount_count > 0:
+        raise RuntimeError(f"Unexpected second tmpfs destination present! Count: {tmpfs_mount_count}")
+
+    tmp_opt_str = tmpfs_dict["/tmp"]
+    if not isinstance(tmp_opt_str, str):
+        raise RuntimeError("/tmp options in HostConfig.Tmpfs must be string")
+
+    tokens = [t.strip() for t in tmp_opt_str.split(",") if t.strip()]
+
+    # Parse options in order-independent fail-closed manner
+    tmpfs_tmp_read_write = False
+    tmpfs_tmp_noexec = False
+    tmpfs_tmp_nosuid = False
+    tmpfs_tmp_mode_1777 = False
+    tmpfs_tmp_size_bytes = None
+
+    seen_mode_count = 0
+    seen_size_count = 0
+
+    FORBIDDEN_TMPFS_OPTIONS = {"ro", "exec", "suid"}
+
+    for token in tokens:
+        if token in FORBIDDEN_TMPFS_OPTIONS:
+            raise RuntimeError(f"Forbidden security-weakening tmpfs option present: '{token}'")
+
+        if token == "rw":
+            tmpfs_tmp_read_write = True
+        elif token == "noexec":
+            tmpfs_tmp_noexec = True
+        elif token == "nosuid":
+            tmpfs_tmp_nosuid = True
+        elif token.startswith("mode="):
+            seen_mode_count += 1
+            mode_val = token.split("=", 1)[1]
+            if mode_val == "1777":
+                tmpfs_tmp_mode_1777 = True
+        elif token.startswith("size="):
+            seen_size_count += 1
+            size_val = token.split("=", 1)[1]
+            try:
+                # Support exact numeric byte string or canonical representation
+                parsed_size = int(size_val)
+                tmpfs_tmp_size_bytes = parsed_size
+            except ValueError:
+                raise RuntimeError(f"Malformed non-numeric size token in tmpfs options: '{token}'")
+        else:
+            raise RuntimeError(f"Unexpected tmpfs option token: '{token}'")
+
+    if seen_mode_count > 1:
+        raise RuntimeError("Duplicate/conflicting mode token in tmpfs options")
+    if seen_size_count > 1:
+        raise RuntimeError("Duplicate/conflicting size token in tmpfs options")
+
+    if not tmpfs_tmp_read_write:
+        raise RuntimeError("tmpfs /tmp missing 'rw' option")
+    if not tmpfs_tmp_noexec:
+        raise RuntimeError("tmpfs /tmp missing 'noexec' option")
+    if not tmpfs_tmp_nosuid:
+        raise RuntimeError("tmpfs /tmp missing 'nosuid' option")
+    if not tmpfs_tmp_mode_1777:
+        raise RuntimeError("tmpfs /tmp missing or invalid mode=1777 option")
+    if tmpfs_tmp_size_bytes is None:
+        raise RuntimeError("tmpfs /tmp missing size option")
+    if tmpfs_tmp_size_bytes != 67108864:
+        raise RuntimeError(f"tmpfs /tmp size_bytes must be exactly 67108864, got {tmpfs_tmp_size_bytes}")
+
     return {
         "network_mode": net_mode,
         "readonly_rootfs": readonly_root,
@@ -316,7 +409,16 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
         "driver_mount_readonly": True,
         "docker_socket_mount_count": docker_socket_count,
         "credential_directory_mount_count": cred_mount_count,
-        "unexpected_host_bind_mount_count": unexpected_bind_count
+        "unexpected_host_bind_mount_count": unexpected_bind_count,
+        "tmpfs_mount_count": tmpfs_mount_count,
+        "tmpfs_tmp_present": tmpfs_tmp_present,
+        "tmpfs_tmp_read_write": tmpfs_tmp_read_write,
+        "tmpfs_tmp_noexec": tmpfs_tmp_noexec,
+        "tmpfs_tmp_nosuid": tmpfs_tmp_nosuid,
+        "tmpfs_tmp_mode_1777": tmpfs_tmp_mode_1777,
+        "tmpfs_tmp_size_bytes": tmpfs_tmp_size_bytes,
+        "host_tmp_bind_mount_count": host_tmp_bind_mount_count,
+        "unexpected_tmpfs_mount_count": unexpected_tmpfs_mount_count
     }
 
 def parse_and_validate_driver_terminal_result(output_text):
@@ -415,6 +517,15 @@ def derive_pilot_result(obs):
         obs.get("docker_socket_count") == 0,
         obs.get("credential_mount_count") == 0,
         obs.get("unexpected_bind_count") == 0,
+        obs.get("tmpfs_mount_count") == 1,
+        obs.get("tmpfs_tmp_present") is True,
+        obs.get("tmpfs_tmp_read_write") is True,
+        obs.get("tmpfs_tmp_noexec") is True,
+        obs.get("tmpfs_tmp_nosuid") is True,
+        obs.get("tmpfs_tmp_mode_1777") is True,
+        obs.get("tmpfs_tmp_size_bytes") == 67108864,
+        obs.get("host_tmp_bind_mount_count") == 0,
+        obs.get("unexpected_tmpfs_mount_count") == 0,
         obs.get("driver_result_exact_key_validation") == "PASS",
         obs.get("product_static_qa_attempt_count") == 1,
         obs.get("product_static_qa_result") == "PASS",
@@ -653,6 +764,7 @@ def execute_harness(request_path, output_dir, runner=None):
             "--pids-limit", "100",
             "--memory", "512m",
             "--cpus", "1.0",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=67108864,mode=1777",
             "-v", f"{temp_workspace_dir.as_posix()}:/workspace:ro",
             "-v", f"{driver_src_path.as_posix()}:/aos-driver/aos6_controlled_pilot_driver.mjs:ro"
         ] + env_args + [TARGET_IMAGE_NAME, "node", "/aos-driver/aos6_controlled_pilot_driver.mjs"]
@@ -863,6 +975,15 @@ def execute_harness(request_path, output_dir, runner=None):
         "docker_socket_count": container_inspection_obs.get("docker_socket_mount_count") if container_inspection_obs else None,
         "credential_mount_count": container_inspection_obs.get("credential_directory_mount_count") if container_inspection_obs else None,
         "unexpected_bind_count": container_inspection_obs.get("unexpected_host_bind_mount_count") if container_inspection_obs else None,
+        "tmpfs_mount_count": container_inspection_obs.get("tmpfs_mount_count") if container_inspection_obs else None,
+        "tmpfs_tmp_present": container_inspection_obs.get("tmpfs_tmp_present") if container_inspection_obs else None,
+        "tmpfs_tmp_read_write": container_inspection_obs.get("tmpfs_tmp_read_write") if container_inspection_obs else None,
+        "tmpfs_tmp_noexec": container_inspection_obs.get("tmpfs_tmp_noexec") if container_inspection_obs else None,
+        "tmpfs_tmp_nosuid": container_inspection_obs.get("tmpfs_tmp_nosuid") if container_inspection_obs else None,
+        "tmpfs_tmp_mode_1777": container_inspection_obs.get("tmpfs_tmp_mode_1777") if container_inspection_obs else None,
+        "tmpfs_tmp_size_bytes": container_inspection_obs.get("tmpfs_tmp_size_bytes") if container_inspection_obs else None,
+        "host_tmp_bind_mount_count": container_inspection_obs.get("host_tmp_bind_mount_count") if container_inspection_obs else None,
+        "unexpected_tmpfs_mount_count": container_inspection_obs.get("unexpected_tmpfs_mount_count") if container_inspection_obs else None,
         "driver_result_exact_key_validation": driver_val_res,
         "product_static_qa_attempt_count": driver_result.get("product_static_qa_attempt_count") if driver_result else 0,
         "product_static_qa_result": driver_result.get("product_static_qa_result") if driver_result else "FAIL",
@@ -920,7 +1041,16 @@ def execute_harness(request_path, output_dir, runner=None):
             "driver_mount_readonly": None,
             "docker_socket_mount_count": None,
             "credential_directory_mount_count": None,
-            "unexpected_host_bind_mount_count": None
+            "unexpected_host_bind_mount_count": None,
+            "tmpfs_mount_count": None,
+            "tmpfs_tmp_present": None,
+            "tmpfs_tmp_read_write": None,
+            "tmpfs_tmp_noexec": None,
+            "tmpfs_tmp_nosuid": None,
+            "tmpfs_tmp_mode_1777": None,
+            "tmpfs_tmp_size_bytes": None,
+            "host_tmp_bind_mount_count": None,
+            "unexpected_tmpfs_mount_count": None
         },
         "source_immutability": {
             "original_source_tree_sha256_pre": source_manifest_before_sha256,
