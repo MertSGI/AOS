@@ -809,6 +809,7 @@ class TestAOS6ControlledPilotContracts:
             "workflow_execution": {
                 "step_p1_static_qa": "PASS",
                 "step_p2_policy_boot": "PASS",
+                "step_p3_result": "PASS",
                 "step_p3_grounded_policy_matrix": {
                     "unsafe_promise_rejected": True,
                     "safe_request_accepted": True,
@@ -817,6 +818,18 @@ class TestAOS6ControlledPilotContracts:
                     "mock_fetch_success_produced": True,
                     "mock_fetch_exception_503_produced": True
                 }
+            },
+            "driver_evidence": {
+                "stdout_filename": "pilot_driver_stdout.log",
+                "stdout_sha256": "0"*64,
+                "stderr_filename": "pilot_driver_stderr.log",
+                "stderr_sha256": "0"*64,
+                "terminal_result_filename": "pilot_driver_terminal_result.json",
+                "terminal_result_sha256": "0"*64,
+                "terminal_result_parse_status": "PASS",
+                "driver_exit_code": 0,
+                "first_failed_step": None,
+                "sanitized_primary_failure_reason": None
             },
             "cleanup_verification": {
                 "cleanup_attempted": True,
@@ -882,7 +895,7 @@ class TestAOS6ControlledPilotContracts:
         manifest_p = tmp_path / "pilot_runtime_manifest.json"
         report_p = tmp_path / "pilot_report.json"
 
-        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
         m_bytes = write_json_deterministic(manifest_p, manifest_obj)
         m_sha = hashlib.sha256(m_bytes).hexdigest()
 
@@ -899,7 +912,7 @@ class TestAOS6ControlledPilotContracts:
         manifest_p = tmp_path / "pilot_runtime_manifest.json"
         report_p = tmp_path / "pilot_report.json"
 
-        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
+        manifest_obj = {"schema_version": "0.1.0", "pilot_run_id": "P123", "target_image_name": None, "target_image_id": None, "target_repo_digest": None, "container_name": None, "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None}, "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None}, "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None}, "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}}, "driver_evidence": {"stdout_filename": None, "stdout_sha256": None, "stderr_filename": None, "stderr_sha256": None, "terminal_result_filename": None, "terminal_result_sha256": None, "terminal_result_parse_status": "NOT_RUN", "driver_exit_code": None, "first_failed_step": None, "sanitized_primary_failure_reason": None}, "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}}
         m_bytes = write_json_deterministic(manifest_p, manifest_obj)
         m_sha = hashlib.sha256(m_bytes).hexdigest()
 
