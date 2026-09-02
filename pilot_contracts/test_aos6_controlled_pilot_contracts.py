@@ -1027,8 +1027,16 @@ class TestAOS6ControlledPilotContracts:
 
         assert manifest["workflow_execution"]["step_p1_static_qa"] == "FAIL"
         assert manifest["workflow_execution"]["step_p2_policy_boot"] == "NOT_RUN"
+        assert manifest["workflow_execution"]["step_p3_result"] == "NOT_RUN"
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["unsafe_promise_rejected"] is None
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["safe_request_accepted"] is None
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["localized_responses_produced"] is None
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["missing_key_503_produced"] is None
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["mock_fetch_success_produced"] is None
+        assert manifest["workflow_execution"]["step_p3_grounded_policy_matrix"]["mock_fetch_exception_503_produced"] is None
+
         assert report["runtime_boot_result"] == "NOT_RUN"
-        assert report["bounded_workflow_result"] == "NOT_RUN"
+        assert report["bounded_workflow_result"] == "FAIL"
         assert report["aos6_controlled_pilot_result"] == "FAIL"
         assert report["evidence_capture_result"] == "PASS"
         assert report["first_failed_step_if_any"] == "P1_STATIC_QA"
@@ -1046,6 +1054,127 @@ class TestAOS6ControlledPilotContracts:
         # Validate attestation bindings
         assert attest["report_sha256"] == hashlib.sha256(report_p.read_bytes()).hexdigest()
         assert attest["runtime_manifest_sha256"] == hashlib.sha256(manifest_p.read_bytes()).hexdigest()
+
+    def test_p3_real_pass_step_p3_result_pass(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+
+        execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["workflow_execution"]["step_p3_result"] == "PASS"
+
+    def test_p3_real_failure_step_p3_result_fail(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.driver_output_json["unsafe_grounding_result"] = "FAIL"
+        fake_runner.driver_output_json["bounded_workflow_result"] = "FAIL"
+        fake_runner.docker_start_returncode = 1
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["workflow_execution"]["step_p3_result"] == "FAIL"
+
+    def test_runtime_manifest_missing_driver_evidence_schema_fails(self, manifest_schema):
+        bad_manifest = {
+            "schema_version": "0.1.0",
+            "pilot_run_id": "P123",
+            "target_image_name": None,
+            "target_image_id": None,
+            "target_repo_digest": None,
+            "container_name": None,
+            "container_inspection": {"network_mode": None, "readonly_rootfs": None, "pids_limit": None, "cap_drop_has_all": None, "no_new_privileges": None, "workspace_mount_readonly": None, "driver_mount_readonly": None, "docker_socket_mount_count": None, "credential_directory_mount_count": None, "unexpected_host_bind_mount_count": None},
+            "source_immutability": {"original_source_tree_sha256_pre": None, "original_source_tree_sha256_post": None, "immutable": None},
+            "dependency_preparation": {"location": None, "command": None, "result": "NOT_CHECKED", "lifecycle_scripts_disabled": None},
+            "workflow_execution": {"step_p1_static_qa": "NOT_CHECKED", "step_p2_policy_boot": "NOT_CHECKED", "step_p3_result": "NOT_CHECKED", "step_p3_grounded_policy_matrix": {"unsafe_promise_rejected": None, "safe_request_accepted": None, "localized_responses_produced": None, "missing_key_503_produced": None, "mock_fetch_success_produced": None, "mock_fetch_exception_503_produced": None}},
+            "cleanup_verification": {"cleanup_attempted": False, "docker_rm_return_code": None, "post_cleanup_absence_proven": None, "surviving_resource_count": None}
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=bad_manifest, schema=manifest_schema)
+
+    def test_driver_evidence_present_before_driver_execution(self, tmp_path, manifest_schema):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.fetch_head_sha = "0000000000000000000000000000000000000000"  # Fail early in phase 1
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+        jsonschema.validate(instance=manifest, schema=manifest_schema)
+
+        assert manifest["driver_evidence"]["stdout_filename"] is None
+        assert manifest["driver_evidence"]["terminal_result_parse_status"] == "NOT_RUN"
+
+    def test_terminal_parse_exception_contains_fake_secret_sanitized(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stdout = "AOS6_PILOT_DRIVER_RESULT={invalid_json_with_secret_/secrets/db_password.txt}\n"
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        report = json.loads((tmp_path / "pilot_report.json").read_text(encoding="utf-8"))
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+
+        assert report["blocker_if_any"] == "DRIVER_TERMINAL_RESULT_PARSE_FAILED"
+        assert manifest["driver_evidence"]["sanitized_primary_failure_reason"] == "DRIVER_TERMINAL_RESULT_PARSE_FAILED"
+        assert "/secrets" not in report["blocker_if_any"]
+
+    def test_generic_harness_exception_contains_fake_secret_sanitized(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        # Raise generic exception inside docker pull
+        def bad_run(cmd, cwd=None, env=None, check=True):
+            if cmd[0] == "docker" and cmd[1] == "pull":
+                raise RuntimeError("Docker pull failed with secret=/etc/secrets/token")
+            return fake_runner.run(cmd, cwd=cwd, env=env, check=check)
+
+        fake_runner_wrapper = copy.copy(fake_runner)
+        fake_runner_wrapper.run = bad_run
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner_wrapper)
+
+        report = json.loads((tmp_path / "pilot_report.json").read_text(encoding="utf-8"))
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+
+        assert report["blocker_if_any"] == "HARNESS_EXECUTION_FAILURE"
+        assert manifest["driver_evidence"]["sanitized_primary_failure_reason"] == "HARNESS_EXECUTION_FAILURE"
+        assert "/etc/secrets" not in report["blocker_if_any"]
+
+    def test_early_failure_cleanup_result_not_checked(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.fetch_head_sha = "0000000000000000000000000000000000000000"
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        report = json.loads((tmp_path / "pilot_report.json").read_text(encoding="utf-8"))
+        assert report["cleanup_result"] == "NOT_CHECKED"
+
+    def test_actual_cleanup_failure_cleanup_result_fail(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_rm_returncode = 1
+        fake_runner.docker_inspect_absent = False
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        report = json.loads((tmp_path / "pilot_report.json").read_text(encoding="utf-8"))
+        assert report["cleanup_result"] == "FAIL"
 
     def test_failure_matrix_b_nonzero_driver_emits_evidence(self, tmp_path):
         from scripts.aos6_controlled_pilot_harness import execute_harness
@@ -1172,9 +1301,30 @@ class TestAOS6ControlledPilotContracts:
         assert "ACTUAL_SHA=$(git rev-parse HEAD)" in content
         assert "$AUTHORIZED_AOS_SHA" in content
         assert "${{ github.sha }}" not in content
-        assert "controlled_pilot_authorized_aos_sha" in content
+        assert "controlled_pilot_authorized_pre_execution_count" in content
+        assert "exec_count_match" in content
+        assert "controlled_pilot_execution_count" in content
         assert "push:" not in content
         assert "pull_request:" not in content
         assert "schedule:" not in content
         assert "workflow_run:" not in content
+
+    def test_workflow_pre_execution_count_field_required(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        assert 'ext.get(\'controlled_pilot_authorized_pre_execution_count\')' in content
+
+    def test_workflow_does_not_hardcode_execution_count_zero(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+        assert "exec_count = ext.get('controlled_pilot_execution_count') == 0" not in content
+
+    def test_current_state_unauthorized_preflight_fails_closed(self):
+        state_path = Path(__file__).resolve().parent.parent / "docs" / "project-control" / "STATE.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        ext = state.get("extensions", {}).get("aos6_lari_controlled_pilot", {})
+
+        auth_ok = ext.get("controlled_pilot_authorized") is True
+        assert auth_ok is False, "Current state must remain unauthorized"
+
 

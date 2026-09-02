@@ -723,17 +723,19 @@ def execute_harness(request_path, output_dir, runner=None):
                 sanitized_primary_failure_reason = "STEP_P3_GROUNDED_POLICY_MATRIX_FAILED"
 
             if start_res.returncode != 0 or driver_result.get("bounded_workflow_result") != "PASS":
-                primary_failure = sanitized_primary_failure_reason or f"TARGET_CONTAINER_DRIVER_EXIT_{start_res.returncode}"
+                primary_failure = sanitized_primary_failure_reason or "STEP_P3_GROUNDED_POLICY_MATRIX_FAILED"
 
         except Exception as parse_err:
             print(f"[AOS6 Harness] Driver terminal result parse error: {parse_err}", file=sys.stderr)
             terminal_result_parse_status = "FAIL"
-            primary_failure = f"DRIVER_TERMINAL_RESULT_PARSE_FAILED: {parse_err}"
+            sanitized_primary_failure_reason = "DRIVER_TERMINAL_RESULT_PARSE_FAILED"
+            primary_failure = "DRIVER_TERMINAL_RESULT_PARSE_FAILED"
             first_failed_step = "TERMINAL_RESULT_PARSING"
 
     except Exception as e:
         print(f"[AOS6 Harness] Execution error: {e}", file=sys.stderr)
-        primary_failure = str(e)
+        sanitized_primary_failure_reason = "HARNESS_EXECUTION_FAILURE"
+        primary_failure = "HARNESS_EXECUTION_FAILURE"
         if not first_failed_step:
             first_failed_step = "HARNESS_EXECUTION_FAILURE"
 
@@ -810,6 +812,35 @@ def execute_harness(request_path, output_dir, runner=None):
     ) else "FAIL"
 
     final_pair_verified = False
+
+    # Derive P3 step result
+    if not driver_result:
+        step_p3_res = "NOT_CHECKED"
+    elif driver_result.get("product_static_qa_result") != "PASS" or driver_result.get("policy_module_boot_result") != "PASS":
+        step_p3_res = "NOT_RUN"
+    else:
+        p3_matrix = [
+            driver_result.get("unsafe_grounding_result"),
+            driver_result.get("safe_grounding_result"),
+            driver_result.get("localization_result"),
+            driver_result.get("no_key_provider_result"),
+            driver_result.get("mock_provider_success_result"),
+            driver_result.get("mock_provider_failure_result")
+        ]
+        if all(v == "PASS" for v in p3_matrix):
+            step_p3_res = "PASS"
+        elif any(v == "FAIL" for v in p3_matrix):
+            step_p3_res = "FAIL"
+        else:
+            step_p3_res = "NOT_RUN"
+
+    # Derive cleanup result
+    if cleanup_attempt_count == 0:
+        cleanup_res = "NOT_CHECKED"
+    elif cleanup_success_count == 1:
+        cleanup_res = "PASS"
+    else:
+        cleanup_res = "FAIL"
 
     observations = {
         "primary_failure": primary_failure,
@@ -905,13 +936,14 @@ def execute_harness(request_path, output_dir, runner=None):
         "workflow_execution": {
             "step_p1_static_qa": driver_result.get("product_static_qa_result", "NOT_RUN") if driver_result else "NOT_RUN",
             "step_p2_policy_boot": driver_result.get("policy_module_boot_result", "NOT_RUN") if driver_result else "NOT_RUN",
+            "step_p3_result": step_p3_res,
             "step_p3_grounded_policy_matrix": {
-                "unsafe_promise_rejected": driver_result.get("unsafe_grounding_result") == "PASS" if driver_result else None,
-                "safe_request_accepted": driver_result.get("safe_grounding_result") == "PASS" if driver_result else None,
-                "localized_responses_produced": driver_result.get("localization_result") == "PASS" if driver_result else None,
-                "missing_key_503_produced": driver_result.get("no_key_provider_result") == "PASS" if driver_result else None,
-                "mock_fetch_success_produced": driver_result.get("mock_provider_success_result") == "PASS" if driver_result else None,
-                "mock_fetch_exception_503_produced": driver_result.get("mock_provider_failure_result") == "PASS" if driver_result else None
+                "unsafe_promise_rejected": (driver_result.get("unsafe_grounding_result") == "PASS") if (driver_result and driver_result.get("unsafe_grounding_result") in ("PASS", "FAIL")) else None,
+                "safe_request_accepted": (driver_result.get("safe_grounding_result") == "PASS") if (driver_result and driver_result.get("safe_grounding_result") in ("PASS", "FAIL")) else None,
+                "localized_responses_produced": (driver_result.get("localization_result") == "PASS") if (driver_result and driver_result.get("localization_result") in ("PASS", "FAIL")) else None,
+                "missing_key_503_produced": (driver_result.get("no_key_provider_result") == "PASS") if (driver_result and driver_result.get("no_key_provider_result") in ("PASS", "FAIL")) else None,
+                "mock_fetch_success_produced": (driver_result.get("mock_provider_success_result") == "PASS") if (driver_result and driver_result.get("mock_provider_success_result") in ("PASS", "FAIL")) else None,
+                "mock_fetch_exception_503_produced": (driver_result.get("mock_provider_failure_result") == "PASS") if (driver_result and driver_result.get("mock_provider_failure_result") in ("PASS", "FAIL")) else None
             }
         },
         "driver_evidence": {
@@ -924,7 +956,7 @@ def execute_harness(request_path, output_dir, runner=None):
             "terminal_result_parse_status": terminal_result_parse_status if 'terminal_result_parse_status' in locals() else "NOT_RUN",
             "driver_exit_code": driver_exit_code if 'driver_exit_code' in locals() else None,
             "first_failed_step": first_failed_step,
-            "sanitized_primary_failure_reason": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() else primary_failure
+            "sanitized_primary_failure_reason": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() else None
         },
         "cleanup_verification": {
             "cleanup_attempted": cleanup_attempt_count > 0,
@@ -953,7 +985,7 @@ def execute_harness(request_path, output_dir, runner=None):
         "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE",
         "bounded_workflow_result": driver_result.get("bounded_workflow_result", "NOT_RUN") if driver_result else "NOT_RUN",
         "evidence_capture_result": "NOT_CHECKED",
-        "cleanup_result": "PASS" if cleanup_success_count == 1 else "FAIL",
+        "cleanup_result": cleanup_res,
         "source_mutation_count": source_mutation_count,
         "canonical_lari_mutation_count": canonical_lari_mutation_count,
         "authorized_source_acquisition_count": authorized_source_acquisition_count,
@@ -973,7 +1005,7 @@ def execute_harness(request_path, output_dir, runner=None):
         "attempt_count": attempt_count,
         "retry_count": retry_count,
         "first_failed_step_if_any": first_failed_step,
-        "blocker_if_any": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() and sanitized_primary_failure_reason else primary_failure,
+        "blocker_if_any": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() else None,
         "stage12c_authority": "NOT_AUTHORIZED",
         "production_authority": "NO",
         "controller_review_required": True,

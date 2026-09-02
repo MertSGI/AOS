@@ -14,6 +14,7 @@
     "source_immutability",
     "dependency_preparation",
     "workflow_execution",
+    "driver_evidence",
     "cleanup_verification"
   ],
   "properties": {
@@ -78,11 +79,13 @@
       "required": [
         "step_p1_static_qa",
         "step_p2_policy_boot",
+        "step_p3_result",
         "step_p3_grounded_policy_matrix"
       ],
       "properties": {
         "step_p1_static_qa": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
         "step_p2_policy_boot": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
+        "step_p3_result": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
         "step_p3_grounded_policy_matrix": {
           "type": "object",
           "additionalProperties": false,
