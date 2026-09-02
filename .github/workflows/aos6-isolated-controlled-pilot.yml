@@ -2,6 +2,11 @@ name: AOS6 Isolated Controlled Pilot
 
 on:
   workflow_dispatch:
+    inputs:
+      authorized_aos_sha:
+        description: Explicit Controller-authorized exact AOS SHA
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,37 +17,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Validate Authorized AOS SHA Format
+        env:
+          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
+        run: |
+          python -c "
+          import os, re, sys
+          sha = os.environ.get('AUTHORIZED_AOS_SHA', '')
+          if not re.match(r'^[0-9a-f]{40}$', sha):
+              print(f'Invalid authorized_aos_sha format: \"{sha}\"', file=sys.stderr)
+              sys.exit(1)
+          print('Authorized AOS SHA input format valid.')
+          "
+
       - name: Checkout AOS Repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.authorized_aos_sha }}
           persist-credentials: false
           fetch-depth: 1
 
       - name: Verify Exact AOS SHA Binding
+        env:
+          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
         run: |
           ACTUAL_SHA=$(git rev-parse HEAD)
-          if [ "$ACTUAL_SHA" != "${{ github.sha }}" ]; then
+          if [ "$ACTUAL_SHA" != "$AUTHORIZED_AOS_SHA" ]; then
             echo "AOS SHA mismatch failure!"
             exit 1
           fi
 
       - name: Verify Canonical AOS STATE Authority Before Source Acquisition
+        env:
+          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
         run: |
           python -c "
-          import json, sys
+          import json, os, sys
           from pathlib import Path
+          auth_sha_input = os.environ.get('AUTHORIZED_AOS_SHA', '')
           state = json.loads(Path('docs/project-control/STATE.json').read_text('utf-8'))
           ext = state.get('extensions', {}).get('aos6_lari_controlled_pilot', {})
 
           auth_ok = ext.get('controlled_pilot_authorized') is True
           auth_class = ext.get('controlled_pilot_authority_class') == 'AUTHORIZED_ISOLATED_ONLY'
+          auth_sha_bound = ext.get('controlled_pilot_authorized_aos_sha') == auth_sha_input
           exec_count = ext.get('controlled_pilot_execution_count') == 0
           source_sha = ext.get('controlled_pilot_source_sha') == 'cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a'
           stage12c_no = ext.get('stage12c_authorized') is False
           prod_no = ext.get('production_authority') is False
 
-          if not (auth_ok and auth_class and exec_count and source_sha and stage12c_no and prod_no):
+          if not (auth_ok and auth_class and auth_sha_bound and exec_count and source_sha and stage12c_no and prod_no):
               print('Canonical AOS STATE authority verification failed!', file=sys.stderr)
               sys.exit(1)
           print('Canonical AOS STATE authority verified successfully.')

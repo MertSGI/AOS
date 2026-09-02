@@ -59,6 +59,9 @@ class FakeCommandRunner:
         self.docker_rm_returncode = 0
         self.docker_inspect_absent = True
         self.created_mounts = []
+        self.docker_start_returncode = 0
+        self.docker_start_stdout = None
+        self.docker_start_stderr = ""
         self.driver_output_json = {
             "product_static_qa_attempt_count": 1,
             "product_static_qa_result": "PASS",
@@ -158,8 +161,8 @@ class FakeCommandRunner:
                     }]
                     return MockCommandResult(stdout=json.dumps(inspect_obj))
             if cmd[1] == "start":
-                out_line = f"AOS6_PILOT_DRIVER_RESULT={json.dumps(self.driver_output_json)}\n"
-                return MockCommandResult(stdout=out_line, returncode=0)
+                stdout_txt = self.docker_start_stdout if self.docker_start_stdout is not None else f"AOS6_PILOT_DRIVER_RESULT={json.dumps(self.driver_output_json)}\n"
+                return MockCommandResult(stdout=stdout_txt, stderr=self.docker_start_stderr, returncode=self.docker_start_returncode)
             if cmd[1] == "rm":
                 return MockCommandResult(stdout="", returncode=self.docker_rm_returncode)
 
@@ -967,3 +970,211 @@ class TestAOS6ControlledPilotContracts:
         assert manifest["cleanup_verification"]["docker_rm_return_code"] is None
         assert report["attempt_count"] == 0
         assert report["retry_count"] == 0
+
+    # 14. END-TO-END EXACT P1 FAILURE REGRESSION & MATRIX TESTS A-N
+    def test_e2e_p1_failure_regression_exact_structure(self, tmp_path, report_schema, manifest_schema, attestation_schema):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stdout = "AOS6_PILOT_DRIVER_RESULT=" + json.dumps({
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "FAIL",
+            "policy_module_boot_result": "NOT_RUN",
+            "unsafe_grounding_result": "NOT_RUN",
+            "safe_grounding_result": "NOT_RUN",
+            "localization_result": "NOT_RUN",
+            "no_key_provider_result": "NOT_RUN",
+            "mock_provider_success_result": "NOT_RUN",
+            "mock_provider_failure_result": "NOT_RUN",
+            "mock_provider_call_count": 0,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "FAIL",
+            "error": "STEP_P1_STATIC_QA_FAILED"
+        }) + "\n"
+        fake_runner.docker_start_stderr = "Static QA execution error trace\n"
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        assert exc_info.value.code == 1
+
+        start_commands = [c for c in fake_runner.commands if len(c[0]) >= 2 and c[0][0:2] == ["docker", "start"]]
+        assert len(start_commands) == 1
+
+        stdout_p = tmp_path / "pilot_driver_stdout.log"
+        stderr_p = tmp_path / "pilot_driver_stderr.log"
+        term_res_p = tmp_path / "pilot_driver_terminal_result.json"
+        manifest_p = tmp_path / "pilot_runtime_manifest.json"
+        report_p = tmp_path / "pilot_report.json"
+        attest_p = tmp_path / "pilot_attestation.json"
+
+        assert stdout_p.exists()
+        assert stderr_p.exists()
+        assert term_res_p.exists()
+        assert manifest_p.exists()
+        assert report_p.exists()
+        assert attest_p.exists()
+
+        report = json.loads(report_p.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+        attest = json.loads(attest_p.read_text(encoding="utf-8"))
+
+        jsonschema.validate(instance=report, schema=report_schema)
+        jsonschema.validate(instance=manifest, schema=manifest_schema)
+        jsonschema.validate(instance=attest, schema=attestation_schema)
+
+        assert manifest["workflow_execution"]["step_p1_static_qa"] == "FAIL"
+        assert manifest["workflow_execution"]["step_p2_policy_boot"] == "NOT_RUN"
+        assert report["runtime_boot_result"] == "NOT_RUN"
+        assert report["bounded_workflow_result"] == "NOT_RUN"
+        assert report["aos6_controlled_pilot_result"] == "FAIL"
+        assert report["evidence_capture_result"] == "PASS"
+        assert report["first_failed_step_if_any"] == "P1_STATIC_QA"
+        assert report["blocker_if_any"] == "STEP_P1_STATIC_QA_FAILED"
+        assert report["attempt_count"] == 1
+        assert report["retry_count"] == 0
+        assert report["cleanup_result"] == "PASS"
+        assert report["surviving_disposable_resource_count"] == 0
+
+        # Validate hashes
+        assert hashlib.sha256(stdout_p.read_bytes()).hexdigest() == manifest["driver_evidence"]["stdout_sha256"]
+        assert hashlib.sha256(stderr_p.read_bytes()).hexdigest() == manifest["driver_evidence"]["stderr_sha256"]
+        assert hashlib.sha256(term_res_p.read_bytes()).hexdigest() == manifest["driver_evidence"]["terminal_result_sha256"]
+
+        # Validate attestation bindings
+        assert attest["report_sha256"] == hashlib.sha256(report_p.read_bytes()).hexdigest()
+        assert attest["runtime_manifest_sha256"] == hashlib.sha256(manifest_p.read_bytes()).hexdigest()
+
+    def test_failure_matrix_b_nonzero_driver_emits_evidence(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stdout = "AOS6_PILOT_DRIVER_RESULT=" + json.dumps({
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "FAIL",
+            "policy_module_boot_result": "NOT_RUN",
+            "unsafe_grounding_result": "NOT_RUN",
+            "safe_grounding_result": "NOT_RUN",
+            "localization_result": "NOT_RUN",
+            "no_key_provider_result": "NOT_RUN",
+            "mock_provider_success_result": "NOT_RUN",
+            "mock_provider_failure_result": "NOT_RUN",
+            "mock_provider_call_count": 0,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "FAIL",
+            "error": "STEP_P1_STATIC_QA_FAILED"
+        }) + "\n"
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        assert exc_info.value.code == 1
+        assert (tmp_path / "pilot_report.json").exists()
+        assert (tmp_path / "pilot_runtime_manifest.json").exists()
+        assert (tmp_path / "pilot_attestation.json").exists()
+
+    def test_failure_matrix_c_d_stdout_stderr_persisted_before_parse_failure(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stdout = "SOMETHING_CRASHED_WITHOUT_TERMINAL_RESULT\n"
+        fake_runner.docker_start_stderr = "FATAL: Node memory limit hit\n"
+
+        with pytest.raises(SystemExit) as exc_info:
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        assert exc_info.value.code == 1
+        stdout_text = (tmp_path / "pilot_driver_stdout.log").read_text(encoding="utf-8")
+        stderr_text = (tmp_path / "pilot_driver_stderr.log").read_text(encoding="utf-8")
+        assert "SOMETHING_CRASHED_WITHOUT_TERMINAL_RESULT" in stdout_text
+        assert "FATAL: Node memory limit hit" in stderr_text
+
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["driver_evidence"]["terminal_result_parse_status"] == "FAIL"
+
+    def test_failure_matrix_g_h_driver_log_hash_modification_detectable(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stdout = "AOS6_PILOT_DRIVER_RESULT=" + json.dumps({
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "FAIL",
+            "policy_module_boot_result": "NOT_RUN",
+            "unsafe_grounding_result": "NOT_RUN",
+            "safe_grounding_result": "NOT_RUN",
+            "localization_result": "NOT_RUN",
+            "no_key_provider_result": "NOT_RUN",
+            "mock_provider_success_result": "NOT_RUN",
+            "mock_provider_failure_result": "NOT_RUN",
+            "mock_provider_call_count": 0,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "FAIL",
+            "error": "STEP_P1_STATIC_QA_FAILED"
+        }) + "\n"
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        stdout_p = tmp_path / "pilot_driver_stdout.log"
+        stdout_p.write_text(stdout_p.read_text(encoding="utf-8") + "tampered", encoding="utf-8")
+
+        manifest = json.loads((tmp_path / "pilot_runtime_manifest.json").read_text(encoding="utf-8"))
+        actual_hash = hashlib.sha256(stdout_p.read_bytes()).hexdigest()
+        assert manifest["driver_evidence"]["stdout_sha256"] != actual_hash
+
+    def test_failure_matrix_m_raw_stderr_not_in_structured_blocker(self, tmp_path):
+        from scripts.aos6_controlled_pilot_harness import execute_harness
+        req_file = CONTRACTS_DIR / "aos6_controlled_pilot_request.json"
+        fake_runner = FakeCommandRunner()
+        fake_runner.docker_start_returncode = 1
+        fake_runner.docker_start_stderr = "Error: secret=/etc/credentials/secret_key.pem\n  at /app/index.js:10\n"
+        fake_runner.docker_start_stdout = "AOS6_PILOT_DRIVER_RESULT=" + json.dumps({
+            "product_static_qa_attempt_count": 1,
+            "product_static_qa_result": "FAIL",
+            "policy_module_boot_result": "NOT_RUN",
+            "unsafe_grounding_result": "NOT_RUN",
+            "safe_grounding_result": "NOT_RUN",
+            "localization_result": "NOT_RUN",
+            "no_key_provider_result": "NOT_RUN",
+            "mock_provider_success_result": "NOT_RUN",
+            "mock_provider_failure_result": "NOT_RUN",
+            "mock_provider_call_count": 0,
+            "real_provider_network_call_count": 0,
+            "bounded_workflow_result": "FAIL",
+            "error": "STEP_P1_STATIC_QA_FAILED"
+        }) + "\n"
+
+        with pytest.raises(SystemExit):
+            execute_harness(req_file, tmp_path, runner=fake_runner)
+
+        report = json.loads((tmp_path / "pilot_report.json").read_text(encoding="utf-8"))
+        assert report["blocker_if_any"] == "STEP_P1_STATIC_QA_FAILED"
+        assert "/etc/credentials" not in report["blocker_if_any"]
+
+    # 15. WORKFLOW STATIC CONTRACT TESTS (Section 18)
+    def test_workflow_authorized_aos_sha_input_contract(self):
+        wf_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "aos6-isolated-controlled-pilot.yml"
+        content = wf_path.read_text(encoding="utf-8")
+
+        assert "workflow_dispatch:" in content
+        assert "authorized_aos_sha:" in content
+        assert "required: true" in content
+        assert "type: string" in content
+        assert "default:" not in content
+        assert "^[0-9a-f]{40}$" in content
+        assert "ref: ${{ inputs.authorized_aos_sha }}" in content
+        assert "persist-credentials: false" in content
+        assert "ACTUAL_SHA=$(git rev-parse HEAD)" in content
+        assert "$AUTHORIZED_AOS_SHA" in content
+        assert "${{ github.sha }}" not in content
+        assert "controlled_pilot_authorized_aos_sha" in content
+        assert "push:" not in content
+        assert "pull_request:" not in content
+        assert "schedule:" not in content
+        assert "workflow_run:" not in content
+

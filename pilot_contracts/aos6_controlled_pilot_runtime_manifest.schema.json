@@ -81,8 +81,8 @@
         "step_p3_grounded_policy_matrix"
       ],
       "properties": {
-        "step_p1_static_qa": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
-        "step_p2_policy_boot": { "type": "string", "enum": ["PASS", "FAIL", "NOT_CHECKED"] },
+        "step_p1_static_qa": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
+        "step_p2_policy_boot": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
         "step_p3_grounded_policy_matrix": {
           "type": "object",
           "additionalProperties": false,
@@ -105,6 +105,34 @@
         }
       }
     },
+    "driver_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stdout_filename",
+        "stdout_sha256",
+        "stderr_filename",
+        "stderr_sha256",
+        "terminal_result_filename",
+        "terminal_result_sha256",
+        "terminal_result_parse_status",
+        "driver_exit_code",
+        "first_failed_step",
+        "sanitized_primary_failure_reason"
+      ],
+      "properties": {
+        "stdout_filename": { "type": ["string", "null"] },
+        "stdout_sha256": { "type": ["string", "null"] },
+        "stderr_filename": { "type": ["string", "null"] },
+        "stderr_sha256": { "type": ["string", "null"] },
+        "terminal_result_filename": { "type": ["string", "null"] },
+        "terminal_result_sha256": { "type": ["string", "null"] },
+        "terminal_result_parse_status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "NOT_CHECKED"] },
+        "driver_exit_code": { "type": ["integer", "null"] },
+        "first_failed_step": { "type": ["string", "null"] },
+        "sanitized_primary_failure_reason": { "type": ["string", "null"] }
+      }
+    },
     "cleanup_verification": {
       "type": "object",
       "additionalProperties": false,
@@ -118,3 +146,4 @@
     }
   }
 }
+

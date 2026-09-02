@@ -675,16 +675,61 @@ def execute_harness(request_path, output_dir, runner=None):
         print("[AOS6 Harness] Phase 8: Executing Target Container...")
         attempt_count = 1
         start_res = runner.run(["docker", "start", "-a", container_name], check=False)
+        driver_exit_code = start_res.returncode
+
+        # Immediately persist logs BEFORE parsing or checking return code
+        stdout_bytes = start_res.stdout.encode("utf-8")
+        stderr_bytes = start_res.stderr.encode("utf-8")
+
+        stdout_file = out_dir / "pilot_driver_stdout.log"
+        stderr_file = out_dir / "pilot_driver_stderr.log"
+
+        stdout_file.write_bytes(stdout_bytes)
+        stderr_file.write_bytes(stderr_bytes)
+
+        stdout_sha256 = hashlib.sha256(stdout_bytes).hexdigest()
+        stderr_sha256 = hashlib.sha256(stderr_bytes).hexdigest()
+
+        driver_stdout_filename = "pilot_driver_stdout.log"
+        driver_stderr_filename = "pilot_driver_stderr.log"
 
         combined_out = start_res.stdout + "\n" + start_res.stderr
-        driver_result = parse_and_validate_driver_terminal_result(combined_out)
-        driver_val_res = "PASS"
 
-        mock_provider_call_count = driver_result.get("mock_provider_call_count", 0)
-        real_provider_network_call_count = driver_result.get("real_provider_network_call_count", 0)
+        try:
+            driver_result = parse_and_validate_driver_terminal_result(combined_out)
+            driver_val_res = "PASS"
+            terminal_result_parse_status = "PASS"
 
-        if start_res.returncode != 0 or driver_result.get("bounded_workflow_result") != "PASS":
-            raise RuntimeError(f"Target container driver execution failed with code {start_res.returncode}")
+            # Persist parsed terminal result
+            terminal_result_bytes = write_json_deterministic(out_dir / "pilot_driver_terminal_result.json", driver_result)
+            terminal_result_filename = "pilot_driver_terminal_result.json"
+            terminal_result_sha256 = hashlib.sha256(terminal_result_bytes).hexdigest()
+
+            mock_provider_call_count = driver_result.get("mock_provider_call_count", 0)
+            real_provider_network_call_count = driver_result.get("real_provider_network_call_count", 0)
+
+            p1_res = driver_result.get("product_static_qa_result", "NOT_RUN")
+            p2_res = driver_result.get("policy_module_boot_result", "NOT_RUN")
+            p3_res = driver_result.get("bounded_workflow_result", "NOT_RUN")
+
+            if p1_res == "FAIL":
+                first_failed_step = "P1_STATIC_QA"
+                sanitized_primary_failure_reason = "STEP_P1_STATIC_QA_FAILED"
+            elif p2_res == "FAIL":
+                first_failed_step = "P2_POLICY_BOOT"
+                sanitized_primary_failure_reason = "STEP_P2_POLICY_BOOT_FAILED"
+            elif p3_res == "FAIL":
+                first_failed_step = "P3_GROUNDED_POLICY_MATRIX"
+                sanitized_primary_failure_reason = "STEP_P3_GROUNDED_POLICY_MATRIX_FAILED"
+
+            if start_res.returncode != 0 or driver_result.get("bounded_workflow_result") != "PASS":
+                primary_failure = sanitized_primary_failure_reason or f"TARGET_CONTAINER_DRIVER_EXIT_{start_res.returncode}"
+
+        except Exception as parse_err:
+            print(f"[AOS6 Harness] Driver terminal result parse error: {parse_err}", file=sys.stderr)
+            terminal_result_parse_status = "FAIL"
+            primary_failure = f"DRIVER_TERMINAL_RESULT_PARSE_FAILED: {parse_err}"
+            first_failed_step = "TERMINAL_RESULT_PARSING"
 
     except Exception as e:
         print(f"[AOS6 Harness] Execution error: {e}", file=sys.stderr)
@@ -826,8 +871,6 @@ def execute_harness(request_path, output_dir, runner=None):
         "evidence_capture_result": "NOT_CHECKED"
     }
 
-    aos6_result = "FAIL"
-
     # 1. Build & write Runtime Manifest
     manifest_obj = {
         "schema_version": "0.1.0",
@@ -860,8 +903,8 @@ def execute_harness(request_path, output_dir, runner=None):
             "lifecycle_scripts_disabled": True if dep_prep_result == "PASS" else None
         },
         "workflow_execution": {
-            "step_p1_static_qa": driver_result.get("product_static_qa_result", "NOT_CHECKED") if driver_result else "NOT_CHECKED",
-            "step_p2_policy_boot": driver_result.get("policy_module_boot_result", "NOT_CHECKED") if driver_result else "NOT_CHECKED",
+            "step_p1_static_qa": driver_result.get("product_static_qa_result", "NOT_RUN") if driver_result else "NOT_RUN",
+            "step_p2_policy_boot": driver_result.get("policy_module_boot_result", "NOT_RUN") if driver_result else "NOT_RUN",
             "step_p3_grounded_policy_matrix": {
                 "unsafe_promise_rejected": driver_result.get("unsafe_grounding_result") == "PASS" if driver_result else None,
                 "safe_request_accepted": driver_result.get("safe_grounding_result") == "PASS" if driver_result else None,
@@ -870,6 +913,18 @@ def execute_harness(request_path, output_dir, runner=None):
                 "mock_fetch_success_produced": driver_result.get("mock_provider_success_result") == "PASS" if driver_result else None,
                 "mock_fetch_exception_503_produced": driver_result.get("mock_provider_failure_result") == "PASS" if driver_result else None
             }
+        },
+        "driver_evidence": {
+            "stdout_filename": driver_stdout_filename if 'driver_stdout_filename' in locals() else None,
+            "stdout_sha256": stdout_sha256 if 'stdout_sha256' in locals() else None,
+            "stderr_filename": driver_stderr_filename if 'driver_stderr_filename' in locals() else None,
+            "stderr_sha256": stderr_sha256 if 'stderr_sha256' in locals() else None,
+            "terminal_result_filename": terminal_result_filename if 'terminal_result_filename' in locals() else None,
+            "terminal_result_sha256": terminal_result_sha256 if 'terminal_result_sha256' in locals() else None,
+            "terminal_result_parse_status": terminal_result_parse_status if 'terminal_result_parse_status' in locals() else "NOT_RUN",
+            "driver_exit_code": driver_exit_code if 'driver_exit_code' in locals() else None,
+            "first_failed_step": first_failed_step,
+            "sanitized_primary_failure_reason": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() else primary_failure
         },
         "cleanup_verification": {
             "cleanup_attempted": cleanup_attempt_count > 0,
@@ -894,9 +949,9 @@ def execute_harness(request_path, output_dir, runner=None):
         "exact_sha_result": "PASS" if exact_source_head == AUTHORIZED_SOURCE_SHA else "FAIL",
         "environment_isolation_result": "PASS" if container_inspection_obs else "FAIL",
         "synthetic_data_only_result": synthetic_data_only_result,
-        "runtime_boot_result": driver_result.get("policy_module_boot_result", "FAIL") if driver_result else "FAIL",
+        "runtime_boot_result": driver_result.get("policy_module_boot_result", "NOT_RUN") if driver_result else "NOT_RUN",
         "runtime_boot_class": "NODE_TSX_PRODUCT_POLICY_MODULE",
-        "bounded_workflow_result": driver_result.get("bounded_workflow_result", "FAIL") if driver_result else "FAIL",
+        "bounded_workflow_result": driver_result.get("bounded_workflow_result", "NOT_RUN") if driver_result else "NOT_RUN",
         "evidence_capture_result": "NOT_CHECKED",
         "cleanup_result": "PASS" if cleanup_success_count == 1 else "FAIL",
         "source_mutation_count": source_mutation_count,
@@ -918,7 +973,7 @@ def execute_harness(request_path, output_dir, runner=None):
         "attempt_count": attempt_count,
         "retry_count": retry_count,
         "first_failed_step_if_any": first_failed_step,
-        "blocker_if_any": primary_failure,
+        "blocker_if_any": sanitized_primary_failure_reason if 'sanitized_primary_failure_reason' in locals() and sanitized_primary_failure_reason else primary_failure,
         "stage12c_authority": "NOT_AUTHORIZED",
         "production_authority": "NO",
         "controller_review_required": True,
