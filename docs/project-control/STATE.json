@@ -1,14 +1,15 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-09-02T06:31:01Z",
+  "updated_at": "2026-09-02T12:40:00Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS6_CONTROLLED_PILOT_FAILED_CORRECTION_ONLY",
+  "status": "AOS6_REPLACEMENT_PILOT_AUTHORITY_BOUND_PENDING_CONTROLLER_REVIEW",
   "current_gate": "AOS-6",
+
   "delivery_train": [
     "AOS-0 Foundation & Charter",
     "AOS-1 Canonical Memory & Schemas",
@@ -68,7 +69,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "* controlled pilot substantive attempt has failed;\n* original one-attempt authority is consumed;\n* no retry/replacement execution authority currently exists;\n* only bounded AOS failure-evidence correction is authorized;\n* after correction + exact-SHA CI, STOP for LARI Controller review;\n* Stage12C remains NOT_AUTHORIZED;\n* canonical LARI execution remains NOT_AUTHORIZED;\n* production remains NO_GO.",
+  "next_action": "* fresh replacement authority is bound;\n* resulting authority evidence SHA requires independent LARI Controller review;\n* workflow dispatch is NOT released;\n* pilot execution must NOT occur yet;\n* Stage12C remains NOT_AUTHORIZED;\n* canonical LARI mutation remains unauthorized;\n* production remains NO_GO.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
@@ -360,21 +361,21 @@
       "controlled_pilot_harness_workspace_completeness": "PASS",
       "controlled_pilot_harness_exact_mount_identity": "PASS",
       "controlled_pilot_harness_strict_terminal_contract": "PASS",
-      "controlled_pilot_authorized": false,
-      "pilot_execution_authorized": false,
+      "controlled_pilot_authorized": true,
+      "pilot_execution_authorized": true,
       "controlled_pilot_execution_count": 1,
       "controlled_pilot_retry_authority": "NONE",
       "controlled_pilot_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
-      "controlled_pilot_authority_source": "LARI_CONTROLLER_EXPLICIT_UPDATE_2026_09_01",
-      "controlled_pilot_authority_evidence_id": "AOS-EV-0081",
-      "controlled_pilot_authority_class": "AUTHORIZED_ISOLATED_ONLY",
+      "controlled_pilot_authority_source": "LARI_CONTROLLER_EXPLICIT_UPDATE_2026_09_02",
+      "controlled_pilot_authority_evidence_id": "AOS-EV-0084",
+      "controlled_pilot_authority_class": "AUTHORIZED_ISOLATED_SYNTHETIC_NONCANONICAL",
       "controlled_pilot_environment_class": "AOS_OWNED_ISOLATED_DISPOSABLE_SYNTHETIC_NONCANONICAL",
-      "aos6_pilot_disposition": "AUTHORIZED_ONE_ATTEMPT_PENDING_EXECUTION",
-      "shadow_decision": "CONTROLLED_PILOT_AUTHORIZED_ISOLATED_ONLY",
-      "shadow_decision_reason": "LARI_CONTROLLER_EXPLICIT_ONE_ATTEMPT_AUTHORITY_AND_HARNESS_READINESS_INDEPENDENTLY_ACCEPTED",
-      "aos6_progress_status": "CONTROLLED_PILOT_HARNESS_READY_ONE_ATTEMPT_AUTHORIZED_PENDING_EXECUTION",
-      "next_aos_step": "IMPLEMENT_AUTHORIZED_FAILURE_EVIDENCE_CORRECTION_THEN_STOP_FOR_LARI_CONTROLLER_REVIEW",
-      "next_authority_event": "FRESH_LARI_CONTROLLER_AUTHORITY_REQUIRED",
+      "aos6_pilot_disposition": "AUTHORIZED_ONE_REPLACEMENT_ATTEMPT_PENDING_CONTROLLER_REVIEW",
+      "shadow_decision": "CONTROLLED_PILOT_REPLACEMENT_AUTHORITY_BOUND",
+      "shadow_decision_reason": "LARI_CONTROLLER_EXPLICIT_REPLACEMENT_AUTHORITY_BOUND_PENDING_CONTROLLER_REVIEW",
+      "aos6_progress_status": "REPLACEMENT_PILOT_AUTHORITY_BOUND_PENDING_CONTROLLER_REVIEW",
+      "next_aos_step": "STOP_FOR_LARI_CONTROLLER_REVIEW_BEFORE_WORKFLOW_DISPATCH",
+      "next_authority_event": "INDEPENDENT_LARI_CONTROLLER_REVIEW_OF_AUTHORITY_EVIDENCE_SHA",
       "canonical_lari_mutation_authorized": false,
       "candidate_execution_authority": false,
       "stage12c_authorized": false,
@@ -501,10 +502,14 @@
         "does_not_block": "READ_ONLY_REMOTE_SOURCE_COMPARISON",
         "read_only_allowed_against_sha": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b"
       },
+      "current_execution_authorization_id": "LARI-AOS6-REPLACEMENT-PILOT-20260902-01",
+      "controlled_pilot_authorized_aos_sha": "77e410747ff44fd09242a2158c4b2bb761a0e08e",
+      "controlled_pilot_authorized_pre_execution_count": 1,
+      "authorized_attempt_limit": 1,
+      "automatic_retry_authority": "NONE",
       "dispatch_count": 2,
       "precheck_only_dispatch_deviation_count": 1,
       "substantive_controlled_pilot_attempt_count": 1,
-      "authorized_attempt_limit": 1,
       "controlled_pilot_authority_consumed": true,
       "automatic_retry_count": 0,
       "controlled_pilot_result": "FAIL",
@@ -525,8 +530,7 @@
       "evidence_finalization_result": "FAIL",
       "cleanup_and_final_immutability_status": "EXECUTED_BUT_NOT_CANONICALLY_EVIDENCED",
       "artifact_count": 0,
-      "new_controlled_pilot_execution_authority": "NOT_GRANTED",
-      "controlled_pilot_authorized_aos_sha": null
+      "new_controlled_pilot_execution_authority": "BOUND_PENDING_CONTROLLER_REVIEW"
     },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
