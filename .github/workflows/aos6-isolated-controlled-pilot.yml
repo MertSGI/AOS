@@ -3,8 +3,16 @@ name: AOS6 Isolated Controlled Pilot
 on:
   workflow_dispatch:
     inputs:
-      authorized_aos_sha:
-        description: Explicit Controller-authorized exact AOS SHA
+      authorized_execution_aos_sha:
+        description: Explicit Controller-authorized exact executable AOS SHA
+        required: true
+        type: string
+      authority_evidence_sha:
+        description: Explicit Controller-authorized authority evidence SHA
+        required: true
+        type: string
+      authority_id:
+        description: Explicit Controller authority event ID
         required: true
         type: string
 
@@ -17,63 +25,80 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Validate Authorized AOS SHA Format
+      - name: Validate Input Formats
         env:
-          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
+          AUTHORIZED_EXECUTION_AOS_SHA: ${{ inputs.authorized_execution_aos_sha }}
+          AUTHORITY_EVIDENCE_SHA: ${{ inputs.authority_evidence_sha }}
+          AUTHORITY_ID: ${{ inputs.authority_id }}
         run: |
           python -c "
           import os, re, sys
-          sha = os.environ.get('AUTHORIZED_AOS_SHA', '')
-          if not re.match(r'^[0-9a-f]{40}$', sha):
-              print(f'Invalid authorized_aos_sha format: \"{sha}\"', file=sys.stderr)
+          exec_sha = os.environ.get('AUTHORIZED_EXECUTION_AOS_SHA', '')
+          auth_sha = os.environ.get('AUTHORITY_EVIDENCE_SHA', '')
+          auth_id = os.environ.get('AUTHORITY_ID', '')
+
+          if not re.match(r'^[0-9a-f]{40}$', exec_sha):
+              print(f'Invalid authorized_execution_aos_sha format: \"{exec_sha}\"', file=sys.stderr)
               sys.exit(1)
-          print('Authorized AOS SHA input format valid.')
+
+          if not re.match(r'^[0-9a-f]{40}$', auth_sha):
+              print(f'Invalid authority_evidence_sha format: \"{auth_sha}\"', file=sys.stderr)
+              sys.exit(1)
+
+          if not re.match(r'^[A-Za-z0-9_\-\.\:\/]{1,128}$', auth_id):
+              print(f'Invalid authority_id format: \"{auth_id}\"', file=sys.stderr)
+              sys.exit(1)
+
+          print('Authority input formats valid.')
           "
 
-      - name: Checkout AOS Repository
+      - name: Checkout Executable AOS Revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.authorized_aos_sha }}
+          ref: ${{ inputs.authorized_execution_aos_sha }}
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Verify Exact AOS SHA Binding
+      - name: Verify Executable AOS SHA Binding
         env:
-          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
+          AUTHORIZED_EXECUTION_AOS_SHA: ${{ inputs.authorized_execution_aos_sha }}
         run: |
           ACTUAL_SHA=$(git rev-parse HEAD)
-          if [ "$ACTUAL_SHA" != "$AUTHORIZED_AOS_SHA" ]; then
-            echo "AOS SHA mismatch failure!"
+          if [ "$ACTUAL_SHA" != "$AUTHORIZED_EXECUTION_AOS_SHA" ]; then
+            echo "Executable AOS SHA mismatch failure!"
             exit 1
           fi
 
-      - name: Verify Canonical AOS STATE Authority Before Source Acquisition
+      - name: Checkout Authority Evidence Revision (Data Only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.authority_evidence_sha }}
+          path: ${{ runner.temp }}/authority-evidence-checkout
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify Authority Evidence Preflight
         env:
-          AUTHORIZED_AOS_SHA: ${{ inputs.authorized_aos_sha }}
+          AUTHORIZED_EXECUTION_AOS_SHA: ${{ inputs.authorized_execution_aos_sha }}
+          AUTHORITY_EVIDENCE_SHA: ${{ inputs.authority_evidence_sha }}
+          AUTHORITY_ID: ${{ inputs.authority_id }}
         run: |
           python -c "
-          import json, os, sys
+          import os, sys
           from pathlib import Path
-          auth_sha_input = os.environ.get('AUTHORIZED_AOS_SHA', '')
-          state = json.loads(Path('docs/project-control/STATE.json').read_text('utf-8'))
-          ext = state.get('extensions', {}).get('aos6_lari_controlled_pilot', {})
+          from pilot_contracts.aos6_controlled_pilot_authority import verify_authority_preflight
 
-          auth_ok = ext.get('controlled_pilot_authorized') is True
-          auth_class = ext.get('controlled_pilot_authority_class') == 'AUTHORIZED_ISOLATED_ONLY'
-          auth_sha_bound = ext.get('controlled_pilot_authorized_aos_sha') == auth_sha_input
+          exec_sha = os.environ.get('AUTHORIZED_EXECUTION_AOS_SHA', '')
+          auth_sha = os.environ.get('AUTHORITY_EVIDENCE_SHA', '')
+          auth_id = os.environ.get('AUTHORITY_ID', '')
+          exec_dir = Path.cwd()
+          auth_dir = Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'authority-evidence-checkout'
 
-          expected_pre_count = ext.get('controlled_pilot_authorized_pre_execution_count')
-          has_valid_pre_count = isinstance(expected_pre_count, int) and expected_pre_count >= 0
-          exec_count_match = has_valid_pre_count and (ext.get('controlled_pilot_execution_count') == expected_pre_count)
-
-          source_sha = ext.get('controlled_pilot_source_sha') == 'cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a'
-          stage12c_no = ext.get('stage12c_authorized') is False
-          prod_no = ext.get('production_authority') is False
-
-          if not (auth_ok and auth_class and auth_sha_bound and exec_count_match and source_sha and stage12c_no and prod_no):
-              print('Canonical AOS STATE authority verification failed!', file=sys.stderr)
+          ok, err = verify_authority_preflight(exec_sha, auth_sha, auth_id, exec_dir, auth_dir)
+          if not ok:
+              print(f'Authority evidence preflight failed: {err}', file=sys.stderr)
               sys.exit(1)
-          print('Canonical AOS STATE authority verified successfully.')
+          print('Authority evidence preflight verified successfully.')
           "
 
       - name: Set up Python 3.12
