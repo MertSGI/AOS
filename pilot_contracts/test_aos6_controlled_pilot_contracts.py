@@ -1331,13 +1331,40 @@ class TestAOS6ControlledPilotContracts:
         content = wf_path.read_text(encoding="utf-8")
         assert "exec_count = ext.get('controlled_pilot_execution_count') == 0" not in content
 
-    def test_current_state_unauthorized_preflight_fails_closed(self):
+    def test_current_state_replacement_authority_bound_dispatch_still_held(self):
+        """Validate the accepted two-phase replacement-authority state.
+
+        Authority is BOUND (positive assertions) but operational controller
+        dispatch release is NOT YET GRANTED (dispatch-hold assertions).
+        This uses existing canonical STATE semantics only.
+        """
         state_path = Path(__file__).resolve().parent.parent / "docs" / "project-control" / "STATE.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         ext = state.get("extensions", {}).get("aos6_lari_controlled_pilot", {})
 
-        auth_ok = ext.get("controlled_pilot_authorized") is True
-        assert auth_ok is False, "Current state must remain unauthorized"
+        # --- Positive authority assertions (Section 4) ---
+        assert ext.get("controlled_pilot_authorized") is True
+        assert ext.get("pilot_execution_authorized") is True
+        assert ext.get("controlled_pilot_execution_count") == 1
+        assert ext.get("controlled_pilot_authorized_pre_execution_count") == 1
+        assert ext.get("controlled_pilot_authorized_aos_sha") == \
+            "77e410747ff44fd09242a2158c4b2bb761a0e08e"
+        assert ext.get("controlled_pilot_source_sha") == \
+            "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a"
+        assert ext.get("current_execution_authorization_id") == \
+            "LARI-AOS6-REPLACEMENT-PILOT-20260902-01"
+        assert ext.get("controlled_pilot_retry_authority") == "NONE"
+        assert ext.get("canonical_lari_mutation_authorized") is False
+        assert ext.get("stage12c_authorized") is False
+        assert ext.get("production_authority") is False
+
+        # --- Dispatch-hold assertions (Section 5) ---
+        # Authority state is bound but operational controller dispatch
+        # release is NOT yet granted, using existing canonical fields.
+        assert ext.get("aos6_pilot_disposition") == \
+            "AUTHORIZED_ONE_REPLACEMENT_ATTEMPT_PENDING_CONTROLLER_REVIEW"
+        assert ext.get("next_aos_step") == \
+            "STOP_FOR_LARI_CONTROLLER_REVIEW_BEFORE_WORKFLOW_DISPATCH"
 
 
 # 16. AUTHORITY BINDING PREFLIGHT TESTS (Section 15 Matrix A-AS)
