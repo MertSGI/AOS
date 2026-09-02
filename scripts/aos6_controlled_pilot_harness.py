@@ -263,16 +263,18 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
     drv_dest = "/aos-driver/aos6_controlled_pilot_driver.mjs"
     expected_destinations = {ws_dest, drv_dest}
 
-    ws_mounts = [m for m in mounts if m.get("Destination") == ws_dest]
-    drv_mounts = [m for m in mounts if m.get("Destination") == drv_dest]
+    bind_mounts = [m for m in mounts if m.get("Type") == "bind"]
+
+    ws_mounts = [m for m in bind_mounts if m.get("Destination") == ws_dest]
+    drv_mounts = [m for m in bind_mounts if m.get("Destination") == drv_dest]
 
     if len(ws_mounts) != 1:
         raise RuntimeError(f"Workspace mount count at '{ws_dest}' must be exactly 1, got {len(ws_mounts)}")
     if len(drv_mounts) != 1:
         raise RuntimeError(f"Driver mount count at '{drv_dest}' must be exactly 1, got {len(drv_mounts)}")
-    # Check host /tmp bind mounts in Mounts FIRST
+
     host_tmp_bind_mount_count = 0
-    for m in mounts:
+    for m in bind_mounts:
         dest = m.get("Destination")
         if dest is not None:
             norm_dest = Path(dest).as_posix().rstrip("/")
@@ -282,14 +284,12 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
     if host_tmp_bind_mount_count > 0:
         raise RuntimeError(f"Host /tmp bind mount detected! Count: {host_tmp_bind_mount_count}")
 
-    if len(mounts) != 2:
-        raise RuntimeError(f"Total mount count must be exactly 2, got {len(mounts)}")
+    if len(bind_mounts) != 2:
+        raise RuntimeError(f"Total bind mount count must be exactly 2, got {len(bind_mounts)}")
 
     ws_m = ws_mounts[0]
     drv_m = drv_mounts[0]
 
-    if ws_m.get("Type") != "bind":
-        raise RuntimeError(f"Workspace mount Type must be 'bind', got '{ws_m.get('Type')}'")
     if ws_m.get("RW") is not False:
         raise RuntimeError("Workspace mount MUST be read-only (RW=false)")
     ws_src_res = Path(ws_m.get("Source", "")).resolve()
@@ -297,8 +297,6 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
     if ws_src_res != ws_expected_res:
         raise RuntimeError(f"Workspace mount Source '{ws_src_res}' != expected '{ws_expected_res}'")
 
-    if drv_m.get("Type") != "bind":
-        raise RuntimeError(f"Driver mount Type must be 'bind', got '{drv_m.get('Type')}'")
     if drv_m.get("RW") is not False:
         raise RuntimeError("Driver mount MUST be read-only (RW=false)")
     drv_src_res = Path(drv_m.get("Source", "")).resolve()
@@ -314,9 +312,9 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
     if cred_mount_count > 0:
         raise RuntimeError("Credential directory mount detected!")
 
-    unexpected_bind_count = sum(1 for m in mounts if m.get("Destination") not in expected_destinations)
-    if unexpected_bind_count > 0:
-        raise RuntimeError(f"Unexpected bind mount count: {unexpected_bind_count}")
+    unexpected_host_bind_mount_count = sum(1 for m in bind_mounts if m.get("Destination") not in expected_destinations)
+    if unexpected_host_bind_mount_count > 0:
+        raise RuntimeError(f"Unexpected bind mount count: {unexpected_host_bind_mount_count}")
 
     # Inspect HostConfig.Tmpfs
     tmpfs_dict = host_config.get("Tmpfs")
@@ -409,7 +407,7 @@ def validate_docker_inspect_data(inspect_data, temp_workspace_dir, driver_src_pa
         "driver_mount_readonly": True,
         "docker_socket_mount_count": docker_socket_count,
         "credential_directory_mount_count": cred_mount_count,
-        "unexpected_host_bind_mount_count": unexpected_bind_count,
+        "unexpected_host_bind_mount_count": unexpected_host_bind_mount_count,
         "tmpfs_mount_count": tmpfs_mount_count,
         "tmpfs_tmp_present": tmpfs_tmp_present,
         "tmpfs_tmp_read_write": tmpfs_tmp_read_write,

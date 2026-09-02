@@ -157,9 +157,10 @@ class FakeCommandRunner:
                                 "/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"
                             }
                         },
-                        "Mounts": self.created_mounts if self.created_mounts else [
+                        "Mounts": (self.created_mounts + [{"Type": "tmpfs", "Destination": "/tmp", "RW": True}]) if self.created_mounts else [
                             {"Type": "bind", "Destination": "/workspace", "RW": False, "Source": "/tmp/ws"},
-                            {"Type": "bind", "Destination": "/aos-driver/aos6_controlled_pilot_driver.mjs", "RW": False, "Source": "/tmp/drv"}
+                            {"Type": "bind", "Destination": "/aos-driver/aos6_controlled_pilot_driver.mjs", "RW": False, "Source": "/tmp/drv"},
+                            {"Type": "tmpfs", "Destination": "/tmp", "RW": True}
                         ]
                     }]
                     return MockCommandResult(stdout=json.dumps(inspect_obj))
@@ -464,6 +465,37 @@ class TestAOS6ControlledPilotContracts:
         assert res["host_tmp_bind_mount_count"] == 0
         assert res["unexpected_tmpfs_mount_count"] == 0
 
+    def test_docker_inspect_valid_with_tmpfs_in_mounts(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append({
+            "Type": "tmpfs",
+            "Destination": "/tmp",
+            "RW": True
+        })
+        res = validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+        assert res["host_tmp_bind_mount_count"] == 0
+        assert res["unexpected_host_bind_mount_count"] == 0
+        assert res["tmpfs_mount_count"] == 1
+        assert res["tmpfs_tmp_present"] is True
+        assert res["tmpfs_tmp_read_write"] is True
+        assert res["tmpfs_tmp_noexec"] is True
+        assert res["tmpfs_tmp_nosuid"] is True
+        assert res["tmpfs_tmp_mode_1777"] is True
+        assert res["tmpfs_tmp_size_bytes"] == 67108864
+
+    def test_docker_inspect_negative_unexpected_third_bind_fails_closed(self, valid_inspect_obj):
+        from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
+        inspect_data, ws_dir, drv_file = valid_inspect_obj
+        inspect_data[0]["Mounts"].append({
+            "Type": "bind",
+            "Destination": "/extra",
+            "RW": False,
+            "Source": "/host/extra"
+        })
+        with pytest.raises(RuntimeError, match="Total bind mount count must be exactly 2|Unexpected bind mount count"):
+            validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
+
     # Negative Tmpfs Tests A-T
     def test_tmpfs_negative_A_host_config_tmpfs_missing(self, valid_inspect_obj):
         from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
@@ -714,7 +746,7 @@ class TestAOS6ControlledPilotContracts:
         from scripts.aos6_controlled_pilot_harness import validate_docker_inspect_data
         inspect_data, ws_dir, drv_file = valid_inspect_obj
         inspect_data[0]["Mounts"][0]["Type"] = "volume"
-        with pytest.raises(RuntimeError, match="Workspace mount Type must be 'bind'"):
+        with pytest.raises(RuntimeError, match="Workspace mount count at '/workspace' must be exactly 1"):
             validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
 
     def test_docker_inspect_duplicate_mount_fails(self, valid_inspect_obj):
@@ -730,7 +762,7 @@ class TestAOS6ControlledPilotContracts:
         inspect_data[0]["Mounts"].append({
             "Type": "bind", "Destination": "/extra", "RW": False, "Source": "/tmp"
         })
-        with pytest.raises(RuntimeError, match="Total mount count must be exactly 2"):
+        with pytest.raises(RuntimeError, match="Total bind mount count must be exactly 2"):
             validate_docker_inspect_data(inspect_data, ws_dir, drv_file)
 
     def test_docker_inspect_docker_socket_fails(self, valid_inspect_obj):
