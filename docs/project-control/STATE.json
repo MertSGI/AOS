@@ -1,13 +1,13 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-09-01T22:30:12Z",
+  "updated_at": "2026-09-02T06:31:01Z",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
     "working_name_status": "PROVISIONAL",
     "purpose": "Reusable AI-plus-deterministic development orchestration and governance platform"
   },
-  "status": "AOS6_ISOLATED_CONTROLLED_PILOT_HARNESS_READY_ONE_ATTEMPT_AUTHORIZED",
+  "status": "AOS6_CONTROLLED_PILOT_FAILED_CORRECTION_ONLY",
   "current_gate": "AOS-6",
   "delivery_train": [
     "AOS-0 Foundation & Charter",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "* PREP-1.3 harness readiness is independently accepted at exact AOS SHA 039af2e8ea8a3a05da862b9b3a6159d059c157f6.\n* AOS-EV-0081 already authorizes exactly one isolated controlled-pilot attempt against exact LARI source SHA cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a.\n* No automatic retry is authorized.\n* After this governance binding is independently accepted, the next action is exactly one controlled-pilot execution attempt followed immediately by Controller review.\n* Stage12C remains NOT_AUTHORIZED.\n* canonical LARI mutation remains unauthorized.\n* production remains NO_GO.",
+  "next_action": "* controlled pilot substantive attempt has failed;\n* original one-attempt authority is consumed;\n* no retry/replacement execution authority currently exists;\n* only bounded AOS failure-evidence correction is authorized;\n* after correction + exact-SHA CI, STOP for LARI Controller review;\n* Stage12C remains NOT_AUTHORIZED;\n* canonical LARI execution remains NOT_AUTHORIZED;\n* production remains NO_GO.",
   "implementation_started": true,
   "extensions": {
     "aos5_distributed_coordination": {
@@ -341,10 +341,10 @@
       "main_ci_evidence_validation": "PASS",
       "stage_11f_status": "COMPLETE",
       "aos5_closure_status": "MAIN_INTEGRATED_CLOSED_PROVEN",
-      "aos6_status": "CONTROLLED_PILOT_HARNESS_READY_ONE_ATTEMPT_AUTHORIZED"
+      "aos6_status": "CONTROLLED_PILOT_FAILED_CORRECTION_ONLY"
     },
     "aos6_lari_controlled_pilot": {
-      "status": "CONTROLLED_PILOT_HARNESS_READY_ONE_ATTEMPT_AUTHORIZED",
+      "status": "CONTROLLED_PILOT_FAILED_CORRECTION_ONLY",
       "controlled_pilot_harness_status": "INDEPENDENTLY_ACCEPTED",
       "controlled_pilot_harness_readiness_sha": "039af2e8ea8a3a05da862b9b3a6159d059c157f6",
       "controlled_pilot_harness_parent_sha": "87a32a951e49b82372f3dfff164e805e4d3ff926",
@@ -360,9 +360,9 @@
       "controlled_pilot_harness_workspace_completeness": "PASS",
       "controlled_pilot_harness_exact_mount_identity": "PASS",
       "controlled_pilot_harness_strict_terminal_contract": "PASS",
-      "controlled_pilot_authorized": true,
-      "pilot_execution_authorized": true,
-      "controlled_pilot_execution_count": 0,
+      "controlled_pilot_authorized": false,
+      "pilot_execution_authorized": false,
+      "controlled_pilot_execution_count": 1,
       "controlled_pilot_retry_authority": "NONE",
       "controlled_pilot_source_sha": "cc9c55e7fc841f4f16137b0a5e7c6f04b44b631a",
       "controlled_pilot_authority_source": "LARI_CONTROLLER_EXPLICIT_UPDATE_2026_09_01",
@@ -373,8 +373,8 @@
       "shadow_decision": "CONTROLLED_PILOT_AUTHORIZED_ISOLATED_ONLY",
       "shadow_decision_reason": "LARI_CONTROLLER_EXPLICIT_ONE_ATTEMPT_AUTHORITY_AND_HARNESS_READINESS_INDEPENDENTLY_ACCEPTED",
       "aos6_progress_status": "CONTROLLED_PILOT_HARNESS_READY_ONE_ATTEMPT_AUTHORIZED_PENDING_EXECUTION",
-      "next_aos_step": "EXECUTE_EXACTLY_ONE_ISOLATED_CONTROLLED_PILOT_ATTEMPT_THEN_STOP_FOR_CONTROLLER_REVIEW",
-      "next_authority_event": "REAUTHORIZATION_REQUIRED_AFTER_AUTHORIZED_ATTEMPT_IS_CONSUMED",
+      "next_aos_step": "IMPLEMENT_AUTHORIZED_FAILURE_EVIDENCE_CORRECTION_THEN_STOP_FOR_LARI_CONTROLLER_REVIEW",
+      "next_authority_event": "FRESH_LARI_CONTROLLER_AUTHORITY_REQUIRED",
       "canonical_lari_mutation_authorized": false,
       "candidate_execution_authority": false,
       "stage12c_authorized": false,
@@ -500,7 +500,33 @@
         ],
         "does_not_block": "READ_ONLY_REMOTE_SOURCE_COMPARISON",
         "read_only_allowed_against_sha": "1ab0dc43753983b5fb0851e0b4a05b2da1cc2d5b"
-      }
+      },
+      "dispatch_count": 2,
+      "precheck_only_dispatch_deviation_count": 1,
+      "substantive_controlled_pilot_attempt_count": 1,
+      "authorized_attempt_limit": 1,
+      "controlled_pilot_authority_consumed": true,
+      "automatic_retry_count": 0,
+      "controlled_pilot_result": "FAIL",
+      "controller_review_status": "REVIEWED_CORRECTION_ONLY",
+      "run_1_id": 33595580362,
+      "run_1_disposition": "ACCEPTED_NON_SUBSTANTIVE_DISPATCH_GOVERNANCE_DEVIATION",
+      "run_1_substantive_attempt_count": 0,
+      "run_2_id": 33595714244,
+      "run_2_job_id": 100138634177,
+      "run_2_head_sha": "f1fa5fe29e86f2d59364e6e38e493e220b1068d5",
+      "run_2_disposition": "SUBSTANTIVE_CONTROLLED_PILOT_FAILURE",
+      "run_2_substantive_attempt_count": 1,
+      "p1_static_qa_execution_result": "FAIL",
+      "p1_root_cause": "UNOBSERVED",
+      "lari_product_defect": "NOT_PROVEN",
+      "p2_policy_boot": "NOT_RUN",
+      "p3_synthetic_policy_matrix": "NOT_RUN",
+      "evidence_finalization_result": "FAIL",
+      "cleanup_and_final_immutability_status": "EXECUTED_BUT_NOT_CANONICALLY_EVIDENCED",
+      "artifact_count": 0,
+      "new_controlled_pilot_execution_authority": "NOT_GRANTED",
+      "controlled_pilot_authorized_aos_sha": null
     },
     "aos3_controlled_execution": {
       "machine_capability_status": "PROVEN",
