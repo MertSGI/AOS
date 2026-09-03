@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/controller_relay_message.schema.json",
+  "title": "AOS Controller Relay Message Schema V1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "protocol",
+    "message_id",
+    "thread_id",
+    "sequence",
+    "from",
+    "to",
+    "in_reply_to",
+    "created_at",
+    "subject",
+    "subject_repository",
+    "subject_branch",
+    "subject_sha",
+    "decision",
+    "authority_effect",
+    "authority_refs",
+    "requested_next_action",
+    "requires_reply",
+    "content_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "protocol": {
+      "type": "string",
+      "const": "CONTROLLER_RELAY_V1"
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^CRV1-[A-Z0-9_]+_CONTROLLER-[A-Z0-9_]+_CONTROLLER-[0-9]{12}$"
+    },
+    "thread_id": {
+      "type": "string",
+      "pattern": "^CRV1-[A-Z0-9_]+_CONTROLLER-[A-Z0-9_]+_CONTROLLER-[0-9]{12}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]+_CONTROLLER$"
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]+_CONTROLLER$"
+    },
+    "in_reply_to": {
+      "type": ["string", "null"],
+      "pattern": "^CRV1-[A-Z0-9_]+_CONTROLLER-[A-Z0-9_]+_CONTROLLER-[0-9]{12}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_effect": {
+      "type": "string",
+      "const": "NONE"
+    },
+    "authority_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requested_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requires_reply": {
+      "type": "boolean"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "supersedes_message_id": {
+      "type": "string",
+      "pattern": "^CRV1-[A-Z0-9_]+_CONTROLLER-[A-Z0-9_]+_CONTROLLER-[0-9]{12}$"
+    }
+  }
+}

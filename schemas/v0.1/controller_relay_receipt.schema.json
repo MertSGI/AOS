@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/controller_relay_receipt.schema.json",
+  "title": "AOS Controller Relay Receipt Schema V1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "protocol",
+    "message_id",
+    "message_content_sha256",
+    "message_commit_sha",
+    "actor",
+    "event",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1(\\.[0-9]+)?$"
+    },
+    "protocol": {
+      "type": "string",
+      "const": "CONTROLLER_RELAY_RECEIPT_V1"
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^CRV1-[A-Z0-9_]+_CONTROLLER-[A-Z0-9_]+_CONTROLLER-[0-9]{12}$"
+    },
+    "message_content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "message_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "actor": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]+_CONTROLLER$"
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "OBSERVED",
+        "VERIFIED",
+        "ACKNOWLEDGED",
+        "CONSUMED"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
