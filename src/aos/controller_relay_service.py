@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from aos.controller_relay import (
     CONTROLLER_ID_REGEX,
     MESSAGE_ID_REGEX,
+    ControllerRelayError,
     ControllerRelayValidationResult,
     _parse_raw_relay_bytes_strict,
     detect_relay_conflicts_and_replays,
@@ -135,37 +136,61 @@ class ControllerRelayService:
         target_ref = ref if ref else self._branch
         return self._transport.read_record_bytes(self._repository, target_ref, path)
 
-    def list_messages(self, ref: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Fetch and parse all existing Relay messages from target ref."""
+    def list_message_provenances(self, ref: Optional[str] = None) -> List[Tuple[Dict[str, Any], str]]:
+        """Fetch, raw-validate, and return (message_dict, publication_commit_sha) tuples from target ref.
+
+        Fails closed on any invalid, malformed, BOM, or schema-failing historical message record.
+        """
         target_ref = ref if ref else self._branch
-        raw_records = self._transport.list_records_under_prefix(
+        provenances = self._transport.list_record_provenance_under_prefix(
             self._repository, target_ref, "controller-relay/v1/messages/"
         )
-        messages: List[Dict[str, Any]] = []
-        for _, raw_bytes in raw_records:
-            try:
-                data, errs = _parse_raw_relay_bytes_strict(raw_bytes)
-                if not errs and isinstance(data, dict):
-                    messages.append(data)
-            except Exception:
-                continue
-        return messages
+        res: List[Tuple[Dict[str, Any], str]] = []
+        for path, raw_bytes, pub_sha in provenances:
+            val_res = validate_controller_relay_message_raw(raw_bytes)
+            if not val_res.is_valid:
+                raise ControllerRelayError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Historical message record at '{path}' failed raw validation: {val_res.errors}"
+                )
+            msg_dict, _ = _parse_raw_relay_bytes_strict(raw_bytes)
+            if not isinstance(msg_dict, dict):
+                raise ControllerRelayError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Historical message record at '{path}' parsed payload is not a dict"
+                )
+            res.append((msg_dict, pub_sha))
+        return res
 
-    def list_receipts(self, ref: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Fetch and parse all existing Relay receipts from target ref."""
+    def list_messages(self, ref: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch and parse all existing Relay messages from target ref. Fail closed if any record is invalid."""
+        return [msg for msg, _ in self.list_message_provenances(ref=ref)]
+
+    def list_receipt_provenances(self, ref: Optional[str] = None) -> List[Tuple[Dict[str, Any], str]]:
+        """Fetch, raw-validate, and return (receipt_dict, publication_commit_sha) tuples from target ref.
+
+        Fails closed on any invalid, malformed, BOM, or schema-failing historical receipt record.
+        """
         target_ref = ref if ref else self._branch
-        raw_records = self._transport.list_records_under_prefix(
+        provenances = self._transport.list_record_provenance_under_prefix(
             self._repository, target_ref, "controller-relay/v1/receipts/"
         )
-        receipts: List[Dict[str, Any]] = []
-        for _, raw_bytes in raw_records:
-            try:
-                data, errs = _parse_raw_relay_bytes_strict(raw_bytes)
-                if not errs and isinstance(data, dict):
-                    receipts.append(data)
-            except Exception:
-                continue
-        return receipts
+        res: List[Tuple[Dict[str, Any], str]] = []
+        for path, raw_bytes, pub_sha in provenances:
+            val_res = validate_controller_relay_receipt_raw(raw_bytes)
+            if not val_res.is_valid:
+                raise ControllerRelayError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Historical receipt record at '{path}' failed raw validation: {val_res.errors}"
+                )
+            rcpt_dict, _ = _parse_raw_relay_bytes_strict(raw_bytes)
+            if not isinstance(rcpt_dict, dict):
+                raise ControllerRelayError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Historical receipt record at '{path}' parsed payload is not a dict"
+                )
+            res.append((rcpt_dict, pub_sha))
+        return res
+
+    def list_receipts(self, ref: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch and parse all existing Relay receipts from target ref. Fail closed if any record is invalid."""
+        return [rcpt for rcpt, _ in self.list_receipt_provenances(ref=ref)]
 
     def publish_message(
         self,
@@ -212,7 +237,25 @@ class ControllerRelayService:
             return ControllerRelayValidationResult(False, "FAIL", [f"Path derivation failed: {exc}"])
 
         # 5. Existing history validation
-        existing_messages = self.list_messages(ref=expected_head)
+        try:
+            msg_provenances = self.list_message_provenances(ref=expected_head)
+            existing_receipts = self.list_receipts(ref=expected_head)
+        except ControllerRelayError as hist_err:
+            return ControllerRelayValidationResult(
+                False,
+                "HOLD_INVALID_RELAY_HISTORY",
+                [str(hist_err)],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
+        except Exception as exc:
+            return ControllerRelayValidationResult(
+                False,
+                "FAIL",
+                [f"Transport history-read exception: {exc}"],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
+
+        existing_messages = [msg for msg, _ in msg_provenances]
         all_messages = existing_messages + [message]
 
         # Directed sequence check
@@ -226,7 +269,6 @@ class ControllerRelayService:
             return thread_res
 
         # Conflicts and replays check
-        existing_receipts = self.list_receipts(ref=expected_head)
         conflict_res = detect_relay_conflicts_and_replays(all_messages, existing_receipts)
         if not conflict_res.is_valid:
             return conflict_res
@@ -253,7 +295,7 @@ class ControllerRelayService:
         1. Validate raw receipt bytes (schema, secrets, protocol).
         2. Authenticate principal: principal.controller_id MUST equal receipt.actor.
         3. Derive storage path internally.
-        4. Resolve target message and verify content-hash binding.
+        4. Resolve target message and verify content-hash and publication-commit binding.
         5. Load existing receipt history for message and validate lifecycle progression.
         6. Ensure target immutable path is absent in tree.
         7. Delegate CAS publication to transport.
@@ -286,15 +328,48 @@ class ControllerRelayService:
         except Exception as exc:
             return ControllerRelayValidationResult(False, "FAIL", [f"Receipt path derivation failed: {exc}"])
 
-        # 5. Resolve target message
-        target_msg_id = receipt.get("message_id")
-        existing_messages = self.list_messages(ref=expected_head)
-        target_message = next((m for m in existing_messages if m.get("message_id") == target_msg_id), None)
+        # Load history
+        try:
+            msg_provenances = self.list_message_provenances(ref=expected_head)
+            existing_receipts = self.list_receipts(ref=expected_head)
+        except ControllerRelayError as hist_err:
+            return ControllerRelayValidationResult(
+                False,
+                "HOLD_INVALID_RELAY_HISTORY",
+                [str(hist_err)],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
+        except Exception as exc:
+            return ControllerRelayValidationResult(
+                False,
+                "FAIL",
+                [f"Transport history-read exception: {exc}"],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
 
-        if not target_message:
+        existing_messages = [msg for msg, _ in msg_provenances]
+
+        # Validate complete existing history before mutation
+        seq_res = validate_channel_sequence_history(existing_messages)
+        if not seq_res.is_valid:
+            return seq_res
+        thread_res = validate_thread_history(existing_messages)
+        if not thread_res.is_valid:
+            return thread_res
+        conflict_res = detect_relay_conflicts_and_replays(existing_messages, existing_receipts)
+        if not conflict_res.is_valid:
+            return conflict_res
+
+        # 5. Resolve target message & publication commit
+        target_msg_id = receipt.get("message_id")
+        resolved_pair = next(((m, pub_sha) for m, pub_sha in msg_provenances if m.get("message_id") == target_msg_id), None)
+
+        if not resolved_pair:
             return ControllerRelayValidationResult(
                 False, "FAIL", [f"Receipt targets non-existent or unknown message_id '{target_msg_id}'"]
             )
+
+        target_message, pub_commit_sha = resolved_pair
 
         # 6. Content hash binding
         rcpt_hash = receipt.get("message_content_sha256")
@@ -309,21 +384,45 @@ class ControllerRelayService:
                 ],
             )
 
-        # 7. Receipt lifecycle check
-        existing_receipts = self.list_receipts(ref=expected_head)
+        # 7. Message commit binding
+        rcpt_commit_sha = receipt.get("message_commit_sha")
+        if rcpt_commit_sha != pub_commit_sha:
+            return ControllerRelayValidationResult(
+                False,
+                "HOLD_RECEIPT_MESSAGE_COMMIT_MISMATCH",
+                [
+                    f"Receipt message_commit_sha mismatch for message '{target_msg_id}': "
+                    f"receipt claimed '{rcpt_commit_sha}', actual publication commit '{pub_commit_sha}'"
+                ],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
+
+        # 8. Receipt lifecycle check
         msg_receipts = [r for r in existing_receipts if r.get("message_id") == target_msg_id]
         all_msg_receipts = msg_receipts + [receipt]
 
         # Determine outbound replies for CONSUMED validation if required
+        # Target message M: requires_reply=true.
+        # Valid reply candidate R MUST satisfy ALL:
+        # R.message_id != M.message_id
+        # R.in_reply_to == M.message_id
+        # R.thread_id == M.thread_id
+        # R.from == M.to
+        # R.to == M.from
         outbound_replies = [
-            m for m in existing_messages if m.get("in_reply_to") == target_msg_id or m.get("thread_id") == target_message.get("thread_id")
+            r_candidate for r_candidate in existing_messages
+            if r_candidate.get("message_id") != target_msg_id
+            and r_candidate.get("in_reply_to") == target_msg_id
+            and r_candidate.get("thread_id") == target_message.get("thread_id")
+            and r_candidate.get("from") == target_message.get("to")
+            and r_candidate.get("to") == target_message.get("from")
         ]
 
         lifecycle_res = validate_receipt_lifecycle(target_message, all_msg_receipts, outbound_replies=outbound_replies)
         if not lifecycle_res.is_valid:
             return lifecycle_res
 
-        # 8. Transport CAS mutation
+        # 9. Transport CAS mutation
         return self._transport.publish_record(
             repository=self._repository,
             branch=self._branch,

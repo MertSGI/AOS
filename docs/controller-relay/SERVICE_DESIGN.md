@@ -178,6 +178,7 @@ The HTTP requester is strictly restricted to the following endpoints on target `
 GET   /repos/MertSGI/AOS/git/ref/heads/control/controller-relay
 GET   /repos/MertSGI/AOS/git/commits/{sha}
 GET   /repos/MertSGI/AOS/git/trees/{sha}
+GET   /repos/MertSGI/AOS/git/trees/{sha}?recursive=1
 GET   /repos/MertSGI/AOS/git/blobs/{sha}
 POST  /repos/MertSGI/AOS/git/blobs
 POST  /repos/MertSGI/AOS/git/trees
@@ -185,7 +186,7 @@ POST  /repos/MertSGI/AOS/git/commits
 PATCH /repos/MertSGI/AOS/git/refs/heads/control/controller-relay
 ```
 
-Any attempt to access other repos, refs, or endpoints raises an immediate validation exception.
+Any attempt to access other repos, refs, query parameters (e.g., `?recursive=0` or `?foo=bar`), or endpoints raises an immediate validation exception.
 
 ---
 
@@ -199,6 +200,9 @@ Any attempt to access other repos, refs, or endpoints raises an immediate valida
 | **Target Path Already Exists** | Rejects before object creation | `HOLD_RECORD_ALREADY_EXISTS` |
 | **`expected_head` Mismatch** | Rejects before object creation | `HOLD_CAS_RACE` |
 | **Concurrent Writer Win (Ref Patch Failure)** | Ref update fails closed | `HOLD_CAS_RACE` |
+| **Truncated Recursive Tree Observed** | Rejects before object creation / history load | `HOLD_GIT_TREE_TRUNCATED` |
+| **Invalid Historical Record Encountered** | Fails closed, rejects publication | `HOLD_INVALID_RELAY_HISTORY` |
+| **Receipt `message_commit_sha` Mismatch** | Rejects receipt publication | `HOLD_RECEIPT_MESSAGE_COMMIT_MISMATCH` |
 | **GitHub Remote API Unavailable / 5xx** | Transport fails closed, sanitizes error | `FAIL_CLOSED` |
 | **Rate Limit Exceeded (429 / 403)** | Transport fails closed, returns retry-after header | `HOLD_RATE_LIMITED` |
 
@@ -215,3 +219,45 @@ Unit testing follows strict deterministic offline rules:
    * 11-step CAS sequence creates exactly one blob, tree, and commit with `force=False`.
    * CAS races correctly produce `HOLD_CAS_RACE` without retries or force fallbacks.
    * Remote GitHub errors are sanitized of credentials.
+   * Exact production tree allowlist restrictions, truncated tree fail-closed behavior, invalid history rejection, and receipt commit SHA binding.
+
+---
+
+## 11. Foundation R1 Hardening Specifications
+
+Foundation R1 establishes mandatory normative security, fail-closed, and provenance invariants:
+
+### 11.1 Production Recursive Tree Allowlist
+* The `StdlibGitHubRequester` endpoint allowlist permits EXACTLY:
+  * `/repos/MertSGI/AOS/git/trees/<40-lowercase-hex-sha>`
+  * `/repos/MertSGI/AOS/git/trees/<40-lowercase-hex-sha>?recursive=1`
+* Broad query strings (e.g. `?recursive=0`, `?recursive=true`, `?foo=bar`) are strictly prohibited and raise an immediate `ControllerRelayTransportError`.
+
+### 11.2 Truncated Tree Fail-Closed Behavior
+* Any recursive tree response from GitHub containing `"truncated": true` during path absence proof, history listing, or post-write verification causes an immediate fail-closed abort (`HOLD_GIT_TREE_TRUNCATED`).
+* No partial history is returned and zero Git objects are created.
+
+### 11.3 Invalid Immutable History Fail-Closed Behavior
+* All historical records under `controller-relay/v1/messages/` and `controller-relay/v1/receipts/` MUST individually pass strict raw parsing and validation (`validate_controller_relay_message_raw` / `validate_controller_relay_receipt_raw`).
+* If any historical record is malformed JSON, UTF-8 BOM, contains duplicate keys, or fails schema validation, listing and service publication operations fail closed (`HOLD_INVALID_RELAY_HISTORY`).
+
+### 11.4 History Provenance Model & Publication Commit Derivation
+* Each historical record's immutable publication commit SHA is derived independently by walking first-parent Git ancestry (`RelayRecordProvenance`).
+* For candidate commit $C$ and parent $P$, if path exists in $C$ and does not exist in $P$, $C$ is established as the publication commit SHA.
+* Publication commit SHA is NEVER inferred from current branch HEAD, receipt claims, or caller input.
+
+### 11.5 Receipt Message Commit Binding
+* Before publishing a receipt, `ControllerRelayService` resolves the exact target message and its derived publication commit SHA.
+* `receipt.message_commit_sha` MUST match the derived publication commit SHA exactly. Mismatches return `HOLD_RECEIPT_MESSAGE_COMMIT_MISMATCH` with zero transport mutations.
+
+### 11.6 True Reply Guard for `requires_reply`
+* For a target message $M$ where `requires_reply=true`, a `CONSUMED` receipt is permitted ONLY if a real outbound reply $R$ exists in validated history satisfying:
+  * $R.\text{message\_id} \neq M.\text{message\_id}$
+  * $R.\text{in\_reply\_to} == M.\text{message\_id}$
+  * $R.\text{thread\_id} == M.\text{thread\_id}$
+  * $R.\text{from} == M.\text{to}$
+  * $R.\text{to} == M.\text{from}$
+
+### 11.7 Transport Read Failure Propagation & No Partial History
+* Transport exceptions during history listing propagate immediately, preventing any message/receipt publication.
+* Live identity phase remains blocked until R1 foundation hardening is formally accepted.

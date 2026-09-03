@@ -86,6 +86,8 @@ class FakeGitHubRequester(GitHubRequester):
             sha = path.split("?")[0].split("/")[-1]
             if sha in self.trees:
                 data = {"sha": sha, "tree": self.trees[sha]}
+                if getattr(self, "simulate_truncated_tree", False) and "?recursive=1" in path:
+                    data["truncated"] = True
                 return 200, json.dumps(data).encode("utf-8"), {}
             return 404, b'{"message": "Not Found"}', {}
 
@@ -295,3 +297,80 @@ def test_github_unavailable_fails_closed():
 
     with pytest.raises(ControllerRelayTransportError, match="HTTP 500"):
         transport.get_branch_head(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH)
+
+
+# --- R1 HARDENING PROOF MATRIX TESTS ---
+
+def test_production_recursive_tree_allowlist():
+    """PRODUCTION_RECURSIVE_TREE_ALLOWLIST: Real StdlibGitHubRequester._validate_endpoint tests."""
+    provider = FakeCredentialProvider(token=FAKE_TOKEN)
+    req = StdlibGitHubRequester(provider)
+
+    # 1. Exact ?recursive=1 production endpoint accepted
+    req._validate_endpoint("GET", "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6?recursive=1")
+    # No-query tree endpoint accepted
+    req._validate_endpoint("GET", "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6")
+
+    # 2. Arbitrary tree query rejected
+    for bad_path in [
+        "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6?recursive=0",
+        "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6?recursive=true",
+        "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6?foo=bar",
+        "/repos/MertSGI/AOS/git/trees/039232ecf10948bf55a9d9dab665828b6c06f7c6?recursive=1&foo=bar",
+    ]:
+        with pytest.raises(ControllerRelayTransportError, match="prohibited by allowlist"):
+            req._validate_endpoint("GET", bad_path)
+
+
+def test_truncated_tree_fail_closed():
+    """TRUNCATED_TREE_FAIL_CLOSED tests."""
+    requester = FakeGitHubRequester(initial_head=HEAD_SHA_0)
+    requester.simulate_truncated_tree = True
+    transport = GitDataCASRelayTransport(requester)
+
+    # A. expected-head tree truncated before target absence proof -> publication rejected fail-closed
+    target_path = "controller-relay/v1/messages/LARI--AOS/0001.json"
+    res = transport.publish_record(
+        FIXED_RELAY_REPOSITORY,
+        FIXED_RELAY_BRANCH,
+        target_path,
+        b"{}",
+        expected_head=HEAD_SHA_0,
+    )
+    assert res.is_valid is False
+    assert res.disposition == "HOLD_GIT_TREE_TRUNCATED"
+    assert requester.blob_create_count == 0
+    assert requester.tree_create_count == 0
+    assert requester.commit_create_count == 0
+    assert requester.ref_update_count == 0
+
+    # B. history listing against truncated recursive tree -> raises GitTreeTruncatedError
+    with pytest.raises(ControllerRelayTransportError, match="truncated"):
+        transport.list_records_under_prefix(FIXED_RELAY_REPOSITORY, HEAD_SHA_0, "controller-relay/v1/")
+
+
+def test_message_publication_provenance_derivation():
+    """MESSAGE_PUBLICATION_PROVENANCE tests."""
+    requester = FakeGitHubRequester(initial_head=HEAD_SHA_0)
+    transport = GitDataCASRelayTransport(requester)
+
+    # Add commit C1 introducing msg1.json
+    path_1 = "controller-relay/v1/messages/LARI--AOS/0001.json"
+    content_1 = b'{"msg": 1}'
+    c1_res = transport.publish_record(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH, path_1, content_1, expected_head=HEAD_SHA_0)
+    c1_sha = c1_res.details["commit_sha"]
+
+    # Add commit C2 introducing msg2.json
+    path_2 = "controller-relay/v1/messages/LARI--AOS/0002.json"
+    content_2 = b'{"msg": 2}'
+    c2_res = transport.publish_record(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH, path_2, content_2, expected_head=c1_sha)
+    c2_sha = c2_res.details["commit_sha"]
+
+    # Verify publication commit of path_1 is c1_sha, NOT current head c2_sha
+    pub_1 = transport.derive_publication_commit_sha(FIXED_RELAY_REPOSITORY, c2_sha, path_1)
+    assert pub_1 == c1_sha
+    assert pub_1 != c2_sha
+
+    # Verify publication commit of path_2 is c2_sha
+    pub_2 = transport.derive_publication_commit_sha(FIXED_RELAY_REPOSITORY, c2_sha, path_2)
+    assert pub_2 == c2_sha

@@ -18,9 +18,17 @@ import re
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from aos.controller_relay import ControllerRelayValidationResult
+
+
+class RelayRecordProvenance(NamedTuple):
+    """Immutable publication provenance of a Relay record within Git history."""
+
+    path: str
+    raw_bytes: bytes
+    publication_commit_sha: str
 
 FIXED_RELAY_REPOSITORY: str = "MertSGI/AOS"
 FIXED_RELAY_BRANCH: str = "control/controller-relay"
@@ -30,7 +38,7 @@ FIXED_RELAY_REF: str = "refs/heads/control/controller-relay"
 ALLOWED_ENDPOINTS: List[Tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/repos/MertSGI/AOS/git/ref/heads/control/controller-relay$")),
     ("GET", re.compile(r"^/repos/MertSGI/AOS/git/commits/[0-9a-f]{40}$")),
-    ("GET", re.compile(r"^/repos/MertSGI/AOS/git/trees/[0-9a-f]{40}$")),
+    ("GET", re.compile(r"^/repos/MertSGI/AOS/git/trees/[0-9a-f]{40}(\?recursive=1)?$")),
     ("GET", re.compile(r"^/repos/MertSGI/AOS/git/blobs/[0-9a-f]{40}$")),
     ("POST", re.compile(r"^/repos/MertSGI/AOS/git/blobs$")),
     ("POST", re.compile(r"^/repos/MertSGI/AOS/git/trees$")),
@@ -41,6 +49,11 @@ ALLOWED_ENDPOINTS: List[Tuple[str, re.Pattern]] = [
 
 class ControllerRelayTransportError(Exception):
     """Base exception for transport failure with sanitized error output."""
+    pass
+
+
+class GitTreeTruncatedError(ControllerRelayTransportError):
+    """Exception raised when Git recursive tree response is truncated."""
     pass
 
 
@@ -196,7 +209,10 @@ class GitDataCASRelayTransport:
         status, body, _ = self._requester.request("GET", path)
         if status != 200:
             raise ControllerRelayTransportError(f"Failed to fetch tree '{tree_sha}' (HTTP {status})")
-        return json.loads(body.decode("utf-8"))
+        data = json.loads(body.decode("utf-8"))
+        if recursive and data.get("truncated") is True:
+            raise GitTreeTruncatedError(f"Git recursive tree is truncated for tree SHA '{tree_sha}'")
+        return data
 
     def read_record_bytes(self, repository: str, ref_or_branch: str, path: str) -> bytes:
         """Read a record's raw bytes at target path from specified ref or commit SHA."""
@@ -236,8 +252,95 @@ class GitDataCASRelayTransport:
         else:
             raise ControllerRelayTransportError(f"Unsupported blob encoding: '{encoding}'")
 
+    def derive_publication_commit_sha(self, repository: str, head_commit_sha: str, path: str) -> str:
+        """Walk first-parent Git ancestry to find the exact commit that introduced the record at `path`.
+
+        Walks candidate commit C and parent P:
+        If path exists in C tree and does not exist in P tree -> C is publication commit.
+        Fails closed on malformed parents, unexpected pre-bootstrap existence, or missing path.
+        """
+        if repository != FIXED_RELAY_REPOSITORY:
+            raise ValueError(f"Repository invariant violation: got '{repository}'")
+
+        curr_sha = head_commit_sha
+        memo_tree_paths: Dict[str, Set[str]] = {}
+
+        def get_paths_for_tree(tree_sha: str) -> Set[str]:
+            if tree_sha not in memo_tree_paths:
+                tree_data = self._get_tree(tree_sha, recursive=True)
+                memo_tree_paths[tree_sha] = {
+                    item["path"] for item in tree_data.get("tree", []) if item.get("type") == "blob"
+                }
+            return memo_tree_paths[tree_sha]
+
+        # Verify path exists in head_commit_sha tree
+        head_commit = self._get_commit(curr_sha)
+        head_paths = get_paths_for_tree(head_commit["tree"]["sha"])
+        if path not in head_paths:
+            raise FileNotFoundError(f"Record path '{path}' not found at commit '{curr_sha}'")
+
+        # Walk first-parent chain
+        visited_commits: Set[str] = set()
+        head_bytes: Optional[bytes] = None
+
+        while curr_sha:
+            if curr_sha in visited_commits:
+                raise ControllerRelayTransportError(f"Cycle detected in first-parent ancestry at '{curr_sha}'")
+            visited_commits.add(curr_sha)
+
+            curr_commit = self._get_commit(curr_sha)
+            curr_tree_sha = curr_commit["tree"]["sha"]
+            curr_paths = get_paths_for_tree(curr_tree_sha)
+
+            if path not in curr_paths:
+                raise ControllerRelayTransportError(
+                    f"Record path '{path}' disappeared during ancestry walk at commit '{curr_sha}'"
+                )
+
+            # Read record bytes at current commit to ensure immutable content integrity across history
+            curr_bytes = self.read_record_bytes(repository, curr_sha, path)
+            if head_bytes is None:
+                head_bytes = curr_bytes
+            elif curr_bytes != head_bytes:
+                raise ControllerRelayTransportError(
+                    f"Immutable record content mismatch for path '{path}' across descendants"
+                )
+
+            parents = curr_commit.get("parents", [])
+            if not parents:
+                # Bootstrap commit has no parents, and path exists in it -> bootstrap commit introduced it
+                return curr_sha
+
+            if len(parents) > 1:
+                raise ControllerRelayTransportError(
+                    f"Ambiguous non-linear history: commit '{curr_sha}' has multiple parents"
+                )
+
+            parent_sha = parents[0].get("sha")
+            if not parent_sha or not isinstance(parent_sha, str) or len(parent_sha) != 40:
+                raise ControllerRelayTransportError(f"Malformed parent SHA in commit '{curr_sha}'")
+
+            parent_commit = self._get_commit(parent_sha)
+            parent_tree_sha = parent_commit["tree"]["sha"]
+            parent_paths = get_paths_for_tree(parent_tree_sha)
+
+            if path not in parent_paths:
+                # Introduced in curr_sha!
+                return curr_sha
+
+            curr_sha = parent_sha
+
+        raise ControllerRelayTransportError(f"Could not establish publication provenance for '{path}'")
+
     def list_records_under_prefix(self, repository: str, ref_or_branch: str, prefix: str) -> List[Tuple[str, bytes]]:
         """List all records and their bytes matching prefix under target ref."""
+        provenances = self.list_record_provenance_under_prefix(repository, ref_or_branch, prefix)
+        return [(p.path, p.raw_bytes) for p in provenances]
+
+    def list_record_provenance_under_prefix(
+        self, repository: str, ref_or_branch: str, prefix: str
+    ) -> List[RelayRecordProvenance]:
+        """List all record provenances matching prefix under target ref."""
         if repository != FIXED_RELAY_REPOSITORY:
             raise ValueError(f"Repository invariant violation: got '{repository}'")
 
@@ -246,12 +349,13 @@ class GitDataCASRelayTransport:
         tree_sha = commit_data["tree"]["sha"]
         tree_data = self._get_tree(tree_sha, recursive=True)
 
-        results: List[Tuple[str, bytes]] = []
+        results: List[RelayRecordProvenance] = []
         for item in tree_data.get("tree", []):
             item_path = item.get("path", "")
             if item_path.startswith(prefix) and item.get("type") == "blob":
                 record_bytes = self.read_record_bytes(repository, commit_sha, item_path)
-                results.append((item_path, record_bytes))
+                pub_commit_sha = self.derive_publication_commit_sha(repository, commit_sha, item_path)
+                results.append(RelayRecordProvenance(item_path, record_bytes, pub_commit_sha))
         return results
 
     def publish_record(
@@ -295,7 +399,15 @@ class GitDataCASRelayTransport:
         base_tree_sha = commit_data["tree"]["sha"]
 
         # Step 4: Prove target path absent in base tree
-        tree_data = self._get_tree(base_tree_sha, recursive=True)
+        try:
+            tree_data = self._get_tree(base_tree_sha, recursive=True)
+        except GitTreeTruncatedError as trunc_err:
+            return ControllerRelayValidationResult(
+                False,
+                "HOLD_GIT_TREE_TRUNCATED",
+                [str(trunc_err)],
+                details={"GIT_OBJECT_CREATE_COUNT": 0, "REF_UPDATE_COUNT": 0},
+            )
         for item in tree_data.get("tree", []):
             if item.get("path") == path:
                 return ControllerRelayValidationResult(

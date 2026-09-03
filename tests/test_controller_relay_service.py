@@ -16,9 +16,12 @@ from aos.controller_relay import (
     compute_message_content_sha256,
     format_message_id,
 )
-from aos.controller_relay_service import (
+from aos.controller_relay_git_transport import (
     FIXED_RELAY_BRANCH,
     FIXED_RELAY_REPOSITORY,
+    RelayRecordProvenance,
+)
+from aos.controller_relay_service import (
     ControllerPrincipal,
     ControllerRelayService,
     derive_message_path,
@@ -56,6 +59,14 @@ class FakeRelayTransport:
                 res.append((rec["path"], rec["content_bytes"]))
         return res
 
+    def list_record_provenance_under_prefix(self, repository: str, ref: str, prefix: str) -> List[RelayRecordProvenance]:
+        res = []
+        for rec in self.published_records:
+            if rec["path"].startswith(prefix):
+                pub_sha = rec.get("commit_sha", "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e")
+                res.append(RelayRecordProvenance(rec["path"], rec["content_bytes"], pub_sha))
+        return res
+
     def publish_record(
         self,
         repository: str,
@@ -72,7 +83,7 @@ class FakeRelayTransport:
             return ControllerRelayValidationResult(
                 False, "HOLD_CAS_RACE", [f"Expected head mismatch: got {expected_head}, actual {self.head_sha}"]
             )
-        new_commit_sha = f"commit-{self.publish_call_count:04d}-" + "a" * 30
+        new_commit_sha = f"{self.publish_call_count:010x}" + "a" * 30
         self.published_records.append({
             "path": path,
             "content_bytes": content_bytes,
@@ -126,13 +137,14 @@ def make_valid_receipt_dict(
     msg: Dict[str, Any],
     actor: str = "AOS_CONTROLLER",
     event: str = "OBSERVED",
+    message_commit_sha: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "schema_version": "0.1.0",
         "protocol": "CONTROLLER_RELAY_RECEIPT_V1",
         "message_id": msg["message_id"],
         "message_content_sha256": msg["content_sha256"],
-        "message_commit_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
+        "message_commit_sha": message_commit_sha or "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
         "actor": actor,
         "event": event,
         "created_at": "2026-09-03T12:01:00Z",
@@ -205,10 +217,11 @@ def test_valid_receipt_and_matching_principal():
 
     # Publish receipt from AOS_CONTROLLER
     principal_aos = ControllerPrincipal("AOS_CONTROLLER")
-    rcpt = make_valid_receipt_dict(msg, "AOS_CONTROLLER", "OBSERVED")
+    rcpt = make_valid_receipt_dict(msg, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m_res.details["commit_sha"])
     raw_rcpt_bytes = json.dumps(rcpt).encode("utf-8")
 
     r_res = service.publish_receipt(raw_rcpt_bytes, head_after_msg, principal_aos)
+    assert r_res.errors == []
     assert r_res.is_valid is True
     assert r_res.disposition == "PASS"
     assert transport.publish_call_count == 2
@@ -323,3 +336,150 @@ def test_fixed_repository_and_branch_invariants():
     service = ControllerRelayService(transport)
     assert service.repository == "MertSGI/AOS"
     assert service.branch == "control/controller-relay"
+
+
+# --- R1 HARDENING PROOF SUITES ---
+
+def test_invalid_history_fail_closed():
+    """INVALID_HISTORY_FAIL_CLOSED tests."""
+    principal = ControllerPrincipal("LARI_CONTROLLER")
+
+    # 1. Malformed JSON message in history
+    t1 = FakeRelayTransport()
+    t1.published_records.append({
+        "path": "controller-relay/v1/messages/LARI--AOS/0001.json",
+        "content_bytes": b"{malformed json",
+        "commit_sha": "0000000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    s1 = ControllerRelayService(t1)
+    msg = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 2)
+    res1 = s1.publish_message(json.dumps(msg).encode("utf-8"), t1.get_branch_head(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH), principal)
+    assert res1.is_valid is False
+    assert res1.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert t1.publish_call_count == 0
+
+    # 2. UTF-8 BOM historical message
+    t2 = FakeRelayTransport()
+    valid_msg_dict = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    bom_bytes = b"\xef\xbb\xbf" + json.dumps(valid_msg_dict).encode("utf-8")
+    t2.published_records.append({
+        "path": "controller-relay/v1/messages/LARI--AOS/0001.json",
+        "content_bytes": bom_bytes,
+        "commit_sha": "0000000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    s2 = ControllerRelayService(t2)
+    res2 = s2.publish_message(json.dumps(msg).encode("utf-8"), t2.get_branch_head(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH), principal)
+    assert res2.is_valid is False
+    assert res2.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert t2.publish_call_count == 0
+
+    # 3. Duplicate-key historical message
+    t3 = FakeRelayTransport()
+    dup_key_bytes = b'{"schema_version": "0.1.0", "schema_version": "0.1.0"}'
+    t3.published_records.append({
+        "path": "controller-relay/v1/messages/LARI--AOS/0001.json",
+        "content_bytes": dup_key_bytes,
+        "commit_sha": "0000000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    s3 = ControllerRelayService(t3)
+    res3 = s3.publish_message(json.dumps(msg).encode("utf-8"), t3.get_branch_head(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH), principal)
+    assert res3.is_valid is False
+    assert res3.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert t3.publish_call_count == 0
+
+    # 4. Invalid historical receipt
+    t4 = FakeRelayTransport()
+    t4.published_records.append({
+        "path": "controller-relay/v1/receipts/CRV1-1/AOS-OBSERVED.json",
+        "content_bytes": b"{invalid json receipt",
+        "commit_sha": "0000000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    s4 = ControllerRelayService(t4)
+    res4 = s4.publish_message(json.dumps(msg).encode("utf-8"), t4.get_branch_head(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH), principal)
+    assert res4.is_valid is False
+    assert res4.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert t4.publish_call_count == 0
+
+
+def test_receipt_message_commit_binding():
+    """RECEIPT_MESSAGE_COMMIT_BINDING tests."""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # Publish message M1
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    m1_res = service.publish_message(json.dumps(msg1).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    assert m1_res.is_valid is True
+    actual_pub_sha = m1_res.details["commit_sha"]
+
+    head1 = service.get_head()
+
+    # 1. Wrong 40-char message_commit_sha -> FAIL CLOSED (HOLD_RECEIPT_MESSAGE_COMMIT_MISMATCH)
+    wrong_sha = "9999999999aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    rcpt_wrong = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=wrong_sha)
+    res_wrong = service.publish_receipt(json.dumps(rcpt_wrong).encode("utf-8"), head1, principal_a)
+
+    assert res_wrong.is_valid is False
+    assert res_wrong.disposition == "HOLD_RECEIPT_MESSAGE_COMMIT_MISMATCH"
+    assert transport.publish_call_count == 1  # Only M1 published
+
+    # 2. Exact true publication commit SHA -> PASS
+    rcpt_exact = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=actual_pub_sha)
+    res_exact = service.publish_receipt(json.dumps(rcpt_exact).encode("utf-8"), head1, principal_a)
+
+    assert res_exact.is_valid is True
+    assert res_exact.disposition == "PASS"
+    assert transport.publish_call_count == 2
+
+
+def test_requires_reply_true_reply_guard():
+    """REQUIRES_REPLY_TRUE_REPLY_GUARD tests."""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # 1. Publish root message M1 with requires_reply=True
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1, requires_reply=True)
+    m1_res = service.publish_message(json.dumps(msg1).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    m1_sha = m1_res.details["commit_sha"]
+
+    # Publish receipts OBSERVED, VERIFIED, ACKNOWLEDGED for M1
+    h = service.get_head()
+    r_obs = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(r_obs).encode("utf-8"), h, principal_a)
+
+    h = service.get_head()
+    r_ver = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "VERIFIED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(r_ver).encode("utf-8"), h, principal_a)
+
+    h = service.get_head()
+    r_ack = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "ACKNOWLEDGED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(r_ack).encode("utf-8"), h, principal_a)
+
+    h = service.get_head()
+    # Attempt CONSUMED when NO actual outbound reply exists -> FAIL CLOSED
+    r_con = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "CONSUMED", message_commit_sha=m1_sha)
+    con_res_fail = service.publish_receipt(json.dumps(r_con).encode("utf-8"), h, principal_a)
+    assert con_res_fail.is_valid is False
+    assert any("requiring reply, but no valid outbound reply decision exists" in err for err in con_res_fail.errors)
+
+    # Now publish real valid inverted reply R2 from AOS_CONTROLLER to LARI_CONTROLLER
+    msg2 = make_valid_message_dict(
+        from_c="AOS_CONTROLLER",
+        to_c="LARI_CONTROLLER",
+        seq=1,
+        in_reply_to=msg1["message_id"],
+        thread_id=msg1["thread_id"],
+        decision="PROCEED_TO_EXECUTION",
+    )
+    m2_res = service.publish_message(json.dumps(msg2).encode("utf-8"), h, principal_a)
+    assert m2_res.is_valid is True
+
+    h = service.get_head()
+    # Attempt CONSUMED again now that valid inverted reply exists -> PASS
+    con_res_pass = service.publish_receipt(json.dumps(r_con).encode("utf-8"), h, principal_a)
+    assert con_res_pass.is_valid is True
+    assert con_res_pass.disposition == "PASS"
