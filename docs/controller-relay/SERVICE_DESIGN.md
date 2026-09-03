@@ -304,3 +304,36 @@ Foundation R2 completes the service trust boundary and closes all lineage, host,
 * Relay V1 records generate NO execution authority (`authority_effect` MUST equal `"NONE"`).
 * Live Relay branch `control/controller-relay` remains frozen (`LIVE_RELAY_WRITE_COUNT=0`).
 
+---
+
+## 13. Identity Adapter R0 Specifications
+
+Identity Adapter R0 defines the normative credential chain and one-shot handshake preparation boundaries:
+
+### 13.1 Normative Credential Chain Architecture
+Future live production credential flow operates across the following strict pipeline:
+```
+GitHub App private key (stored in external secure vault)
+  -> trusted external secret injector (OUTSIDE service core)
+  -> GitHub App JWT generation (OUTSIDE service core)
+  -> GitHub App installation access token request (OUTSIDE service core)
+  -> InjectedInstallationTokenCredentialProvider (memory-only, 120s safety margin)
+  -> StdlibGitHubRequester (pinned to https://api.github.com)
+  -> GitDataCASRelayTransport (11-step CAS over REST API)
+  -> ControllerRelayService
+```
+
+### 13.2 Core Identity Boundaries & Safety Invariants
+1. **External Key & JWT Generation:** Private key creation, JWT generation, and installation access token requests MUST occur strictly OUTSIDE the Relay service core.
+2. **Short-Lived Installation Access Token:** The short-lived installation access token is the ONLY credential string entering the Relay process.
+3. **Memory-Only & Redaction:** Installation tokens are process-memory-only and MUST NOT be logged, printed, serialized, or written to disk/artifacts (`token='***REDACTED***'`).
+4. **120-Second Lifetime Safety Margin:** Before returning token material, `InjectedInstallationTokenCredentialProvider.get_token()` evaluates remaining lifetime against an explicit 120-second safety margin (`HOLD_INSTALLATION_TOKEN_TOO_CLOSE_TO_EXPIRY`).
+5. **Fixed Role-to-Principal Mapping:** Handshake planning strictly maps `AOS_ROOT` -> `ControllerPrincipal("AOS_CONTROLLER")` and `LARI_REPLY` -> `ControllerPrincipal("LARI_CONTROLLER")`. All caller overrides of principal or identity fields are rejected.
+6. **R0 DRY_RUN Only:** Identity Adapter R0 operates strictly in `DRY_RUN` mode (`CREDENTIAL_ACCESS_COUNT=0`, `TRANSPORT_MUTATION_COUNT=0`, `LIVE_RELAY_WRITE_COUNT=0`). No live network calls or GitHub App provisioning occur during R0.
+
+### 13.3 Intended Next-Phase GitHub App Installation Contract
+For future authorization phases:
+* `IDENTITY_TYPE`: Dedicated GitHub App Installation.
+* `REPOSITORY_SELECTION`: Pinned exclusively to `MertSGI/AOS`.
+* `PERMISSIONS`: `Contents: Read & write` only (`refs/heads/control/controller-relay` branch target).
+* `PROHIBITED PERMISSIONS`: NO Actions write, Workflows write, Issues, Pull requests, Deployments, Administration, or Organization permissions.
