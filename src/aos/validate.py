@@ -32,6 +32,8 @@ TYPE_TO_SCHEMA = {
     "worker_capability_attestation": "worker_capability_attestation.schema.json",
     "execution_authorization": "execution_authorization.schema.json",
     "verification_result": "verification_result.schema.json",
+    "controller_relay_message": "controller_relay_message.schema.json",
+    "controller_relay_receipt": "controller_relay_receipt.schema.json",
 }
 
 
