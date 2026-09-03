@@ -1,4 +1,4 @@
-"""Tests for AOS Controller Relay V1 protocol, schemas, validation engine, and state machine."""
+"""Tests for AOS Controller Relay V1 protocol, schemas, validation engine, state machine, and raw parsers."""
 
 import json
 from pathlib import Path
@@ -16,11 +16,14 @@ from aos.controller_relay import (
     validate_controller_relay_message,
     validate_controller_relay_message_raw,
     validate_controller_relay_receipt,
+    validate_controller_relay_receipt_raw,
     validate_receipt_lifecycle,
     validate_thread_history,
     verify_message_content_sha256,
 )
 from aos.validate import validate_document, validate_file
+
+PROTOCOL_MD_PATH = Path(__file__).parent.parent / "docs" / "controller-relay" / "PROTOCOL.md"
 
 
 def make_valid_message(
@@ -166,7 +169,6 @@ class TestControllerRelayPass:
         )
         rcpt = make_valid_receipt(root["message_id"], root["content_sha256"], "LARI_CONTROLLER", "CONSUMED")
 
-        # Manually validate receipt lifecycle with outbound reply present
         rcpt_res = validate_receipt_lifecycle(
             root,
             [
@@ -211,7 +213,7 @@ class TestControllerRelayFailClosed:
             from_c="AOS_CONTROLLER",
             to_c="LARI_CONTROLLER",
             sequence=1,
-            message_id="CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000002",  # Different ID, same sequence
+            message_id="CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000002",
         )
         res = validate_channel_sequence_history([m1, m2])
         assert res.is_valid is False
@@ -244,7 +246,7 @@ class TestControllerRelayFailClosed:
     def test_wrong_reply_sender_receiver(self):
         root = make_valid_message(from_c="AOS_CONTROLLER", to_c="LARI_CONTROLLER", sequence=1)
         wrong_reply = make_valid_message(
-            from_c="AOS_CONTROLLER",  # Should be LARI_CONTROLLER
+            from_c="AOS_CONTROLLER",
             to_c="LARI_CONTROLLER",
             sequence=2,
             thread_id=root["message_id"],
@@ -309,7 +311,7 @@ class TestControllerRelayFailClosed:
             to_c="AOS_CONTROLLER",
             sequence=1,
             thread_id=root["message_id"],
-            in_reply_to=root["message_id"],  # Replying to root which was superseded by sup
+            in_reply_to=root["message_id"],
         )
         res = validate_thread_history([root, sup, stale_reply])
         assert res.is_valid is False
@@ -318,7 +320,7 @@ class TestControllerRelayFailClosed:
     def test_invalid_supersession(self):
         root = make_valid_message(from_c="AOS_CONTROLLER", to_c="LARI_CONTROLLER", sequence=1)
         invalid_sup = make_valid_message(
-            from_c="LARI_CONTROLLER",  # Different controller attempting to supersede
+            from_c="LARI_CONTROLLER",
             to_c="AOS_CONTROLLER",
             sequence=1,
             thread_id=root["message_id"],
@@ -419,3 +421,187 @@ class TestControllerRelayFailClosed:
     def test_invalid_generic_controller_identity(self):
         with pytest.raises(ValueError, match="Invalid from_controller identity format"):
             format_message_id("invalid_lowercase_controller", "LARI_CONTROLLER", 1)
+
+
+# ==============================================================================
+# R1 RAW PARSER & STRICT DUPLICATE KEY TESTS
+# ==============================================================================
+
+class TestControllerRelayRawParsers:
+    def test_raw_message_valid_pass(self):
+        msg = make_valid_message()
+        raw_bytes = json.dumps(msg).encode("utf-8")
+        res = validate_controller_relay_message_raw(raw_bytes)
+        assert res.is_valid is True
+        assert res.disposition == "PASS"
+
+    def test_raw_message_duplicate_top_level_key_fails(self):
+        raw_json_str = """{
+            "schema_version": "0.1.0",
+            "protocol": "CONTROLLER_RELAY_V1",
+            "protocol": "CONTROLLER_RELAY_V1",
+            "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "thread_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "sequence": 1,
+            "from": "AOS_CONTROLLER",
+            "to": "LARI_CONTROLLER",
+            "in_reply_to": null,
+            "created_at": "2026-09-03T08:00:00Z",
+            "subject": "Duplicate key test",
+            "subject_repository": "MertSGI/AOS",
+            "subject_branch": "feature/controller-relay-v1",
+            "subject_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
+            "decision": "PROCEED",
+            "authority_effect": "NONE",
+            "authority_refs": [],
+            "requested_next_action": "Evaluate",
+            "requires_reply": true,
+            "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }"""
+        res = validate_controller_relay_message_raw(raw_json_str.encode("utf-8"))
+        assert res.is_valid is False
+        assert any("DUPLICATE_JSON_KEY" in e for e in res.errors)
+
+    def test_raw_message_duplicate_nested_key_fails(self):
+        raw_json_str = """{
+            "schema_version": "0.1.0",
+            "protocol": "CONTROLLER_RELAY_V1",
+            "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "thread_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "sequence": 1,
+            "from": "AOS_CONTROLLER",
+            "to": "LARI_CONTROLLER",
+            "in_reply_to": null,
+            "created_at": "2026-09-03T08:00:00Z",
+            "subject": "Duplicate nested key test",
+            "subject_repository": "MertSGI/AOS",
+            "subject_branch": "feature/controller-relay-v1",
+            "subject_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
+            "decision": "PROCEED",
+            "authority_effect": "NONE",
+            "authority_refs": [],
+            "requested_next_action": "Evaluate",
+            "requires_reply": true,
+            "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "meta": {
+                "key": "value1",
+                "key": "value2"
+            }
+        }"""
+        res = validate_controller_relay_message_raw(raw_json_str.encode("utf-8"))
+        assert res.is_valid is False
+        assert any("DUPLICATE_JSON_KEY" in e for e in res.errors)
+
+    def test_raw_receipt_valid_pass(self):
+        rcpt = make_valid_receipt()
+        raw_bytes = json.dumps(rcpt).encode("utf-8")
+        res = validate_controller_relay_receipt_raw(raw_bytes)
+        assert res.is_valid is True
+
+    def test_raw_receipt_bom_fails(self):
+        rcpt = make_valid_receipt()
+        raw_bytes = b"\xef\xbb\xbf" + json.dumps(rcpt).encode("utf-8")
+        res = validate_controller_relay_receipt_raw(raw_bytes)
+        assert res.is_valid is False
+        assert any("BOM" in e for e in res.errors)
+
+    def test_raw_receipt_malformed_utf8_fails(self):
+        res = validate_controller_relay_receipt_raw(b"\x80\x81\x82")
+        assert res.is_valid is False
+        assert any("Invalid UTF-8" in e for e in res.errors)
+
+    def test_raw_receipt_oversized_fails(self):
+        big_bytes = b"{" + (b" " * (65 * 1024)) + b"}"
+        res = validate_controller_relay_receipt_raw(big_bytes)
+        assert res.is_valid is False
+        assert any("exceeds maximum limit" in e for e in res.errors)
+
+    def test_raw_receipt_duplicate_top_level_key_fails(self):
+        raw_str = """{
+            "schema_version": "0.1.0",
+            "protocol": "CONTROLLER_RELAY_RECEIPT_V1",
+            "protocol": "CONTROLLER_RELAY_RECEIPT_V1",
+            "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "message_content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "message_commit_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
+            "actor": "LARI_CONTROLLER",
+            "event": "OBSERVED",
+            "created_at": "2026-09-03T08:05:00Z"
+        }"""
+        res = validate_controller_relay_receipt_raw(raw_str.encode("utf-8"))
+        assert res.is_valid is False
+        assert any("DUPLICATE_JSON_KEY" in e for e in res.errors)
+
+    def test_raw_receipt_duplicate_nested_key_fails(self):
+        raw_str = """{
+            "schema_version": "0.1.0",
+            "protocol": "CONTROLLER_RELAY_RECEIPT_V1",
+            "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+            "message_content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "message_commit_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
+            "actor": "LARI_CONTROLLER",
+            "event": "OBSERVED",
+            "created_at": "2026-09-03T08:05:00Z",
+            "meta": {"key": "val1", "key": "val2"}
+        }"""
+        res = validate_controller_relay_receipt_raw(raw_str.encode("utf-8"))
+        assert res.is_valid is False
+        assert any("DUPLICATE_JSON_KEY" in e for e in res.errors)
+
+    def test_raw_receipt_secret_key_fails(self):
+        rcpt = make_valid_receipt()
+        rcpt["api_key"] = "secret_value"
+        res = validate_controller_relay_receipt_raw(json.dumps(rcpt).encode("utf-8"))
+        assert res.is_valid is False
+        assert any("Prohibited secret" in e for e in res.errors)
+
+    def test_raw_receipt_credential_value_fails(self):
+        rcpt = make_valid_receipt()
+        rcpt["created_at"] = "2026-09-03T08:05:00Z bearer secret_token_value_xyz"
+        res = validate_controller_relay_receipt_raw(json.dumps(rcpt).encode("utf-8"))
+        assert res.is_valid is False
+        assert any("High-confidence credential pattern" in e for e in res.errors)
+
+    def test_raw_receipt_unknown_protocol_fails(self):
+        rcpt = make_valid_receipt()
+        rcpt["protocol"] = "UNKNOWN_RECEIPT_PROTOCOL"
+        res = validate_controller_relay_receipt_raw(json.dumps(rcpt).encode("utf-8"))
+        assert res.is_valid is False
+        assert any("receipt protocol" in e.lower() for e in res.errors)
+
+
+# ==============================================================================
+# R1 PROTOCOL SOURCE-CONTRACT TESTS
+# ==============================================================================
+
+class TestProtocolSourceContract:
+    @pytest.fixture(autouse=True)
+    def load_protocol_text(self):
+        assert PROTOCOL_MD_PATH.is_file(), f"PROTOCOL.md missing at {PROTOCOL_MD_PATH}"
+        with open(PROTOCOL_MD_PATH, "r", encoding="utf-8") as f:
+            self.protocol_text = f.read()
+
+    def test_protocol_contains_mandatory_normative_strings(self):
+        required_substrings = [
+            "HOLD_RELAY_UNAVAILABLE",
+            "MANUAL_BOOTSTRAP_OR_BREAK_GLASS",
+            "MANDATORY_INBOUND_CHECK=YES",
+            "CHECK_LATEST_UNCONSUMED_INBOUND_RELAY_BEFORE_CROSS_CONTROLLER_ACTION=YES",
+            "RELAY_CONSUMED != AUTHORITY_CONSUMED",
+            "FAST_FORWARD_COMPARE_AND_SWAP",
+            "HOLD_AMBIGUOUS_CONCURRENT_DECISION",
+            "authority_refs",
+            "opaque",
+        ]
+        for sub in required_substrings:
+            assert sub in self.protocol_text, f"PROTOCOL.md missing required normative string: '{sub}'"
+
+    def test_protocol_negative_assertion_no_overbroad_break_glass_semantic(self):
+        forbidden_pattern = "break-glass automatically emits direct Layer 3 canonical control_request"
+        assert forbidden_pattern not in self.protocol_text, f"PROTOCOL.md contains forbidden over-broad semantic string: '{forbidden_pattern}'"
+
+    def test_relay_message_cannot_grant_authority_invariant_holds(self):
+        msg = make_valid_message()
+        rcpt = make_valid_receipt()
+        assert RELAY_MESSAGE_CANNOT_GRANT_AUTHORITY(msg) is True
+        assert RELAY_MESSAGE_CANNOT_GRANT_AUTHORITY(rcpt) is True
