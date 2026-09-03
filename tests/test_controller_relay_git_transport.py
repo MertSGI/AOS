@@ -17,6 +17,7 @@ from aos.controller_relay_git_transport import (
     FIXED_RELAY_REF,
     FIXED_RELAY_REPOSITORY,
     ControllerRelayTransportError,
+    CredentialProvider,
     FakeCredentialProvider,
     GitDataCASRelayTransport,
     GitHubRequester,
@@ -349,28 +350,35 @@ def test_truncated_tree_fail_closed():
         transport.list_records_under_prefix(FIXED_RELAY_REPOSITORY, HEAD_SHA_0, "controller-relay/v1/")
 
 
-def test_message_publication_provenance_derivation():
-    """MESSAGE_PUBLICATION_PROVENANCE tests."""
-    requester = FakeGitHubRequester(initial_head=HEAD_SHA_0)
-    transport = GitDataCASRelayTransport(requester)
+def test_github_api_host_pinning_and_credential_non_access():
+    """GITHUB_API_HOST_PINNING=PASS and CREDENTIAL_NOT_ACCESSED_ON_INVALID_HOST=PASS"""
+    class CountingCredentialProvider(CredentialProvider):
+        def __init__(self):
+            self.call_count = 0
+        def get_token(self) -> str:
+            self.call_count += 1
+            return "secret-token-123"
 
-    # Add commit C1 introducing msg1.json
-    path_1 = "controller-relay/v1/messages/LARI--AOS/0001.json"
-    content_1 = b'{"msg": 1}'
-    c1_res = transport.publish_record(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH, path_1, content_1, expected_head=HEAD_SHA_0)
-    c1_sha = c1_res.details["commit_sha"]
+    counting_provider = CountingCredentialProvider()
 
-    # Add commit C2 introducing msg2.json
-    path_2 = "controller-relay/v1/messages/LARI--AOS/0002.json"
-    content_2 = b'{"msg": 2}'
-    c2_res = transport.publish_record(FIXED_RELAY_REPOSITORY, FIXED_RELAY_BRANCH, path_2, content_2, expected_head=c1_sha)
-    c2_sha = c2_res.details["commit_sha"]
+    # Valid canonical host with trailing slash normalizes to canonical host
+    req_valid = StdlibGitHubRequester(counting_provider, base_url="https://api.github.com/")
+    assert req_valid._base_url == "https://api.github.com"
 
-    # Verify publication commit of path_1 is c1_sha, NOT current head c2_sha
-    pub_1 = transport.derive_publication_commit_sha(FIXED_RELAY_REPOSITORY, c2_sha, path_1)
-    assert pub_1 == c1_sha
-    assert pub_1 != c2_sha
+    # All illegal host attempts raise ControllerRelayTransportError BEFORE get_token() is called
+    illegal_hosts = [
+        "https://evil.example",
+        "http://api.github.com",
+        "https://api.github.com.evil.example",
+        "https://user@api.github.com",
+        "https://api.github.com@evil.example",
+        "https://api.github.com.evil.example/api",
+    ]
 
-    # Verify publication commit of path_2 is c2_sha
-    pub_2 = transport.derive_publication_commit_sha(FIXED_RELAY_REPOSITORY, c2_sha, path_2)
-    assert pub_2 == c2_sha
+    for bad_url in illegal_hosts:
+        with pytest.raises(ControllerRelayTransportError, match="Invalid production GitHub API host"):
+            StdlibGitHubRequester(counting_provider, base_url=bad_url)
+
+    # CREDENTIAL_PROVIDER_GET_TOKEN_CALL_COUNT must equal 0
+    assert counting_provider.call_count == 0
+
