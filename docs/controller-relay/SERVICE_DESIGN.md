@@ -260,4 +260,47 @@ Foundation R1 establishes mandatory normative security, fail-closed, and provena
 
 ### 11.7 Transport Read Failure Propagation & No Partial History
 * Transport exceptions during history listing propagate immediately, preventing any message/receipt publication.
-* Live identity phase remains blocked until R1 foundation hardening is formally accepted.
+* Live identity phase remains blocked until R1/R2 foundation hardening is formally accepted.
+
+---
+
+## 12. Foundation R2 Hardening Specifications
+
+Foundation R2 completes the service trust boundary and closes all lineage, host, credential, and reappearance trust gaps:
+
+### 12.1 Single Global History Validator
+* `ControllerRelayService` enforces a single, unified, fail-closed service-level validator `_validate_existing_relay_history(expected_head)`.
+* Both `publish_message()` and `publish_receipt()` MUST invoke `_validate_existing_relay_history(expected_head)` before any Git object creation or ref mutation (`GIT_OBJECT_CREATE_COUNT=0`, `REF_UPDATE_COUNT=0`, `TRANSPORT_PUBLICATION_COUNT=0`).
+* No separate or weaker history validation paths are maintained.
+
+### 12.2 Trusted Bootstrap Boundary & Single First-Parent Lineage
+* Trusted bootstrap boundary is fixed to `039232ecf10948bf55a9d9dab665828b6c06f7c6`.
+* Every provenance walk validates single first-parent ancestry from `expected_head` back to `039232ecf10948bf55a9d9dab665828b6c06f7c6`.
+* If trusted bootstrap cannot be reached, validation fails with `HOLD_RELAY_BOOTSTRAP_UNREACHABLE`.
+* If any commit in the ancestry contains more than one parent, history fails closed (`HOLD_INVALID_RELAY_HISTORY`).
+
+### 12.3 Complete Provenance Mapping & Binding
+* Historical message records yield an exact mapping `message_id -> { message, publication_commit_sha, path, publication_ordinal }`. Duplicate `message_id` across history fails closed (`HOLD_INVALID_RELAY_HISTORY`).
+* Historical receipts require:
+  * Referenced `message_id` exists in history.
+  * `receipt.message_content_sha256 == target_message.content_sha256`.
+  * `receipt.message_commit_sha == target_message.publication_commit_sha` (derived from Git, never claimed from payload).
+
+### 12.4 Actual Git Publication Order & Temporal Reply Validation
+* Historical receipt lifecycle validation is performed in actual Git publication commit order (`publication_ordinal`). Out-of-order published events fail closed (`HOLD_INVALID_RELAY_HISTORY`).
+* For `requires_reply=true` messages and `CONSUMED` receipts, a qualifying reply MUST have been published BEFORE the `CONSUMED` receipt publication commit (`reply.publication_ordinal < consumed_receipt.publication_ordinal`). Replies published after a `CONSUMED` receipt cannot retroactively repair history.
+
+### 12.5 Delete / Re-Add & Record Continuity Detection
+* Ancestry walking verifies that record paths are absent from all ancestors prior to first introduction (`i_pub`).
+* If a path already exists at `039232ecf10948bf55a9d9dab665828b6c06f7c6`, publication provenance is unverifiable (`HOLD_RECORD_PROVENANCE_UNVERIFIABLE`).
+* If a record disappears after introduction and reappears later (`PRESENT -> ABSENT -> PRESENT`), validation fails with `HOLD_RELAY_RECORD_REAPPEARED`.
+* Record content bytes MUST remain identical across all descendant commits (`HOLD_RELAY_RECORD_MUTATED`).
+
+### 12.6 Canonical GitHub API Host Pinning & Credential Non-Access Guarantee
+* Production API host is strictly pinned to `https://api.github.com`.
+* `StdlibGitHubRequester.__init__` validates `base_url` before calling `CredentialProvider.get_token()`. Invalid host configurations fail before credential retrieval (`CREDENTIAL_PROVIDER_GET_TOKEN_CALL_COUNT=0`), HTTP request construction, or network attempts.
+
+### 12.7 Non-Authority Invariant & Live Freeze
+* Relay V1 records generate NO execution authority (`authority_effect` MUST equal `"NONE"`).
+* Live Relay branch `control/controller-relay` remains frozen (`LIVE_RELAY_WRITE_COUNT=0`).
+

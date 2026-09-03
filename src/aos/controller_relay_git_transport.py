@@ -29,10 +29,13 @@ class RelayRecordProvenance(NamedTuple):
     path: str
     raw_bytes: bytes
     publication_commit_sha: str
+    publication_ordinal: int = 0
 
 FIXED_RELAY_REPOSITORY: str = "MertSGI/AOS"
 FIXED_RELAY_BRANCH: str = "control/controller-relay"
 FIXED_RELAY_REF: str = "refs/heads/control/controller-relay"
+CANONICAL_GITHUB_API_HOST: str = "https://api.github.com"
+TRUSTED_RELAY_BOOTSTRAP_SHA: str = "039232ecf10948bf55a9d9dab665828b6c06f7c6"
 
 # Endpoint allowlist regular expressions
 ALLOWED_ENDPOINTS: List[Tuple[str, re.Pattern]] = [
@@ -101,8 +104,29 @@ class StdlibGitHubRequester(GitHubRequester):
     """
 
     def __init__(self, credential_provider: CredentialProvider, base_url: str = "https://api.github.com"):
+        self._base_url = self._validate_and_normalize_base_url(base_url)
         self._credential_provider = credential_provider
-        self._base_url = base_url.rstrip("/")
+
+    @staticmethod
+    def _validate_and_normalize_base_url(url: str) -> str:
+        if not isinstance(url, str):
+            raise ControllerRelayTransportError(f"Invalid base_url type: {type(url)}")
+        parsed = urllib.parse.urlparse(url)
+        if (
+            parsed.scheme == "https"
+            and parsed.netloc == "api.github.com"
+            and parsed.hostname == "api.github.com"
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port is None
+            and parsed.path in ("", "/")
+            and not parsed.query
+            and not parsed.fragment
+        ):
+            return CANONICAL_GITHUB_API_HOST
+        raise ControllerRelayTransportError(
+            f"Invalid production GitHub API host: '{url}'. Only canonical 'https://api.github.com' is allowed."
+        )
 
     def __repr__(self) -> str:
         return f"StdlibGitHubRequester(base_url={self._base_url!r}, credential_provider={self._credential_provider!r})"
@@ -332,6 +356,60 @@ class GitDataCASRelayTransport:
 
         raise ControllerRelayTransportError(f"Could not establish publication provenance for '{path}'")
 
+    def get_first_parent_lineage(
+        self,
+        repository: str,
+        head_commit_sha: str,
+        bootstrap_sha: str = TRUSTED_RELAY_BOOTSTRAP_SHA,
+    ) -> List[str]:
+        """Walk first-parent Git ancestry from head_commit_sha back to trusted bootstrap_sha.
+
+        Returns list of commit SHAs ordered from bootstrap_sha (index 0) to head_commit_sha (index N).
+        Fails closed if bootstrap is unreachable or if any commit has multiple parents.
+        """
+        if repository != FIXED_RELAY_REPOSITORY:
+            raise ValueError(f"Repository invariant violation: got '{repository}'")
+
+        curr_sha = head_commit_sha
+        visited: Set[str] = set()
+        lineage_from_head: List[str] = []
+
+        while curr_sha:
+            if curr_sha in visited:
+                raise ControllerRelayTransportError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Cycle detected in first-parent ancestry at '{curr_sha}'"
+                )
+            visited.add(curr_sha)
+            lineage_from_head.append(curr_sha)
+
+            if curr_sha == bootstrap_sha:
+                # Reached trusted bootstrap boundary!
+                return list(reversed(lineage_from_head))
+
+            curr_commit = self._get_commit(curr_sha)
+            parents = curr_commit.get("parents", [])
+
+            if len(parents) > 1:
+                raise ControllerRelayTransportError(
+                    f"HOLD_INVALID_RELAY_HISTORY: Non-linear lineage commit with multiple parents encountered at '{curr_sha}'"
+                )
+
+            if not parents:
+                # Reached root commit without reaching bootstrap_sha
+                raise ControllerRelayTransportError(
+                    f"HOLD_RELAY_BOOTSTRAP_UNREACHABLE: Trusted bootstrap SHA '{bootstrap_sha}' is unreachable from HEAD '{head_commit_sha}'"
+                )
+
+            parent_sha = parents[0].get("sha")
+            if not parent_sha or not isinstance(parent_sha, str) or len(parent_sha) != 40:
+                raise ControllerRelayTransportError(f"Malformed parent SHA in commit '{curr_sha}'")
+
+            curr_sha = parent_sha
+
+        raise ControllerRelayTransportError(
+            f"HOLD_RELAY_BOOTSTRAP_UNREACHABLE: Trusted bootstrap SHA '{bootstrap_sha}' is unreachable from HEAD '{head_commit_sha}'"
+        )
+
     def list_records_under_prefix(self, repository: str, ref_or_branch: str, prefix: str) -> List[Tuple[str, bytes]]:
         """List all records and their bytes matching prefix under target ref."""
         provenances = self.list_record_provenance_under_prefix(repository, ref_or_branch, prefix)
@@ -340,22 +418,70 @@ class GitDataCASRelayTransport:
     def list_record_provenance_under_prefix(
         self, repository: str, ref_or_branch: str, prefix: str
     ) -> List[RelayRecordProvenance]:
-        """List all record provenances matching prefix under target ref."""
+        """List all record provenances matching prefix under target ref, validating complete lineage."""
         if repository != FIXED_RELAY_REPOSITORY:
             raise ValueError(f"Repository invariant violation: got '{repository}'")
 
-        commit_sha = self.get_branch_head(repository, FIXED_RELAY_BRANCH) if ref_or_branch in (FIXED_RELAY_BRANCH, FIXED_RELAY_REF) else ref_or_branch
-        commit_data = self._get_commit(commit_sha)
-        tree_sha = commit_data["tree"]["sha"]
-        tree_data = self._get_tree(tree_sha, recursive=True)
+        head_sha = self.get_branch_head(repository, FIXED_RELAY_BRANCH) if ref_or_branch in (FIXED_RELAY_BRANCH, FIXED_RELAY_REF) else ref_or_branch
+        lineage = self.get_first_parent_lineage(repository, head_sha, TRUSTED_RELAY_BOOTSTRAP_SHA)
+
+        # Inspect trees across single first-parent lineage (index 0 = bootstrap, index N = head_sha)
+        tree_items: List[Dict[str, str]] = []
+        for c_sha in lineage:
+            c_data = self._get_commit(c_sha)
+            t_sha = c_data["tree"]["sha"]
+            t_data = self._get_tree(t_sha, recursive=True)
+            blobs = {
+                item["path"]: item.get("sha", "")
+                for item in t_data.get("tree", [])
+                if item.get("type") == "blob" and item.get("path", "").startswith(prefix)
+            }
+            tree_items.append(blobs)
+
+        all_paths: Set[str] = set()
+        for blobs in tree_items:
+            all_paths.update(blobs.keys())
 
         results: List[RelayRecordProvenance] = []
-        for item in tree_data.get("tree", []):
-            item_path = item.get("path", "")
-            if item_path.startswith(prefix) and item.get("type") == "blob":
-                record_bytes = self.read_record_bytes(repository, commit_sha, item_path)
-                pub_commit_sha = self.derive_publication_commit_sha(repository, commit_sha, item_path)
-                results.append(RelayRecordProvenance(item_path, record_bytes, pub_commit_sha))
+        num_commits = len(lineage)
+
+        for path in sorted(list(all_paths)):
+            # 1. Bootstrap path case: path MUST NOT exist at index 0 (trusted bootstrap)
+            if path in tree_items[0]:
+                raise ControllerRelayTransportError(
+                    f"HOLD_RECORD_PROVENANCE_UNVERIFIABLE: Target Relay record path '{path}' already exists at trusted bootstrap SHA '{TRUSTED_RELAY_BOOTSTRAP_SHA}'"
+                )
+
+            # 2. Find introduction commit index i_pub
+            i_pub = next(i for i in range(num_commits) if path in tree_items[i])
+            pub_commit_sha = lineage[i_pub]
+
+            # 3. Check presence and re-add/deletion across descendants from i_pub to num_commits - 1
+            for k in range(i_pub, num_commits):
+                if path not in tree_items[k]:
+                    # Path disappeared after introduction! Check if it reappears later.
+                    reappeared = any(path in tree_items[m] for m in range(k + 1, num_commits))
+                    if reappeared:
+                        reappear_commit = next(lineage[m] for m in range(k + 1, num_commits) if path in tree_items[m])
+                        raise ControllerRelayTransportError(
+                            f"HOLD_RELAY_RECORD_REAPPEARED: Relay record path '{path}' reappeared at commit '{reappear_commit}'"
+                        )
+                    else:
+                        raise ControllerRelayTransportError(
+                            f"HOLD_INVALID_RELAY_HISTORY: Relay record path '{path}' disappeared/deleted at commit '{lineage[k]}'"
+                        )
+
+            # 4. Check content byte constancy across descendants
+            pub_bytes = self.read_record_bytes(repository, pub_commit_sha, path)
+            for k in range(i_pub + 1, num_commits):
+                curr_bytes = self.read_record_bytes(repository, lineage[k], path)
+                if curr_bytes != pub_bytes:
+                    raise ControllerRelayTransportError(
+                        f"HOLD_RELAY_RECORD_MUTATED: Relay record path '{path}' mutated at commit '{lineage[k]}'"
+                    )
+
+            results.append(RelayRecordProvenance(path, pub_bytes, pub_commit_sha, i_pub))
+
         return results
 
     def publish_record(

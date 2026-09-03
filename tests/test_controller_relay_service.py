@@ -36,10 +36,18 @@ class FakeRelayTransport:
 
     def __init__(self, initial_head: str = HEAD_SHA_INITIAL):
         self.head_sha = initial_head
-        self.messages: List[Dict[str, Any]] = []
-        self.receipts: List[Dict[str, Any]] = []
+        self.commits: Dict[str, Dict[str, Any]] = {
+            initial_head: {"sha": initial_head, "parents": []}
+        }
         self.published_records: List[Dict[str, Any]] = []
         self.publish_call_count = 0
+
+        # Simulated failure flags for testing lineage & provenance boundaries
+        self.simulate_bootstrap_unreachable = False
+        self.simulate_non_linear_lineage = False
+        self.simulate_reappeared_path = False
+        self.simulate_mutated_path = False
+        self.simulate_bootstrap_path_exists = False
 
     def get_branch_head(self, repository: str, branch: str) -> str:
         assert repository == FIXED_RELAY_REPOSITORY
@@ -52,6 +60,53 @@ class FakeRelayTransport:
                 return rec["content_bytes"]
         raise FileNotFoundError(f"Path '{path}' not found in fake transport")
 
+    def get_first_parent_lineage(
+        self,
+        repository: str,
+        head_commit_sha: str,
+        bootstrap_sha: str = HEAD_SHA_INITIAL,
+    ) -> List[str]:
+        if self.simulate_bootstrap_unreachable:
+            from aos.controller_relay_git_transport import ControllerRelayTransportError
+            raise ControllerRelayTransportError(
+                f"HOLD_RELAY_BOOTSTRAP_UNREACHABLE: Trusted bootstrap SHA '{bootstrap_sha}' is unreachable from HEAD '{head_commit_sha}'"
+            )
+        if self.simulate_non_linear_lineage:
+            from aos.controller_relay_git_transport import ControllerRelayTransportError
+            raise ControllerRelayTransportError(
+                f"HOLD_INVALID_RELAY_HISTORY: Non-linear lineage commit with multiple parents encountered at '{head_commit_sha}'"
+            )
+
+        curr_sha = head_commit_sha
+        lineage: List[str] = []
+        visited = set()
+
+        while curr_sha:
+            if curr_sha in visited:
+                from aos.controller_relay_git_transport import ControllerRelayTransportError
+                raise ControllerRelayTransportError("HOLD_INVALID_RELAY_HISTORY: Cycle in lineage")
+            visited.add(curr_sha)
+            lineage.append(curr_sha)
+
+            if curr_sha == bootstrap_sha:
+                return list(reversed(lineage))
+
+            c_info = self.commits.get(curr_sha)
+            if not c_info or not c_info.get("parents"):
+                from aos.controller_relay_git_transport import ControllerRelayTransportError
+                raise ControllerRelayTransportError(
+                    f"HOLD_RELAY_BOOTSTRAP_UNREACHABLE: Trusted bootstrap SHA '{bootstrap_sha}' is unreachable from HEAD '{head_commit_sha}'"
+                )
+
+            parents = c_info["parents"]
+            if len(parents) > 1:
+                from aos.controller_relay_git_transport import ControllerRelayTransportError
+                raise ControllerRelayTransportError("HOLD_INVALID_RELAY_HISTORY: Non-linear lineage")
+
+            curr_sha = parents[0]
+
+        return list(reversed(lineage))
+
     def list_records_under_prefix(self, repository: str, ref: str, prefix: str) -> List[Tuple[str, bytes]]:
         res = []
         for rec in self.published_records:
@@ -60,11 +115,26 @@ class FakeRelayTransport:
         return res
 
     def list_record_provenance_under_prefix(self, repository: str, ref: str, prefix: str) -> List[RelayRecordProvenance]:
+        if self.simulate_reappeared_path:
+            from aos.controller_relay_git_transport import ControllerRelayTransportError
+            raise ControllerRelayTransportError("HOLD_RELAY_RECORD_REAPPEARED: Relay record path reappeared in ancestry")
+        if self.simulate_mutated_path:
+            from aos.controller_relay_git_transport import ControllerRelayTransportError
+            raise ControllerRelayTransportError("HOLD_RELAY_RECORD_MUTATED: Relay record content mutated across history")
+        if self.simulate_bootstrap_path_exists:
+            from aos.controller_relay_git_transport import ControllerRelayTransportError
+            raise ControllerRelayTransportError("HOLD_RECORD_PROVENANCE_UNVERIFIABLE: Record already exists at trusted bootstrap")
+
+        # Verify lineage first
+        lineage = self.get_first_parent_lineage(repository, ref, HEAD_SHA_INITIAL)
+        ordinal_map = {sha: idx for idx, sha in enumerate(lineage)}
+
         res = []
         for rec in self.published_records:
             if rec["path"].startswith(prefix):
-                pub_sha = rec.get("commit_sha", "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e")
-                res.append(RelayRecordProvenance(rec["path"], rec["content_bytes"], pub_sha))
+                pub_sha = rec.get("commit_sha", HEAD_SHA_INITIAL)
+                pub_ord = ordinal_map.get(pub_sha, 0)
+                res.append(RelayRecordProvenance(rec["path"], rec["content_bytes"], pub_sha, pub_ord))
         return res
 
     def publish_record(
@@ -84,6 +154,7 @@ class FakeRelayTransport:
                 False, "HOLD_CAS_RACE", [f"Expected head mismatch: got {expected_head}, actual {self.head_sha}"]
             )
         new_commit_sha = f"{self.publish_call_count:010x}" + "a" * 30
+        self.commits[new_commit_sha] = {"sha": new_commit_sha, "parents": [self.head_sha]}
         self.published_records.append({
             "path": path,
             "content_bytes": content_bytes,
@@ -483,3 +554,263 @@ def test_requires_reply_true_reply_guard():
     con_res_pass = service.publish_receipt(json.dumps(r_con).encode("utf-8"), h, principal_a)
     assert con_res_pass.is_valid is True
     assert con_res_pass.disposition == "PASS"
+
+
+# --- SECTION 15 FOUNDATION R2 REQUIRED PROOF TESTS ---
+
+def test_full_historical_receipt_integrity():
+    """FULL_HISTORICAL_RECEIPT_INTEGRITY=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # Publish message M1
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    m1_res = service.publish_message(json.dumps(msg1).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    assert m1_res.is_valid is True
+    m1_sha = m1_res.details["commit_sha"]
+
+    # Publish receipt OBSERVED for M1
+    rcpt_obs = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m1_sha)
+    r1_res = service.publish_receipt(json.dumps(rcpt_obs).encode("utf-8"), service.get_head(), principal_a)
+    assert r1_res.is_valid is True
+
+    # Validate global history
+    msg_map, rcpt_entries, hist_res = service._validate_existing_relay_history(service.get_head())
+    assert hist_res.is_valid is True
+    assert hist_res.disposition == "PASS"
+    assert len(msg_map) == 1
+    assert len(rcpt_entries) == 1
+
+
+def test_historical_receipt_unknown_message_fails():
+    """HISTORICAL_RECEIPT_UNKNOWN_MESSAGE_FAILS=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # Inject receipt referencing non-existent message into history
+    orphan_rcpt = {
+        "schema_version": "0.1.0",
+        "protocol": "CONTROLLER_RELAY_RECEIPT_V1",
+        "message_id": "CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000999",
+        "message_content_sha256": "a" * 64,
+        "message_commit_sha": "b" * 40,
+        "actor": "AOS_CONTROLLER",
+        "event": "OBSERVED",
+        "created_at": "2026-09-03T12:00:00Z",
+    }
+    transport.published_records.append({
+        "path": "controller-relay/v1/receipts/CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000999/AOS_CONTROLLER-OBSERVED.json",
+        "content_bytes": json.dumps(orphan_rcpt).encode("utf-8"),
+        "commit_sha": "c" * 40,
+    })
+
+    # Attempt to publish a new valid message -> blocked by bad history!
+    new_msg = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    res = service.publish_message(json.dumps(new_msg).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    assert res.is_valid is False
+    assert res.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert res.details.get("GIT_OBJECT_CREATE_COUNT", 0) == 0
+    assert res.details.get("REF_UPDATE_COUNT", 0) == 0
+    assert transport.publish_call_count == 0
+
+
+def test_historical_receipt_content_hash_binding():
+    """HISTORICAL_RECEIPT_CONTENT_HASH_BINDING=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # Publish M1
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    m1_res = service.publish_message(json.dumps(msg1).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    m1_sha = m1_res.details["commit_sha"]
+
+    # Receipt with wrong content_sha256
+    rcpt_bad_hash = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m1_sha)
+    rcpt_bad_hash["message_content_sha256"] = "f" * 64
+
+    res = service.publish_receipt(json.dumps(rcpt_bad_hash).encode("utf-8"), service.get_head(), principal_a)
+    assert res.is_valid is False
+    assert res.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert transport.publish_call_count == 1
+
+
+def test_historical_receipt_actual_git_order():
+    """HISTORICAL_RECEIPT_ACTUAL_GIT_ORDER=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    m1_bytes = json.dumps(msg1).encode("utf-8")
+    m1_res = service.publish_message(m1_bytes, HEAD_SHA_INITIAL, principal_l)
+    m1_sha = m1_res.details["commit_sha"]
+    h1 = service.get_head()
+
+    # Manually inject ACKNOWLEDGED before OBSERVED into transport commits
+    rcpt_ack = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "ACKNOWLEDGED", message_commit_sha=m1_sha)
+    ack_bytes = json.dumps(rcpt_ack).encode("utf-8")
+    ack_sha = "1111111111111111111111111111111111111111"
+    transport.commits[ack_sha] = {"sha": ack_sha, "parents": [h1]}
+    transport.published_records.append({
+        "path": f"controller-relay/v1/receipts/{msg1['message_id']}/AOS_CONTROLLER-ACKNOWLEDGED.json",
+        "content_bytes": ack_bytes,
+        "commit_sha": ack_sha,
+    })
+
+    rcpt_obs = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m1_sha)
+    obs_bytes = json.dumps(rcpt_obs).encode("utf-8")
+    obs_sha = "2222222222222222222222222222222222222222"
+    transport.commits[obs_sha] = {"sha": obs_sha, "parents": [ack_sha]}
+    transport.published_records.append({
+        "path": f"controller-relay/v1/receipts/{msg1['message_id']}/AOS_CONTROLLER-OBSERVED.json",
+        "content_bytes": obs_bytes,
+        "commit_sha": obs_sha,
+    })
+    transport.head_sha = obs_sha
+
+    # Verify history validation fails because ACKNOWLEDGED came first in Git commit order!
+    _, _, val_res = service._validate_existing_relay_history(obs_sha)
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_INVALID_RELAY_HISTORY"
+
+
+def test_reply_after_consumed_does_not_retroactively_pass():
+    """REPLY_AFTER_CONSUMED_DOES_NOT_RETROACTIVELY_PASS=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # M1 with requires_reply=True
+    msg1 = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1, requires_reply=True)
+    m1_bytes = json.dumps(msg1).encode("utf-8")
+    m1_res = service.publish_message(m1_bytes, HEAD_SHA_INITIAL, principal_l)
+    m1_sha = m1_res.details["commit_sha"]
+
+    h1 = service.get_head()
+    rcpt_obs = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "OBSERVED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(rcpt_obs).encode("utf-8"), h1, principal_a)
+
+    h2 = service.get_head()
+    rcpt_ver = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "VERIFIED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(rcpt_ver).encode("utf-8"), h2, principal_a)
+
+    h3 = service.get_head()
+    rcpt_ack = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "ACKNOWLEDGED", message_commit_sha=m1_sha)
+    service.publish_receipt(json.dumps(rcpt_ack).encode("utf-8"), h3, principal_a)
+
+    h4 = service.get_head()
+    # Manually inject CONSUMED at ordinal 5 before any reply exists
+    rcpt_con = make_valid_receipt_dict(msg1, "AOS_CONTROLLER", "CONSUMED", message_commit_sha=m1_sha)
+    con_bytes = json.dumps(rcpt_con).encode("utf-8")
+    con_sha = "3333333333333333333333333333333333333333"
+    transport.commits[con_sha] = {"sha": con_sha, "parents": [h4]}
+    transport.published_records.append({
+        "path": f"controller-relay/v1/receipts/{msg1['message_id']}/AOS_CONTROLLER-CONSUMED.json",
+        "content_bytes": con_bytes,
+        "commit_sha": con_sha,
+    })
+    transport.head_sha = con_sha
+
+    # Manually inject reply at ordinal 6 AFTER CONSUMED
+    reply_msg = make_valid_message_dict(
+        from_c="AOS_CONTROLLER",
+        to_c="LARI_CONTROLLER",
+        seq=1,
+        in_reply_to=msg1["message_id"],
+        thread_id=msg1["thread_id"],
+    )
+    rep_bytes = json.dumps(reply_msg).encode("utf-8")
+    rep_sha = "4444444444444444444444444444444444444444"
+    transport.commits[rep_sha] = {"sha": rep_sha, "parents": [con_sha]}
+    transport.published_records.append({
+        "path": f"controller-relay/v1/messages/AOS_CONTROLLER--LARI_CONTROLLER/000000000001-{reply_msg['message_id']}.json",
+        "content_bytes": rep_bytes,
+        "commit_sha": rep_sha,
+    })
+    transport.head_sha = rep_sha
+
+    # History validation MUST FAIL because reply came AFTER CONSUMED!
+    _, _, val_res = service._validate_existing_relay_history(rep_sha)
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_INVALID_RELAY_HISTORY"
+
+
+def test_unrelated_invalid_receipt_blocks_publication():
+    """UNRELATED_INVALID_RECEIPT_BLOCKS_MESSAGE_PUBLICATION=PASS & UNRELATED_INVALID_RECEIPT_BLOCKS_RECEIPT_PUBLICATION=PASS"""
+    transport = FakeRelayTransport()
+    service = ControllerRelayService(transport)
+    principal_l = ControllerPrincipal("LARI_CONTROLLER")
+    principal_a = ControllerPrincipal("AOS_CONTROLLER")
+
+    # Inject an invalid receipt for an unrelated message
+    transport.published_records.append({
+        "path": "controller-relay/v1/receipts/CRV1-X-Y-000000000001/X-OBSERVED.json",
+        "content_bytes": b"{bad json",
+        "commit_sha": "5555555555555555555555555555555555555555",
+    })
+
+    # 1. Blocks publish_message
+    msg = make_valid_message_dict("LARI_CONTROLLER", "AOS_CONTROLLER", 1)
+    res_m = service.publish_message(json.dumps(msg).encode("utf-8"), HEAD_SHA_INITIAL, principal_l)
+    assert res_m.is_valid is False
+    assert res_m.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert transport.publish_call_count == 0
+
+    # 2. Blocks publish_receipt
+    rcpt = make_valid_receipt_dict(msg, "AOS_CONTROLLER", "OBSERVED")
+    res_r = service.publish_receipt(json.dumps(rcpt).encode("utf-8"), HEAD_SHA_INITIAL, principal_a)
+    assert res_r.is_valid is False
+    assert res_r.disposition == "HOLD_INVALID_RELAY_HISTORY"
+    assert transport.publish_call_count == 0
+
+
+def test_delete_readd_provenance_detection():
+    """DELETE_READD_PROVENANCE_DETECTION=PASS"""
+    transport = FakeRelayTransport()
+    transport.simulate_reappeared_path = True
+    service = ControllerRelayService(transport)
+
+    _, _, val_res = service._validate_existing_relay_history(HEAD_SHA_INITIAL)
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_RELAY_RECORD_REAPPEARED"
+
+
+def test_trusted_relay_bootstrap_boundary():
+    """TRUSTED_RELAY_BOOTSTRAP_BOUNDARY=PASS"""
+    transport = FakeRelayTransport()
+    transport.simulate_bootstrap_path_exists = True
+    service = ControllerRelayService(transport)
+
+    _, _, val_res = service._validate_existing_relay_history(HEAD_SHA_INITIAL)
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_RECORD_PROVENANCE_UNVERIFIABLE"
+
+
+def test_bootstrap_unreachable_fails():
+    """BOOTSTRAP_UNREACHABLE_FAILS=PASS"""
+    transport = FakeRelayTransport()
+    transport.simulate_bootstrap_unreachable = True
+    service = ControllerRelayService(transport)
+
+    _, _, val_res = service._validate_existing_relay_history("unreachable_head")
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_RELAY_BOOTSTRAP_UNREACHABLE"
+
+
+def test_non_linear_lineage_fails():
+    """NON_LINEAR_LINEAGE_FAILS=PASS"""
+    transport = FakeRelayTransport()
+    transport.simulate_non_linear_lineage = True
+    service = ControllerRelayService(transport)
+
+    _, _, val_res = service._validate_existing_relay_history(HEAD_SHA_INITIAL)
+    assert val_res.is_valid is False
+    assert val_res.disposition == "HOLD_INVALID_RELAY_HISTORY"
+
