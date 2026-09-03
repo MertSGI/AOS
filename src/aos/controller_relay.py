@@ -1,6 +1,7 @@
 """AOS Controller Relay V1 deterministic transport validation engine and receipt state machine.
 
 Implementation Authority ID: LARI-AOS-CONTROLLER-RELAY-CR0-20260903-01
+Correction Authority ID: LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01
 CR-0 establishes protocol specifications, schemas, deterministic network-free validation,
 derived receipt state-machine logic, and CLI registration.
 
@@ -20,7 +21,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from aos.validate import validate_document
+from aos.validate import DuplicateJSONKeyError, loads_json_strict, validate_document
 
 MAX_RELAY_MESSAGE_BYTES: int = 64 * 1024  # 64 KiB conservative payload limit
 
@@ -157,26 +158,58 @@ def scan_for_prohibited_secrets(raw_input: Any, current_path: str = "") -> List[
     return violations
 
 
-def validate_controller_relay_message_raw(raw_bytes: bytes) -> ControllerRelayValidationResult:
-    """Validate raw serialized UTF-8 bytes of a Controller Relay V1 message."""
+def _parse_raw_relay_bytes_strict(raw_bytes: bytes, max_bytes: int = MAX_RELAY_MESSAGE_BYTES) -> Tuple[Optional[Any], List[str]]:
+    """Generic helper to validate raw payload constraints and parse JSON strictly rejecting duplicate keys."""
     errors: List[str] = []
 
-    if len(raw_bytes) > MAX_RELAY_MESSAGE_BYTES:
-        errors.append(f"Message size ({len(raw_bytes)} bytes) exceeds maximum limit ({MAX_RELAY_MESSAGE_BYTES} bytes)")
-        return ControllerRelayValidationResult(False, "FAIL", errors)
+    if len(raw_bytes) > max_bytes:
+        errors.append(f"Payload size ({len(raw_bytes)} bytes) exceeds maximum limit ({max_bytes} bytes)")
+        return None, errors
 
     if raw_bytes.startswith(b"\xef\xbb\xbf"):
         errors.append("UTF-8 BOM header is strictly prohibited")
-        return ControllerRelayValidationResult(False, "FAIL", errors)
+        return None, errors
 
     try:
         raw_text = raw_bytes.decode("utf-8")
-        data = json.loads(raw_text)
     except Exception as exc:
-        errors.append(f"Invalid UTF-8 JSON encoding: {exc}")
+        errors.append(f"Invalid UTF-8 encoding: {exc}")
+        return None, errors
+
+    try:
+        data = loads_json_strict(raw_text)
+    except DuplicateJSONKeyError as dup_err:
+        errors.append(f"DUPLICATE_JSON_KEY: {dup_err}")
+        return None, errors
+    except Exception as exc:
+        errors.append(f"Invalid JSON structure: {exc}")
+        return None, errors
+
+    return data, errors
+
+
+def validate_controller_relay_message_raw(raw_bytes: bytes) -> ControllerRelayValidationResult:
+    """Validate raw serialized UTF-8 bytes of a Controller Relay V1 message strictly rejecting duplicate keys."""
+    data, errors = _parse_raw_relay_bytes_strict(raw_bytes)
+    if errors:
         return ControllerRelayValidationResult(False, "FAIL", errors)
 
+    if not isinstance(data, dict):
+        return ControllerRelayValidationResult(False, "FAIL", ["Message payload must be a JSON object"])
+
     return validate_controller_relay_message(data)
+
+
+def validate_controller_relay_receipt_raw(raw_bytes: bytes) -> ControllerRelayValidationResult:
+    """Validate raw serialized UTF-8 bytes of a Controller Relay V1 receipt strictly rejecting duplicate keys."""
+    data, errors = _parse_raw_relay_bytes_strict(raw_bytes)
+    if errors:
+        return ControllerRelayValidationResult(False, "FAIL", errors)
+
+    if not isinstance(data, dict):
+        return ControllerRelayValidationResult(False, "FAIL", ["Receipt payload must be a JSON object"])
+
+    return validate_controller_relay_receipt(data)
 
 
 def validate_controller_relay_message(message: Dict[str, Any]) -> ControllerRelayValidationResult:
