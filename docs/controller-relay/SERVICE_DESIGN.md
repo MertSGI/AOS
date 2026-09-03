@@ -337,3 +337,65 @@ For future authorization phases:
 * `REPOSITORY_SELECTION`: Pinned exclusively to `MertSGI/AOS`.
 * `PERMISSIONS`: `Contents: Read & write` only (`refs/heads/control/controller-relay` branch target).
 * `PROHIBITED PERMISSIONS`: NO Actions write, Workflows write, Issues, Pull requests, Deployments, Administration, or Organization permissions.
+
+---
+
+## 14. Live One-Shot Invoker R0 Specifications
+
+Live Invoker R0 defines the normative one-shot live publication boundary for CR-1 capability handshake wiring:
+
+### 14.1 DRY_RUN Planner vs LIVE One-Shot Invoker
+
+| Aspect | `execute_cr1_dry_run` | `execute_cr1_live` |
+| :--- | :--- | :--- |
+| **Mode** | `DRY_RUN` — pure in-memory calculation | `LIVE` — publishes through service/transport |
+| **Transport** | None (zero transport calls) | Receives already-constructed `ControllerRelayService` |
+| **Credential Discovery** | None | None — invoker does not inspect credential-provider internals |
+| **Network** | Forbidden | Delegated to transport via service; R0 uses fake/in-memory requester |
+| **Git Objects Created** | 0 | 1 blob + 1 tree + 1 commit per message (via transport) |
+| **Ref Updates** | 0 | 1 per message (via transport, `force=False`) |
+| **Output** | Safe metadata dict with zero-mutation counters | Safe metadata dict with publication commit SHA |
+
+### 14.2 Live Invoker Receives Pre-Constructed Service
+* `execute_cr1_live(role, service, expected_head, created_at)` receives an already-constructed `ControllerRelayService` instance.
+* The invoker performs **zero credential discovery** — it does not instantiate requesters, credential providers, or transport layers.
+* The caller is responsible for constructing the full stack: `requester -> transport -> service`.
+
+### 14.3 Fixed Controller-Role Mapping
+* `AOS_ROOT` -> `ControllerPrincipal("AOS_CONTROLLER")`
+* `LARI_REPLY` -> `ControllerPrincipal("LARI_CONTROLLER")`
+* No arbitrary principal, token, or credential parameters accepted.
+
+### 14.4 Expected Head & CAS Rules
+* **Root expected parent:** Trusted bootstrap SHA `039232ecf10948bf55a9d9dab665828b6c06f7c6`.
+* **Reply expected parent:** Root publication commit SHA (derived from live root observation).
+* Before message construction/publication: `service.get_head() == expected_head` is required. Mismatch -> `HOLD_CAS_RACE`.
+* CAS failure has **no automatic retry** (`AUTOMATIC_RETRY_COUNT=0`).
+
+### 14.5 Observation Through Service History APIs
+* LARI_REPLY obtains root through `observe_exact_cr1_root(service, expected_head)` which:
+  1. Verifies `service.get_head() == expected_head`
+  2. Calls `service.list_message_provenances(ref=expected_head)` triggering complete accepted history validation
+  3. Locates exact root message by ID
+  4. Reads raw immutable bytes through `service.read_record(path, ref=expected_head)`
+  5. Validates raw bytes and enforces exact R0-R1 root binding
+* AOS reply verification is **read-only** — zero additional blobs, trees, commits, or ref updates.
+
+### 14.6 R0 Wiring Proof Boundaries
+* R0 performs **ZERO real Relay writes** (`REAL_LIVE_RELAY_WRITE_COUNT=0`)
+* R0 performs **ZERO credential access** (`REAL_CREDENTIAL_ACCESS_COUNT=0`)
+* R0 uses a fake/in-memory requester that proves actual service-to-transport wiring
+* Receipt live lifecycle remains next-phase authority
+* Relay remains non-authoritative: `RELAY_MESSAGE != AUTHORITY`
+
+### 14.7 Error Mapping
+
+| Scenario | Disposition |
+| :--- | :--- |
+| Wrong expected/current head | `HOLD_CAS_RACE` |
+| Root missing | `HOLD_CROSS_CONTROLLER_HANDSHAKE` |
+| Reply missing | `HOLD_CROSS_CONTROLLER_HANDSHAKE` |
+| Invalid observed root binding | `HOLD_INVALID_OBSERVED_ROOT` |
+| Wrong reply contract | `HOLD_CROSS_CONTROLLER_HANDSHAKE` |
+| Service publication validation failure | Propagate accepted disposition without retry |
+| Transport CAS failure | `HOLD_CAS_RACE` |
