@@ -24,7 +24,18 @@ from aos.controller_relay import (
 )
 from aos.controller_relay_service import ControllerPrincipal, derive_message_path
 
-EXPECTED_LIVE_RELAY_HEAD: str = "039232ecf10948bf55a9d9dab665828b6c06f7c6"
+CR1_SCHEMA_VERSION: str = "0.1"
+CR1_SUBJECT_REPOSITORY: str = "MertSGI/AOS"
+CR1_SUBJECT_BRANCH: str = "feature/controller-relay-v1"
+CR1_SUBJECT_SHA: str = "039232ecf10948bf55a9d9dab665828b6c06f7c6"
+CR1_EXPECTED_PARENT_SHA: str = "039232ecf10948bf55a9d9dab665828b6c06f7c6"
+CR1_AUTHORITY_REFS: list[str] = [
+    "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01",
+    "039232ecf10948bf55a9d9dab665828b6c06f7c6",
+    "c3ee2f2c1510abdddd3de14bc879e5ba27dac835",
+]
+
+EXPECTED_LIVE_RELAY_HEAD: str = CR1_SUBJECT_SHA
 ALLOWED_ROLES = {"AOS_ROOT", "LARI_REPLY"}
 
 ROLE_PRINCIPAL_MAP = {
@@ -44,7 +55,7 @@ def build_cr1_root_message_plan(
     ts = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     msg: Dict[str, Any] = {
-        "schema_version": "0.1.0",
+        "schema_version": CR1_SCHEMA_VERSION,
         "protocol": "CONTROLLER_RELAY_V1",
         "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
         "thread_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
@@ -54,16 +65,12 @@ def build_cr1_root_message_plan(
         "in_reply_to": None,
         "created_at": ts,
         "subject": "CONTROLLER_RELAY_CR1_CAPABILITY_HANDSHAKE",
-        "subject_repository": "MertSGI/AOS",
-        "subject_branch": "feature/controller-relay-service-v1",
-        "subject_sha": EXPECTED_LIVE_RELAY_HEAD,
+        "subject_repository": CR1_SUBJECT_REPOSITORY,
+        "subject_branch": CR1_SUBJECT_BRANCH,
+        "subject_sha": CR1_SUBJECT_SHA,
         "decision": "CR1_CAPABILITY_HANDSHAKE_REQUEST",
         "authority_effect": "NONE",
-        "authority_refs": [
-            "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01",
-            EXPECTED_LIVE_RELAY_HEAD,
-            "c3ee2f2c1510abdddd3de14bc879e5ba27dac835",
-        ],
+        "authority_refs": list(CR1_AUTHORITY_REFS),
         "requested_next_action": "LARI_CONTROLLER_VERIFY_AND_REPLY",
         "requires_reply": True,
     }
@@ -95,15 +102,22 @@ def build_cr1_reply_message_plan(
 
     # 2. Require exact root identity checks
     if (
-        root_dict.get("message_id") != "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
+        root_dict.get("schema_version") != CR1_SCHEMA_VERSION
+        or root_dict.get("protocol") != "CONTROLLER_RELAY_V1"
+        or root_dict.get("message_id") != "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
+        or root_dict.get("thread_id") != "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
+        or root_dict.get("sequence") != 1
         or root_dict.get("from") != "AOS_CONTROLLER"
         or root_dict.get("to") != "LARI_CONTROLLER"
-        or root_dict.get("sequence") != 1
-        or root_dict.get("thread_id") != "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
         or root_dict.get("in_reply_to") is not None
         or root_dict.get("subject") != "CONTROLLER_RELAY_CR1_CAPABILITY_HANDSHAKE"
+        or root_dict.get("subject_repository") != CR1_SUBJECT_REPOSITORY
+        or root_dict.get("subject_branch") != CR1_SUBJECT_BRANCH
+        or root_dict.get("subject_sha") != CR1_SUBJECT_SHA
         or root_dict.get("decision") != "CR1_CAPABILITY_HANDSHAKE_REQUEST"
         or root_dict.get("authority_effect") != "NONE"
+        or root_dict.get("authority_refs") != CR1_AUTHORITY_REFS
+        or root_dict.get("requested_next_action") != "LARI_CONTROLLER_VERIFY_AND_REPLY"
         or root_dict.get("requires_reply") is not True
     ):
         raise ValueError("HOLD_INVALID_OBSERVED_ROOT: Observed root message identity/field mismatch")
@@ -111,7 +125,7 @@ def build_cr1_reply_message_plan(
     ts = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     reply_msg: Dict[str, Any] = {
-        "schema_version": "0.1.0",
+        "schema_version": CR1_SCHEMA_VERSION,
         "protocol": "CONTROLLER_RELAY_V1",
         "message_id": "CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000001",
         "thread_id": root_dict["thread_id"],
@@ -121,16 +135,12 @@ def build_cr1_reply_message_plan(
         "in_reply_to": root_dict["message_id"],
         "created_at": ts,
         "subject": "CONTROLLER_RELAY_CR1_CAPABILITY_HANDSHAKE",
-        "subject_repository": "MertSGI/AOS",
-        "subject_branch": "feature/controller-relay-service-v1",
-        "subject_sha": EXPECTED_LIVE_RELAY_HEAD,
+        "subject_repository": CR1_SUBJECT_REPOSITORY,
+        "subject_branch": CR1_SUBJECT_BRANCH,
+        "subject_sha": CR1_SUBJECT_SHA,
         "decision": "CR1_CAPABILITY_HANDSHAKE_ACCEPTED",
         "authority_effect": "NONE",
-        "authority_refs": [
-            "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01",
-            EXPECTED_LIVE_RELAY_HEAD,
-            "c3ee2f2c1510abdddd3de14bc879e5ba27dac835",
-        ],
+        "authority_refs": list(CR1_AUTHORITY_REFS),
         "requested_next_action": "AOS_CONTROLLER_VERIFY_REPLY_AND_CLOSE_HANDSHAKE",
         "requires_reply": False,
     }

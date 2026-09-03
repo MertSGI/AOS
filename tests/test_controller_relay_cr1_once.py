@@ -1,6 +1,6 @@
 """Deterministic offline unit tests for Controller Relay CR-1 One-Shot Handshake Runner.
 
-Implementation Authority ID: LARI-AOS-CONTROLLER-RELAY-IDENTITY-ADAPTER-R0-20260903-01
+Implementation Authority ID: LARI-AOS-CONTROLLER-RELAY-IDENTITY-ADAPTER-R0-R1-20260903-01
 PROVES ROLE BOUNDARIES, EXACT IDENTITIES, CANONICAL HASH RECOMPUTATION, AND ZERO MUTATION.
 """
 
@@ -13,6 +13,12 @@ import pytest
 
 from aos.controller_relay import compute_message_content_sha256
 from scripts.controller_relay_cr1_once import (
+    CR1_AUTHORITY_REFS,
+    CR1_EXPECTED_PARENT_SHA,
+    CR1_SCHEMA_VERSION,
+    CR1_SUBJECT_BRANCH,
+    CR1_SUBJECT_REPOSITORY,
+    CR1_SUBJECT_SHA,
     EXPECTED_LIVE_RELAY_HEAD,
     build_cr1_reply_message_plan,
     build_cr1_root_message_plan,
@@ -43,6 +49,8 @@ def test_root_message_exact_identity_and_path():
     dt = datetime(2026, 9, 3, 12, 0, 0, tzinfo=timezone.utc)
     msg, path, raw_bytes = build_cr1_root_message_plan(created_at=dt)
 
+    assert msg["schema_version"] == "0.1"
+    assert msg["protocol"] == "CONTROLLER_RELAY_V1"
     assert msg["message_id"] == "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
     assert msg["thread_id"] == "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001"
     assert msg["sequence"] == 1
@@ -50,10 +58,22 @@ def test_root_message_exact_identity_and_path():
     assert msg["to"] == "LARI_CONTROLLER"
     assert msg["in_reply_to"] is None
     assert msg["created_at"] == "2026-09-03T12:00:00Z"
+    assert msg["subject"] == "CONTROLLER_RELAY_CR1_CAPABILITY_HANDSHAKE"
+    assert msg["subject_repository"] == "MertSGI/AOS"
+    assert msg["subject_branch"] == "feature/controller-relay-v1"
+    assert msg["subject_sha"] == "039232ecf10948bf55a9d9dab665828b6c06f7c6"
     assert msg["decision"] == "CR1_CAPABILITY_HANDSHAKE_REQUEST"
     assert msg["authority_effect"] == "NONE"
+    assert msg["authority_refs"] == [
+        "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01",
+        "039232ecf10948bf55a9d9dab665828b6c06f7c6",
+        "c3ee2f2c1510abdddd3de14bc879e5ba27dac835",
+    ]
+    assert msg["requested_next_action"] == "LARI_CONTROLLER_VERIFY_AND_REPLY"
     assert msg["requires_reply"] is True
-    assert msg["subject_sha"] == EXPECTED_LIVE_RELAY_HEAD
+
+    res = execute_cr1_dry_run("AOS_ROOT", created_at=dt)
+    assert res["expected_parent_sha"] == "039232ecf10948bf55a9d9dab665828b6c06f7c6"
 
     expected_path = "controller-relay/v1/messages/AOS_CONTROLLER--LARI_CONTROLLER/000000000001-CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001.json"
     assert path == expected_path
@@ -80,8 +100,81 @@ def test_canonical_content_hash_recomputed_freshly():
     assert msg1["content_sha256"] != msg2["content_sha256"]
 
 
-def test_lari_reply_requires_valid_observed_root():
-    """LARI_REPLY without observed root rejected, invalid root rejected, exact root permits reply"""
+def test_lari_reply_exact_contract():
+    """LARI_REPLY exact fields contract for valid observed root"""
+    valid_root_msg, _, valid_root_raw = build_cr1_root_message_plan()
+    dt_reply = datetime(2026, 9, 3, 12, 5, 0, tzinfo=timezone.utc)
+    reply_msg, reply_path, reply_raw = build_cr1_reply_message_plan(valid_root_raw, created_at=dt_reply)
+
+    assert reply_msg["schema_version"] == "0.1"
+    assert reply_msg["protocol"] == "CONTROLLER_RELAY_V1"
+    assert reply_msg["message_id"] == "CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000001"
+    assert reply_msg["from"] == "LARI_CONTROLLER"
+    assert reply_msg["to"] == "AOS_CONTROLLER"
+    assert reply_msg["sequence"] == 1
+    assert reply_msg["thread_id"] == valid_root_msg["thread_id"]
+    assert reply_msg["in_reply_to"] == valid_root_msg["message_id"]
+    assert reply_msg["subject"] == "CONTROLLER_RELAY_CR1_CAPABILITY_HANDSHAKE"
+    assert reply_msg["subject_repository"] == "MertSGI/AOS"
+    assert reply_msg["subject_branch"] == "feature/controller-relay-v1"
+    assert reply_msg["subject_sha"] == "039232ecf10948bf55a9d9dab665828b6c06f7c6"
+    assert reply_msg["authority_refs"] == [
+        "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01",
+        "039232ecf10948bf55a9d9dab665828b6c06f7c6",
+        "c3ee2f2c1510abdddd3de14bc879e5ba27dac835",
+    ]
+    assert reply_msg["decision"] == "CR1_CAPABILITY_HANDSHAKE_ACCEPTED"
+    assert reply_msg["requested_next_action"] == "AOS_CONTROLLER_VERIFY_REPLY_AND_CLOSE_HANDSHAKE"
+    assert reply_msg["requires_reply"] is False
+    assert reply_msg["authority_effect"] == "NONE"
+    assert reply_msg["content_sha256"] == compute_message_content_sha256(reply_msg)
+
+    expected_reply_path = "controller-relay/v1/messages/LARI_CONTROLLER--AOS_CONTROLLER/000000000001-CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000001.json"
+    assert reply_path == expected_reply_path
+
+
+def test_observed_root_binding_guard_negative_cases():
+    """Observed root MUST be rejected on any identity or binding mismatch"""
+    valid_root_msg, _, _ = build_cr1_root_message_plan()
+
+    # Helper to encode root with freshly recomputed content_sha256
+    def make_root_raw(mods: dict) -> bytes:
+        d = dict(valid_root_msg)
+        d.update(mods)
+        d["content_sha256"] = compute_message_content_sha256(d)
+        return json.dumps(d, ensure_ascii=False).encode("utf-8")
+
+    # A. schema_version = "0.1.0" -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"schema_version": "0.1.0"}))
+
+    # B. subject_branch = "feature/controller-relay-service-v1" -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"subject_branch": "feature/controller-relay-service-v1"}))
+
+    # C. authority_refs member differs -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"authority_refs": ["WRONG_REF", "039232ecf10948bf55a9d9dab665828b6c06f7c6", "c3ee2f2c1510abdddd3de14bc879e5ba27dac835"]}))
+
+    # D. authority_refs wrong order -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"authority_refs": ["039232ecf10948bf55a9d9dab665828b6c06f7c6", "LARI-AOS-CONTROLLER-RELAY-CR0-R1-20260903-01", "c3ee2f2c1510abdddd3de14bc879e5ba27dac835"]}))
+
+    # E. requested_next_action differs -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"requested_next_action": "WRONG_ACTION"}))
+
+    # F. wrong subject_repository -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"subject_repository": "WRONG/REPO"}))
+
+    # G. wrong subject_sha -> HOLD_INVALID_OBSERVED_ROOT
+    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
+        build_cr1_reply_message_plan(make_root_raw({"subject_sha": "0000000000000000000000000000000000000000"}))
+
+
+def test_lari_reply_requires_valid_observed_root_basics():
+    """LARI_REPLY basic edge checks"""
     # 1. No observed root -> rejected
     with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
         execute_cr1_dry_run("LARI_REPLY", observed_root_raw=None)
@@ -89,43 +182,6 @@ def test_lari_reply_requires_valid_observed_root():
     # 2. Malformed JSON observed root -> rejected
     with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
         build_cr1_reply_message_plan(b"{invalid json")
-
-    # 3. Valid JSON but wrong identity observed root -> rejected
-    wrong_root = {
-        "schema_version": "0.1.0",
-        "protocol": "CONTROLLER_RELAY_V1",
-        "message_id": "CRV1-WRONG-WRONG-000000000001",
-        "thread_id": "CRV1-WRONG-WRONG-000000000001",
-        "sequence": 1,
-        "from": "WRONG_CONTROLLER",
-        "to": "LARI_CONTROLLER",
-        "created_at": "2026-09-03T12:00:00Z",
-        "subject": "WRONG",
-        "decision": "WRONG",
-        "authority_effect": "NONE",
-        "requires_reply": True,
-    }
-    wrong_root["content_sha256"] = compute_message_content_sha256(wrong_root)
-    with pytest.raises(ValueError, match="HOLD_INVALID_OBSERVED_ROOT"):
-        build_cr1_reply_message_plan(json.dumps(wrong_root).encode("utf-8"))
-
-    # 4. Exact valid observed root -> permits reply plan
-    valid_root_msg, _, valid_root_raw = build_cr1_root_message_plan()
-    dt_reply = datetime(2026, 9, 3, 12, 5, 0, tzinfo=timezone.utc)
-    reply_msg, reply_path, reply_raw = build_cr1_reply_message_plan(valid_root_raw, created_at=dt_reply)
-
-    assert reply_msg["message_id"] == "CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000001"
-    assert reply_msg["from"] == "LARI_CONTROLLER"
-    assert reply_msg["to"] == "AOS_CONTROLLER"
-    assert reply_msg["in_reply_to"] == valid_root_msg["message_id"]
-    assert reply_msg["thread_id"] == valid_root_msg["thread_id"]
-    assert reply_msg["decision"] == "CR1_CAPABILITY_HANDSHAKE_ACCEPTED"
-    assert reply_msg["requires_reply"] is False
-    assert reply_msg["authority_effect"] == "NONE"
-    assert reply_msg["content_sha256"] == compute_message_content_sha256(reply_msg)
-
-    expected_reply_path = "controller-relay/v1/messages/LARI_CONTROLLER--AOS_CONTROLLER/000000000001-CRV1-LARI_CONTROLLER-AOS_CONTROLLER-000000000001.json"
-    assert reply_path == expected_reply_path
 
 
 def test_dry_run_zero_mutation_and_safe_output():
