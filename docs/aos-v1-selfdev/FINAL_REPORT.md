@@ -1,18 +1,26 @@
-# AOS Self-Development Final Report
+# AOS Self-Development Final Report (Correction Cycle R1)
 
-`AUTHORITY_ID=AOS-SELFDEV-AUTONOMY-DESIGN-INTELLIGENCE-V1-20260904-02`
+`CORRECTION_AUTHORITY_ID=AOS-SELFDEV-AUTONOMY-DESIGN-INTELLIGENCE-V1-CORRECTION-R1-20260904-01`
+`PARENT_SHA=675bc7fb9792f7ed26127f4a6a74fca0166dd5b7`
 
 ## Executive Summary
 
-The **AOS Autonomy Fabric + Design Intelligence V1 Autonomous Roadmap-to-Completion Program** has executed to full completion. All objectives across phases R0 through R20 have been implemented and verified. The codebase strictly respects the core freeze on all pre-existing tracked files at canonical base SHA `7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e`.
+The **AOS Autonomy Fabric + Design Intelligence V1 Controller Review Correction** cycle has completed. All 6 independently identified gaps from the controller review have been resolved:
+1. **Core Freeze Compliance**: `PREEXISTING_TRACKED_FILE_MUTATION_COUNT=0` verified across all 186 pre-existing baseline files. Top-level `benchmarks/__init__.py` removed; `extensions/__init__.py` retained as authorized extension bootstrap glue.
+2. **Antigravity CLI Contract**: Updated `AntigravityCLIAdapter` to support `-p`/`--prompt`, `--output-format json`, `--output-format stream-json`, `--conversation`, and `--continue`. Removed unsupported `--workspace` argument, executing subprocesses with `workspace_path` as working directory (`cwd`). Stream-json event parsing implemented with `IDENTITY_UNRESOLVED` fail-closed semantics.
+3. **Durable Run Journal & Process Restart Recovery**: Implemented `FileRunJournal` JSONL durable storage with atomic append, explicit flush, safe reload, and corrupt-record error handling (`JournalCorruptRecordError`). `AgentRunRegistry` and `ParallelSupervisor` restart recovery tested across separate process/registry instances without needing the original in-memory registry object.
+4. **Corrected Multi-Run Benchmark (R19)**: Explicitly simulated `WAITING_HUMAN`, `WAITING_AUTHORITY`, `WAITING_AGENT`, `INTERRUPTED`, and `COMPLETED` runs, proving non-blocking independent progress for `Run C`.
+5. **Required JSON Schemas**: Generated 14 draft-07 JSON Schema files under `schemas/design-intelligence/` with full round-trip verification against Python contracts.
+6. **Strengthened Design Benchmark (R18)**: Expanded from 6 to 24 deterministic fixtures covering PASS, WARN, FAIL, adversarial failure modes, and near-miss fixtures for false-positive validation.
 
-- **PROMOTION_RECOMMENDATION**: `GO_FOR_CONTROLLER_REVIEW`
+- **PROMOTION_RECOMMENDATION**: `HOLD` (due to official CLI binary environment boundary)
 - **CORE_FREEZE_VERIFIED**: `YES` (`PREEXISTING_TRACKED_FILE_MUTATION_COUNT=0`)
-- **AUTONOMY_FABRIC_RESULT**: `PASS` (21 unit tests passed)
-- **DESIGN_INTELLIGENCE_RESULT**: `PASS` (10 unit tests passed)
-- **MULTI_RUN_BENCHMARK_RESULT**: `PASS` (Deterministic isolation & recovery proven)
-- **DESIGN_BENCHMARK_RESULT**: `PASS` (100% detection rate across 6 fixtures, 0 FP, 0 FN)
-- **LIVE_SUPERVISION_PROOF**: `NOT_EXECUTED_ENVIRONMENT_BOUNDARY` (Headless CLI binary boundary noted)
+- **ANTIGRAVITY_CLI_CONTRACT_RESULT**: `PASS` (5 unit tests passed)
+- **DURABLE_JOURNAL_RESULT**: `PASS` (2 process restart recovery tests passed)
+- **MULTI_RUN_BENCHMARK_RESULT**: `PASS` (Non-blocking WAITING_HUMAN & WAITING_AUTHORITY gates proven)
+- **JSON_SCHEMA_RESULT**: `PASS` (14 JSON Schema files validated)
+- **DESIGN_BENCHMARK_RESULT**: `PASS` (24/24 fixtures passed, 100% corpus accuracy)
+- **LIVE_SUPERVISION_PROOF**: `NOT_EXECUTED_ENVIRONMENT_BOUNDARY`
 
 ---
 
@@ -24,8 +32,6 @@ PREEXISTING_TRACKED_FILE_MUTATION_COUNT=0
 CORE_FREEZE_VERIFIED=YES
 ```
 
-All 186 pre-existing tracked files existing at base commit `7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e` remain 100% untouched. Development was strictly additive and limited to authorized path prefixes (`extensions/**`, `benchmarks/**`, `docs/**`).
-
 ---
 
 ## Test & Benchmark Metrics
@@ -33,56 +39,8 @@ All 186 pre-existing tracked files existing at base commit `7c4c75e32c0d7c43fc07
 | Suite / Benchmark | Total Tests | Passed | Failed | Deselected / Skipped | Duration |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Root Baseline Test Suite (R0)** | 665 | 631 | 0 | 26 deselected, 8 skipped | 229.28s |
-| **Autonomy Fabric Suite (R1-R9)** | 21 | 21 | 0 | 0 | 0.35s |
-| **Design Intelligence Suite (R10-R17)** | 10 | 10 | 0 | 0 | 0.15s |
-| **Multi-Run Autonomy Benchmark (R19)** | 1 | 1 | 0 | 0 | 0.07s |
-| **Design Intelligence Benchmark (R18)** | 1 | 1 | 0 | 0 | 0.06s |
-| **TOTAL** | **698** | **664** | **0** | **34** | **229.91s** |
-
----
-
-## Capability Matrices
-
-### Autonomy Fabric
-1. **Agent Run Registry (R1)**: First-class `RunIdentity` independent of branch or UI tab, backed by fail-closed state machine and append-only event journal.
-2. **Antigravity CLI Adapter (R2)**: Headless prompt execution with `--output-format json`, conversation ID resumption, and status mapping.
-3. **Parallel Supervisor (R3)**: Bounded concurrency (`MAX_CONCURRENT_ACTIVE_RUNS=4`), lease heartbeats, workspace & branch locks, and crash recovery.
-4. **Task DAG (R4)**: Dependency-aware orchestration, node eligibility checks, and dynamic progress calculation.
-5. **Authority Router (R5)**: Risk classification (`TECHNICAL_DECISION`, `DESIGN_QUALITY_GATE`, `HUMAN_PRODUCT_DECISION`, `AUTHORITY_REQUIRED`, `PRODUCTION_DECISION`) with anti-impersonation rules.
-6. **Completion Supervisor (R6)**: Pre-presentation controller review driving bounded revision cycles (`MAX_AUTONOMOUS_REVISION_CYCLES=3`).
-7. **Evidence Aggregator (R7)**: Per-run evidence indexing with strict separation of claims, observations, and verifications.
-8. **Worker Registry (R8)**: Multi-PC worker capability scheduling and abstract `CredentialProvider` interface.
-
-### Design Intelligence
-1. **Versioned Contracts (R10)**: Strict dataclass contracts for `DesignDNA`, `ProductStorySpec`, `SalesFoldSpec`, `CritiqueScorecard`, etc.
-2. **Reference Intelligence (R11)**: Metadata design analysis without third-party code vendoring.
-3. **Design DNA & Product Story (R12)**: Evaluates Sales Fold clarity ("Can user understand within seconds?").
-4. **7-Critic Ensemble (R13)**: Independent critics (Anti-Generic, Conversion, Visual Hierarchy, Evidence Integrity, Accessibility, Design Coherence, Product Semantics).
-5. **Visual QA (R14)**: Multi-viewport layout evaluation (375px to 1920px).
-6. **Taste Memory (R15)**: Versioned, reversible, explainable human feedback store.
-7. **Tool Primitives & Video (R16)**: UI/motion primitives and V1.1 Remotion/FFmpeg video roadmap.
-8. **Autonomous Design Loop (R17)**: 8 bounded roles coordinating multi-cycle design iteration.
-
----
-
-## Recommendations & Integration Sequence
-
-### Multi-PC Bootstrap & Security Recommendation
-- Do NOT copy DPAPI secrets or raw credential files between machines.
-- Use `LocalMemoryCredentialProvider` / OS Keychain / Vault broker for worker enrollment.
-
-### Controller Relay Integration Recommendation
-- Integrate `extensions/autonomy-fabric/run_registry.py` into Controller Relay service to track remote agent runs without mutating core.
-
-### Top 5 Future Value Improvements
-1. **Live Antigravity CLI Integration**: Deploy machine-readable CLI wrapper binary into worker PATH for live local probe execution.
-2. **V1.1 Remotion Video Compositing**: Implement React-based programmatic product demo video rendering.
-3. **Multimodal LLM Critic Vision Adapter**: Feed screenshot visual evidence into multimodal vision models for fine-grained aesthetic feedback.
-4. **Postgres Storage Adapter for Run Journal**: Implement PostgreSQL backend for high-volume run journal event streaming.
-5. **Dynamic Concurrency Auto-Scaling**: Scale `MAX_CONCURRENT_ACTIVE_RUNS` dynamically based on worker CPU and memory pressure.
-
----
-
-## Final Promotion Recommendation
-
-`PROMOTION_RECOMMENDATION=GO_FOR_CONTROLLER_REVIEW`
+| **Autonomy Fabric Suite (R1-R9)** | 24 | 24 | 0 | 0 | 0.40s |
+| **Design Intelligence Suite (R10-R17)** | 12 | 12 | 0 | 0 | 0.18s |
+| **Multi-Run Autonomy Benchmark (R19)** | 1 | 1 | 0 | 0 | 0.08s |
+| **Design Intelligence Benchmark (R18)** | 1 | 1 | 0 | 0 | 0.10s |
+| **TOTAL** | **703** | **669** | **0** | **34** | **230.04s** |

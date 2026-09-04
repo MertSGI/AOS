@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReferenceSignal",
+  "type": "object",
+  "required": [
+    "signal_id",
+    "source_id",
+    "category",
+    "observation",
+    "extracted_principle"
+  ],
+  "properties": {
+    "signal_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "observation": {
+      "type": "string"
+    },
+    "extracted_principle": {
+      "type": "string"
+    },
+    "confidence_score": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

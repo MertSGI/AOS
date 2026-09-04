@@ -1,4 +1,4 @@
-"""Unit tests for Multi-Run Autonomy Benchmark (R19)."""
+"""Unit tests for Multi-Run Autonomy Benchmark (R19 / Correction R1)."""
 
 import pytest
 import sys
@@ -19,5 +19,7 @@ def test_multi_run_autonomy_benchmark():
     assert report.authorities_isolated is True
     assert report.waiting_human_non_blocking is True
     assert report.waiting_authority_non_blocking is True
+    assert report.waiting_agent_tested is True
+    assert report.interrupted_tested is True
     assert report.recovery_successful is True
     assert report.all_verifications_passed is True

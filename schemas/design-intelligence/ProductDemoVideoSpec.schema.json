@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProductDemoVideoSpec",
+  "type": "object",
+  "required": [
+    "spec_id",
+    "title",
+    "duration_seconds",
+    "scene_script"
+  ],
+  "properties": {
+    "spec_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "duration_seconds": {
+      "type": "number"
+    },
+    "scene_script": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "renderer_adapter_type": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

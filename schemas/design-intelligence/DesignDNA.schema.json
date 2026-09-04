@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignDNA",
+  "type": "object",
+  "required": [
+    "dna_id",
+    "project_id",
+    "visual_personality",
+    "typography_pairings",
+    "color_palette",
+    "motion_philosophy",
+    "grid_structure",
+    "mobile_strategy",
+    "trust_strategy"
+  ],
+  "properties": {
+    "dna_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "visual_personality": {
+      "type": "string"
+    },
+    "typography_pairings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "color_palette": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "motion_philosophy": {
+      "type": "string"
+    },
+    "grid_structure": {
+      "type": "string"
+    },
+    "mobile_strategy": {
+      "type": "string"
+    },
+    "trust_strategy": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

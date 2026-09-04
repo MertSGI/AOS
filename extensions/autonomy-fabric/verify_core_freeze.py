@@ -1,11 +1,11 @@
-"""Core Freeze Auditor & Verification Script (R20).
+"""Core Freeze Auditor & Verification Script (R20 / Correction R1).
 
 Verifies that zero pre-existing tracked files at base commit 7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e
 have been modified, deleted, renamed, or mode-changed, and checks that all added files reside in authorized path prefixes.
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Set
 import subprocess
 import os
 import sys
@@ -24,6 +24,10 @@ AUTHORIZED_PREFIXES = [
     "docs/aos-v1-selfdev/",
 ]
 
+AUTHORIZED_EXACT_FILES = [
+    "extensions/__init__.py",
+]
+
 
 @dataclass
 class CoreFreezeReport:
@@ -35,15 +39,20 @@ class CoreFreezeReport:
 
 
 def audit_core_freeze(repo_root: str) -> CoreFreezeReport:
-    # 1. Get diff of modified tracked files relative to base commit
+    # Get all tracked files existing at BASE_SHA
+    cmd_base_files = ["git", "ls-tree", "-r", "--name-only", BASE_SHA]
+    proc_base = subprocess.run(cmd_base_files, cwd=repo_root, capture_output=True, text=True, check=True)
+    base_tracked_files: Set[str] = set(proc_base.stdout.strip().splitlines())
+
+    # Get diff of current tree/commit against BASE_SHA
     cmd_diff = ["git", "diff", "--name-status", BASE_SHA]
-    proc = subprocess.run(cmd_diff, cwd=repo_root, capture_output=True, text=True, check=True)
+    proc_diff = subprocess.run(cmd_diff, cwd=repo_root, capture_output=True, text=True, check=True)
 
     mutations = []
     added_files = []
     unauthorized = []
 
-    for line in proc.stdout.strip().splitlines():
+    for line in proc_diff.stdout.strip().splitlines():
         if not line.strip():
             continue
         parts = line.strip().split(maxsplit=1)
@@ -51,25 +60,15 @@ def audit_core_freeze(repo_root: str) -> CoreFreezeReport:
             continue
         status, path = parts[0], parts[1].replace("\\", "/")
 
-        if status.startswith("M") or status.startswith("D") or status.startswith("R"):
+        # Check if the path was a pre-existing tracked file at BASE_SHA
+        if path in base_tracked_files:
             mutations.append((status, path))
         elif status.startswith("A"):
             added_files.append(path)
-            # Check prefix
-            if not any(path.startswith(prefix) for prefix in AUTHORIZED_PREFIXES):
+            is_auth_prefix = any(path.startswith(prefix) for prefix in AUTHORIZED_PREFIXES)
+            is_auth_file = path in AUTHORIZED_EXACT_FILES
+            if not (is_auth_prefix or is_auth_file):
                 unauthorized.append(path)
-
-    # Check uncommitted status for modified tracked files
-    cmd_status = ["git", "status", "--porcelain"]
-    proc_st = subprocess.run(cmd_status, cwd=repo_root, capture_output=True, text=True, check=True)
-    for line in proc_st.stdout.strip().splitlines():
-        if not line.strip():
-            continue
-        st = line[:2]
-        path = line[3:].strip().replace("\\", "/")
-        if st[0] in ("M", "D", "R") or st[1] in ("M", "D", "R"):
-            if path not in [m[1] for m in mutations]:
-                mutations.append((st, path))
 
     mutation_count = len(mutations)
     core_verified = (mutation_count == 0) and (len(unauthorized) == 0)

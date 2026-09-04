@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SalesFoldSpec",
+  "type": "object",
+  "required": [
+    "understandable_within_seconds",
+    "target_persona_clear",
+    "primary_value_prop",
+    "visible_product_evidence",
+    "dominant_cta_text",
+    "cta_result_understandable",
+    "creates_credible_desire"
+  ],
+  "properties": {
+    "understandable_within_seconds": {
+      "type": "boolean"
+    },
+    "target_persona_clear": {
+      "type": "boolean"
+    },
+    "primary_value_prop": {
+      "type": "string"
+    },
+    "visible_product_evidence": {
+      "type": "boolean"
+    },
+    "dominant_cta_text": {
+      "type": "string"
+    },
+    "cta_result_understandable": {
+      "type": "boolean"
+    },
+    "creates_credible_desire": {
+      "type": "boolean"
+    },
+    "unsupported_claims_detected": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

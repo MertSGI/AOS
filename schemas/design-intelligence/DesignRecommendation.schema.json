@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignRecommendation",
+  "type": "object",
+  "required": [
+    "recommendation_id",
+    "project_id",
+    "recommended_dna",
+    "product_story"
+  ],
+  "properties": {
+    "recommendation_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "recommended_dna": {
+      "$ref": "DesignDNA.schema.json"
+    },
+    "product_story": {
+      "$ref": "ProductStorySpec.schema.json"
+    },
+    "provenance_feedback_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rationale": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

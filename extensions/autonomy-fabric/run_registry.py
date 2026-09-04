@@ -1,14 +1,16 @@
-"""AOS Agent Run Registry (R1).
+"""AOS Agent Run Registry (R1 / Correction R1).
 
-Defines first-class Run identity, explicit state machine, and append-only event journal.
+Defines first-class Run identity, explicit state machine, append-only event journals
+(in-memory and durable file-backed JSONL journal), and journal-based process restart recovery.
 """
 
 from dataclasses import dataclass, field, asdict
-from enum import Enum, auto
+from enum import Enum
 from typing import Dict, List, Optional, Any
 import datetime
 import json
 import uuid
+import os
 
 
 class RunStatus(str, Enum):
@@ -41,6 +43,7 @@ VALID_TRANSITIONS: Dict[RunStatus, List[RunStatus]] = {
         RunStatus.INTERRUPTED,
     ],
     RunStatus.WAITING_AGENT: [
+        RunStatus.WAITING_AGENT,
         RunStatus.RUNNING,
         RunStatus.WAITING_AUTHORITY,
         RunStatus.WAITING_HUMAN,
@@ -51,6 +54,7 @@ VALID_TRANSITIONS: Dict[RunStatus, List[RunStatus]] = {
         RunStatus.INTERRUPTED,
     ],
     RunStatus.WAITING_AUTHORITY: [
+        RunStatus.WAITING_AUTHORITY,
         RunStatus.RUNNING,
         RunStatus.WAITING_HUMAN,
         RunStatus.HOLD,
@@ -59,6 +63,7 @@ VALID_TRANSITIONS: Dict[RunStatus, List[RunStatus]] = {
         RunStatus.INTERRUPTED,
     ],
     RunStatus.WAITING_HUMAN: [
+        RunStatus.WAITING_HUMAN,
         RunStatus.RUNNING,
         RunStatus.HOLD,
         RunStatus.COMPLETED,
@@ -67,6 +72,7 @@ VALID_TRANSITIONS: Dict[RunStatus, List[RunStatus]] = {
         RunStatus.INTERRUPTED,
     ],
     RunStatus.HOLD: [
+        RunStatus.HOLD,
         RunStatus.RUNNING,
         RunStatus.WAITING_AGENT,
         RunStatus.FAILED,
@@ -82,6 +88,11 @@ VALID_TRANSITIONS: Dict[RunStatus, List[RunStatus]] = {
 
 class InvalidStateTransitionError(ValueError):
     """Raised when an illegal state transition is attempted."""
+    pass
+
+
+class JournalCorruptRecordError(ValueError):
+    """Raised when a corrupt or truncated record is found in the durable journal."""
     pass
 
 
@@ -134,9 +145,18 @@ class RunEvent:
     to_status: Optional[str] = None
     payload: Dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunEvent":
+        if not isinstance(data, dict) or "event_id" not in data or "run_id" not in data:
+            raise JournalCorruptRecordError("Invalid or missing required fields in RunEvent record")
+        return cls(**data)
+
 
 class RunJournal:
-    """Append-only run event journal."""
+    """In-memory run event journal."""
 
     def __init__(self):
         self._events: List[RunEvent] = []
@@ -146,6 +166,9 @@ class RunJournal:
 
     def get_events_for_run(self, run_id: str) -> List[RunEvent]:
         return [e for e in self._events if e.run_id == run_id]
+
+    def list_all_events(self) -> List[RunEvent]:
+        return list(self._events)
 
     def replay_run(self, initial_identity: RunIdentity, run_id: str) -> RunIdentity:
         """Derives current run state by replaying append-only event journal history."""
@@ -176,12 +199,83 @@ class RunJournal:
         return run
 
 
+class FileRunJournal(RunJournal):
+    """File-backed durable JSONL append-only journal with explicit flush and corrupt record protection."""
+
+    def __init__(self, file_path: str):
+        super().__init__()
+        self.file_path = file_path
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        self.reload()
+
+    def append(self, event: RunEvent) -> None:
+        super().append(event)
+        line = json.dumps(event.to_dict()) + "\n"
+        with open(self.file_path, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+
+    def reload(self) -> List[RunEvent]:
+        self._events.clear()
+        if not os.path.exists(self.file_path):
+            return []
+
+        with open(self.file_path, "r", encoding="utf-8") as f:
+            for line_no, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    event = RunEvent.from_dict(data)
+                    self._events.append(event)
+                except Exception as ex:
+                    raise JournalCorruptRecordError(
+                        f"Corrupt or truncated record on line {line_no} in journal {self.file_path}: {ex}"
+                    )
+        return self._events
+
+
 class AgentRunRegistry:
     """Foundational AOS Agent Run Registry."""
 
-    def __init__(self):
+    def __init__(self, journal: Optional[RunJournal] = None):
         self._runs: Dict[str, RunIdentity] = {}
-        self.journal = RunJournal()
+        self.journal = journal or RunJournal()
+
+        # If loading from an existing non-empty journal, reconstruct runs
+        if self.journal.list_all_events():
+            self._reconstruct_all_from_journal()
+
+    def _reconstruct_all_from_journal(self):
+        for ev in self.journal.list_all_events():
+            if ev.event_type == "RUN_CREATED":
+                identity = RunIdentity.from_dict(ev.payload)
+                self._runs[identity.run_id] = identity
+            elif ev.run_id in self._runs:
+                # Replay event onto existing run state
+                run = self._runs[ev.run_id]
+                if ev.to_status:
+                    run.status = RunStatus(ev.to_status)
+                if "current_phase" in ev.payload:
+                    run.current_phase = ev.payload["current_phase"]
+                if "agent_conversation_id" in ev.payload:
+                    run.agent_conversation_id = ev.payload["agent_conversation_id"]
+                if "worker_id" in ev.payload:
+                    run.worker_id = ev.payload["worker_id"]
+                if "human_input_required" in ev.payload:
+                    run.human_input_required = ev.payload["human_input_required"]
+                if "authority_required" in ev.payload:
+                    run.authority_required = ev.payload["authority_required"]
+                if "last_evidence_id" in ev.payload:
+                    run.last_evidence_id = ev.payload["last_evidence_id"]
+                if "result_artifact" in ev.payload:
+                    run.result_artifact = ev.payload["result_artifact"]
+                if "started_at" in ev.payload:
+                    run.started_at = ev.payload["started_at"]
+                if "completed_at" in ev.payload:
+                    run.completed_at = ev.payload["completed_at"]
+                run.updated_at = ev.timestamp
 
     def create_run(
         self,

@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReferenceSource",
+  "type": "object",
+  "required": [
+    "source_id",
+    "url_or_name",
+    "purpose",
+    "strength",
+    "integration_cost",
+    "dependency_cost",
+    "license_provenance",
+    "supply_chain_risk",
+    "generic_design_risk",
+    "recommended_use"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string"
+    },
+    "url_or_name": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "strength": {
+      "type": "string"
+    },
+    "integration_cost": {
+      "type": "string"
+    },
+    "dependency_cost": {
+      "type": "string"
+    },
+    "license_provenance": {
+      "type": "string"
+    },
+    "supply_chain_risk": {
+      "type": "string"
+    },
+    "generic_design_risk": {
+      "type": "string"
+    },
+    "recommended_use": {
+      "type": "string"
+    },
+    "do_not_use_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

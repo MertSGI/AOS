@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HumanDesignFeedback",
+  "type": "object",
+  "required": [
+    "feedback_id",
+    "project_id",
+    "source_attribution",
+    "rating",
+    "target_element"
+  ],
+  "properties": {
+    "feedback_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "source_attribution": {
+      "type": "string"
+    },
+    "rating": {
+      "type": "string"
+    },
+    "target_element": {
+      "type": "string"
+    },
+    "comments": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "is_reversible": {
+      "type": "boolean"
+    },
+    "recorded_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

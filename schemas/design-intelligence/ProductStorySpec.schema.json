@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProductStorySpec",
+  "type": "object",
+  "required": [
+    "spec_id",
+    "hero_narrative",
+    "value_pillars",
+    "product_proof_points",
+    "sales_fold"
+  ],
+  "properties": {
+    "spec_id": {
+      "type": "string"
+    },
+    "hero_narrative": {
+      "type": "string"
+    },
+    "value_pillars": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "product_proof_points": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sales_fold": {
+      "$ref": "SalesFoldSpec.schema.json"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

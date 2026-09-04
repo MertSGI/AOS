@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CritiqueFinding",
+  "type": "object",
+  "required": [
+    "finding_id",
+    "critic_name",
+    "verdict",
+    "dimension",
+    "title",
+    "details"
+  ],
+  "properties": {
+    "finding_id": {
+      "type": "string"
+    },
+    "critic_name": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ]
+    },
+    "dimension": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "details": {
+      "type": "string"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suggested_fix": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

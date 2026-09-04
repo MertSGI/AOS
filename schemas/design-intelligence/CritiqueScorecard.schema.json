@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CritiqueScorecard",
+  "type": "object",
+  "required": [
+    "scorecard_id",
+    "project_id",
+    "overall_verdict",
+    "critic_findings"
+  ],
+  "properties": {
+    "scorecard_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "overall_verdict": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ]
+    },
+    "critic_findings": {
+      "type": "array",
+      "items": {
+        "$ref": "CritiqueFinding.schema.json"
+      }
+    },
+    "scored_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

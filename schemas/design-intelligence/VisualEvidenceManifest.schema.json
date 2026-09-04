@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VisualEvidenceManifest",
+  "type": "object",
+  "required": [
+    "manifest_id",
+    "run_id",
+    "viewports_captured",
+    "screenshot_paths"
+  ],
+  "properties": {
+    "manifest_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "viewports_captured": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "screenshot_paths": {
+      "type": "object"
+    },
+    "horizontal_overflow_detected": {
+      "type": "object"
+    },
+    "cta_visible": {
+      "type": "object"
+    },
+    "captured_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

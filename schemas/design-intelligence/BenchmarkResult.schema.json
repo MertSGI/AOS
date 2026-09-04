@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BenchmarkResult",
+  "type": "object",
+  "required": [
+    "benchmark_id",
+    "fixture_name",
+    "passed",
+    "detected_failures",
+    "false_positives",
+    "false_negatives",
+    "duration_seconds"
+  ],
+  "properties": {
+    "benchmark_id": {
+      "type": "string"
+    },
+    "fixture_name": {
+      "type": "string"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "detected_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "false_positives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "false_negatives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "duration_seconds": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

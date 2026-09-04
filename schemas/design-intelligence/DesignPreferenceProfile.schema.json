@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignPreferenceProfile",
+  "type": "object",
+  "required": [
+    "profile_id",
+    "project_id"
+  ],
+  "properties": {
+    "profile_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "liked_principles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "disliked_anti_patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "feedback_history": {
+      "type": "array",
+      "items": {
+        "$ref": "HumanDesignFeedback.schema.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}

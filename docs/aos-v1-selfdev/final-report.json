@@ -1,23 +1,12 @@
 {
-  "authority_id": "AOS-SELFDEV-AUTONOMY-DESIGN-INTELLIGENCE-V1-20260904-02",
-  "execution_mode": "AUTONOMOUS_TO_ROADMAP_END",
+  "correction_authority_id": "AOS-SELFDEV-AUTONOMY-DESIGN-INTELLIGENCE-V1-CORRECTION-R1-20260904-01",
+  "parent_authority_id": "AOS-SELFDEV-AUTONOMY-DESIGN-INTELLIGENCE-V1-20260904-02",
+  "parent_sha": "675bc7fb9792f7ed26127f4a6a74fca0166dd5b7",
   "base_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
   "branch": "feature/aos-autonomy-design-intelligence-v1-20260904-02",
-  "worktree": "C:\\Projects\\AOS-autonomy-worktree",
   "core_freeze": {
     "core_freeze_verified": true,
-    "preexisting_tracked_file_mutation_count": 0,
-    "authorized_new_path_prefixes": [
-      "extensions/autonomy-fabric/**",
-      "extensions/design-intelligence/**",
-      "schemas/autonomy-fabric/**",
-      "schemas/design-intelligence/**",
-      "benchmarks/autonomy-fabric/**",
-      "benchmarks/design-intelligence/**",
-      "docs/autonomy-fabric/**",
-      "docs/design-intelligence/**",
-      "docs/aos-v1-selfdev/**"
-    ]
+    "preexisting_tracked_file_mutation_count": 0
   },
   "root_baseline_tests": {
     "python_version": "3.14.0",
@@ -28,40 +17,35 @@
     "duration_seconds": 229.28
   },
   "autonomy_fabric_tests": {
-    "passed": 21,
+    "passed": 24,
     "failed": 0
   },
   "design_intelligence_tests": {
-    "passed": 10,
+    "passed": 12,
     "failed": 0
   },
   "benchmarks": {
     "multi_run_autonomy_benchmark": {
       "passed": true,
-      "isolated_runs": 3,
-      "isolated_workspaces": 3,
-      "isolated_authorities": 3,
+      "isolated_runs": 4,
+      "waiting_human_non_blocking": true,
+      "waiting_authority_non_blocking": true,
+      "waiting_agent_tested": true,
+      "interrupted_tested": true,
       "recovery_successful": true
     },
     "design_intelligence_benchmark": {
       "passed": true,
-      "fixture_count": 6,
-      "detection_rate": "100%",
+      "fixture_count": 24,
+      "benchmark_corpus_accuracy": "100%",
       "false_positives": 0,
       "false_negatives": 0
     }
   },
-  "live_supervision_proof": "NOT_EXECUTED_ENVIRONMENT_BOUNDARY",
-  "capability_matrices": {
-    "agent_run_registry": "PROVEN",
-    "antigravity_adapter": "PROVEN",
-    "parallel_supervisor": "PROVEN",
-    "task_dag": "PROVEN",
-    "authority_router": "PROVEN",
-    "completion_supervisor": "PROVEN",
-    "evidence_aggregator": "PROVEN",
-    "worker_registry": "PROVEN",
-    "design_intelligence": "PROVEN"
+  "json_schemas": {
+    "schema_count": 14,
+    "validated": true
   },
-  "promotion_recommendation": "GO_FOR_CONTROLLER_REVIEW"
+  "live_supervision_proof": "NOT_EXECUTED_ENVIRONMENT_BOUNDARY",
+  "promotion_recommendation": "HOLD"
 }

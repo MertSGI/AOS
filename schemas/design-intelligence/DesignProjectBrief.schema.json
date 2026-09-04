@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DesignProjectBrief",
+  "type": "object",
+  "required": [
+    "brief_id",
+    "project_id",
+    "tenant_name",
+    "industry",
+    "target_audience",
+    "core_job_to_be_done",
+    "brand_posture"
+  ],
+  "properties": {
+    "brief_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "tenant_name": {
+      "type": "string"
+    },
+    "industry": {
+      "type": "string"
+    },
+    "target_audience": {
+      "type": "string"
+    },
+    "core_job_to_be_done": {
+      "type": "string"
+    },
+    "brand_posture": {
+      "type": "string"
+    },
+    "supported_claims": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

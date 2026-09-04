@@ -1,4 +1,4 @@
-"""Design Critic Ensemble (R13).
+"""Design Critic Ensemble (R13 / Correction R1).
 
 Implements 7 independent critics evaluating specific design failure modes.
 Enforces the rule that an overall score NEVER hides a critical FAIL.
@@ -86,15 +86,15 @@ class ConversionCritic(BaseCritic):
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
     ) -> CritiqueFinding:
         issues = []
-        if "btn" not in html_content and "button" not in html_content and "cta" not in html_content.lower():
+        has_button_element = "<button" in html_content.lower() or "class=\"btn" in html_content.lower() or "class='btn" in html_content.lower() or "role=\"button\"" in html_content.lower()
+        if not has_button_element:
             issues.append("No obvious primary call-to-action (CTA) button found")
 
-        if html_content.lower().count("btn-primary") > 3:
-            issues.append("Multiple competing primary CTAs dilute conversion focus")
+        primary_cta_count = html_content.lower().count("btn-primary")
+        if primary_cta_count > 3:
+            issues.append(f"Multiple competing primary CTAs ({primary_cta_count}) dilute conversion focus")
 
-        verdict = JudgmentVerdict.FAIL if "No obvious primary" in str(issues) else (
-            JudgmentVerdict.WARN if issues else JudgmentVerdict.PASS
-        )
+        verdict = JudgmentVerdict.FAIL if issues else JudgmentVerdict.PASS
 
         return CritiqueFinding(
             finding_id=f"f-conv-{uuid.uuid4().hex[:6]}",
@@ -177,7 +177,6 @@ class AccessibilityHeuristicCritic(BaseCritic):
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
     ) -> CritiqueFinding:
         issues = []
-        # Check if img tag exists without alt attribute
         for img_match in re.finditer(r'<img\s+[^>]*>', html_content, re.IGNORECASE):
             if 'alt=' not in img_match.group(0).lower():
                 issues.append("Image tag missing alt attribute")
