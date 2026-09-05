@@ -1,7 +1,7 @@
-"""Antigravity CLI Adapter (R2 / Correction R1).
+"""Antigravity CLI Adapter (R2 / Final Correction).
 
 Provides official machine-readable headless CLI execution, conversation ID resumption,
-stream-json parsing, fail-closed state mapping into AOS run states, and workspace cwd execution.
+stream-json terminal contract enforcement, fail-closed state mapping, and workspace validation.
 """
 
 from dataclasses import dataclass, field
@@ -41,7 +41,7 @@ ANTIGRAVITY_TO_AOS_STATUS_MAP: Dict[AntigravityStatus, RunStatus] = {
 
 @dataclass
 class AntigravityResponse:
-    conversation_id: str
+    conversation_id: Optional[str]
     status: AntigravityStatus
     mapped_aos_status: RunStatus
     raw_response: str
@@ -124,7 +124,6 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         output_format: str = "json",
         continue_conversation: bool = False,
     ) -> List[str]:
-        # Supported CLI flags: --prompt / -p, --output-format, --conversation, --continue
         cmd = [self.cli_binary_path, "--output-format", output_format]
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
@@ -139,20 +138,37 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         except json.JSONDecodeError:
             data = {}
 
-        raw_status_str = data.get("status", "SUCCESS" if returncode == 0 else "ERROR").upper()
-        try:
-            status_enum = AntigravityStatus(raw_status_str)
-        except ValueError:
-            status_enum = AntigravityStatus.UNKNOWN
-
         conversation_id = data.get("conversation_id")
-        if not conversation_id and returncode != 0:
+        raw_status_str = data.get("status")
+
+        # Fail closed if conversation_id is missing (returncode=0 or !=0)
+        if not conversation_id:
             status_enum = AntigravityStatus.IDENTITY_UNRESOLVED
+            mapped_aos_status = RunStatus.FAILED
+            return AntigravityResponse(
+                conversation_id=None,
+                status=status_enum,
+                mapped_aos_status=mapped_aos_status,
+                raw_response=stdout,
+                parsed_json=data,
+                duration_seconds=data.get("duration_seconds", 0.0),
+                turn_count=data.get("num_turns", 1),
+                usage_metadata=data.get("usage", {}),
+                error_message=stderr if returncode != 0 else (data.get("error") or "Missing required conversation_id"),
+            )
+
+        if raw_status_str:
+            try:
+                status_enum = AntigravityStatus(raw_status_str.upper())
+            except ValueError:
+                status_enum = AntigravityStatus.UNKNOWN
+        else:
+            status_enum = AntigravityStatus.SUCCESS if returncode == 0 else AntigravityStatus.ERROR
 
         mapped_aos_status = ANTIGRAVITY_TO_AOS_STATUS_MAP.get(status_enum, RunStatus.FAILED)
 
         return AntigravityResponse(
-            conversation_id=conversation_id or "IDENTITY_UNRESOLVED",
+            conversation_id=conversation_id,
             status=status_enum,
             mapped_aos_status=mapped_aos_status,
             raw_response=stdout,
@@ -164,7 +180,10 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         )
 
     def parse_cli_stream_json(self, stdout: str, stderr: str, returncode: int) -> AntigravityResponse:
-        """Parses line-delimited stream-json events: init, step_update, result."""
+        """Parses line-delimited stream-json events: init, step_update, result.
+        
+        Requires a valid terminal 'result' event to provide terminal SUCCESS.
+        """
         lines = [line.strip() for line in stdout.splitlines() if line.strip()]
         events = []
         terminal_event = None
@@ -176,7 +195,8 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
                 events.append(evt)
                 evt_type = evt.get("event") or evt.get("type")
                 if evt_type == "init":
-                    conv_id = evt.get("conversation_id")
+                    if evt.get("conversation_id"):
+                        conv_id = evt.get("conversation_id")
                 elif evt_type == "result":
                     terminal_event = evt
                     if evt.get("conversation_id"):
@@ -184,18 +204,34 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
             except json.JSONDecodeError:
                 continue
 
-        if terminal_event:
-            raw_status = terminal_event.get("status", "SUCCESS" if returncode == 0 else "ERROR").upper()
+        # A stream-json execution is terminally successful ONLY when a valid terminal result event exists
+        if not terminal_event:
+            status_enum = AntigravityStatus.INVALID
+            mapped_aos_status = RunStatus.FAILED
+            return AntigravityResponse(
+                conversation_id=conv_id,
+                status=status_enum,
+                mapped_aos_status=mapped_aos_status,
+                raw_response=stdout,
+                parsed_json={"events": events},
+                duration_seconds=0.0,
+                turn_count=len(events),
+                usage_metadata={},
+                error_message=stderr if returncode != 0 else "Missing terminal result event in stream-json output",
+            )
+
+        raw_status = terminal_event.get("status")
+        if raw_status:
             try:
-                status_enum = AntigravityStatus(raw_status)
+                status_enum = AntigravityStatus(raw_status.upper())
             except ValueError:
                 status_enum = AntigravityStatus.UNKNOWN
         else:
-            status_enum = AntigravityStatus.SUCCESS if returncode == 0 else AntigravityStatus.ERROR
+            status_enum = AntigravityStatus.UNKNOWN
 
         if not conv_id:
             status_enum = AntigravityStatus.IDENTITY_UNRESOLVED
-            conv_id = "IDENTITY_UNRESOLVED"
+            conv_id = None
 
         mapped_aos_status = ANTIGRAVITY_TO_AOS_STATUS_MAP.get(status_enum, RunStatus.FAILED)
 
@@ -204,11 +240,11 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
             status=status_enum,
             mapped_aos_status=mapped_aos_status,
             raw_response=stdout,
-            parsed_json=terminal_event or {"events": events},
-            duration_seconds=terminal_event.get("duration_seconds", 0.0) if terminal_event else 0.0,
-            turn_count=terminal_event.get("num_turns", len(events)) if terminal_event else len(events),
-            usage_metadata=terminal_event.get("usage", {}) if terminal_event else {},
-            error_message=stderr if returncode != 0 else (terminal_event.get("error") if terminal_event else None),
+            parsed_json=terminal_event,
+            duration_seconds=terminal_event.get("duration_seconds", 0.0),
+            turn_count=terminal_event.get("num_turns", len(events)),
+            usage_metadata=terminal_event.get("usage", {}),
+            error_message=stderr if returncode != 0 else terminal_event.get("error"),
         )
 
     def execute_prompt(
@@ -219,14 +255,17 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         output_format: str = "json",
         continue_conversation: bool = False,
     ) -> AntigravityResponse:
+        # Workspace Fail-Closed: If workspace_path is explicitly supplied but does not exist, fail immediately before invoking CLI
+        if workspace_path and not os.path.isdir(workspace_path):
+            raise ValueError(f"Workspace path '{workspace_path}' does not exist or is not a directory")
+
         cmd = self.build_cmd(prompt, conversation_id, output_format, continue_conversation)
         t0 = time.time()
-        cwd = workspace_path if (workspace_path and os.path.isdir(workspace_path)) else None
 
         try:
             proc = subprocess.run(
                 cmd,
-                cwd=cwd,
+                cwd=workspace_path,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -239,8 +278,10 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
             resp.duration_seconds = time.time() - t0
             return resp
         except Exception as ex:
+            if isinstance(ex, ValueError):
+                raise
             return AntigravityResponse(
-                conversation_id="IDENTITY_UNRESOLVED",
+                conversation_id=None,
                 status=AntigravityStatus.IDENTITY_UNRESOLVED,
                 mapped_aos_status=RunStatus.FAILED,
                 raw_response="",
