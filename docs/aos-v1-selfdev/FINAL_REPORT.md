@@ -1,11 +1,11 @@
-# AOS Self-Development Final Report (Portable Runtime & Live Supervision Gate)
+# AOS Self-Development Final Report (Final Canonical Evidence Reconciliation)
 
-`AUTHORITY_ID=AOS-AUTONOMY-V1-PORTABLE-RUNTIME-DISCOVERY-FINAL-20260905-01`
-`PARENT_SHA=e6c52181299a07f0d8c55b8e8a99634e43e2131e`
+`AUTHORITY_ID=AOS-AUTONOMY-V1-FINAL-EVIDENCE-RECONCILIATION-20260905-01`
+`PARENT_SHA=f2ea764c0852137062be3d0fad32865bc9fd7f80`
 
 ## Executive Summary
 
-The **AOS Autonomy Fabric V1 Final Portability and Canonical Live-Evidence Gate** has been fully completed.
+The **AOS Autonomy Fabric + Design Intelligence V1 Final Canonical Evidence Reconciliation** has been completed. All test suite metrics have been reconciled with exact observed execution results.
 
 - **PROMOTION_RECOMMENDATION**: `GO_FOR_CONTROLLER_PROMOTION_REVIEW`
 - **PORTABLE_RUNTIME_DISCOVERY_RESULT**: `PASS`
@@ -24,7 +24,7 @@ The **AOS Autonomy Fabric V1 Final Portability and Canonical Live-Evidence Gate*
 | Pillar | Status | Description |
 | :--- | :---: | :--- |
 | **SOURCE_PROVEN** | `PASS` | Fail-closed envelope parsing, stream-json terminal contract enforcement, non-existent workspace fail-closed, and zero username-specific path hardcoding. |
-| **OFFLINE_TESTED** | `PASS` | 39 pytest unit tests across Autonomy Fabric, Design Intelligence, Multi-Run Benchmark, and Design Benchmark. |
+| **OFFLINE_TESTED** | `PASS` | 46 pytest unit tests across Autonomy Fabric (32), Design Intelligence (12), Multi-Run Benchmark (1), and Design Benchmark (1). |
 | **LIVE_PROVEN** | `PASS` | 2 real distinct conversations created, exact `--conversation` resumption verified, and durable run journal recovery proven. |
 | **PORTABILITY_PROVEN** | `PASS` | Priority discovery rules verified (explicit arg > env var > `shutil.which` > `%LOCALAPPDATA%\AOS\runtime\antigravity-cli\`). |
 
@@ -73,8 +73,8 @@ CORE_FREEZE_VERIFIED=YES
 
 | Suite / Benchmark | Total Tests | Passed | Failed | Deselected / Skipped | Duration |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Autonomy Fabric Suite (R1-R9)** | 25 | 25 | 0 | 0 | 0.47s |
+| **Autonomy Fabric Suite (R1-R9)** | 32 | 32 | 0 | 0 | 0.28s |
 | **Design Intelligence Suite (R10-R17)** | 12 | 12 | 0 | 0 | 0.18s |
 | **Multi-Run Autonomy Benchmark (R19)** | 1 | 1 | 0 | 0 | 0.08s |
-| **Design Intelligence Benchmark (R18)** | 1 | 1 | 0 | 0 | 0.10s |
-| **TOTAL** | **39** | **39** | **0** | **0** | **0.83s** |
+| **Design Intelligence Benchmark (R18)** | 1 | 1 | 0 | 0 | 0.08s |
+| **TOTAL** | **46** | **46** | **0** | **0** | **0.62s** |

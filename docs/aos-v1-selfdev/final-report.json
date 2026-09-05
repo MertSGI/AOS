@@ -1,7 +1,7 @@
 {
-  "authority_id": "AOS-AUTONOMY-V1-PORTABLE-RUNTIME-DISCOVERY-FINAL-20260905-01",
-  "parent_authority_id": "AOS-AUTONOMY-V1-KNOWN-RUNTIME-LIVE-PROOF-20260905-01",
-  "parent_sha": "e6c52181299a07f0d8c55b8e8a99634e43e2131e",
+  "authority_id": "AOS-AUTONOMY-V1-FINAL-EVIDENCE-RECONCILIATION-20260905-01",
+  "parent_authority_id": "AOS-AUTONOMY-V1-PORTABLE-RUNTIME-DISCOVERY-FINAL-20260905-01",
+  "parent_sha": "f2ea764c0852137062be3d0fad32865bc9fd7f80",
   "base_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
   "branch": "feature/aos-autonomy-design-intelligence-v1-20260904-02",
   "core_freeze": {
@@ -16,7 +16,7 @@
     "binary_sha256": "059b96c1069206158d340ee2a8912894eca5002195e62b8cd281c26c01cd794e"
   },
   "autonomy_fabric_tests": {
-    "passed": 25,
+    "passed": 32,
     "failed": 0
   },
   "design_intelligence_tests": {
@@ -33,6 +33,12 @@
       "fixture_count": 24,
       "benchmark_corpus_accuracy": "100%"
     }
+  },
+  "total_suite": {
+    "passed": 46,
+    "failed": 0,
+    "skipped": 0,
+    "deselected": 0
   },
   "json_schemas": {
     "schema_count": 14,
