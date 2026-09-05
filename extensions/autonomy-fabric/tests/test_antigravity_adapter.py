@@ -132,8 +132,79 @@ def test_stream_json_terminal_contract():
 
 
 def test_nonexistent_workspace_path_fails_immediately():
-    cli = AntigravityCLIAdapter()
+    cli = AntigravityCLIAdapter(cli_binary_path="antigravity")
     fake_path = "/nonexistent/directory/path/for/workspace/test"
 
     with pytest.raises(ValueError, match="does not exist or is not a directory"):
         cli.execute_prompt("Test prompt", workspace_path=fake_path)
+
+
+def test_portable_discovery_explicit_path_wins():
+    path = AntigravityCLIAdapter.discover_cli_binary("/custom/explicit/path/antigravity")
+    assert path == "/custom/explicit/path/antigravity"
+
+
+def test_portable_discovery_env_override_wins(monkeypatch):
+    monkeypatch.setenv("AOS_ANTIGRAVITY_CLI_PATH", "/env/override/antigravity")
+    path = AntigravityCLIAdapter.discover_cli_binary()
+    assert path == "/env/override/antigravity"
+
+
+def test_portable_discovery_path_which_wins(monkeypatch):
+    import shutil
+    monkeypatch.delenv("AOS_ANTIGRAVITY_CLI_PATH", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/antigravity" if cmd == "antigravity" else None)
+    path = AntigravityCLIAdapter.discover_cli_binary()
+    assert path == "antigravity"
+
+
+def test_portable_discovery_localappdata_single_candidate(monkeypatch):
+    import os
+    import shutil
+    monkeypatch.delenv("AOS_ANTIGRAVITY_CLI_PATH", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        monkeypatch.setenv("LOCALAPPDATA", tmp_dir)
+        bin_dir = os.path.join(tmp_dir, "AOS", "runtime", "antigravity-cli", "1.0.0")
+        os.makedirs(bin_dir)
+        bin_file = os.path.join(bin_dir, "antigravity.exe")
+        open(bin_file, "w").close()
+
+        discovered = AntigravityCLIAdapter.discover_cli_binary()
+        assert discovered == bin_file
+
+
+def test_portable_discovery_missing_localappdata_fails_closed(monkeypatch):
+    import shutil
+    monkeypatch.delenv("AOS_ANTIGRAVITY_CLI_PATH", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+    with pytest.raises(ValueError, match="CLI_BINARY_NOT_FOUND"):
+        AntigravityCLIAdapter.discover_cli_binary()
+
+
+def test_portable_discovery_multiple_candidates_ambiguous_fails_closed(monkeypatch):
+    import os
+    import shutil
+    monkeypatch.delenv("AOS_ANTIGRAVITY_CLI_PATH", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        monkeypatch.setenv("LOCALAPPDATA", tmp_dir)
+        bin_dir1 = os.path.join(tmp_dir, "AOS", "runtime", "antigravity-cli", "1.0.0")
+        bin_dir2 = os.path.join(tmp_dir, "AOS", "runtime", "antigravity-cli", "1.1.0")
+        os.makedirs(bin_dir1)
+        os.makedirs(bin_dir2)
+        open(os.path.join(bin_dir1, "antigravity.exe"), "w").close()
+        open(os.path.join(bin_dir2, "antigravity.exe"), "w").close()
+
+        with pytest.raises(ValueError, match="CLI_BINARY_AMBIGUOUS"):
+            AntigravityCLIAdapter.discover_cli_binary()
+
+
+def test_no_username_specific_path_in_source():
+    import os
+    adapter_file = os.path.join(os.path.dirname(__file__), "..", "antigravity_adapter.py")
+    content = open(adapter_file, "r", encoding="utf-8").read()
+    assert "mozcelikbas" not in content
+    assert "C:\\Users\\" not in content
+

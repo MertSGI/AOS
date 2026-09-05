@@ -1,0 +1,42 @@
+{
+  "authority_id": "AOS-AUTONOMY-V1-PORTABLE-RUNTIME-DISCOVERY-FINAL-20260905-01",
+  "timestamp": "2026-09-05T21:44:30Z",
+  "discovery": {
+    "method": "LOCALAPPDATA_AOS_RUNTIME_ROOT",
+    "safe_path_representation": "%LOCALAPPDATA%\\AOS\\runtime\\antigravity-cli\\1.1.20\\antigravity.exe",
+    "binary_version": "1.1.20",
+    "binary_sha256": "059b96c1069206158d340ee2a8912894eca5002195e62b8cd281c26c01cd794e",
+    "portable_discovery_result": "PASS"
+  },
+  "cli_contract": {
+    "command_shape": "antigravity.exe --output-format json [--conversation <ID>] [--continue] --prompt <PROMPT>",
+    "process_exit_codes": [0, 0, 0],
+    "machine_readable_fields": [
+      "conversation_id",
+      "status",
+      "response",
+      "duration_seconds",
+      "num_turns",
+      "usage"
+    ]
+  },
+  "live_supervision_proof": {
+    "conversation_a_id": "f74018f6-b441-4124-ac63-6f312cccf7a2",
+    "conversation_b_id": "fa1f8791-f0d8-4f69-be91-b8918e687754",
+    "distinct_id_result": "PASS",
+    "resume_requested_id": "f74018f6-b441-4124-ac63-6f312cccf7a2",
+    "resume_returned_id": "f74018f6-b441-4124-ac63-6f312cccf7a2",
+    "exact_resume_result": "PASS",
+    "durable_recovery_result": "PASS",
+    "live_supervision_proof": "PASS"
+  },
+  "safe_prompts": [
+    "Return the exact token ALPHA only. Do not create or modify files.",
+    "Return the exact token BETA only. Do not create or modify files.",
+    "Return the exact token ALPHA-RESUMED only. Do not create or modify files."
+  ],
+  "core_freeze": {
+    "preexisting_tracked_file_mutation_count": 0,
+    "core_freeze_verified": true
+  }
+}

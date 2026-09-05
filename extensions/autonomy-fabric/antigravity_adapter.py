@@ -115,18 +115,45 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
 class AntigravityCLIAdapter(BaseAntigravityAdapter):
     """Real CLI adapter calling `antigravity` executable with machine-readable interface."""
 
-    KNOWN_AOS_RUNTIME_PATH = r"C:\Users\mozcelikbas\AppData\Local\AOS\runtime\antigravity-cli\1.1.20\antigravity.exe"
-
     def __init__(self, cli_binary_path: Optional[str] = None):
-        if not cli_binary_path or cli_binary_path == "antigravity":
-            if shutil.which("antigravity"):
-                self.cli_binary_path = "antigravity"
-            elif os.path.exists(self.KNOWN_AOS_RUNTIME_PATH):
-                self.cli_binary_path = self.KNOWN_AOS_RUNTIME_PATH
-            else:
-                self.cli_binary_path = "antigravity"
-        else:
-            self.cli_binary_path = cli_binary_path
+        self.cli_binary_path = self.discover_cli_binary(cli_binary_path)
+
+    @staticmethod
+    def discover_cli_binary(cli_binary_path: Optional[str] = None) -> str:
+        """Discovers Antigravity CLI binary with portable priority rules:
+
+        1. Explicit cli_binary_path argument
+        2. Explicit AOS_ANTIGRAVITY_CLI_PATH environment override
+        3. shutil.which("antigravity")
+        4. Windows AOS-managed runtime root derived from LOCALAPPDATA (%LOCALAPPDATA%/AOS/runtime/antigravity-cli/)
+        """
+        if cli_binary_path:
+            return cli_binary_path
+
+        env_path = os.environ.get("AOS_ANTIGRAVITY_CLI_PATH")
+        if env_path:
+            return env_path
+
+        which_path = shutil.which("antigravity")
+        if which_path:
+            return "antigravity"
+
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            aos_runtime_dir = os.path.join(localappdata, "AOS", "runtime", "antigravity-cli")
+            if os.path.isdir(aos_runtime_dir):
+                candidates = []
+                for root, _, files in os.walk(aos_runtime_dir):
+                    for f in files:
+                        if f.lower() in ("antigravity.exe", "antigravity"):
+                            candidates.append(os.path.join(root, f))
+
+                if len(candidates) == 1:
+                    return candidates[0]
+                elif len(candidates) > 1:
+                    raise ValueError("CLI_BINARY_AMBIGUOUS: Multiple candidate binaries found under AOS runtime root")
+
+        raise ValueError("CLI_BINARY_NOT_FOUND: Unable to discover Antigravity CLI binary via PATH or LOCALAPPDATA")
 
     def build_cmd(
         self,

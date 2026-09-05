@@ -1,18 +1,19 @@
 {
-  "authority_id": "AOS-AUTONOMY-V1-KNOWN-RUNTIME-LIVE-PROOF-20260905-01",
-  "parent_authority_id": "AOS-SELFDEV-AUTONOMY-V1-FINAL-LIVE-PROOF-20260905-01",
-  "parent_sha": "0ff5a62745159bb55c966101ae234fb47c9ad826",
+  "authority_id": "AOS-AUTONOMY-V1-PORTABLE-RUNTIME-DISCOVERY-FINAL-20260905-01",
+  "parent_authority_id": "AOS-AUTONOMY-V1-KNOWN-RUNTIME-LIVE-PROOF-20260905-01",
+  "parent_sha": "e6c52181299a07f0d8c55b8e8a99634e43e2131e",
   "base_sha": "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e",
   "branch": "feature/aos-autonomy-design-intelligence-v1-20260904-02",
   "core_freeze": {
     "core_freeze_verified": true,
     "preexisting_tracked_file_mutation_count": 0
   },
-  "known_binary": {
-    "exists": true,
-    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime\\antigravity-cli\\1.1.20\\antigravity.exe",
-    "sha256": "059b96c1069206158d340ee2a8912894eca5002195e62b8cd281c26c01cd794e",
-    "version": "1.1.20"
+  "portable_discovery": {
+    "portable_runtime_discovery_result": "PASS",
+    "discovery_method_used": "LOCALAPPDATA_AOS_RUNTIME_ROOT",
+    "safe_binary_path": "%LOCALAPPDATA%\\AOS\\runtime\\antigravity-cli\\1.1.20\\antigravity.exe",
+    "binary_version": "1.1.20",
+    "binary_sha256": "059b96c1069206158d340ee2a8912894eca5002195e62b8cd281c26c01cd794e"
   },
   "autonomy_fabric_tests": {
     "passed": 25,
@@ -40,17 +41,18 @@
   "live_supervision_proof": {
     "status": "PASS",
     "live_conversation_count": 2,
-    "real_conversation_a_id": "1be489a6-e912-4d99-b9b6-d22d6ccc87d7",
-    "real_conversation_b_id": "6659fa36-2e00-4ae5-be18-ee1b63b27dd8",
+    "real_conversation_a_id": "f74018f6-b441-4124-ac63-6f312cccf7a2",
+    "real_conversation_b_id": "fa1f8791-f0d8-4f69-be91-b8918e687754",
     "real_conversation_ids_distinct": true,
     "exact_conversation_resume_result": "PASS",
-    "durable_real_id_recovery_result": "PASS"
+    "durable_real_id_recovery_result": "PASS",
+    "canonical_live_evidence_path": "docs/aos-v1-selfdev/live-supervision-proof.json"
   },
   "provenance": {
-    "source_proven": true,
-    "offline_tested": true,
-    "live_proven": true,
-    "not_proven": false
+    "source_proven": "PASS",
+    "offline_tested": "PASS",
+    "live_proven": "PASS",
+    "portability_proven": "PASS"
   },
   "promotion_recommendation": "GO_FOR_CONTROLLER_PROMOTION_REVIEW"
 }
