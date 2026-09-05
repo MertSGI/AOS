@@ -11,6 +11,7 @@ import subprocess
 import json
 import time
 import os
+import shutil
 from extensions.autonomy_fabric.run_registry import RunStatus
 
 
@@ -114,8 +115,18 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
 class AntigravityCLIAdapter(BaseAntigravityAdapter):
     """Real CLI adapter calling `antigravity` executable with machine-readable interface."""
 
-    def __init__(self, cli_binary_path: str = "antigravity"):
-        self.cli_binary_path = cli_binary_path
+    KNOWN_AOS_RUNTIME_PATH = r"C:\Users\mozcelikbas\AppData\Local\AOS\runtime\antigravity-cli\1.1.20\antigravity.exe"
+
+    def __init__(self, cli_binary_path: Optional[str] = None):
+        if not cli_binary_path or cli_binary_path == "antigravity":
+            if shutil.which("antigravity"):
+                self.cli_binary_path = "antigravity"
+            elif os.path.exists(self.KNOWN_AOS_RUNTIME_PATH):
+                self.cli_binary_path = self.KNOWN_AOS_RUNTIME_PATH
+            else:
+                self.cli_binary_path = "antigravity"
+        else:
+            self.cli_binary_path = cli_binary_path
 
     def build_cmd(
         self,

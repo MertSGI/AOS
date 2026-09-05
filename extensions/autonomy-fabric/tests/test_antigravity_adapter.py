@@ -28,7 +28,7 @@ def test_cli_adapter_cmd_building_without_workspace_flag():
     cmd = cli.build_cmd("Hello", conversation_id="conv-789", output_format="json", continue_conversation=True)
     assert "--workspace" not in cmd
     assert cmd == [
-        "antigravity",
+        cli.cli_binary_path,
         "--output-format",
         "json",
         "--conversation",
