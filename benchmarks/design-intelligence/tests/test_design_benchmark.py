@@ -14,11 +14,12 @@ def test_expanded_design_benchmark_corpus_performance():
     runner = DesignBenchmarkRunner()
     results = runner.run_benchmark()
 
-    assert len(results) == 24
+    assert len(results) == 25
     passed_count = sum(1 for r in results if r.passed)
-    assert passed_count == 24  # 100% accuracy on the 24-fixture benchmark corpus
+    assert passed_count == 25  # 100% accuracy on the 25-fixture benchmark corpus
 
     total_fps = sum(len(r.false_positives) for r in results)
     total_fns = sum(len(r.false_negatives) for r in results)
     assert total_fps == 0
     assert total_fns == 0
+

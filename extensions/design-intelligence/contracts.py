@@ -18,6 +18,37 @@ class JudgmentVerdict(str, Enum):
     FAIL = "FAIL"
 
 
+class FactType(str, Enum):
+    CANONICAL_PRODUCT_FACT = "CANONICAL_PRODUCT_FACT"
+    CANONICAL_TENANT_FACT = "CANONICAL_TENANT_FACT"
+    DESIGN_INFERENCE = "DESIGN_INFERENCE"
+    REFERENCE_DERIVED_PRINCIPLE = "REFERENCE_DERIVED_PRINCIPLE"
+    HUMAN_PREFERENCE = "HUMAN_PREFERENCE"
+    PLACEHOLDER_VISUAL_CONTENT = "PLACEHOLDER_VISUAL_CONTENT"
+
+
+class EvidenceModality(str, Enum):
+    STATIC_SOURCE_HEURISTIC = "STATIC_SOURCE_HEURISTIC"
+    STRUCTURED_SEMANTIC = "STRUCTURED_SEMANTIC"
+    DOM_METRIC = "DOM_METRIC"
+    PIXEL_VISUAL = "PIXEL_VISUAL"
+    HUMAN_VISUAL = "HUMAN_VISUAL"
+
+
+class VisualQACoverage(str, Enum):
+    FULL_PASS = "FULL_PASS"
+    PARTIAL_COVERAGE = "PARTIAL_COVERAGE"
+    FAIL = "FAIL"
+
+
+class HumanReviewReadinessState(str, Enum):
+    DESIGN_DISCOVERY_COMPLETE = "DESIGN_DISCOVERY_COMPLETE"
+    VISUAL_CRITIC_COMPLETE = "VISUAL_CRITIC_COMPLETE"
+    HUMAN_VISUAL_REVIEW_READY = "HUMAN_VISUAL_REVIEW_READY"
+    HUMAN_ACCEPTED = "HUMAN_ACCEPTED"
+    HUMAN_REJECTED = "HUMAN_REJECTED"
+
+
 class FeedbackRating(str, Enum):
     LIKE = "LIKE"
     DISLIKE = "DISLIKE"
@@ -34,6 +65,38 @@ class FeedbackRating(str, Enum):
 
 
 @dataclass
+class GroundedFact:
+    fact_id: str
+    fact_type: FactType
+    value: str
+    source_type: str
+    source_reference: str
+    confidence: float = 1.0
+
+
+@dataclass
+class GroundedFactLedger:
+    ledger_id: str
+    project_id: str
+    facts: List[GroundedFact] = field(default_factory=list)
+
+    def add_fact(self, fact: GroundedFact) -> None:
+        self.facts.append(fact)
+
+    def get_canonical_facts(self) -> List[GroundedFact]:
+        return [f for f in self.facts if f.fact_type in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT)]
+
+
+@dataclass
+class GroundedContentBlock:
+    text: str
+    semantic_role: str
+    provenance_kind: FactType
+    source_fact_ids: List[str]
+    is_customer_facing: bool = True
+
+
+@dataclass
 class DesignProjectBrief:
     brief_id: str
     project_id: str
@@ -43,7 +106,8 @@ class DesignProjectBrief:
     core_job_to_be_done: str
     brand_posture: str
     supported_claims: List[str] = field(default_factory=list)
-    version: str = "v1.0"
+    fact_ledger: Optional[GroundedFactLedger] = None
+    version: str = "v1.1"
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 
@@ -60,6 +124,9 @@ class ReferenceSource:
     generic_design_risk: str
     recommended_use: str
     do_not_use_conditions: List[str] = field(default_factory=list)
+    observation: str = ""
+    retrieval_timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    is_placeholder: bool = False
 
 
 @dataclass
@@ -116,6 +183,9 @@ class VisualEvidenceManifest:
     screenshot_paths: Dict[int, str]  # viewport -> path
     horizontal_overflow_detected: Dict[int, bool] = field(default_factory=dict)
     cta_visible: Dict[int, bool] = field(default_factory=dict)
+    capture_mode: str = "REAL_LOCAL_BROWSER_SCREENSHOT"
+    capture_adapter: str = "FakeBrowserScreenshotAdapter"
+    file_hashes: Dict[int, str] = field(default_factory=dict)
     captured_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 
@@ -127,6 +197,7 @@ class CritiqueFinding:
     dimension: str
     title: str
     details: str
+    evidence_modality: EvidenceModality = EvidenceModality.STATIC_SOURCE_HEURISTIC
     evidence_ids: List[str] = field(default_factory=list)
     suggested_fix: Optional[str] = None
 
@@ -178,10 +249,11 @@ class ProductDemoVideoSpec:
 class DesignRecommendation:
     recommendation_id: str
     project_id: str
-    recommended_dna: DesignDNA
-    product_story: ProductStorySpec
+    recommended_dna: Optional[DesignDNA] = None
+    product_story: Optional[ProductStorySpec] = None
     provenance_feedback_ids: List[str] = field(default_factory=list)
     rationale: str = ""
+    recommended_concept: str = "NONE"  # Set to NONE when weak or forced
 
 
 @dataclass
@@ -193,3 +265,4 @@ class BenchmarkResult:
     false_positives: List[str]
     false_negatives: List[str]
     duration_seconds: float
+

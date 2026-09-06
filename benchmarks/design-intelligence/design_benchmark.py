@@ -139,11 +139,18 @@ BENCHMARK_FIXTURES: Dict[str, Dict[str, str]] = {
         "css": "body { background: linear-gradient(to right, #6366f1, #8b5cf6); }",
         "expected_verdict": "FAIL",
     },
+
+    # Section 13 Observed-Failure Regression Fixture
+    "25_observed_failure_grounding_unsupported_facts": {
+        "html": "<html><body><h1>Luxury Hair Studio - Nişantaşı Branch</h1><p>Bridal Consultation & Award-Winning Master Artists</p><img src='/pic.jpg' alt='Studio'/><button class='btn btn-primary'>RANDEVU AL</button></body></html>",
+        "css": "h1 { font-family: 'Playfair Display'; }",
+        "expected_verdict": "FAIL",
+    },
 }
 
 
 class DesignBenchmarkRunner:
-    """Runs design critic benchmark suite against the 24-fixture benchmark corpus."""
+    """Runs design critic benchmark suite against the benchmark corpus."""
 
     def __init__(self, ensemble: Optional[DesignCriticEnsemble] = None):
         self.ensemble = ensemble or DesignCriticEnsemble()
@@ -185,3 +192,4 @@ class DesignBenchmarkRunner:
             )
 
         return results
+

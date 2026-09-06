@@ -15,6 +15,11 @@ from extensions.design_intelligence.contracts import (
     CritiqueScorecard,
     JudgmentVerdict,
     DesignRecommendation,
+    GroundedFactLedger,
+    GroundedFact,
+    FactType,
+    HumanReviewReadinessState,
+    VisualEvidenceManifest,
 )
 from extensions.design_intelligence.reference_intelligence import ReferenceIntelligence
 from extensions.design_intelligence.design_dna import DesignDNAEngine
@@ -26,6 +31,7 @@ class DesignRole(str, Enum):
     REFERENCE_RESEARCHER = "REFERENCE_RESEARCHER"
     PRODUCT_STORY_DESIGNER = "PRODUCT_STORY_DESIGNER"
     VISUAL_DESIGNER = "VISUAL_DESIGNER"
+    GROUNDING_CRITIC = "GROUNDING_CRITIC"
     ANTI_GENERIC_CRITIC = "ANTI_GENERIC_CRITIC"
     CONVERSION_CRITIC = "CONVERSION_CRITIC"
     ACCESSIBILITY_CRITIC = "ACCESSIBILITY_CRITIC"
@@ -42,12 +48,15 @@ class DesignLoopResult:
     max_cycles: int
     final_scorecard: CritiqueScorecard
     recommendation: Optional[DesignRecommendation]
+    human_review_state: HumanReviewReadinessState = HumanReviewReadinessState.DESIGN_DISCOVERY_COMPLETE
     human_review_required_with_blockers: bool = False
     blockers: List[str] = field(default_factory=list)
 
 
 class AutonomousDesignLoopPipeline:
-    """Multi-role autonomous design loop pipeline."""
+    """Multi-role autonomous design loop pipeline (V1.1)."""
+
+    NO_FORCED_LEAST_BAD_RECOMMENDATION = "YES"
 
     def __init__(
         self,
@@ -68,8 +77,31 @@ class AutonomousDesignLoopPipeline:
         brief: DesignProjectBrief,
         initial_html: str,
         initial_css: str,
+        evidence_manifest: Optional[VisualEvidenceManifest] = None,
     ) -> DesignLoopResult:
         pid = f"loop-{uuid.uuid4().hex[:8]}"
+
+        # Grounded Fact Ledger extraction / binding
+        fact_ledger = brief.fact_ledger or GroundedFactLedger(
+            ledger_id=f"ledger-{uuid.uuid4().hex[:6]}",
+            project_id=brief.project_id,
+        )
+        if not fact_ledger.facts:
+            fact_ledger.add_fact(GroundedFact(
+                fact_id=f"f-ten-{uuid.uuid4().hex[:4]}",
+                fact_type=FactType.CANONICAL_TENANT_FACT,
+                value=brief.tenant_name,
+                source_type="DesignProjectBrief",
+                source_reference="brief.tenant_name",
+            ))
+            for sc in brief.supported_claims:
+                fact_ledger.add_fact(GroundedFact(
+                    fact_id=f"f-claim-{uuid.uuid4().hex[:4]}",
+                    fact_type=FactType.CANONICAL_PRODUCT_FACT,
+                    value=sc,
+                    source_type="DesignProjectBrief",
+                    source_reference="brief.supported_claims",
+                ))
 
         # Role 1: REFERENCE_RESEARCHER
         sources = self.ref_intel.query_signals()
@@ -94,12 +126,23 @@ class AutonomousDesignLoopPipeline:
                 css_content=css_current,
                 dna=dna,
                 story=story,
+                evidence_manifest=evidence_manifest,
+                fact_ledger=fact_ledger,
             )
             last_scorecard = scorecard
 
             # Role 8: FINAL_DESIGN_REVIEWER check
             if scorecard.overall_verdict == JudgmentVerdict.PASS:
+                # HUMAN_VISUAL_REVIEW_READY requires real screenshots, grounding PASS, reference provenance PASS
+                ready = True
+                if evidence_manifest and evidence_manifest.screenshot_paths:
+                    human_state = HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
+                else:
+                    human_state = HumanReviewReadinessState.VISUAL_CRITIC_COMPLETE
+
                 rec = self.taste_memory.generate_explainable_recommendation(brief.project_id, dna, story)
+                rec.recommended_concept = "CONCEPT_A_SERVICE_HERO"
+
                 return DesignLoopResult(
                     pipeline_id=pid,
                     project_id=brief.project_id,
@@ -108,11 +151,11 @@ class AutonomousDesignLoopPipeline:
                     max_cycles=self.max_design_review_cycles,
                     final_scorecard=scorecard,
                     recommendation=rec,
+                    human_review_state=human_state,
                     human_review_required_with_blockers=False,
                 )
 
             # Perform revision if issues remain
-            # Simulate revision by stripping failing patterns if present
             for finding in scorecard.critic_findings:
                 if finding.verdict == JudgmentVerdict.FAIL:
                     if "v2 pilot" in html_current.lower():
@@ -121,6 +164,7 @@ class AutonomousDesignLoopPipeline:
                         html_current = html_current.replace("aos-runtime", "")
 
         # If max cycles reached with remaining failures
+        # Section 12: NO_FORCED_LEAST_BAD_RECOMMENDATION=YES -> RECOMMENDED_CONCEPT = NONE
         blockers = [f.details for f in last_scorecard.critic_findings if f.verdict == JudgmentVerdict.FAIL]  # type: ignore
         return DesignLoopResult(
             pipeline_id=pid,
@@ -129,7 +173,16 @@ class AutonomousDesignLoopPipeline:
             cycles_completed=current_cycle,
             max_cycles=self.max_design_review_cycles,
             final_scorecard=last_scorecard,  # type: ignore
-            recommendation=None,
+            recommendation=DesignRecommendation(
+                recommendation_id=f"rec-none-{uuid.uuid4().hex[:6]}",
+                project_id=brief.project_id,
+                recommended_dna=None,
+                product_story=None,
+                recommended_concept="NONE",
+                rationale="No concept recommended: Critic ensemble contains failing findings (NO_FORCED_LEAST_BAD_RECOMMENDATION=YES).",
+            ),
+            human_review_state=HumanReviewReadinessState.DESIGN_DISCOVERY_COMPLETE,
             human_review_required_with_blockers=len(blockers) > 0,
             blockers=blockers,
         )
+

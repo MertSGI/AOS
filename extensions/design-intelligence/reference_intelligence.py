@@ -5,12 +5,15 @@ without third-party code vendoring or repository cloning.
 """
 
 from dataclasses import dataclass, field
+import datetime
 from typing import Dict, List, Optional, Any
 from extensions.design_intelligence.contracts import ReferenceSource, ReferenceSignal
 
 
 class ReferenceIntelligence:
     """Registry and metadata analyzer for design principles and candidate components."""
+
+    REFERENCE_SOURCE_PLACEHOLDER_REJECTED = "YES"
 
     def __init__(self):
         self._sources: Dict[str, ReferenceSource] = {}
@@ -29,7 +32,17 @@ class ReferenceIntelligence:
         recommended_use: str,
         do_not_use_conditions: Optional[List[str]] = None,
         source_id: Optional[str] = None,
+        observation: str = "",
+        retrieval_timestamp: Optional[str] = None,
     ) -> ReferenceSource:
+        # Enforce Real Reference Provenance (Section 5)
+        # Must not be generic placeholder without actual source identity
+        placeholder_tokens = ["REF-", "Editorial Luxury", "Placeholder", "Generic", "Sample Source", "Test Ref"]
+        is_placeholder = any(p.lower() in url_or_name.lower() for p in ["editorial luxury", "placeholder", "generic source", "sample source"]) or url_or_name.strip() in ["REF-001", "REF-002", "Editorial Luxury Beauty"]
+        
+        if is_placeholder:
+            raise ValueError(f"Reference source '{url_or_name}' rejected: REFERENCE_SOURCE_PLACEHOLDER_REJECTED=YES. Source must possess real URL or unambiguous real source identity.")
+
         sid = source_id or f"src-{len(self._sources) + 1}"
         source = ReferenceSource(
             source_id=sid,
@@ -43,6 +56,9 @@ class ReferenceIntelligence:
             generic_design_risk=generic_design_risk,
             recommended_use=recommended_use,
             do_not_use_conditions=do_not_use_conditions or [],
+            observation=observation,
+            retrieval_timestamp=retrieval_timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            is_placeholder=False,
         )
         self._sources[sid] = source
         return source
@@ -72,3 +88,4 @@ class ReferenceIntelligence:
         if not category:
             return list(self._signals)
         return [s for s in self._signals if s.category == category]
+
