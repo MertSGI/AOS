@@ -1,6 +1,6 @@
-"""Design Critic Ensemble (R13 / Correction R1).
+"""Design Critic Ensemble (R13 / Correction R1 / Correction R1-Hardening).
 
-Implements 7 independent critics evaluating specific design failure modes.
+Implements independent critics evaluating specific design failure modes.
 Enforces the rule that an overall score NEVER hides a critical FAIL.
 """
 
@@ -17,6 +17,8 @@ from extensions.design_intelligence.contracts import (
     ProductStorySpec,
     VisualEvidenceManifest,
     GroundedFactLedger,
+    GroundedContentManifest,
+    ContentBlockCategory,
     FactType,
 )
 
@@ -35,16 +37,70 @@ class BaseCritic:
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         raise NotImplementedError
 
 
+class VisualCriticAdapter:
+    """Interface for real visual screenshot evaluation adapters (Section 7)."""
+
+    def evaluate_visuals(
+        self,
+        screenshot_paths: Dict[int, str],
+        dna: Optional[DesignDNA] = None,
+        story: Optional[ProductStorySpec] = None,
+        fact_ledger: Optional[GroundedFactLedger] = None,
+        negative_preferences: Optional[List[str]] = None,
+    ) -> CritiqueFinding:
+        raise NotImplementedError
+
+
+class FakeVisualCriticAdapter(VisualCriticAdapter):
+    """Deterministic offline visual critic adapter for testing (Section 9)."""
+
+    def __init__(self, simulate_generic_template: bool = False, simulate_weak_identity: bool = False):
+        self.simulate_generic_template = simulate_generic_template
+        self.simulate_weak_identity = simulate_weak_identity
+
+    def evaluate_visuals(
+        self,
+        screenshot_paths: Dict[int, str],
+        dna: Optional[DesignDNA] = None,
+        story: Optional[ProductStorySpec] = None,
+        fact_ledger: Optional[GroundedFactLedger] = None,
+        negative_preferences: Optional[List[str]] = None,
+    ) -> CritiqueFinding:
+        findings = []
+
+        if self.simulate_generic_template:
+            findings.append("Generic/template appearance detected from visual layout inspect")
+        if self.simulate_weak_identity:
+            findings.append("Weak tenant business identity prominence in hero render")
+
+        verdict = JudgmentVerdict.FAIL if findings else JudgmentVerdict.PASS
+
+        return CritiqueFinding(
+            finding_id=f"f-pixelvis-{uuid.uuid4().hex[:6]}",
+            critic_name="FakeVisualCriticAdapter",
+            verdict=verdict,
+            dimension="pixel_visual_quality",
+            title="Pixel Visual Review (Simulated Test)",
+            details="; ".join(findings) if findings else "Visually distinct service hero with strong tenant identity and hierarchy.",
+            evidence_modality=EvidenceModality.PIXEL_VISUAL,
+            evidence_ids=["SIMULATED_VISUAL_TEST"],
+            suggested_fix="Improve brand visual prominence and layout distinction." if findings else None,
+        )
+
+
 class GroundingIntegrityCritic(BaseCritic):
-    """Validates customer-facing copy against the bound Grounded Fact Ledger.
+    """Validates customer-facing copy against the bound Grounded Fact Ledger and GroundedContentManifest (Section 3 & 4).
     
-    Fails closed when copy introduces unsupported business names, locations, branch names,
-    services, prices, credentials, staff titles, opening hours, ratings, reviews, testimonials,
-    awards, customer counts, health-tourism claims, specialties, or business history.
+    Fails closed when:
+    - Customer-facing factual content blocks have empty source_fact_ids.
+    - Referenced fact ID does not exist in GroundedFactLedger.
+    - Provenance fact type is not CANONICAL_PRODUCT_FACT or CANONICAL_TENANT_FACT.
+    - Rendered customer-facing factual copy exists outside the manifest (unmanifested_customer_facing_text_detected).
     """
     name = "GroundingIntegrityCritic"
 
@@ -56,57 +112,58 @@ class GroundingIntegrityCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
-        unsupported_facts = []
+        unsupported_findings = []
 
-        # If no ledger provided or empty canonical facts, extract default canonical facts from brief/context if available
-        canonical_values = []
-        if fact_ledger:
-            canonical_values = [f.value.lower() for f in fact_ledger.get_canonical_facts()]
+        # Section 4: Content manifest completeness check
+        if content_manifest and content_manifest.unmanifested_customer_facing_text_detected:
+            unsupported_findings.append("INCOMPLETE GroundedContentManifest: Rendered customer-facing factual copy exists outside manifest")
 
-        # Clean text stripping HTML tags
-        clean_text = re.sub(r'<[^>]+>', ' ', html_content)
-        clean_text_lower = clean_text.lower()
+        # Evaluate blocks in GroundedContentManifest if provided
+        if content_manifest and content_manifest.blocks:
+            for block in content_manifest.blocks:
+                if block.is_customer_facing and block.category == ContentBlockCategory.FACTUAL:
+                    if not block.source_fact_ids:
+                        unsupported_findings.append(f"Factual block '{block.text}' lacks source_fact_ids")
+                        continue
+                    
+                    if not fact_ledger:
+                        unsupported_findings.append(f"Factual block '{block.text}' has source_fact_ids but no GroundedFactLedger bound")
+                        continue
 
-        # Known unsupported patterns from past discovery failure (Section 2 & 4 & 13)
-        # Business names: e.g. "Melis Beauty Studio" when canonical is "Melis Güzellik & Nail Art" or "Example Nail Studio"
-        # Locations: e.g. "Nişantaşı"
-        # Services/Credentials: "Bridal Consultation", "Master Artist", "Certified Specialist", "Luxury Hair Studio"
-        
-        # Checking specific invented terms that are not in canonical values
-        invented_terms_check = [
-            "melis beauty studio",
-            "nişantaşı",
-            "nisantasi",
-            "bridal consultation",
-            "master artist",
-            "certified specialist",
-            "luxury hair studio",
-            "health-tourism",
-            "health tourism",
-            "award-winning master artists",
-            "award winning master artists",
-        ]
+                    if block.provenance_kind not in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT):
+                        unsupported_findings.append(f"Factual block '{block.text}' has non-canonical block provenance kind '{block.provenance_kind.value}'")
+                    else:
+                        for fid in block.source_fact_ids:
+                            fact = fact_ledger.get_fact_by_id(fid)
+                            if not fact:
+                                unsupported_findings.append(f"Factual block '{block.text}' references non-existent fact ID '{fid}'")
+                            elif fact.fact_type not in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT):
+                                unsupported_findings.append(f"Factual block '{block.text}' references non-canonical fact type '{fact.fact_type.value}'")
 
-        for term in invented_terms_check:
-            if term in clean_text_lower and not any(term in cv for cv in canonical_values):
-                unsupported_facts.append(f"Unsupported customer-facing claim/entity detected: '{term}'")
+        else:
+            # Fallback for legacy calls without structured GroundedContentManifest:
+            # Check HTML text against canonical ledger values without domain-specific blacklists!
+            if fact_ledger:
+                canonical_facts = fact_ledger.get_canonical_facts()
+                canonical_values_lower = [f.value.lower() for f in canonical_facts]
+            else:
+                canonical_values_lower = []
 
-        # Also check for price / review / rating claim exaggerations if not in ledger
-        claim_patterns = [
-            (r'#1\s+rated', "#1 Rated claim"),
-            (r'100%\s+guaranteed', "100% Guaranteed claim"),
-            (r'5\.0\s+stars', "Exaggerated 5.0 Stars claim"),
-            (r'9999\s+reviews', "Exaggerated 9999 reviews claim"),
-            (r'master\s+artists?', "Master Artist title"),
-        ]
+            clean_text = re.sub(r'<[^>]+>', ' ', html_content)
+            # Generic claim patterns like #1 Rated or 100% Guaranteed without ledger proof
+            generic_exaggerations = [
+                (r'#1\s+rated', "#1 Rated claim"),
+                (r'100%\s+guaranteed', "100% Guaranteed claim"),
+                (r'5\.0\s+stars', "Exaggerated 5.0 Stars claim"),
+                (r'9999\s+reviews', "Exaggerated 9999 reviews claim"),
+            ]
+            for pat, label in generic_exaggerations:
+                if re.search(pat, clean_text, re.IGNORECASE) and not any(label.lower() in cv for cv in canonical_values_lower):
+                    unsupported_findings.append(f"Unverified claim exaggeration: '{label}'")
 
-        for pat, label in claim_patterns:
-            if re.search(pat, clean_text_lower) and not any(label.lower() in cv for cv in canonical_values):
-                if label not in [uf.split(": ")[-1] for uf in unsupported_facts]:
-                    unsupported_facts.append(f"Unsupported customer-facing claim detected: '{label}'")
-
-        verdict = JudgmentVerdict.FAIL if unsupported_facts else JudgmentVerdict.PASS
+        verdict = JudgmentVerdict.FAIL if unsupported_findings else JudgmentVerdict.PASS
 
         return CritiqueFinding(
             finding_id=f"f-grounding-{uuid.uuid4().hex[:6]}",
@@ -114,9 +171,9 @@ class GroundingIntegrityCritic(BaseCritic):
             verdict=verdict,
             dimension="grounding_integrity",
             title="Grounding & Factual Copy Integrity",
-            details="; ".join(unsupported_facts) if unsupported_facts else "All customer-facing factual copy is strictly grounded in canonical tenant facts.",
+            details="; ".join(unsupported_findings) if unsupported_findings else "All customer-facing factual copy is strictly grounded with canonical fact provenance.",
             evidence_modality=EvidenceModality.STRUCTURED_SEMANTIC,
-            suggested_fix="Remove invented business names, locations, services, or credentials not present in the Grounded Fact Ledger." if unsupported_facts else None,
+            suggested_fix="Ensure all customer-facing factual content has valid canonical fact provenance in GroundedFactLedger." if unsupported_findings else None,
         )
 
 
@@ -131,6 +188,7 @@ class AntiGenericDesignCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         anti_patterns = []
 
@@ -174,6 +232,7 @@ class ConversionCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
         has_button_element = "<button" in html_content.lower() or "class=\"btn" in html_content.lower() or "class='btn" in html_content.lower() or "role=\"button\"" in html_content.lower()
@@ -209,6 +268,7 @@ class VisualHierarchyCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
         if "<h1" not in html_content:
@@ -239,6 +299,7 @@ class EvidenceIntegrityCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
         unsupported = ["#1 Rated", "100% Guaranteed", "5.0 Stars (9999 reviews)"]
@@ -271,6 +332,7 @@ class AccessibilityHeuristicCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
         for img_match in re.finditer(r'<img\s+[^>]*>', html_content, re.IGNORECASE):
@@ -303,6 +365,7 @@ class DesignCoherenceCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
         font_count = css_content.count("font-family")
@@ -334,6 +397,7 @@ class ProductSemanticsCritic(BaseCritic):
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueFinding:
         issues = []
 
@@ -361,58 +425,10 @@ class ProductSemanticsCritic(BaseCritic):
         )
 
 
-class VisualCriticAdapter:
-    """Interface for real visual screenshot evaluation adapters (Section 7)."""
-
-    def evaluate_visuals(
-        self,
-        screenshot_paths: Dict[int, str],
-        dna: Optional[DesignDNA] = None,
-        story: Optional[ProductStorySpec] = None,
-        fact_ledger: Optional[GroundedFactLedger] = None,
-        negative_preferences: Optional[List[str]] = None,
-    ) -> CritiqueFinding:
-        raise NotImplementedError
-
-
-class FakeVisualCriticAdapter(VisualCriticAdapter):
-    """Deterministic offline visual critic adapter for testing."""
-
-    def __init__(self, simulate_generic_template: bool = False, simulate_weak_identity: bool = False):
-        self.simulate_generic_template = simulate_generic_template
-        self.simulate_weak_identity = simulate_weak_identity
-
-    def evaluate_visuals(
-        self,
-        screenshot_paths: Dict[int, str],
-        dna: Optional[DesignDNA] = None,
-        story: Optional[ProductStorySpec] = None,
-        fact_ledger: Optional[GroundedFactLedger] = None,
-        negative_preferences: Optional[List[str]] = None,
-    ) -> CritiqueFinding:
-        findings = []
-
-        if self.simulate_generic_template:
-            findings.append("Generic/template appearance detected from visual layout inspect")
-        if self.simulate_weak_identity:
-            findings.append("Weak tenant business identity prominence in hero render")
-
-        verdict = JudgmentVerdict.FAIL if findings else JudgmentVerdict.PASS
-
-        return CritiqueFinding(
-            finding_id=f"f-pixelvis-{uuid.uuid4().hex[:6]}",
-            critic_name="FakeVisualCriticAdapter",
-            verdict=verdict,
-            dimension="pixel_visual_quality",
-            title="Pixel Visual Review",
-            details="; ".join(findings) if findings else "Visually distinct service hero with strong tenant identity and hierarchy.",
-            evidence_modality=EvidenceModality.PIXEL_VISUAL,
-            suggested_fix="Improve brand visual prominence and layout distinction." if findings else None,
-        )
-
-
 class DesignCriticEnsemble:
     """Ensemble of design critics (R13 + V1.1 GroundingIntegrityCritic)."""
+
+    FAKE_VISUAL_EVIDENCE_CAN_GRANT_HUMAN_READY = "NO"
 
     def __init__(self, visual_adapter: Optional[VisualCriticAdapter] = None):
         self.critics: List[BaseCritic] = [
@@ -425,7 +441,8 @@ class DesignCriticEnsemble:
             DesignCoherenceCritic(),
             ProductSemanticsCritic(),
         ]
-        self.visual_adapter = visual_adapter or FakeVisualCriticAdapter()
+        # Section 9: visual_adapter MUST NOT default to FakeVisualCriticAdapter for runtime evaluation!
+        self.visual_adapter = visual_adapter
 
     def evaluate_project(
         self,
@@ -436,6 +453,7 @@ class DesignCriticEnsemble:
         story: Optional[ProductStorySpec] = None,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
         fact_ledger: Optional[GroundedFactLedger] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
     ) -> CritiqueScorecard:
         findings = []
         for critic in self.critics:
@@ -446,11 +464,12 @@ class DesignCriticEnsemble:
                 story=story,
                 evidence_manifest=evidence_manifest,
                 fact_ledger=fact_ledger,
+                content_manifest=content_manifest,
             )
             findings.append(finding)
 
-        # Evaluate pixel visual quality if manifest is present
-        if evidence_manifest and evidence_manifest.screenshot_paths:
+        # Evaluate pixel visual quality if adapter AND manifest are present
+        if self.visual_adapter and evidence_manifest and evidence_manifest.screenshot_paths:
             vis_finding = self.visual_adapter.evaluate_visuals(
                 screenshot_paths=evidence_manifest.screenshot_paths,
                 dna=dna,
@@ -473,4 +492,3 @@ class DesignCriticEnsemble:
             overall_verdict=overall,
             critic_findings=findings,
         )
-

@@ -64,6 +64,19 @@ class FeedbackRating(str, Enum):
     GOOD_PRODUCT_REVEAL = "GOOD_PRODUCT_REVEAL"
 
 
+class ContentBlockCategory(str, Enum):
+    FACTUAL = "FACTUAL"
+    INFERENTIAL = "INFERENTIAL"
+    DECORATIVE_OR_UI = "DECORATIVE_OR_UI"
+
+
+class EvidenceOrigin(str, Enum):
+    FAKE_TEST_ARTIFACT = "FAKE_TEST_ARTIFACT"
+    SIMULATED_VISUAL_TEST = "SIMULATED_VISUAL_TEST"
+    REAL_LOCAL_BROWSER_SCREENSHOT = "REAL_LOCAL_BROWSER_SCREENSHOT"
+    REAL_PROVIDER_VISUAL_REVIEW = "REAL_PROVIDER_VISUAL_REVIEW"
+
+
 @dataclass
 class GroundedFact:
     fact_id: str
@@ -83,6 +96,9 @@ class GroundedFactLedger:
     def add_fact(self, fact: GroundedFact) -> None:
         self.facts.append(fact)
 
+    def get_fact_by_id(self, fact_id: str) -> Optional[GroundedFact]:
+        return next((f for f in self.facts if f.fact_id == fact_id), None)
+
     def get_canonical_facts(self) -> List[GroundedFact]:
         return [f for f in self.facts if f.fact_type in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT)]
 
@@ -93,7 +109,19 @@ class GroundedContentBlock:
     semantic_role: str
     provenance_kind: FactType
     source_fact_ids: List[str]
+    category: ContentBlockCategory = ContentBlockCategory.FACTUAL
     is_customer_facing: bool = True
+
+
+@dataclass
+class GroundedContentManifest:
+    manifest_id: str
+    project_id: str
+    blocks: List[GroundedContentBlock] = field(default_factory=list)
+    unmanifested_customer_facing_text_detected: bool = False
+
+    def is_complete(self) -> bool:
+        return not self.unmanifested_customer_facing_text_detected and len(self.blocks) > 0
 
 
 @dataclass
@@ -109,6 +137,7 @@ class DesignProjectBrief:
     fact_ledger: Optional[GroundedFactLedger] = None
     version: str = "v1.1"
     created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
 
 
 @dataclass
@@ -183,10 +212,11 @@ class VisualEvidenceManifest:
     screenshot_paths: Dict[int, str]  # viewport -> path
     horizontal_overflow_detected: Dict[int, bool] = field(default_factory=dict)
     cta_visible: Dict[int, bool] = field(default_factory=dict)
-    capture_mode: str = "REAL_LOCAL_BROWSER_SCREENSHOT"
+    capture_mode: str = "FAKE_TEST_ARTIFACT"
     capture_adapter: str = "FakeBrowserScreenshotAdapter"
     file_hashes: Dict[int, str] = field(default_factory=dict)
     captured_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
 
 
 @dataclass

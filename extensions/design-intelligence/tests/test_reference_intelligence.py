@@ -17,8 +17,10 @@ def test_reference_intelligence_registration_and_analysis():
         generic_design_risk="LOW",
         recommended_use="Inspiration for sales fold structuring",
         do_not_use_conditions=["Do not copy raw CSS", "Do not clone brand assets"],
+        observation="Product screenshot is placed side-by-side with primary CTA and social proof badge",
     )
     assert source.source_id.startswith("src-")
+
 
     signal = ref_intel.extract_design_signal(
         source_id=source.source_id,

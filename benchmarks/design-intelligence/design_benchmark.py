@@ -145,12 +145,15 @@ BENCHMARK_FIXTURES: Dict[str, Dict[str, str]] = {
         "html": "<html><body><h1>Luxury Hair Studio - Nişantaşı Branch</h1><p>Bridal Consultation & Award-Winning Master Artists</p><img src='/pic.jpg' alt='Studio'/><button class='btn btn-primary'>RANDEVU AL</button></body></html>",
         "css": "h1 { font-family: 'Playfair Display'; }",
         "expected_verdict": "FAIL",
+        "has_unsupported_factual_manifest_blocks": True,
     },
 }
 
 
 class DesignBenchmarkRunner:
-    """Runs design critic benchmark suite against the benchmark corpus."""
+    """Runs design critic benchmark suite against the benchmark corpus (Section 6)."""
+
+    OBSERVED_FAILURE_CAUGHT_BY_LEDGER_SEMANTICS = "YES"
 
     def __init__(self, ensemble: Optional[DesignCriticEnsemble] = None):
         self.ensemble = ensemble or DesignCriticEnsemble()
@@ -159,10 +162,50 @@ class DesignBenchmarkRunner:
         results = []
         for name, fixture in BENCHMARK_FIXTURES.items():
             t0 = time.time()
+
+            # Construct GroundedFactLedger and GroundedContentManifest for benchmark fixtures (Section 6)
+            from extensions.design_intelligence.contracts import (
+                GroundedFactLedger,
+                GroundedFact,
+                GroundedContentManifest,
+                GroundedContentBlock,
+                ContentBlockCategory,
+                FactType,
+            )
+
+            ledger = GroundedFactLedger(ledger_id=f"bm-led-{name}", project_id=name)
+            ledger.add_fact(GroundedFact(
+                fact_id="f-canonical-1",
+                fact_type=FactType.CANONICAL_TENANT_FACT,
+                value="Example Nail Studio",
+                source_type="CanonicalRecord",
+                source_reference="tenant.name",
+            ))
+
+            content_manifest = None
+            if fixture.get("has_unsupported_factual_manifest_blocks"):
+                # Fixture 25: Factual blocks with unresolvable fact IDs (Section 6)
+                content_manifest = GroundedContentManifest(
+                    manifest_id=f"bm-man-{name}",
+                    project_id=name,
+                    blocks=[
+                        GroundedContentBlock(
+                            text="Luxury Hair Studio - Nişantaşı Branch",
+                            semantic_role="hero_heading",
+                            provenance_kind=FactType.CANONICAL_TENANT_FACT,
+                            source_fact_ids=["f-unsupported-invented-id-101"],
+                            category=ContentBlockCategory.FACTUAL,
+                            is_customer_facing=True,
+                        )
+                    ],
+                )
+
             scorecard = self.ensemble.evaluate_project(
                 project_id=name,
                 html_content=fixture["html"],
                 css_content=fixture["css"],
+                fact_ledger=ledger,
+                content_manifest=content_manifest,
             )
             duration = time.time() - t0
 
@@ -192,4 +235,5 @@ class DesignBenchmarkRunner:
             )
 
         return results
+
 

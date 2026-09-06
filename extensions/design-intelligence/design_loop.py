@@ -17,6 +17,7 @@ from extensions.design_intelligence.contracts import (
     DesignRecommendation,
     GroundedFactLedger,
     GroundedFact,
+    GroundedContentManifest,
     FactType,
     HumanReviewReadinessState,
     VisualEvidenceManifest,
@@ -53,10 +54,96 @@ class DesignLoopResult:
     blockers: List[str] = field(default_factory=list)
 
 
+def evaluate_human_visual_review_readiness(
+    scorecard: CritiqueScorecard,
+    fact_ledger: Optional[GroundedFactLedger],
+    content_manifest: Optional[GroundedContentManifest],
+    ref_intel: Optional[ReferenceIntelligence],
+    evidence_manifest: Optional[VisualEvidenceManifest],
+    visual_adapter: Optional[Any],
+) -> Dict[str, Any]:
+    """Central evaluator for HUMAN_VISUAL_REVIEW_READY state (Section 12).
+    
+    Requires ALL:
+    1. GroundingIntegrityCritic = PASS
+    2. GroundedContentManifest completeness = PASS
+    3. Reference provenance = PASS
+    4. Visual QA = FULL_PASS
+    5. Real screenshot artifact integrity = PASS
+    6. Capture origin = REAL_LOCAL_BROWSER_SCREENSHOT
+    7. REAL VisualCriticAdapter actually executed
+    8. Real visual finding modality/origin confirmed
+    9. No critical static/semantic/visual critic FAIL
+    10. Inspectable screenshot paths are present
+    """
+    reasons = []
+
+    # 1 & 9. Static & semantic critic check
+    if scorecard.has_critical_failure():
+        reasons.append("CritiqueScorecard has critical FAIL findings")
+
+    grounding_finding = next((f for f in scorecard.critic_findings if f.critic_name == "GroundingIntegrityCritic"), None)
+    if not grounding_finding or grounding_finding.verdict != JudgmentVerdict.PASS:
+        reasons.append("GroundingIntegrityCritic did not PASS")
+
+    # 2. Content manifest completeness
+    if content_manifest and not content_manifest.is_complete():
+        reasons.append("GroundedContentManifest is incomplete")
+
+    # 3. Reference provenance
+    if ref_intel:
+        signals = ref_intel.query_signals()
+        for sig in signals:
+            src = ref_intel._sources.get(sig.source_id)
+            if not src or not ref_intel.validate_reference_source(src):
+                reasons.append(f"Reference signal '{sig.signal_id}' uses invalid source '{sig.source_id}'")
+
+    # 4 & 5 & 6 & 10. Evidence manifest & artifact integrity
+    if not evidence_manifest:
+        reasons.append("No VisualEvidenceManifest present")
+    else:
+        if manifest_capture_mode := getattr(evidence_manifest, "capture_mode", None):
+            if manifest_capture_mode != "REAL_LOCAL_BROWSER_SCREENSHOT":
+                reasons.append(f"Capture origin '{manifest_capture_mode}' is not REAL_LOCAL_BROWSER_SCREENSHOT")
+        else:
+            reasons.append("VisualEvidenceManifest missing capture_mode")
+
+        if not evidence_manifest.screenshot_paths:
+            reasons.append("No screenshot paths present in manifest")
+        else:
+            from extensions.design_intelligence.visual_qa import validate_real_artifact_integrity, VisualQAEvaluator
+            qa_res = VisualQAEvaluator(check_file_existence=True).evaluate_manifest(evidence_manifest)
+            if not qa_res.overall_pass:
+                reasons.append(f"Visual QA is not FULL_PASS (status: {qa_res.coverage_status.value})")
+
+            integ = validate_real_artifact_integrity(evidence_manifest)
+            if not integ["valid"]:
+                reasons.append(f"Artifact integrity failure: {'; '.join(integ['errors'])}")
+
+    # 7 & 8. Real VisualCriticAdapter check
+    if not visual_adapter:
+        reasons.append("No VisualCriticAdapter executed")
+    elif visual_adapter.__class__.__name__ == "FakeVisualCriticAdapter":
+        reasons.append("FakeVisualCriticAdapter used (test-only, cannot grant human-ready)")
+    else:
+        vis_finding = next((f for f in scorecard.critic_findings if f.dimension == "pixel_visual_quality"), None)
+        if not vis_finding or vis_finding.verdict != JudgmentVerdict.PASS:
+            reasons.append("Real visual critic evaluation did not PASS")
+
+    is_ready = len(reasons) == 0
+    return {
+        "is_ready": is_ready,
+        "state": HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY if is_ready else HumanReviewReadinessState.DESIGN_DISCOVERY_COMPLETE,
+        "reasons": reasons,
+    }
+
+
 class AutonomousDesignLoopPipeline:
     """Multi-role autonomous design loop pipeline (V1.1)."""
 
+    NO_DEFAULT_CONCEPT_WINNER = "YES"
     NO_FORCED_LEAST_BAD_RECOMMENDATION = "YES"
+    AUTOMATED_HUMAN_ACCEPTED_TRANSITION_COUNT = 0
 
     def __init__(
         self,
@@ -78,6 +165,8 @@ class AutonomousDesignLoopPipeline:
         initial_html: str,
         initial_css: str,
         evidence_manifest: Optional[VisualEvidenceManifest] = None,
+        content_manifest: Optional[GroundedContentManifest] = None,
+        concept_id: Optional[str] = None,
     ) -> DesignLoopResult:
         pid = f"loop-{uuid.uuid4().hex[:8]}"
 
@@ -128,20 +217,25 @@ class AutonomousDesignLoopPipeline:
                 story=story,
                 evidence_manifest=evidence_manifest,
                 fact_ledger=fact_ledger,
+                content_manifest=content_manifest,
             )
             last_scorecard = scorecard
 
+            # Evaluate central human review readiness gate (Section 12)
+            gate_res = evaluate_human_visual_review_readiness(
+                scorecard=scorecard,
+                fact_ledger=fact_ledger,
+                content_manifest=content_manifest,
+                ref_intel=self.ref_intel,
+                evidence_manifest=evidence_manifest,
+                visual_adapter=self.critic_ensemble.visual_adapter,
+            )
+
             # Role 8: FINAL_DESIGN_REVIEWER check
             if scorecard.overall_verdict == JudgmentVerdict.PASS:
-                # HUMAN_VISUAL_REVIEW_READY requires real screenshots, grounding PASS, reference provenance PASS
-                ready = True
-                if evidence_manifest and evidence_manifest.screenshot_paths:
-                    human_state = HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
-                else:
-                    human_state = HumanReviewReadinessState.VISUAL_CRITIC_COMPLETE
-
                 rec = self.taste_memory.generate_explainable_recommendation(brief.project_id, dna, story)
-                rec.recommended_concept = "CONCEPT_A_SERVICE_HERO"
+                # Section 14: No default concept winner
+                rec.recommended_concept = concept_id if concept_id else ("NONE" if not gate_res["is_ready"] else "EVALUATED_CONCEPT")
 
                 return DesignLoopResult(
                     pipeline_id=pid,
@@ -151,7 +245,7 @@ class AutonomousDesignLoopPipeline:
                     max_cycles=self.max_design_review_cycles,
                     final_scorecard=scorecard,
                     recommendation=rec,
-                    human_review_state=human_state,
+                    human_review_state=gate_res["state"],
                     human_review_required_with_blockers=False,
                 )
 
@@ -164,7 +258,7 @@ class AutonomousDesignLoopPipeline:
                         html_current = html_current.replace("aos-runtime", "")
 
         # If max cycles reached with remaining failures
-        # Section 12: NO_FORCED_LEAST_BAD_RECOMMENDATION=YES -> RECOMMENDED_CONCEPT = NONE
+        # Section 14: NO_FORCED_LEAST_BAD_RECOMMENDATION=YES -> RECOMMENDED_CONCEPT = NONE
         blockers = [f.details for f in last_scorecard.critic_findings if f.verdict == JudgmentVerdict.FAIL]  # type: ignore
         return DesignLoopResult(
             pipeline_id=pid,
@@ -185,4 +279,5 @@ class AutonomousDesignLoopPipeline:
             human_review_required_with_blockers=len(blockers) > 0,
             blockers=blockers,
         )
+
 

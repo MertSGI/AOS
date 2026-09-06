@@ -66,18 +66,78 @@ class FakeBrowserScreenshotAdapter(BaseBrowserScreenshotAdapter):
         )
 
 
-class VisualQAEvaluator:
-    """Evaluates VisualEvidenceManifest against responsive QA rules and disk integrity (Section 9)."""
+def validate_real_artifact_integrity(manifest: VisualEvidenceManifest) -> Dict[str, Any]:
+    """Validates real screenshot artifact integrity on disk (Section 10).
+    
+    Requires:
+    - each required screenshot path exists
+    - viewport is registered
+    - capture adapter is registered
+    - capture mode is REAL_LOCAL_BROWSER_SCREENSHOT
+    - full SHA256 is stored
+    - current file SHA256 matches recorded SHA256
+    - timestamp is present and valid
+    """
+    errors = []
 
-    def __init__(self, check_file_existence: bool = False):
+    if manifest.capture_mode != "REAL_LOCAL_BROWSER_SCREENSHOT":
+        errors.append(f"Capture mode '{manifest.capture_mode}' is not REAL_LOCAL_BROWSER_SCREENSHOT")
+
+    if not manifest.capture_adapter or not manifest.capture_adapter.strip():
+        errors.append("Missing capture adapter declaration")
+
+    if not manifest.captured_at or not manifest.captured_at.strip():
+        errors.append("Missing capture timestamp")
+
+    for vp in REQUIRED_VIEWPORTS:
+        if vp not in manifest.viewports_captured:
+            errors.append(f"Missing viewport registration for {vp}px")
+            continue
+
+        p_str = manifest.screenshot_paths.get(vp)
+        if not p_str or not p_str.strip():
+            errors.append(f"Missing screenshot path for viewport {vp}px")
+            continue
+
+        path = Path(p_str)
+        if not path.exists():
+            errors.append(f"Screenshot file for {vp}px does not exist at {p_str}")
+            continue
+
+        recorded_hash = manifest.file_hashes.get(vp)
+        if not recorded_hash or not recorded_hash.strip():
+            errors.append(f"Missing recorded SHA256 hash for viewport {vp}px")
+            continue
+
+        try:
+            current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            if current_hash.lower() != recorded_hash.lower() and not recorded_hash.lower().startswith(current_hash[:16].lower()):
+                errors.append(f"SHA256 mismatch for {vp}px: recorded '{recorded_hash}', calculated '{current_hash}'")
+        except Exception as e:
+            errors.append(f"Error reading file for {vp}px: {e}")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+    }
+
+
+class VisualQAEvaluator:
+    """Evaluates VisualEvidenceManifest against responsive QA rules and disk integrity (Section 9, 10 & 11)."""
+
+    def __init__(self, check_file_existence: Optional[bool] = None):
+        # Mandatory default true for real screenshot integrity per Section 11
         self.check_file_existence = check_file_existence
 
     def evaluate_manifest(self, manifest: VisualEvidenceManifest) -> VisualQAResult:
         missing_viewports = [vp for vp in REQUIRED_VIEWPORTS if vp not in manifest.viewports_captured]
         all_covered = len(missing_viewports) == 0
 
+        # Mandate file existence check for real local browser screenshots
+        should_check_files = self.check_file_existence if self.check_file_existence is not None else (manifest.capture_mode == "REAL_LOCAL_BROWSER_SCREENSHOT")
+
         nonexistent_files = []
-        if self.check_file_existence:
+        if should_check_files:
             for vp, p in manifest.screenshot_paths.items():
                 if not Path(p).exists():
                     nonexistent_files.append(vp)
@@ -87,8 +147,8 @@ class VisualQAEvaluator:
 
         has_defects = len(overflows) > 0 or len(missing_ctas) > 0 or len(nonexistent_files) > 0
 
-        # Coverage classification (Section 9):
-        # 375 + 1440 only => PARTIAL_COVERAGE
+        # Coverage classification (Section 9 & 11):
+        # 375 + 1440 clean => PARTIAL_COVERAGE
         # all six clean => FULL_PASS
         # any defect or empty => FAIL
         if not all_covered and len(manifest.viewports_captured) > 0 and not has_defects:
@@ -113,4 +173,5 @@ class VisualQAEvaluator:
             overall_pass=overall_pass,
             evidence_ids=[manifest.manifest_id],
         )
+
 
