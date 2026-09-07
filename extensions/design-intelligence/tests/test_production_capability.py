@@ -475,35 +475,64 @@ def test_media_decision_adversarial_matrix_and_force_video_semantics():
     assert d6.video_justified is False
 
 
-def test_real_tenant_media_provenance_unrelated_fact_rejection():
+def test_real_tenant_media_provenance_exhaustive_matrix():
     engine = MediaDecisionEngine()
 
-    # Unrelated canonical fact containing word "media" in text copy or unrelated ID
-    ledger_unrelated = GroundedFactLedger("l-unrel", "p-unrel")
-    ledger_unrelated.add_fact(GroundedFact(
-        fact_id="f-copy-1",
-        fact_type=FactType.CANONICAL_TENANT_FACT,
-        value="We utilize social media for marketing",
-        source_type="Brief",
-        source_reference="brief.copy",
-    ))
+    def make_ledger(fact_id, value, fact_type=FactType.CANONICAL_TENANT_FACT, src_ref="ref"):
+        ledger = GroundedFactLedger("l-test", "p-test")
+        ledger.add_fact(GroundedFact(
+            fact_id=fact_id,
+            fact_type=fact_type,
+            value=value,
+            source_type="Test",
+            source_reference=src_ref,
+        ))
+        return ledger
 
-    # Requesting REAL_TENANT_IMAGE with unrelated fact => REJECTED / STATIC_IMAGE_FALLBACK
-    d_unrel = engine.evaluate_media_needs("p-unrel", "Salon", "Hair styling", fact_ledger=ledger_unrelated, requested_kind=MediaKind.REAL_TENANT_IMAGE)
-    assert d_unrel.selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
-    assert d_unrel.factual_claims_verified is False
-    assert "REJECTED" in d_unrel.justification_reason
+    # 1. UNRELATED_CANONICAL_TEXT
+    l_text = make_ledger("f-text", "Our salon has great reviews")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_text, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_text, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
 
-    # Valid canonical media asset fact
-    ledger_valid = GroundedFactLedger("l-valid", "p-valid")
-    ledger_valid.add_fact(GroundedFact(
-        fact_id="tenant_media_hero_img",
-        fact_type=FactType.CANONICAL_TENANT_FACT,
-        value="https://cdn.tenant.com/hero.png",
-        source_type="MediaAsset",
-        source_reference="tenant_media_manifest",
-    ))
+    # 2. UNRELATED_CANONICAL_HTTP_URL (Generic site URL without image/video extension or media tag)
+    l_http = make_ledger("f-http", "https://tenant.example.com/about")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_http, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_http, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
 
-    d_valid = engine.evaluate_media_needs("p-valid", "Salon", "Hair styling", fact_ledger=ledger_valid, requested_kind=MediaKind.REAL_TENANT_IMAGE)
-    assert d_valid.selected_media_kind == MediaKind.REAL_TENANT_IMAGE
-    assert d_valid.factual_claims_verified is True
+    # 3. UNRELATED_CANONICAL_FILE_URL
+    l_file = make_ledger("f-file", "file:///tmp/data.json")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_file, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_file, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 4. VALID_CANONICAL_IMAGE_PNG -> IMAGE_ACCEPTED, VIDEO_REJECTED
+    l_png = make_ledger("f-png", "https://cdn.example.com/hero.png")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_png, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.REAL_TENANT_IMAGE
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_png, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 5. VALID_CANONICAL_IMAGE_JPEG -> IMAGE_ACCEPTED, VIDEO_REJECTED
+    l_jpg = make_ledger("f-jpg", "https://cdn.example.com/hero.jpeg")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_jpg, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.REAL_TENANT_IMAGE
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_jpg, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 6. VALID_CANONICAL_VIDEO_MP4 -> VIDEO_ACCEPTED, IMAGE_REJECTED
+    l_mp4 = make_ledger("f-mp4", "https://cdn.example.com/demo.mp4")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_mp4, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.REAL_TENANT_VIDEO
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_mp4, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 7. VALID_CANONICAL_VIDEO_WEBM -> VIDEO_ACCEPTED, IMAGE_REJECTED
+    l_webm = make_ledger("f-webm", "https://cdn.example.com/demo.webm")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_webm, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.REAL_TENANT_VIDEO
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_webm, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 8. NONCANONICAL_IMAGE_FACT -> IMAGE_REJECTED
+    l_noncan_img = make_ledger("tenant_image_1", "https://cdn.example.com/hero.png", fact_type=FactType.DESIGN_INFERENCE)
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_noncan_img, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 9. NONCANONICAL_VIDEO_FACT -> VIDEO_REJECTED
+    l_noncan_vid = make_ledger("tenant_video_1", "https://cdn.example.com/demo.mp4", fact_type=FactType.HUMAN_PREFERENCE)
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_noncan_vid, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+
+    # 10. GENERIC_MEDIA_WORD_WITHOUT_ASSET_IDENTITY -> IMAGE_REJECTED, VIDEO_REJECTED
+    l_gen_media = make_ledger("social_media_policy", "We utilize social media for marketing")
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_gen_media, requested_kind=MediaKind.REAL_TENANT_IMAGE).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK
+    assert engine.evaluate_media_needs("p", "Salon", "Story", fact_ledger=l_gen_media, requested_kind=MediaKind.REAL_TENANT_VIDEO).selected_media_kind == MediaKind.STATIC_IMAGE_FALLBACK

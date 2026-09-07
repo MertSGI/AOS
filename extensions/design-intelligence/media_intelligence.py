@@ -79,10 +79,23 @@ class MediaDecisionEngine:
                     fid_lower = f.fact_id.lower()
                     src_ref_lower = f.source_reference.lower()
                     val_lower = f.value.lower()
-                    # Must explicitly represent media asset provenance, not generic copy mentioning media
-                    has_media_tag = any(tag in fid_lower or tag in src_ref_lower for tag in ["tenant_media_", "product_media_", "media_url", "image_url", "video_url"])
-                    has_media_val = any(val_lower.endswith(ext) or val_lower.startswith("http") or val_lower.startswith("file:") for ext in [".png", ".jpg", ".jpeg", ".mp4", ".webp"])
-                    return has_media_tag or has_media_val
+
+                    image_exts = [".png", ".jpg", ".jpeg", ".webp"]
+                    video_exts = [".mp4", ".webm", ".mov"]
+
+                    if requested_kind == MediaKind.REAL_TENANT_IMAGE:
+                        # Explicit image asset tag or explicit image extension
+                        has_image_tag = any(tag in fid_lower or tag in src_ref_lower for tag in ["tenant_image_", "product_image_", "image_url", "photo_url", "media_image_"])
+                        has_image_ext = any(val_lower.endswith(ext) or f"?ext={ext[1:]}" in val_lower for ext in image_exts)
+                        return has_image_tag or has_image_ext
+
+                    elif requested_kind == MediaKind.REAL_TENANT_VIDEO:
+                        # Explicit video asset tag or explicit video extension
+                        has_video_tag = any(tag in fid_lower or tag in src_ref_lower for tag in ["tenant_video_", "product_video_", "video_url", "media_video_"])
+                        has_video_ext = any(val_lower.endswith(ext) or f"?ext={ext[1:]}" in val_lower for ext in video_exts)
+                        return has_video_tag or has_video_ext
+
+                    return False
 
                 has_canonical_provenance = any(is_media_fact(f) for f in fact_ledger.facts)
 
