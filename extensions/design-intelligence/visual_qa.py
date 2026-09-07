@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+import datetime
 import hashlib
 import uuid
 from extensions.design_intelligence.contracts import (
@@ -67,16 +68,16 @@ class FakeBrowserScreenshotAdapter(BaseBrowserScreenshotAdapter):
 
 
 def validate_real_artifact_integrity(manifest: VisualEvidenceManifest) -> Dict[str, Any]:
-    """Validates real screenshot artifact integrity on disk (Section 10).
+    """Validates real screenshot artifact integrity on disk (Section 5, 6, 7 & 10).
     
     Requires:
     - each required screenshot path exists
     - viewport is registered
-    - capture adapter is registered
+    - capture adapter is registered and is NOT FakeBrowserScreenshotAdapter (Section 7)
     - capture mode is REAL_LOCAL_BROWSER_SCREENSHOT
-    - full SHA256 is stored
-    - current file SHA256 matches recorded SHA256
-    - timestamp is present and valid
+    - EXACT full 64-character SHA256 is stored (Section 5)
+    - current file SHA256 matches recorded SHA256 exactly
+    - timestamp is present, valid ISO-8601, and contains timezone info / UTC offset (Section 6)
     """
     errors = []
 
@@ -85,9 +86,18 @@ def validate_real_artifact_integrity(manifest: VisualEvidenceManifest) -> Dict[s
 
     if not manifest.capture_adapter or not manifest.capture_adapter.strip():
         errors.append("Missing capture adapter declaration")
+    elif "fake" in manifest.capture_adapter.lower():
+        errors.append(f"FAKE_CAPTURE_ADAPTER_WITH_REAL_MODE: Capture adapter '{manifest.capture_adapter}' cannot be used with REAL_LOCAL_BROWSER_SCREENSHOT mode")
 
     if not manifest.captured_at or not manifest.captured_at.strip():
         errors.append("Missing capture timestamp")
+    else:
+        try:
+            dt = datetime.datetime.fromisoformat(manifest.captured_at)
+            if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+                errors.append(f"Naive timestamp '{manifest.captured_at}' lacks timezone offset")
+        except Exception as e:
+            errors.append(f"Invalid captured_at ISO timestamp '{manifest.captured_at}': {e}")
 
     for vp in REQUIRED_VIEWPORTS:
         if vp not in manifest.viewports_captured:
@@ -109,9 +119,13 @@ def validate_real_artifact_integrity(manifest: VisualEvidenceManifest) -> Dict[s
             errors.append(f"Missing recorded SHA256 hash for viewport {vp}px")
             continue
 
+        if len(recorded_hash) != 64:
+            errors.append(f"Recorded hash '{recorded_hash}' length is {len(recorded_hash)}, expected EXACT 64 full SHA256 hex characters")
+            continue
+
         try:
             current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-            if current_hash.lower() != recorded_hash.lower() and not recorded_hash.lower().startswith(current_hash[:16].lower()):
+            if current_hash.lower() != recorded_hash.lower():
                 errors.append(f"SHA256 mismatch for {vp}px: recorded '{recorded_hash}', calculated '{current_hash}'")
         except Exception as e:
             errors.append(f"Error reading file for {vp}px: {e}")
@@ -120,6 +134,7 @@ def validate_real_artifact_integrity(manifest: VisualEvidenceManifest) -> Dict[s
         "valid": len(errors) == 0,
         "errors": errors,
     }
+
 
 
 class VisualQAEvaluator:

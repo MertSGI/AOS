@@ -34,5 +34,8 @@ def test_design_loop_passes_and_auto_revises():
     # Auto-revision should strip 'v2 pilot' on cycle 1 and pass on cycle 2!
     assert res.overall_verdict == JudgmentVerdict.PASS
     assert res.cycles_completed <= 3
-    assert res.human_review_required_with_blockers is False
+    # Per Section 9: When human-ready evidence is incomplete, human_review_required_with_blockers is True
+    assert res.human_review_required_with_blockers is True
+    assert len(res.blockers) > 0
     assert res.recommendation is not None
+

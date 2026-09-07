@@ -62,12 +62,12 @@ def evaluate_human_visual_review_readiness(
     evidence_manifest: Optional[VisualEvidenceManifest],
     visual_adapter: Optional[Any],
 ) -> Dict[str, Any]:
-    """Central evaluator for HUMAN_VISUAL_REVIEW_READY state (Section 12).
+    """Central evaluator for HUMAN_VISUAL_REVIEW_READY state (Section 2, 3, 12).
     
     Requires ALL:
     1. GroundingIntegrityCritic = PASS
-    2. GroundedContentManifest completeness = PASS
-    3. Reference provenance = PASS
+    2. GroundedContentManifest is not None AND is_complete() == True (Section 2)
+    3. Reference Intelligence present AND at least 1 valid reference signal (Section 3)
     4. Visual QA = FULL_PASS
     5. Real screenshot artifact integrity = PASS
     6. Capture origin = REAL_LOCAL_BROWSER_SCREENSHOT
@@ -86,17 +86,24 @@ def evaluate_human_visual_review_readiness(
     if not grounding_finding or grounding_finding.verdict != JudgmentVerdict.PASS:
         reasons.append("GroundingIntegrityCritic did not PASS")
 
-    # 2. Content manifest completeness
-    if content_manifest and not content_manifest.is_complete():
+    # 2. Content manifest completeness (Mandatory Section 2)
+    if content_manifest is None:
+        reasons.append("GROUNDING_CONTENT_MANIFEST_MISSING: GroundedContentManifest is None")
+    elif not content_manifest.is_complete():
         reasons.append("GroundedContentManifest is incomplete")
 
-    # 3. Reference provenance
-    if ref_intel:
+    # 3. Reference evidence mandatory (Section 3)
+    if ref_intel is None:
+        reasons.append("REFERENCE_PROVENANCE_EVIDENCE_MISSING: ReferenceIntelligence is None")
+    else:
         signals = ref_intel.query_signals()
-        for sig in signals:
-            src = ref_intel._sources.get(sig.source_id)
-            if not src or not ref_intel.validate_reference_source(src):
-                reasons.append(f"Reference signal '{sig.signal_id}' uses invalid source '{sig.source_id}'")
+        if not signals:
+            reasons.append("REFERENCE_PROVENANCE_EVIDENCE_MISSING: Zero evidence-eligible reference signals found")
+        else:
+            for sig in signals:
+                src = ref_intel._sources.get(sig.source_id)
+                if not src or not ref_intel.validate_reference_source(src):
+                    reasons.append(f"Reference signal '{sig.signal_id}' uses invalid source '{sig.source_id}'")
 
     # 4 & 5 & 6 & 10. Evidence manifest & artifact integrity
     if not evidence_manifest:
@@ -234,8 +241,16 @@ class AutonomousDesignLoopPipeline:
             # Role 8: FINAL_DESIGN_REVIEWER check
             if scorecard.overall_verdict == JudgmentVerdict.PASS:
                 rec = self.taste_memory.generate_explainable_recommendation(brief.project_id, dna, story)
-                # Section 14: No default concept winner
-                rec.recommended_concept = concept_id if concept_id else ("NONE" if not gate_res["is_ready"] else "EVALUATED_CONCEPT")
+                
+                # Section 8: Remove concept_id bypass. If gate is NOT ready, recommended_concept MUST be NONE!
+                if not gate_res["is_ready"]:
+                    rec.recommended_concept = "NONE"
+                else:
+                    rec.recommended_concept = concept_id if concept_id else "EVALUATED_CONCEPT"
+
+                # Section 9: Blocker reporting when gate is not ready
+                has_blockers = not gate_res["is_ready"]
+                blockers = gate_res["reasons"] if not gate_res["is_ready"] else []
 
                 return DesignLoopResult(
                     pipeline_id=pid,
@@ -246,7 +261,8 @@ class AutonomousDesignLoopPipeline:
                     final_scorecard=scorecard,
                     recommendation=rec,
                     human_review_state=gate_res["state"],
-                    human_review_required_with_blockers=False,
+                    human_review_required_with_blockers=has_blockers,
+                    blockers=blockers,
                 )
 
             # Perform revision if issues remain
@@ -258,7 +274,7 @@ class AutonomousDesignLoopPipeline:
                         html_current = html_current.replace("aos-runtime", "")
 
         # If max cycles reached with remaining failures
-        # Section 14: NO_FORCED_LEAST_BAD_RECOMMENDATION=YES -> RECOMMENDED_CONCEPT = NONE
+        # Section 8 & 9: NO_FORCED_LEAST_BAD_RECOMMENDATION=YES -> RECOMMENDED_CONCEPT = NONE
         blockers = [f.details for f in last_scorecard.critic_findings if f.verdict == JudgmentVerdict.FAIL]  # type: ignore
         return DesignLoopResult(
             pipeline_id=pid,
@@ -279,5 +295,6 @@ class AutonomousDesignLoopPipeline:
             human_review_required_with_blockers=len(blockers) > 0,
             blockers=blockers,
         )
+
 
 

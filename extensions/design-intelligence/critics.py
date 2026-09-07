@@ -142,6 +142,30 @@ class GroundingIntegrityCritic(BaseCritic):
                             elif fact.fact_type not in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT):
                                 unsupported_findings.append(f"Factual block '{block.text}' references non-canonical fact type '{fact.fact_type.value}'")
 
+                    # Section 4 (Correction R2): Fact-to-rendered-content binding validation
+                    if hasattr(block, "rendered_fact_bindings") and block.rendered_fact_bindings:
+                        for binding in block.rendered_fact_bindings:
+                            fact = fact_ledger.get_fact_by_id(binding.fact_id) if fact_ledger else None
+                            if not fact:
+                                unsupported_findings.append(f"Rendered fact binding references unknown fact ID '{binding.fact_id}'")
+                            else:
+                                canonical_val_norm = fact.value.strip().lower()
+                                rendered_val_norm = binding.rendered_value.strip().lower()
+                                block_text_norm = block.text.strip().lower()
+
+                                if canonical_val_norm != rendered_val_norm:
+                                    unsupported_findings.append(f"Rendered value '{binding.rendered_value}' contradicts canonical fact value '{fact.value}' for fact ID '{binding.fact_id}'")
+                                elif rendered_val_norm not in block_text_norm:
+                                    unsupported_findings.append(f"Factual block text '{block.text}' does not contain rendered canonical value '{binding.rendered_value}'")
+                    else:
+                        # If block has source_fact_ids, verify block text actually contains the canonical fact values directly
+                        for fid in block.source_fact_ids:
+                            fact = fact_ledger.get_fact_by_id(fid) if fact_ledger else None
+                            if fact and fact.fact_type in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT):
+                                if fact.value.strip().lower() not in block.text.strip().lower():
+                                    unsupported_findings.append(f"Factual block text '{block.text}' does not contain canonical fact value '{fact.value}' for fact ID '{fid}'")
+
+
         else:
             # Fallback for legacy calls without structured GroundedContentManifest:
             # Check HTML text against canonical ledger values without domain-specific blacklists!

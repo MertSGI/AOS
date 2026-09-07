@@ -147,6 +147,12 @@ BENCHMARK_FIXTURES: Dict[str, Dict[str, str]] = {
         "expected_verdict": "FAIL",
         "has_unsupported_factual_manifest_blocks": True,
     },
+    "26_observed_failure_valid_fact_id_contradicted_text": {
+        "html": "<html><body><h1>Award Winning Laser Clinic in Ankara</h1><p>Consultation available</p><img src='/pic.jpg' alt='Clinic'/><button class='btn btn-primary'>RANDEVU AL</button></body></html>",
+        "css": "h1 { font-family: 'Playfair Display'; }",
+        "expected_verdict": "FAIL",
+        "has_contradicted_factual_manifest_blocks": True,
+    },
 }
 
 
@@ -194,6 +200,22 @@ class DesignBenchmarkRunner:
                             semantic_role="hero_heading",
                             provenance_kind=FactType.CANONICAL_TENANT_FACT,
                             source_fact_ids=["f-unsupported-invented-id-101"],
+                            category=ContentBlockCategory.FACTUAL,
+                            is_customer_facing=True,
+                        )
+                    ],
+                )
+            elif fixture.get("has_contradicted_factual_manifest_blocks"):
+                # Fixture 26: Valid fact ID but rendered text contradicts canonical fact (Section 11)
+                content_manifest = GroundedContentManifest(
+                    manifest_id=f"bm-man-{name}",
+                    project_id=name,
+                    blocks=[
+                        GroundedContentBlock(
+                            text="Award Winning Laser Clinic in Ankara",
+                            semantic_role="hero_heading",
+                            provenance_kind=FactType.CANONICAL_TENANT_FACT,
+                            source_fact_ids=["f-canonical-1"],
                             category=ContentBlockCategory.FACTUAL,
                             is_customer_facing=True,
                         )

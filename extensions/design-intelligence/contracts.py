@@ -104,6 +104,12 @@ class GroundedFactLedger:
 
 
 @dataclass
+class RenderedFactBinding:
+    fact_id: str
+    rendered_value: str
+
+
+@dataclass
 class GroundedContentBlock:
     text: str
     semantic_role: str
@@ -111,6 +117,8 @@ class GroundedContentBlock:
     source_fact_ids: List[str]
     category: ContentBlockCategory = ContentBlockCategory.FACTUAL
     is_customer_facing: bool = True
+    rendered_fact_bindings: List[RenderedFactBinding] = field(default_factory=list)
+
 
 
 @dataclass

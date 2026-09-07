@@ -14,9 +14,9 @@ def test_expanded_design_benchmark_corpus_performance():
     runner = DesignBenchmarkRunner()
     results = runner.run_benchmark()
 
-    assert len(results) == 25
+    assert len(results) == 26
     passed_count = sum(1 for r in results if r.passed)
-    assert passed_count == 25  # 100% accuracy on the 25-fixture benchmark corpus
+    assert passed_count == 26  # 100% accuracy on the 26-fixture benchmark corpus
 
     total_fps = sum(len(r.false_positives) for r in results)
     total_fns = sum(len(r.false_negatives) for r in results)

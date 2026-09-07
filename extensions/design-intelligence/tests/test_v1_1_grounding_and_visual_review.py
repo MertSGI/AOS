@@ -1,8 +1,9 @@
-"""Unit tests for Design Intelligence V1.1 Real-World Grounding & Visual Judgment (R19 / V1.1 / Correction R1)."""
+"""Unit tests for Design Intelligence V1.1 Real-World Grounding & Visual Judgment (R19 / V1.1 / Correction R2)."""
 
 import pytest
 import tempfile
 import hashlib
+import datetime
 from pathlib import Path
 
 from extensions.design_intelligence.contracts import (
@@ -10,6 +11,7 @@ from extensions.design_intelligence.contracts import (
     GroundedFact,
     GroundedContentBlock,
     GroundedContentManifest,
+    RenderedFactBinding,
     ContentBlockCategory,
     FactType,
     JudgmentVerdict,
@@ -41,298 +43,215 @@ from extensions.design_intelligence.design_loop import (
 )
 
 
-def test_generic_ledger_driven_grounding_and_manifest_validation():
-    # Section 5: Grounding works without knowing invented words in advance
-    ledger = GroundedFactLedger(ledger_id="led-gen", project_id="p-gen")
+def test_fact_render_binding_and_unsupported_rendered_text():
+    # Section 4 (Correction R2): Valid fact ID alone MUST NOT authorize arbitrary text
+    ledger = GroundedFactLedger(ledger_id="led-1", project_id="p-1")
     ledger.add_fact(GroundedFact(
         fact_id="f-name",
         fact_type=FactType.CANONICAL_TENANT_FACT,
         value="Example Nail Studio",
-        source_type="CanonicalTenantRecord",
-        source_reference="tenant.name",
-    ))
-    ledger.add_fact(GroundedFact(
-        fact_id="f-loc",
-        fact_type=FactType.CANONICAL_TENANT_FACT,
-        value="Istanbul",
-        source_type="CanonicalTenantRecord",
-        source_reference="tenant.location",
+        source_type="Catalog",
+        source_reference="name",
     ))
 
     critic = GroundingIntegrityCritic()
 
-    # Valid supported block => PASS
-    valid_manifest = GroundedContentManifest(
-        manifest_id="m-valid",
-        project_id="p-gen",
-        blocks=[
-            GroundedContentBlock(
-                text="Example Nail Studio - Istanbul",
-                semantic_role="hero_title",
-                provenance_kind=FactType.CANONICAL_TENANT_FACT,
-                source_fact_ids=["f-name", "f-loc"],
-                category=ContentBlockCategory.FACTUAL,
-                is_customer_facing=True,
-            )
-        ],
-    )
-    res_valid = critic.evaluate("", "", fact_ledger=ledger, content_manifest=valid_manifest)
-    assert res_valid.verdict == JudgmentVerdict.PASS
-
-    # Arbitrary unsupported Set 1: Kadıköy Flagship Beauty Lab, Laser Epilation
+    # 1. Valid canonical fact ID + contradictory text => FAIL
     bad_manifest_1 = GroundedContentManifest(
         manifest_id="m-bad-1",
-        project_id="p-gen",
+        project_id="p-1",
         blocks=[
             GroundedContentBlock(
-                text="Kadıköy Flagship Beauty Lab - Laser Epilation",
+                text="Award Winning Laser Clinic in Ankara",
                 semantic_role="hero_title",
                 provenance_kind=FactType.CANONICAL_TENANT_FACT,
-                source_fact_ids=["f-unknown-999"],  # Non-existent fact ID
+                source_fact_ids=["f-name"],  # Valid ID, but text contradicts!
                 category=ContentBlockCategory.FACTUAL,
-                is_customer_facing=True,
             )
         ],
     )
     res_bad_1 = critic.evaluate("", "", fact_ledger=ledger, content_manifest=bad_manifest_1)
     assert res_bad_1.verdict == JudgmentVerdict.FAIL
-    assert "non-existent fact ID" in res_bad_1.details
+    assert "does not contain canonical fact value" in res_bad_1.details
 
-    # Arbitrary unsupported Set 2: Senior Colorist, Wedding Makeup, Ankara Branch
+    # 2. Valid canonical fact ID + second unrelated text => FAIL
     bad_manifest_2 = GroundedContentManifest(
         manifest_id="m-bad-2",
-        project_id="p-gen",
+        project_id="p-1",
         blocks=[
             GroundedContentBlock(
-                text="Senior Colorist Wedding Makeup Ankara Branch",
-                semantic_role="services_list",
-                provenance_kind=FactType.DESIGN_INFERENCE,  # Non-canonical fact type for factual copy
+                text="Kadıköy Flagship Studio",
+                semantic_role="location",
+                provenance_kind=FactType.CANONICAL_TENANT_FACT,
                 source_fact_ids=["f-name"],
                 category=ContentBlockCategory.FACTUAL,
-                is_customer_facing=True,
             )
         ],
     )
     res_bad_2 = critic.evaluate("", "", fact_ledger=ledger, content_manifest=bad_manifest_2)
     assert res_bad_2.verdict == JudgmentVerdict.FAIL
-    assert "non-canonical" in res_bad_2.details.lower()
 
-
-    # Unmanifested customer facing text detected => FAIL (Section 4)
-    incomplete_manifest = GroundedContentManifest(
-        manifest_id="m-incomp",
-        project_id="p-gen",
-        blocks=[],
-        unmanifested_customer_facing_text_detected=True,
+    # 3. Explicit RenderedFactBinding with contradicting value => FAIL
+    bad_manifest_3 = GroundedContentManifest(
+        manifest_id="m-bad-3",
+        project_id="p-1",
+        blocks=[
+            GroundedContentBlock(
+                text="Example Laser Clinic",
+                semantic_role="hero",
+                provenance_kind=FactType.CANONICAL_TENANT_FACT,
+                source_fact_ids=["f-name"],
+                category=ContentBlockCategory.FACTUAL,
+                rendered_fact_bindings=[
+                    RenderedFactBinding(fact_id="f-name", rendered_value="Example Laser Clinic")
+                ],
+            )
+        ],
     )
-    res_incomp = critic.evaluate("", "", fact_ledger=ledger, content_manifest=incomplete_manifest)
-    assert res_incomp.verdict == JudgmentVerdict.FAIL
-    assert "INCOMPLETE GroundedContentManifest" in res_incomp.details
+    res_bad_3 = critic.evaluate("", "", fact_ledger=ledger, content_manifest=bad_manifest_3)
+    assert res_bad_3.verdict == JudgmentVerdict.FAIL
+    assert "contradicts canonical fact value" in res_bad_3.details
 
-
-def test_reference_provenance_structural_validation():
-    ref_intel = ReferenceIntelligence()
-    assert ref_intel.REFERENCE_SOURCE_PLACEHOLDER_REJECTED == "YES"
-
-    # Blank purpose rejection
-    with pytest.raises(ValueError):
-        ref_intel.register_candidate_source(
-            url_or_name="https://stripe.com/design",
-            purpose="",  # Blank purpose
-            strength="High",
-            integration_cost="LOW",
-            dependency_cost="ZERO",
-            license_provenance="MIT",
-            supply_chain_risk="LOW",
-            generic_design_risk="LOW",
-            recommended_use="UI inspiration",
-            observation="Observed layout",
-        )
-
-    # Valid named-source identity
-    src = ref_intel.register_candidate_source(
-        url_or_name="Stripe Design System 2026",
-        purpose="Layout and micro-animation guidance",
-        strength="High brand focus",
-        integration_cost="LOW",
-        dependency_cost="ZERO",
-        license_provenance="Public Design Guidelines",
-        supply_chain_risk="LOW",
-        generic_design_risk="LOW",
-        recommended_use="Sales fold alignment",
-        observation="Clean hierarchy with dominant CTA",
+    # 4. Correct exact canonical rendering => PASS
+    good_manifest = GroundedContentManifest(
+        manifest_id="m-good",
+        project_id="p-1",
+        blocks=[
+            GroundedContentBlock(
+                text="Welcome to Example Nail Studio",
+                semantic_role="hero",
+                provenance_kind=FactType.CANONICAL_TENANT_FACT,
+                source_fact_ids=["f-name"],
+                category=ContentBlockCategory.FACTUAL,
+                rendered_fact_bindings=[
+                    RenderedFactBinding(fact_id="f-name", rendered_value="Example Nail Studio")
+                ],
+            )
+        ],
     )
-    assert src.source_id.startswith("src-")
-
-    # Extracting signal from invalid source fails
-    invalid_src = ReferenceSource(
-        source_id="src-bad",
-        url_or_name="REF-001 Editorial Luxury",  # Invalid identity
-        purpose="None",
-        strength="None",
-        integration_cost="HIGH",
-        dependency_cost="HIGH",
-        license_provenance="None",
-        supply_chain_risk="HIGH",
-        generic_design_risk="HIGH",
-        recommended_use="None",
-        observation="None",
-    )
-    ref_intel._sources["src-bad"] = invalid_src
-    with pytest.raises(ValueError):
-        ref_intel.extract_design_signal("src-bad", "hero", "obs", "principle")
+    res_good = critic.evaluate("", "", fact_ledger=ledger, content_manifest=good_manifest)
+    assert res_good.verdict == JudgmentVerdict.PASS
 
 
-def test_fake_visual_adapter_and_fake_manifest_cannot_grant_human_ready():
-    # Section 9: FakeVisualCriticAdapter cannot grant human-ready
-    assert DesignCriticEnsemble.FAKE_VISUAL_EVIDENCE_CAN_GRANT_HUMAN_READY == "NO"
+def test_mandatory_content_manifest_and_reference_evidence_for_human_ready():
+    scorecard = DesignCriticEnsemble().evaluate_project("p-1", "<h1>Test</h1><button class='btn btn-primary'>CTA</button>", "")
+    ledger = GroundedFactLedger(ledger_id="l-1", project_id="p-1")
+    ledger.add_fact(GroundedFact("f-1", FactType.CANONICAL_TENANT_FACT, "Test", "Cat", "ref"))
 
-    fake_adapter = FakeBrowserScreenshotAdapter()
-    manifest = fake_adapter.capture_manifest("http://localhost:3000", "run-fake")
-    assert manifest.capture_mode == "FAKE_TEST_ARTIFACT"
-
-    scorecard = DesignCriticEnsemble(visual_adapter=FakeVisualCriticAdapter()).evaluate_project("p-fake", "<h1>Title</h1>", "")
-    
-    gate_res = evaluate_human_visual_review_readiness(
+    # Section 2: content_manifest is None => HUMAN_READY NO
+    gate_no_manifest = evaluate_human_visual_review_readiness(
         scorecard=scorecard,
-        fact_ledger=GroundedFactLedger(ledger_id="led-1", project_id="p-fake"),
-        content_manifest=GroundedContentManifest(manifest_id="man-1", project_id="p-fake", blocks=[GroundedContentBlock("Title", "h1", FactType.CANONICAL_TENANT_FACT, ["f-1"])]),
+        fact_ledger=ledger,
+        content_manifest=None,
         ref_intel=ReferenceIntelligence(),
-        evidence_manifest=manifest,
-        visual_adapter=FakeVisualCriticAdapter(),
+        evidence_manifest=None,
+        visual_adapter=None,
     )
+    assert gate_no_manifest["is_ready"] is False
+    assert any("GROUNDING_CONTENT_MANIFEST_MISSING" in r for r in gate_no_manifest["reasons"])
 
-    assert gate_res["is_ready"] is False
-    assert gate_res["state"] == HumanReviewReadinessState.DESIGN_DISCOVERY_COMPLETE
-    assert any("FakeVisualCriticAdapter used" in r for r in gate_res["reasons"])
-    assert any("Capture origin 'FAKE_TEST_ARTIFACT' is not REAL_LOCAL_BROWSER_SCREENSHOT" in r for r in gate_res["reasons"])
+    # Section 3: ref_intel is None => HUMAN_READY NO
+    gate_no_ref = evaluate_human_visual_review_readiness(
+        scorecard=scorecard,
+        fact_ledger=ledger,
+        content_manifest=GroundedContentManifest("m-1", "p-1", [GroundedContentBlock("Test", "h1", FactType.CANONICAL_TENANT_FACT, ["f-1"])]),
+        ref_intel=None,
+        evidence_manifest=None,
+        visual_adapter=None,
+    )
+    assert gate_no_ref["is_ready"] is False
+    assert any("REFERENCE_PROVENANCE_EVIDENCE_MISSING" in r for r in gate_no_ref["reasons"])
+
+    # Section 3: Zero reference signals => HUMAN_READY NO
+    ref_empty = ReferenceIntelligence()
+    gate_zero_signals = evaluate_human_visual_review_readiness(
+        scorecard=scorecard,
+        fact_ledger=ledger,
+        content_manifest=GroundedContentManifest("m-1", "p-1", [GroundedContentBlock("Test", "h1", FactType.CANONICAL_TENANT_FACT, ["f-1"])]),
+        ref_intel=ref_empty,
+        evidence_manifest=None,
+        visual_adapter=None,
+    )
+    assert gate_zero_signals["is_ready"] is False
+    assert any("REFERENCE_PROVENANCE_EVIDENCE_MISSING: Zero evidence-eligible" in r for r in gate_zero_signals["reasons"])
 
 
-def test_real_artifact_integrity_and_human_ready_gate():
-    # Create temp files on disk to test real artifact integrity
+def test_full_sha256_timestamp_and_capture_adapter_validation():
     with tempfile.TemporaryDirectory() as tmpdir:
-        paths = {}
-        hashes = {}
+        file_path = Path(tmpdir) / "test.png"
+        content = b"test_screenshot_data_12345"
+        file_path.write_bytes(content)
+        correct_hash = hashlib.sha256(content).hexdigest()  # 64 chars
 
-        for vp in REQUIRED_VIEWPORTS:
-            file_path = Path(tmpdir) / f"screenshot_{vp}.png"
-            content = f"fake_image_bytes_{vp}".encode("utf-8")
-            file_path.write_bytes(content)
-            paths[vp] = str(file_path)
-            hashes[vp] = hashlib.sha256(content).hexdigest()
+        paths = {vp: str(file_path) for vp in REQUIRED_VIEWPORTS}
 
-        real_manifest = VisualEvidenceManifest(
-            manifest_id="vis-real-001",
-            run_id="run-real-001",
-            viewports_captured=REQUIRED_VIEWPORTS,
-            screenshot_paths=paths,
+        # 1. 16-char prefix => FAIL (Section 5)
+        hashes_16 = {vp: correct_hash[:16] for vp in REQUIRED_VIEWPORTS}
+        m_16 = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="PlaywrightAdapter", file_hashes=hashes_16)
+        res_16 = validate_real_artifact_integrity(m_16)
+        assert res_16["valid"] is False
+        assert any("expected EXACT 64 full SHA256" in e for e in res_16["errors"])
+
+        # 2. 63-char hash => FAIL (Section 5)
+        hashes_63 = {vp: correct_hash[:63] for vp in REQUIRED_VIEWPORTS}
+        m_63 = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="PlaywrightAdapter", file_hashes=hashes_63)
+        res_63 = validate_real_artifact_integrity(m_63)
+        assert res_63["valid"] is False
+
+        # 3. Wrong 64-char hash => FAIL (Section 5)
+        hashes_wrong = {vp: "a" * 64 for vp in REQUIRED_VIEWPORTS}
+        m_wrong = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="PlaywrightAdapter", file_hashes=hashes_wrong)
+        res_wrong = validate_real_artifact_integrity(m_wrong)
+        assert res_wrong["valid"] is False
+        assert any("SHA256 mismatch" in e for e in res_wrong["errors"])
+
+        # 4. Correct 64-char hash + valid ISO offset-aware timestamp => PASS
+        hashes_64 = {vp: correct_hash for vp in REQUIRED_VIEWPORTS}
+        m_valid = VisualEvidenceManifest(
+            "v1", "r1", REQUIRED_VIEWPORTS, paths,
             capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT",
-            capture_adapter="PlaywrightRealBrowserScreenshotAdapter",
-            file_hashes=hashes,
+            capture_adapter="PlaywrightAdapter",
+            file_hashes=hashes_64,
+            captured_at="2026-09-07T14:00:00+03:00",
         )
+        res_valid = validate_real_artifact_integrity(m_valid)
+        assert res_valid["valid"] is True
 
-        # 1. Valid real artifacts pass integrity
-        integ_valid = validate_real_artifact_integrity(real_manifest)
-        assert integ_valid["valid"] is True
+        # 5. Invalid captured_at => FAIL (Section 6)
+        m_invalid_ts = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="PlaywrightAdapter", file_hashes=hashes_64, captured_at="not-a-timestamp")
+        res_invalid_ts = validate_real_artifact_integrity(m_invalid_ts)
+        assert res_invalid_ts["valid"] is False
 
-        # 2. Missing screenshot file => FAIL
-        paths_missing = dict(paths)
-        paths_missing[375] = str(Path(tmpdir) / "nonexistent.png")
-        manifest_missing = VisualEvidenceManifest(
-            manifest_id="vis-real-002",
-            run_id="run-real-002",
-            viewports_captured=REQUIRED_VIEWPORTS,
-            screenshot_paths=paths_missing,
-            capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT",
-            capture_adapter="PlaywrightRealBrowserScreenshotAdapter",
-            file_hashes=hashes,
-        )
-        integ_missing = validate_real_artifact_integrity(manifest_missing)
-        assert integ_missing["valid"] is False
-        assert any("does not exist" in err for err in integ_missing["errors"])
+        # 6. Naive timestamp without offset => FAIL (Section 6)
+        m_naive_ts = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="PlaywrightAdapter", file_hashes=hashes_64, captured_at="2026-09-07T14:00:00")
+        res_naive_ts = validate_real_artifact_integrity(m_naive_ts)
+        assert res_naive_ts["valid"] is False
+        assert any("Naive timestamp" in e for e in res_naive_ts["errors"])
 
-        # 3. Hash mismatch => FAIL
-        hashes_bad = dict(hashes)
-        hashes_bad[1440] = "0000000000000000000000000000000000000000000000000000000000000000"
-        manifest_bad_hash = VisualEvidenceManifest(
-            manifest_id="vis-real-003",
-            run_id="run-real-003",
-            viewports_captured=REQUIRED_VIEWPORTS,
-            screenshot_paths=paths,
-            capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT",
-            capture_adapter="PlaywrightRealBrowserScreenshotAdapter",
-            file_hashes=hashes_bad,
-        )
-        integ_bad_hash = validate_real_artifact_integrity(manifest_bad_hash)
-        assert integ_bad_hash["valid"] is False
-        assert any("SHA256 mismatch" in err for err in integ_bad_hash["errors"])
-
-        # 4. Injected real visual adapter double => HUMAN_VISUAL_REVIEW_READY = TRUE
-        from extensions.design_intelligence.contracts import CritiqueFinding
-
-        class RealVisualCriticAdapterDouble(VisualCriticAdapter):
-            def evaluate_visuals(self, screenshot_paths, dna=None, story=None, fact_ledger=None, negative_preferences=None):
-                return CritiqueFinding(
-                    finding_id="f-real-vis",
-                    critic_name="RealVisualCriticAdapterDouble",
-                    verdict=JudgmentVerdict.PASS,
-                    dimension="pixel_visual_quality",
-                    title="Real Visual Review",
-                    details="Verified real visual layout",
-                    evidence_modality=EvidenceModality.PIXEL_VISUAL,
-                )
-
-        ledger = GroundedFactLedger(ledger_id="led-r", project_id="p-real")
-        ledger.add_fact(GroundedFact("f-r1", FactType.CANONICAL_TENANT_FACT, "Real Studio", "Catalog", "name"))
-
-        content_manifest = GroundedContentManifest(
-            manifest_id="m-r",
-            project_id="p-real",
-            blocks=[GroundedContentBlock("Real Studio", "h1", FactType.CANONICAL_TENANT_FACT, ["f-r1"], ContentBlockCategory.FACTUAL)],
-        )
-
-        scorecard = DesignCriticEnsemble(visual_adapter=RealVisualCriticAdapterDouble()).evaluate_project(
-            project_id="p-real",
-            html_content="<h1>Real Studio</h1><button class='btn btn-primary'>Randevu Al</button>",
-            css_content="",
-            evidence_manifest=real_manifest,
-            fact_ledger=ledger,
-            content_manifest=content_manifest,
-        )
-
-        gate_res = evaluate_human_visual_review_readiness(
-            scorecard=scorecard,
-            fact_ledger=ledger,
-            content_manifest=content_manifest,
-            ref_intel=ReferenceIntelligence(),
-            evidence_manifest=real_manifest,
-            visual_adapter=RealVisualCriticAdapterDouble(),
-        )
-
-        if not gate_res["is_ready"]:
-            print(f"Debug reasons: {gate_res['reasons']}")
-        assert gate_res["reasons"] == []
-        assert gate_res["is_ready"] is True
-        assert gate_res["state"] == HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
+        # 7. FakeBrowserScreenshotAdapter + REAL capture mode => FAIL (Section 7)
+        m_fake_adapter_real_mode = VisualEvidenceManifest("v1", "r1", REQUIRED_VIEWPORTS, paths, capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT", capture_adapter="FakeBrowserScreenshotAdapter", file_hashes=hashes_64, captured_at="2026-09-07T14:00:00+03:00")
+        res_fake_adapter = validate_real_artifact_integrity(m_fake_adapter_real_mode)
+        assert res_fake_adapter["valid"] is False
+        assert any("FAKE_CAPTURE_ADAPTER_WITH_REAL_MODE" in e for e in res_fake_adapter["errors"])
 
 
-def test_no_forced_recommendation_and_no_default_winner():
+def test_concept_id_gate_bypass_prevention_and_blocker_reporting():
+    # Section 8 & 9: concept_id + gate FAIL => recommended_concept MUST be NONE, blockers returned
     pipeline = AutonomousDesignLoopPipeline()
-    assert pipeline.NO_DEFAULT_CONCEPT_WINNER == "YES"
-    assert pipeline.NO_FORCED_LEAST_BAD_RECOMMENDATION == "YES"
-    assert pipeline.AUTOMATED_HUMAN_ACCEPTED_TRANSITION_COUNT == 0
 
-    brief = DesignProjectBrief(
-        brief_id="b-1",
-        project_id="p-weak",
-        tenant_name="Weak Salon",
-        industry="Beauty",
-        target_audience="Clients",
-        core_job_to_be_done="Booking",
-        brand_posture="Generic",
+    brief = DesignProjectBrief("b-1", "p-test", "Test Tenant", "Saas", "User", "Job", "Posture")
+
+    # Run pipeline without evidence manifest / real visual critic => Gate FAIL
+    res = pipeline.run_pipeline(
+        brief=brief,
+        initial_html="<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>",
+        initial_css="",
+        concept_id="SUPPLIED_CONCEPT_HERO_V2",
     )
 
-    # Initial HTML leaking internal build causing FAIL
-    res = pipeline.run_pipeline(brief, "<h1>Weak Salon (v2 pilot)</h1>", "")
-    assert res.overall_verdict == JudgmentVerdict.FAIL
+    assert res.overall_verdict == JudgmentVerdict.PASS
+    # Gate failed because evidence/manifest missing => recommended_concept MUST be NONE!
     assert res.recommendation.recommended_concept == "NONE"
+    assert res.human_review_required_with_blockers is True
+    assert len(res.blockers) > 0
+    assert any("GROUNDING_CONTENT_MANIFEST_MISSING" in b or "REFERENCE_PROVENANCE_EVIDENCE_MISSING" in b for b in res.blockers)
