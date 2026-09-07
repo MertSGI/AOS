@@ -19,6 +19,7 @@ from extensions.design_intelligence.contracts import (
     VisualQACoverage,
     HumanReviewReadinessState,
     VisualEvidenceManifest,
+    EvidenceOrigin,
     ReferenceSource,
     DesignProjectBrief,
 )
@@ -255,3 +256,200 @@ def test_concept_id_gate_bypass_prevention_and_blocker_reporting():
     assert res.human_review_required_with_blockers is True
     assert len(res.blockers) > 0
     assert any("GROUNDING_CONTENT_MANIFEST_MISSING" in b or "REFERENCE_PROVENANCE_EVIDENCE_MISSING" in b for b in res.blockers)
+
+
+def test_r3_visual_provider_provenance_and_concept_id_matrix():
+    # R3 Section 6 Test Matrix requirements
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir) / "test.png"
+        content = b"test_screenshot_data_67890"
+        file_path.write_bytes(content)
+        correct_hash = hashlib.sha256(content).hexdigest()
+        paths = {vp: str(file_path) for vp in REQUIRED_VIEWPORTS}
+        hashes_64 = {vp: correct_hash for vp in REQUIRED_VIEWPORTS}
+
+        evidence_manifest = VisualEvidenceManifest(
+            "v1", "r1", REQUIRED_VIEWPORTS, paths,
+            capture_mode="REAL_LOCAL_BROWSER_SCREENSHOT",
+            capture_adapter="PlaywrightAdapter",
+            file_hashes=hashes_64,
+            captured_at="2026-09-07T14:00:00+03:00",
+        )
+
+        ref_intel = ReferenceIntelligence()
+        src = ref_intel.register_candidate_source(
+            url_or_name="https://example-saas.com/metadata",
+            purpose="Hero composition analysis",
+            strength="Clear visual hierarchy & immediate value proposition",
+            integration_cost="LOW",
+            dependency_cost="ZERO",
+            license_provenance="MIT / Metadata-Only",
+            supply_chain_risk="LOW",
+            generic_design_risk="LOW",
+            recommended_use="Inspiration for sales fold structuring",
+            do_not_use_conditions=["Do not copy raw CSS"],
+            observation="Product screenshot is placed side-by-side with primary CTA",
+        )
+        sig = ref_intel.extract_design_signal(
+            source_id=src.source_id,
+            category="hero_composition",
+            observation="Product screenshot is placed side-by-side with primary CTA",
+            extracted_principle="Show real UI preview immediately above the fold",
+        )
+
+        ledger = GroundedFactLedger("l-1", "p-1")
+        ledger.add_fact(GroundedFact("f-1", FactType.CANONICAL_TENANT_FACT, "Test Tenant", "Brief", "ref"))
+
+        content_manifest = GroundedContentManifest(
+            manifest_id="m-1",
+            project_id="p-1",
+            blocks=[
+                GroundedContentBlock(
+                    text="Welcome to Test Tenant",
+                    semantic_role="hero",
+                    provenance_kind=FactType.CANONICAL_TENANT_FACT,
+                    source_fact_ids=["f-1"],
+                    category=ContentBlockCategory.FACTUAL,
+                    rendered_fact_bindings=[RenderedFactBinding("f-1", "Test Tenant")],
+                )
+            ],
+        )
+
+        # 1. FakeVisualCriticAdapter => HUMAN_READY NO
+        scorecard = DesignCriticEnsemble().evaluate_project("p-1", "<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>", "")
+        gate_fake = evaluate_human_visual_review_readiness(
+            scorecard=scorecard,
+            fact_ledger=ledger,
+            content_manifest=content_manifest,
+            ref_intel=ref_intel,
+            evidence_manifest=evidence_manifest,
+            visual_adapter=FakeVisualCriticAdapter(),
+        )
+        assert gate_fake["is_ready"] is False
+        assert any("FakeVisualCriticAdapter used" in r for r in gate_fake["reasons"])
+
+        # 2. RenamedSimulatedAdapter with SIMULATED_VISUAL_TEST => HUMAN_READY NO
+        class RenamedSimulatedAdapter(VisualCriticAdapter):
+            evidence_origin = EvidenceOrigin.SIMULATED_VISUAL_TEST
+        
+        gate_renamed = evaluate_human_visual_review_readiness(
+            scorecard=scorecard,
+            fact_ledger=ledger,
+            content_manifest=content_manifest,
+            ref_intel=ref_intel,
+            evidence_manifest=evidence_manifest,
+            visual_adapter=RenamedSimulatedAdapter(),
+        )
+        assert gate_renamed["is_ready"] is False
+        assert any("is not REAL_PROVIDER_VISUAL_REVIEW" in r for r in gate_renamed["reasons"])
+
+        # 3. NoOriginAdapter => HUMAN_READY NO
+        class NoOriginAdapter:
+            evidence_origin = None
+        no_orig = NoOriginAdapter()
+        
+        gate_no_orig = evaluate_human_visual_review_readiness(
+            scorecard=scorecard,
+            fact_ledger=ledger,
+            content_manifest=content_manifest,
+            ref_intel=ref_intel,
+            evidence_manifest=evidence_manifest,
+            visual_adapter=no_orig,
+        )
+        assert gate_no_orig["is_ready"] is False
+        assert any("missing declared evidence origin" in r or "is not REAL_PROVIDER_VISUAL_REVIEW" in r for r in gate_no_orig["reasons"])
+
+        # 4. RealOriginAdapter + STATIC_SOURCE_HEURISTIC finding => HUMAN_READY NO
+        from extensions.design_intelligence.contracts import CritiqueFinding
+        class RealOriginAdapter(VisualCriticAdapter):
+            evidence_origin = EvidenceOrigin.REAL_PROVIDER_VISUAL_REVIEW
+            def evaluate_visuals(self, screenshot_paths, dna=None, story=None, fact_ledger=None, negative_preferences=None):
+                return CritiqueFinding(
+                    finding_id="f-pixel-pass",
+                    critic_name="RealOriginAdapter",
+                    verdict=JudgmentVerdict.PASS,
+                    dimension="pixel_visual_quality",
+                    title="Visual Quality",
+                    details="Pass",
+                    evidence_modality=EvidenceModality.PIXEL_VISUAL,
+                )
+
+        scorecard_static_modality = DesignCriticEnsemble().evaluate_project("p-1", "<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>", "")
+        scorecard_static_modality.critic_findings.append(CritiqueFinding(
+            finding_id="f-wrong-modality",
+            critic_name="RealOriginAdapter",
+            verdict=JudgmentVerdict.PASS,
+            dimension="pixel_visual_quality",
+            title="Visual Quality",
+            details="Pass",
+            evidence_modality=EvidenceModality.STATIC_SOURCE_HEURISTIC,  # WRONG MODALITY!
+        ))
+
+        gate_static_modality = evaluate_human_visual_review_readiness(
+            scorecard=scorecard_static_modality,
+            fact_ledger=ledger,
+            content_manifest=content_manifest,
+            ref_intel=ref_intel,
+            evidence_manifest=evidence_manifest,
+            visual_adapter=RealOriginAdapter(),
+        )
+        assert gate_static_modality["is_ready"] is False
+        assert any("evidence modality 'EvidenceModality.STATIC_SOURCE_HEURISTIC' is not PIXEL_VISUAL" in r for r in gate_static_modality["reasons"])
+
+        # 5. Test Double: RealOriginAdapter + PIXEL_VISUAL PASS => HUMAN_VISUAL_REVIEW_READY
+        scorecard_valid_pixel = DesignCriticEnsemble().evaluate_project("p-1", "<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>", "")
+        scorecard_valid_pixel.critic_findings.append(CritiqueFinding(
+            finding_id="f-pixel-pass",
+            critic_name="RealOriginAdapter",
+            verdict=JudgmentVerdict.PASS,
+            dimension="pixel_visual_quality",
+            title="Visual Quality",
+            details="Pass",
+            evidence_modality=EvidenceModality.PIXEL_VISUAL,
+        ))
+
+        gate_valid_pixel = evaluate_human_visual_review_readiness(
+            scorecard=scorecard_valid_pixel,
+            fact_ledger=ledger,
+            content_manifest=content_manifest,
+            ref_intel=ref_intel,
+            evidence_manifest=evidence_manifest,
+            visual_adapter=RealOriginAdapter(),
+        )
+        assert gate_valid_pixel["is_ready"] is True
+        assert gate_valid_pixel["state"] == HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
+
+        # 6. Pipeline concept_id matrix checks with gate PASS
+        ensemble_valid = DesignCriticEnsemble()
+        ensemble_valid.visual_adapter = RealOriginAdapter()
+
+        pipeline_pass = AutonomousDesignLoopPipeline(
+            ref_intel=ref_intel,
+            critic_ensemble=ensemble_valid,
+        )
+        brief = DesignProjectBrief("b-1", "p-1", "Test Tenant", "Saas", "User", "Job", "Posture", fact_ledger=ledger)
+
+        # gate PASS + concept_id=None => recommendation NONE (Section 2 R3)
+        res_no_concept = pipeline_pass.run_pipeline(
+            brief=brief,
+            initial_html="<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>",
+            initial_css="",
+            evidence_manifest=evidence_manifest,
+            content_manifest=content_manifest,
+            concept_id=None,
+        )
+        assert res_no_concept.human_review_state == HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
+        assert res_no_concept.recommendation.recommended_concept == "NONE"
+
+        # gate PASS + concept_id="CONCEPT_B" => recommendation CONCEPT_B (Section 2 R3)
+        res_concept_b = pipeline_pass.run_pipeline(
+            brief=brief,
+            initial_html="<h1>Test Tenant</h1><button class='btn btn-primary'>CTA</button>",
+            initial_css="",
+            evidence_manifest=evidence_manifest,
+            content_manifest=content_manifest,
+            concept_id="CONCEPT_B",
+        )
+        assert res_concept_b.human_review_state == HumanReviewReadinessState.HUMAN_VISUAL_REVIEW_READY
+        assert res_concept_b.recommendation.recommended_concept == "CONCEPT_B"
+

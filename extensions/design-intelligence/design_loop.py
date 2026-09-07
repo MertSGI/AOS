@@ -21,6 +21,8 @@ from extensions.design_intelligence.contracts import (
     FactType,
     HumanReviewReadinessState,
     VisualEvidenceManifest,
+    EvidenceModality,
+    EvidenceOrigin,
 )
 from extensions.design_intelligence.reference_intelligence import ReferenceIntelligence
 from extensions.design_intelligence.design_dna import DesignDNAEngine
@@ -127,15 +129,25 @@ def evaluate_human_visual_review_readiness(
             if not integ["valid"]:
                 reasons.append(f"Artifact integrity failure: {'; '.join(integ['errors'])}")
 
-    # 7 & 8. Real VisualCriticAdapter check
+    # 7 & 8. Real VisualCriticAdapter & provider provenance check (Section 3 & 4 - R3)
     if not visual_adapter:
         reasons.append("No VisualCriticAdapter executed")
     elif visual_adapter.__class__.__name__ == "FakeVisualCriticAdapter":
         reasons.append("FakeVisualCriticAdapter used (test-only, cannot grant human-ready)")
     else:
+        origin = getattr(visual_adapter, "evidence_origin", None)
+        if not origin:
+            reasons.append("Visual adapter missing declared evidence origin")
+        elif origin != EvidenceOrigin.REAL_PROVIDER_VISUAL_REVIEW:
+            reasons.append(f"Visual adapter evidence origin '{origin}' is not REAL_PROVIDER_VISUAL_REVIEW")
+        
         vis_finding = next((f for f in scorecard.critic_findings if f.dimension == "pixel_visual_quality"), None)
-        if not vis_finding or vis_finding.verdict != JudgmentVerdict.PASS:
+        if not vis_finding:
+            reasons.append("No pixel_visual_quality finding present")
+        elif vis_finding.verdict != JudgmentVerdict.PASS:
             reasons.append("Real visual critic evaluation did not PASS")
+        elif vis_finding.evidence_modality != EvidenceModality.PIXEL_VISUAL:
+            reasons.append(f"Visual finding evidence modality '{vis_finding.evidence_modality}' is not PIXEL_VISUAL")
 
     is_ready = len(reasons) == 0
     return {
@@ -242,11 +254,14 @@ class AutonomousDesignLoopPipeline:
             if scorecard.overall_verdict == JudgmentVerdict.PASS:
                 rec = self.taste_memory.generate_explainable_recommendation(brief.project_id, dna, story)
                 
-                # Section 8: Remove concept_id bypass. If gate is NOT ready, recommended_concept MUST be NONE!
+                # Section 2 & 8 (R3): Remove synthetic default winner.
+                # gate FAIL + concept_id supplied => NONE
+                # gate PASS + concept_id missing => NONE
+                # gate PASS + actual evaluated concept_id supplied => concept_id
                 if not gate_res["is_ready"]:
                     rec.recommended_concept = "NONE"
                 else:
-                    rec.recommended_concept = concept_id if concept_id else "EVALUATED_CONCEPT"
+                    rec.recommended_concept = concept_id if concept_id else "NONE"
 
                 # Section 9: Blocker reporting when gate is not ready
                 has_blockers = not gate_res["is_ready"]

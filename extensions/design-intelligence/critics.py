@@ -20,6 +20,7 @@ from extensions.design_intelligence.contracts import (
     GroundedContentManifest,
     ContentBlockCategory,
     FactType,
+    EvidenceOrigin,
 )
 
 STATIC_CRITIC_MAY_GRANT_PIXEL_VISUAL_PASS = "NO"
@@ -43,7 +44,8 @@ class BaseCritic:
 
 
 class VisualCriticAdapter:
-    """Interface for real visual screenshot evaluation adapters (Section 7)."""
+    """Interface for real visual screenshot evaluation adapters (Section 7 & R3)."""
+    evidence_origin: EvidenceOrigin = EvidenceOrigin.SIMULATED_VISUAL_TEST
 
     def evaluate_visuals(
         self,
@@ -57,7 +59,8 @@ class VisualCriticAdapter:
 
 
 class FakeVisualCriticAdapter(VisualCriticAdapter):
-    """Deterministic offline visual critic adapter for testing (Section 9)."""
+    """Deterministic offline visual critic adapter for testing (Section 9 & R3)."""
+    evidence_origin: EvidenceOrigin = EvidenceOrigin.SIMULATED_VISUAL_TEST
 
     def __init__(self, simulate_generic_template: bool = False, simulate_weak_identity: bool = False):
         self.simulate_generic_template = simulate_generic_template
