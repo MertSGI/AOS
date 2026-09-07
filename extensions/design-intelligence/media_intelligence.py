@@ -73,10 +73,19 @@ class MediaDecisionEngine:
         if requested_kind in (MediaKind.REAL_TENANT_IMAGE, MediaKind.REAL_TENANT_VIDEO):
             has_canonical_provenance = False
             if fact_ledger:
-                has_canonical_provenance = any(
-                    f.fact_type in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT) and "media" in f.fact_id.lower()
-                    for f in fact_ledger.facts
-                )
+                def is_media_fact(f) -> bool:
+                    if f.fact_type not in (FactType.CANONICAL_PRODUCT_FACT, FactType.CANONICAL_TENANT_FACT):
+                        return False
+                    fid_lower = f.fact_id.lower()
+                    src_ref_lower = f.source_reference.lower()
+                    val_lower = f.value.lower()
+                    # Must explicitly represent media asset provenance, not generic copy mentioning media
+                    has_media_tag = any(tag in fid_lower or tag in src_ref_lower for tag in ["tenant_media_", "product_media_", "media_url", "image_url", "video_url"])
+                    has_media_val = any(val_lower.endswith(ext) or val_lower.startswith("http") or val_lower.startswith("file:") for ext in [".png", ".jpg", ".jpeg", ".mp4", ".webp"])
+                    return has_media_tag or has_media_val
+
+                has_canonical_provenance = any(is_media_fact(f) for f in fact_ledger.facts)
+
             if has_canonical_provenance:
                 selected_kind = requested_kind
                 prov_kind = MediaProvenanceKind.REAL_TENANT_MEDIA
@@ -109,13 +118,13 @@ class MediaDecisionEngine:
 
         # Programmatic product demo video evaluation
         # Clinical stories or clinical procedure text MUST NOT synthesize fictional programmatic video
+        # Section 8: force_video_concept evaluates video concept request, BUT IT CANNOT AUTHORIZE VIDEO WITHOUT SAFE UI/PRODUCT DEMO JUSTIFICATION!
         if is_clinical:
             video_justified = False
             selected_kind = MediaKind.STATIC_IMAGE_FALLBACK
             prov_kind = MediaProvenanceKind.GENERATED_DECORATIVE_MEDIA
             reason = "NO_VIDEO: Clinical / medical / treatment procedure text detected. Fictional programmatic video prohibited."
-        elif has_justified_keyword or force_video_concept:
-            # force_video_concept evaluates video concept request, but only permits if safe
+        elif has_justified_keyword:
             video_justified = True
             selected_kind = MediaKind.PROGRAMMATIC_PRODUCT_DEMO_VIDEO
             prov_kind = MediaProvenanceKind.PROGRAMMATIC_PRODUCT_MEDIA

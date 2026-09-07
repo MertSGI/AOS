@@ -44,13 +44,22 @@ class ProgrammaticVideoRendererAdapter:
         ffmpeg_path: Optional[str] = None,
         ffprobe_path: Optional[str] = None,
         playwright_browsers_path: Optional[str] = None,
+        fps: int = 24,
+        width: int = 1280,
+        height: int = 720,
     ):
+        if fps <= 0 or width <= 0 or height <= 0:
+            raise ValueError("Rendering configuration parameters (fps, width, height) must be strictly > 0.")
+
         self.output_dir = output_dir or os.path.join(tempfile.gettempdir(), "aos_evidence", "videos")
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.ffmpeg_path = ffmpeg_path or self._discover_ffmpeg()
         self.ffprobe_path = ffprobe_path or self._discover_ffprobe(self.ffmpeg_path)
         self.playwright_browsers_path = playwright_browsers_path
+        self.fps = fps
+        self.width = width
+        self.height = height
 
     def _discover_ffmpeg(self) -> str:
         if env_path := os.environ.get("AOS_FFMPEG_PATH"):
@@ -102,13 +111,13 @@ class ProgrammaticVideoRendererAdapter:
             except ImportError:
                 raise RuntimeError("Playwright is not available for video rendering.")
 
-            total_frames = int(spec.duration_seconds * spec.fps)
+            total_frames = int(spec.duration_seconds * self.fps)
 
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 try:
                     page = await browser.new_page()
-                    await page.set_viewport_size({"width": spec.width, "height": spec.height})
+                    await page.set_viewport_size({"width": self.width, "height": self.height})
 
                     if os.path.exists(html_content):
                         file_url = Path(html_content).absolute().as_uri()
@@ -119,7 +128,7 @@ class ProgrammaticVideoRendererAdapter:
                     for frame_idx in range(total_frames):
                         frame_path = os.path.join(frames_dir, f"frame_{frame_idx:04d}.png")
                         await page.screenshot(path=frame_path)
-                        await asyncio.sleep(1 / spec.fps)
+                        await asyncio.sleep(1 / self.fps)
                 finally:
                     await browser.close()
 
@@ -127,7 +136,7 @@ class ProgrammaticVideoRendererAdapter:
             ffmpeg_cmd = [
                 self.ffmpeg_path,
                 "-y",
-                "-framerate", str(spec.fps),
+                "-framerate", str(self.fps),
                 "-i", os.path.join(frames_dir, "frame_%04d.png"),
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",

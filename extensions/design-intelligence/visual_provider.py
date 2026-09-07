@@ -28,8 +28,6 @@ DEFAULT_VISUAL_MODEL = "gemini-3.8-flash"
 class RealVisualCriticAdapter(VisualCriticAdapter):
     """Production visual critic adapter powered by real image inspection."""
 
-    evidence_origin = EvidenceOrigin.REAL_PROVIDER_VISUAL_REVIEW
-
     def __init__(
         self,
         model_name: str = DEFAULT_VISUAL_MODEL,
@@ -39,6 +37,12 @@ class RealVisualCriticAdapter(VisualCriticAdapter):
         self.model_name = model_name
         self.api_key_env_var = api_key_env_var
         self.client_factory = client_factory
+
+    @property
+    def evidence_origin(self) -> EvidenceOrigin:
+        if self.client_factory is not None:
+            return EvidenceOrigin.SIMULATED_VISUAL_TEST
+        return EvidenceOrigin.REAL_PROVIDER_VISUAL_REVIEW
 
     def evaluate_visuals(
         self,
@@ -143,9 +147,11 @@ Respond with EXACT JSON format matching this schema:
             if not isinstance(parsed, dict):
                 raise ValueError("Parsed JSON response is not an object/dict")
 
-            # Strict field checks
-            if "verdict" not in parsed:
-                raise ValueError("Response missing required field 'verdict'")
+            # Strict 4-field presence checks
+            required_fields = ["verdict", "is_generic_or_template", "findings", "suggested_fix"]
+            for rf in required_fields:
+                if rf not in parsed:
+                    raise ValueError(f"Response missing required field '{rf}'")
 
             verdict_raw = parsed["verdict"]
             if not isinstance(verdict_raw, str):
@@ -157,9 +163,6 @@ Respond with EXACT JSON format matching this schema:
 
             verdict = JudgmentVerdict[verdict_str]
 
-            if "is_generic_or_template" not in parsed:
-                raise ValueError("Response missing required field 'is_generic_or_template'")
-
             is_generic = parsed["is_generic_or_template"]
             if not isinstance(is_generic, bool):
                 raise ValueError("Field 'is_generic_or_template' is not a boolean")
@@ -168,7 +171,7 @@ Respond with EXACT JSON format matching this schema:
             if is_generic and verdict == JudgmentVerdict.PASS:
                 verdict = JudgmentVerdict.FAIL
 
-            findings_raw = parsed.get("findings", [])
+            findings_raw = parsed["findings"]
             if not isinstance(findings_raw, list):
                 raise ValueError("Field 'findings' is not a list")
 
@@ -178,7 +181,7 @@ Respond with EXACT JSON format matching this schema:
 
             details = "; ".join(findings_raw) if findings_raw else "Visual inspection passed clean."
 
-            suggested_fix = parsed.get("suggested_fix")
+            suggested_fix = parsed["suggested_fix"]
             if suggested_fix is not None and not isinstance(suggested_fix, str):
                 raise ValueError("Field 'suggested_fix' must be a string or null")
 
