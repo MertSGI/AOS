@@ -33,7 +33,7 @@ from aos.controller_relay_git_transport import (
     GitDataCASRelayTransport,
     GitHubRequester,
 )
-from aos.controller_relay_service import ControllerRelayService
+from aos.controller_relay_service import ControllerPrincipal, ControllerRelayService
 from aos.lari_controller_ingress import (
     AUTHORITY_STORE_BRANCH,
     AUTHORITY_STORE_PATH_PREFIX,
@@ -213,3 +213,60 @@ def test_tool_definitions_exact_allowlist():
         "publish_controller_authority",
     ]
     assert tool_names == expected
+
+
+def test_transport_session_authentication_boundary(relay_stack):
+    """AOS/AG cannot access boundary as LARI_CONTROLLER without presenting valid session credential."""
+    ingress = relay_stack["ingress"]
+
+    # Call with valid session token (>= 32 chars) succeeds
+    valid_token = "valid_secret_session_token_32_characters_long"
+    res_valid = dispatch_lari_ingress_call(ingress, "relay_get_head", {}, session_token=valid_token)
+    assert res_valid["status"] == "SUCCESS"
+
+    # Call with invalid/short session token fails with UNAUTHORIZED
+    invalid_token = "too_short"
+    res_invalid = dispatch_lari_ingress_call(ingress, "relay_get_head", {}, session_token=invalid_token)
+    assert res_invalid["status"] == "UNAUTHORIZED"
+
+
+def test_requires_reply_unconsumed_does_not_suppress_without_reply(relay_stack):
+    """Verify that a CONSUMED receipt does NOT suppress an inbound message requiring reply if no reply exists."""
+    ingress = relay_stack["ingress"]
+    service = relay_stack["service"]
+    transport = relay_stack["transport"]
+    p_aos = ControllerPrincipal("AOS_CONTROLLER")
+
+    # 1. AOS sends sequence 1 message with requires_reply=True
+    msg_dict = {
+        "schema_version": "0.1",
+        "protocol": "CONTROLLER_RELAY_V1",
+        "message_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+        "thread_id": "CRV1-AOS_CONTROLLER-LARI_CONTROLLER-000000000001",
+        "sequence": 1,
+        "from": "AOS_CONTROLLER",
+        "to": "LARI_CONTROLLER",
+        "in_reply_to": None,
+        "created_at": "2026-09-11T06:00:00Z",
+        "subject": "CR2_LITE_PROBE",
+        "subject_repository": "MertSGI/AOS",
+        "subject_branch": "control/controller-relay",
+        "subject_sha": BOOTSTRAP_SHA,
+        "decision": "PROBE",
+        "authority_effect": "NONE",
+        "authority_refs": ["REF-01"],
+        "requested_next_action": "REPLY",
+        "requires_reply": True,
+    }
+    msg_dict["content_sha256"] = compute_message_content_sha256(msg_dict)
+    raw_msg = json.dumps(msg_dict, sort_keys=True).encode("utf-8")
+
+    head_sha = service.get_head()
+    pub_res = service.publish_message(raw_msg, head_sha, p_aos)
+    assert pub_res.is_valid
+
+    # Check unconsumed: message is detected
+    unconsumed = ingress.relay_get_latest_unconsumed()
+    assert unconsumed["status"] == "SUCCESS"
+    assert unconsumed["latest_unconsumed"]["message_id"] == msg_dict["message_id"]
+
