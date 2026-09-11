@@ -34,6 +34,7 @@ import base64
 import hashlib
 import json
 import re
+import hmac
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aos.controller_relay import (
@@ -89,20 +90,47 @@ class TransportSessionAuth:
     """Authenticated ingress boundary session credentials.
 
     Enforces that transport/session identity is established before dispatch.
-    AOS/AG cannot access the boundary as LARI_CONTROLLER merely by calling the Python dispatcher
-    without presenting a valid session token/credential bound to LARI_CONTROLLER.
+    A plain data object supplied by the caller is not proof of authentication.
+    Only an injected trusted authenticator produces valid TransportSessionAuth
+    with is_authenticated=True bound to principal_role=LARI_CONTROLLER.
     """
 
-    def __init__(self, session_token: str, principal_role: str):
+    def __init__(
+        self,
+        session_token: str,
+        principal_role: str,
+        is_authenticated: bool = True,
+    ):
         self.session_token = session_token
         self.principal_role = principal_role
+        self.is_authenticated = is_authenticated
 
     def is_valid_lari_controller(self) -> bool:
         return (
-            self.principal_role == "LARI_CONTROLLER"
+            self.is_authenticated is True
+            and self.principal_role == "LARI_CONTROLLER"
             and isinstance(self.session_token, str)
             and len(self.session_token) >= 32
         )
+
+
+def create_secret_session_authenticator(expected_secret: str) -> Callable[[str], Optional[TransportSessionAuth]]:
+    """Factory for constant-time secret-backed session authenticator."""
+    if not isinstance(expected_secret, str) or len(expected_secret) < 32:
+        raise ValueError("STARTUP_FAIL_CLOSED: Ingress expected_secret must be a string of at least 32 characters")
+
+    def authenticator(token: str) -> Optional[TransportSessionAuth]:
+        if not isinstance(token, str) or len(token) < 32:
+            return None
+        if hmac.compare_digest(token, expected_secret):
+            return TransportSessionAuth(
+                session_token=token,
+                principal_role="LARI_CONTROLLER",
+                is_authenticated=True,
+            )
+        return None
+
+    return authenticator
 
 
 def _json_no_duplicates_loader(raw_bytes: bytes) -> Dict[str, Any]:
@@ -143,12 +171,26 @@ class LariControllerIngressService:
         return self._principal.controller_id
 
     def authenticate_session(self, session_token: Optional[str]) -> bool:
-        """Verify transport/session identity before tool dispatch."""
-        if not self._session_authenticator:
-            # Fallback default: require non-empty authenticated token if no custom authenticator provided
-            return bool(session_token and len(session_token) >= 32)
-        auth = self._session_authenticator(session_token or "")
-        return auth is not None and auth.is_valid_lari_controller()
+        """Verify transport/session identity before tool dispatch.
+
+        FAIL CLOSED:
+        - If session_authenticator is absent/None: UNAUTHORIZED (returns False).
+        - If session_token is None/empty: UNAUTHORIZED (returns False).
+        - If session_authenticator raises or returns None: UNAUTHORIZED (returns False).
+        - If authenticated context is not LARI_CONTROLLER: UNAUTHORIZED (returns False).
+        - Caller-supplied token length alone MUST NEVER establish identity.
+        """
+        if self._session_authenticator is None:
+            return False
+        if not session_token or not isinstance(session_token, str) or len(session_token) < 32:
+            return False
+        try:
+            auth = self._session_authenticator(session_token)
+        except Exception:
+            return False
+        if auth is None:
+            return False
+        return bool(auth.is_valid_lari_controller())
 
     # --------------------------------------------------------------------------
     # 1. relay_get_head
@@ -740,11 +782,11 @@ def dispatch_lari_ingress_call(
 
     Enforces transport/session authentication and tool allowlist boundaries.
     """
-    # Verify transport/session authentication boundary
-    if session_token is not None and not service.authenticate_session(session_token):
+    # Verify transport/session authentication boundary (fail closed)
+    if not session_token or not service.authenticate_session(session_token):
         return {
             "status": "UNAUTHORIZED",
-            "error": "Authentication failed: invalid or unauthorized session credential for LARI_CONTROLLER",
+            "error": "Authentication failed: invalid, missing, or unauthorized session credential for LARI_CONTROLLER",
         }
 
     if tool_name == "relay_get_head":
