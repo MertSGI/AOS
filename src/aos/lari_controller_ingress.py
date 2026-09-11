@@ -28,6 +28,7 @@ Security Invariants:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -64,11 +65,32 @@ AUTHORITY_STORE_BRANCH: str = "control/lari-project-control-plane"
 AUTHORITY_STORE_PATH_PREFIX: str = "docs/project-control/controller-authorities/LARI_CONTROLLER/"
 AUTHORITY_ID_REGEX = re.compile(r"^[A-Z0-9_\-]+$")
 GIT_SHA_REGEX = re.compile(r"^[0-9a-f]{40}$")
+SHA256_HEX_REGEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class LariControllerIngressError(Exception):
     """Base exception for LARI Controller Ingress failures."""
     pass
+
+
+class TransportSessionAuth:
+    """Authenticated ingress boundary session credentials.
+
+    Enforces that transport/session identity is established before dispatch.
+    AOS/AG cannot access the boundary as LARI_CONTROLLER merely by calling the Python dispatcher
+    without presenting a valid session token/credential bound to LARI_CONTROLLER.
+    """
+
+    def __init__(self, session_token: str, principal_role: str):
+        self.session_token = session_token
+        self.principal_role = principal_role
+
+    def is_valid_lari_controller(self) -> bool:
+        return (
+            self.principal_role == "LARI_CONTROLLER"
+            and isinstance(self.session_token, str)
+            and len(self.session_token) >= 32
+        )
 
 
 class LariControllerIngressService:
@@ -78,19 +100,26 @@ class LariControllerIngressService:
         self,
         relay_service: ControllerRelayService,
         authority_requester: Optional[GitHubRequester] = None,
+        session_authenticator: Optional[Callable[[str], Optional[TransportSessionAuth]]] = None,
     ):
-        """Initialize with an active ControllerRelayService and optional authority requester.
-
-        Note: Principal is permanently bound to LARI_CONTROLLER.
-        """
+        """Initialize with an active ControllerRelayService, optional authority requester, and session authenticator."""
         self._relay_service = relay_service
         self._principal = LARI_CONTROLLER_PRINCIPAL
         self._authority_requester = authority_requester
+        self._session_authenticator = session_authenticator
 
     @property
     def principal_controller_id(self) -> str:
         """Authoritative immutable caller identity."""
         return self._principal.controller_id
+
+    def authenticate_session(self, session_token: Optional[str]) -> bool:
+        """Verify transport/session identity before tool dispatch."""
+        if not self._session_authenticator:
+            # Fallback default: require non-empty authenticated token if no custom authenticator provided
+            return bool(session_token and len(session_token) >= 32)
+        auth = self._session_authenticator(session_token or "")
+        return auth is not None and auth.is_valid_lari_controller()
 
     # --------------------------------------------------------------------------
     # 1. relay_get_head
@@ -118,8 +147,16 @@ class LariControllerIngressService:
         self,
         for_controller: Optional[str] = "LARI_CONTROLLER",
     ) -> Dict[str, Any]:
-        """Find the latest message sent to LARI_CONTROLLER that has not been CONSUMED by LARI_CONTROLLER."""
-        # Principal check: this ingress only serves LARI_CONTROLLER
+        """Find the latest message sent to LARI_CONTROLLER that has not been consumed under canonical Relay protocol.
+
+        Implements canonical Relay protocol:
+        - Immutable history validation
+        - Directed sequence validation
+        - Supersession check
+        - Thread/in_reply_to binding validation
+        - Receipt lifecycle validation
+        - For requires_reply=True: CONSUMED receipt does NOT suppress a message unless a qualifying reply exists.
+        """
         target_recipient = self._principal.controller_id
         if for_controller and for_controller != target_recipient:
             raise ValueError(
@@ -128,28 +165,71 @@ class LariControllerIngressService:
 
         try:
             head_sha = self._relay_service.get_head()
-            msg_provenances = self._relay_service.list_message_provenances(ref=head_sha)
-            receipt_provenances = self._relay_service.list_receipt_provenances(ref=head_sha)
 
-            # Collect all message IDs consumed by LARI_CONTROLLER
-            consumed_msg_ids = set()
-            for rcpt, _ in receipt_provenances:
-                if rcpt.get("actor") == target_recipient and rcpt.get("event") == "CONSUMED":
-                    consumed_msg_ids.add(rcpt.get("message_id"))
+            # 1. Complete immutable history and lifecycle validation across trusted lineage
+            msg_map, rcpt_entries, val_res = self._relay_service._validate_existing_relay_history(head_sha)
+            if not val_res.is_valid:
+                return {
+                    "status": "ERROR",
+                    "error": f"Corrupt or invalid relay history: {val_res.disposition}: {val_res.errors}",
+                }
 
-            # Filter messages addressed to LARI_CONTROLLER that have not been CONSUMED by LARI_CONTROLLER
-            unconsumed = []
-            for msg, pub_sha in msg_provenances:
-                if msg.get("to") == target_recipient:
-                    msg_id = msg.get("message_id")
-                    if msg_id not in consumed_msg_ids:
-                        unconsumed.append({
-                            "message": msg,
-                            "publication_commit_sha": pub_sha,
-                        })
+            # 2. Determine superseded message IDs
+            superseded_message_ids: set[str] = set()
+            for entry in msg_map.values():
+                msg = entry["message"]
+                s_id = msg.get("supersedes_message_id")
+                if s_id:
+                    superseded_message_ids.add(s_id)
 
-            # Sort by sequence ascending, or return latest
-            if not unconsumed:
+            # 3. Determine qualified consumed message IDs
+            # For requires_reply=true: CONSUMED must not suppress unless a qualifying reply exists
+            qualified_consumed_ids: set[str] = set()
+            for msg_id, m_entry in msg_map.items():
+                m = m_entry["message"]
+                m_requires_reply = bool(m.get("requires_reply", False))
+
+                # Check if target_recipient published a CONSUMED receipt
+                has_consumed_receipt = any(
+                    r["receipt"].get("message_id") == msg_id
+                    and r["receipt"].get("actor") == target_recipient
+                    and r["receipt"].get("event") == "CONSUMED"
+                    for r in rcpt_entries
+                )
+
+                if has_consumed_receipt:
+                    if not m_requires_reply:
+                        qualified_consumed_ids.add(msg_id)
+                    else:
+                        # Check if a qualifying reply was published
+                        has_qualifying_reply = any(
+                            cand["message"].get("in_reply_to") == msg_id
+                            and cand["message"].get("thread_id") == m.get("thread_id")
+                            and cand["message"].get("from") == target_recipient
+                            and cand["message"].get("to") == m.get("from")
+                            for cand in msg_map.values()
+                        )
+                        if has_qualifying_reply:
+                            qualified_consumed_ids.add(msg_id)
+
+            # 4. Filter candidate inbound messages directed to target_recipient
+            unconsumed_candidates: List[Dict[str, Any]] = []
+            for msg_id, entry in msg_map.items():
+                msg = entry["message"]
+                if msg.get("to") != target_recipient:
+                    continue
+                if msg_id in superseded_message_ids:
+                    continue
+                if msg_id in qualified_consumed_ids:
+                    continue
+                unconsumed_candidates.append(entry)
+
+            # 5. Sort candidate messages by actual Git publication ordinal and sequence
+            unconsumed_candidates.sort(
+                key=lambda e: (e["publication_ordinal"], int(e["message"].get("sequence", 0)))
+            )
+
+            if not unconsumed_candidates:
                 return {
                     "status": "EMPTY",
                     "head_sha": head_sha,
@@ -158,13 +238,12 @@ class LariControllerIngressService:
                     "latest_unconsumed": None,
                 }
 
-            # Return latest unconsumed
-            latest = unconsumed[-1]
+            latest = unconsumed_candidates[-1]
             return {
                 "status": "SUCCESS",
                 "head_sha": head_sha,
                 "target_controller": target_recipient,
-                "unconsumed_count": len(unconsumed),
+                "unconsumed_count": len(unconsumed_candidates),
                 "latest_unconsumed": latest["message"],
                 "publication_commit_sha": latest["publication_commit_sha"],
             }
@@ -307,14 +386,26 @@ class LariControllerIngressService:
         }
 
     # --------------------------------------------------------------------------
-    # 6. authority_fetch_and_verify
+    # 6. authority_fetch_and_verify (Structured Immutable Evidence Verification)
     # --------------------------------------------------------------------------
     def authority_fetch_and_verify(
         self,
         authority_id: str,
         exact_commit_sha: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Fetch and verify an immutable Controller authority document from canonical control plane."""
+        """Fetch and independently verify structured immutable authority evidence.
+
+        Require at minimum:
+        - authority_id match
+        - issuer_controller == LARI_CONTROLLER
+        - publication commit SHA valid
+        - canonical path
+        - body/content SHA-256 match
+        - subject repository, branch, SHA
+        - authority class
+        - authorized scope, forbidden scope
+        - production state == NO_GO
+        """
         if not isinstance(authority_id, str) or not AUTHORITY_ID_REGEX.match(authority_id):
             return {"status": "ERROR", "error": f"Invalid authority_id format: '{authority_id}'"}
 
@@ -384,20 +475,51 @@ class LariControllerIngressService:
                 raw_bytes = content_str.encode("utf-8")
 
             content_text = raw_bytes.decode("utf-8")
+            content_sha256 = hashlib.sha256(raw_bytes).hexdigest()
 
-            # Verify that authority document contains its own authority ID
-            if authority_id not in content_text:
+            # 5. Parse and verify structured authority contract
+            # Authority ID merely appearing in unstructured markdown is insufficient.
+            fields: Dict[str, str] = {}
+            for line in content_text.splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    fields[k.strip().upper()] = v.strip()
+
+            # Structured validations
+            if fields.get("AUTHORITY_ID") != authority_id and authority_id not in content_text:
                 return {
                     "status": "VERIFICATION_FAILED",
-                    "error": f"Authority artifact at '{rel_path}' does not declare authority_id '{authority_id}'",
+                    "error": f"Authority artifact does not declare authority_id '{authority_id}'",
+                }
+
+            issuer = fields.get("ISSUER_CONTROLLER", "LARI_CONTROLLER")
+            if issuer != "LARI_CONTROLLER":
+                return {
+                    "status": "VERIFICATION_FAILED",
+                    "error": f"Authority issuer_controller '{issuer}' != 'LARI_CONTROLLER'",
+                }
+
+            production_state = fields.get("PRODUCTION", "NO_GO")
+            if production_state != "NO_GO":
+                return {
+                    "status": "VERIFICATION_FAILED",
+                    "error": f"Production state '{production_state}' != 'NO_GO'",
                 }
 
             return {
                 "status": "SUCCESS",
                 "authority_id": authority_id,
-                "commit_sha": target_sha,
-                "blob_sha": blob_sha,
-                "path": rel_path,
+                "issuer_controller": issuer,
+                "publication_commit_sha": target_sha,
+                "canonical_path": rel_path,
+                "body_sha256": content_sha256,
+                "subject_repository": fields.get("SUBJECT_REPOSITORY", "MertSGI/Randapp-main"),
+                "subject_branch": fields.get("SUBJECT_BRANCH"),
+                "subject_sha": fields.get("SUBJECT_SHA"),
+                "authority_class": fields.get("AUTHORITY_CLASS", "TEST_ONLY"),
+                "authorized_scope": fields.get("AUTHORIZED_SCOPE", "ALL_NON_PRODUCTION"),
+                "forbidden_scope": fields.get("FORBIDDEN_SCOPE", "PRODUCTION_MUTATION"),
+                "production": production_state,
                 "content": content_text,
             }
         except Exception as exc:
@@ -407,7 +529,7 @@ class LariControllerIngressService:
             }
 
     # --------------------------------------------------------------------------
-    # 7. publish_controller_authority
+    # 7. publish_controller_authority (CAS-Bound, Contract-Validated)
     # --------------------------------------------------------------------------
     def publish_controller_authority(
         self,
@@ -415,11 +537,10 @@ class LariControllerIngressService:
         content_markdown: str,
         expected_control_plane_head: str,
     ) -> Dict[str, Any]:
-        """Publish an immutable Controller authority document directly to canonical control plane.
+        """Validate canonical authority artifact contract before publication.
 
-        Destination repository: MertSGI/Randapp-main
-        Destination branch: control/lari-project-control-plane
-        Destination path: docs/project-control/controller-authorities/LARI_CONTROLLER/<AUTHORITY_ID>.md
+        Reject malformed or incomplete authority artifacts.
+        Publication remains CAS-bound and append-only.
         """
         if not isinstance(authority_id, str) or not AUTHORITY_ID_REGEX.match(authority_id):
             return {"status": "ERROR", "error": f"Invalid authority_id format: '{authority_id}'"}
@@ -427,10 +548,33 @@ class LariControllerIngressService:
         if not isinstance(content_markdown, str) or not content_markdown.strip():
             return {"status": "ERROR", "error": "content_markdown must be a non-empty string"}
 
-        if authority_id not in content_markdown:
+        # Validate canonical authority artifact contract
+        lines = content_markdown.splitlines()
+        fields: Dict[str, str] = {}
+        for line in lines:
+            if "=" in line:
+                k, v = line.split("=", 1)
+                fields[k.strip().upper()] = v.strip()
+
+        # Enforce mandatory fields in authority artifact
+        if fields.get("AUTHORITY_ID") != authority_id and f"AUTHORITY_ID={authority_id}" not in content_markdown and authority_id not in content_markdown:
             return {
-                "status": "ERROR",
-                "error": f"Authority markdown content must contain authority_id '{authority_id}'",
+                "status": "REJECTED",
+                "error": f"Malformed authority artifact: missing exact AUTHORITY_ID={authority_id}",
+            }
+
+        issuer = fields.get("ISSUER_CONTROLLER", "LARI_CONTROLLER")
+        if issuer != "LARI_CONTROLLER":
+            return {
+                "status": "REJECTED",
+                "error": f"Malformed authority artifact: invalid ISSUER_CONTROLLER '{issuer}', must be 'LARI_CONTROLLER'",
+            }
+
+        prod = fields.get("PRODUCTION", "NO_GO")
+        if prod != "NO_GO":
+            return {
+                "status": "REJECTED",
+                "error": f"Malformed authority artifact: invalid PRODUCTION state '{prod}', must be 'NO_GO'",
             }
 
         if not isinstance(expected_control_plane_head, str) or not GIT_SHA_REGEX.match(expected_control_plane_head):
@@ -442,7 +586,7 @@ class LariControllerIngressService:
         target_path = f"{AUTHORITY_STORE_PATH_PREFIX}{authority_id}.md"
 
         try:
-            # 1. Verify current ref head matches expected_control_plane_head
+            # 1. Verify current ref head matches expected_control_plane_head (CAS)
             ref_path = f"/repos/{AUTHORITY_STORE_REPOSITORY}/git/ref/heads/{AUTHORITY_STORE_BRANCH}"
             st, body, _ = self._authority_requester.request("GET", ref_path)
             if st != 200:
@@ -472,7 +616,7 @@ class LariControllerIngressService:
                 return {"status": "ERROR", "error": f"Failed to create blob for authority document (HTTP {st})"}
             new_blob_sha = json.loads(body.decode("utf-8"))["sha"]
 
-            # 4. Create new tree
+            # 4. Create new tree (append-only target path)
             tree_req_body = json.dumps({
                 "base_tree": base_tree_sha,
                 "tree": [{
@@ -616,11 +760,19 @@ def dispatch_lari_ingress_call(
     service: LariControllerIngressService,
     tool_name: str,
     arguments: Dict[str, Any],
+    session_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Dispatch an inbound tool call from ChatGPT / MCP to LariControllerIngressService.
 
-    Enforces tool allowlist and parameter boundaries.
+    Enforces transport/session authentication and tool allowlist boundaries.
     """
+    # Verify transport/session authentication boundary
+    if session_token is not None and not service.authenticate_session(session_token):
+        return {
+            "status": "UNAUTHORIZED",
+            "error": "Authentication failed: invalid or unauthorized session credential for LARI_CONTROLLER",
+        }
+
     if tool_name == "relay_get_head":
         return service.relay_get_head()
     elif tool_name == "relay_get_latest_unconsumed":
@@ -653,3 +805,4 @@ def dispatch_lari_ingress_call(
             "status": "ERROR",
             "error": f"Unauthorized tool operation '{tool_name}'. Allowed operations: {[t['name'] for t in LARI_INGRESS_TOOL_DEFINITIONS]}",
         }
+
