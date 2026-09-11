@@ -1,0 +1,2 @@
+cryptography>=42.0.0
+jsonschema[format-nongpl]>=4.20.0
