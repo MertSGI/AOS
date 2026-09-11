@@ -123,28 +123,56 @@ class AuthorityArtifactResolver:
         if not isinstance(body, dict):
             raise AuthorityResolutionError("Authority artifact body must be a JSON object")
 
-        # 4. Invariant checks
+        # 4. Strict fail-closed invariant checks
+        # Every required field must be physically present. No permissive defaults.
+        required_fields = [
+            "authority_id",
+            "issuer_controller",
+            "subject_repository",
+            "subject_branch",
+            "subject_sha",
+            "authority_class",
+            "authorized_scope",
+            "forbidden_scope",
+            "production",
+        ]
+        for field in required_fields:
+            if field not in body or body[field] is None:
+                raise AuthorityResolutionError(
+                    f"VERIFICATION_FAILED: Required authority field '{field}' is missing from artifact"
+                )
+            if isinstance(body[field], str) and not body[field].strip():
+                raise AuthorityResolutionError(
+                    f"VERIFICATION_FAILED: Required authority field '{field}' is empty in artifact"
+                )
+
         issuer = body.get("issuer_controller")
         if issuer != "LARI_CONTROLLER":
             raise AuthorityResolutionError(
-                f"Invalid issuer_controller '{issuer}', expected 'LARI_CONTROLLER'"
+                f"VERIFICATION_FAILED: Invalid issuer_controller '{issuer}', expected 'LARI_CONTROLLER'"
             )
 
         body_id = body.get("authority_id")
         if body_id != ref.authority_id:
             raise AuthorityResolutionError(
-                f"Internal authority_id '{body_id}' does not match ref '{ref.authority_id}'"
+                f"VERIFICATION_FAILED: Internal authority_id '{body_id}' does not match ref '{ref.authority_id}'"
             )
 
         if expected_subject_sha:
             subject_sha = body.get("subject_sha")
             if subject_sha != expected_subject_sha:
                 raise AuthorityResolutionError(
-                    f"Subject SHA mismatch: body '{subject_sha}', expected '{expected_subject_sha}'"
+                    f"VERIFICATION_FAILED: Subject SHA mismatch: body '{subject_sha}', expected '{expected_subject_sha}'"
                 )
+
+        prod = body.get("production")
+        if prod != "NO_GO":
+            raise AuthorityResolutionError(
+                f"VERIFICATION_FAILED: Invalid production state '{prod}', must be strictly 'NO_GO'"
+            )
 
         status = body.get("status", "ACTIVE")
         if status not in {"ACTIVE", "VALID", "GRANTED"}:
-            raise AuthorityResolutionError(f"Authority status is not active: '{status}'")
+            raise AuthorityResolutionError(f"VERIFICATION_FAILED: Authority status is not active: '{status}'")
 
         return body
