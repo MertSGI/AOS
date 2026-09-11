@@ -337,9 +337,14 @@ def test_cr2_lite_authority_resolver_independent_validation():
     auth_doc = {
         "authority_id": authority_id,
         "issuer_controller": "LARI_CONTROLLER",
-        "status": "ACTIVE",
+        "subject_repository": "MertSGI/Randapp-main",
+        "subject_branch": "control/lari-project-control-plane",
         "subject_sha": BOOTSTRAP_SHA,
-        "scope": "TEST_ONLY",
+        "authority_class": "TEST_ONLY",
+        "authorized_scope": "TEST_ONLY",
+        "forbidden_scope": "PRODUCTION",
+        "production": "NO_GO",
+        "status": "ACTIVE",
     }
     raw_doc = json.dumps(auth_doc, sort_keys=True).encode("utf-8")
     body_sha256 = hashlib.sha256(raw_doc).hexdigest()
