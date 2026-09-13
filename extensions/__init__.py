@@ -19,3 +19,4 @@ def _load_hyphenated_pkg(pkg_name: str, folder_name: str):
 
 _load_hyphenated_pkg("autonomy_fabric", "autonomy-fabric")
 _load_hyphenated_pkg("design_intelligence", "design-intelligence")
+_load_hyphenated_pkg("model_fabric", "model-fabric")

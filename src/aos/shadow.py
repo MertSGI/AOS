@@ -29,7 +29,7 @@ from aos.provider_registry import (
     RoutingResult,
     load_routing_policy,
 )
-from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, OllamaPlannerProvider
+from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import load_schema, validate_document, validate_file
 
@@ -38,6 +38,7 @@ RUNTIME_TRACE_DIR = Path(__file__).resolve().parent.parent.parent / ".aos-runtim
 PROVIDER_MAP = {
     "gemini": GeminiPlannerProvider,
     "groq": GroqPlannerProvider,
+    "nemotron": NemotronPlannerProvider,
     "ollama": OllamaPlannerProvider,
     "openai": OpenAIPlannerProvider,
 }

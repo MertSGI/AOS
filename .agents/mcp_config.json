@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "aos-nemotron-specialist": {
+      "command": "python",
+      "args": [
+        "-m",
+        "extensions.model_fabric.mcp_cli"
+      ],
+      "env": {
+        "PYTHONPATH": "."
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
