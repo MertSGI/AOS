@@ -18,6 +18,7 @@ from aos.provider_registry import (
 )
 from aos.providers.gemini import GeminiPlannerProvider
 from aos.providers.groq import GroqPlannerProvider
+from aos.providers.nemotron import NemotronPlannerProvider
 from aos.providers.ollama import OllamaPlannerProvider
 from aos.shadow import run_shadow_orchestration
 from aos.source_adapter import ProjectSourceAdapter
@@ -25,6 +26,7 @@ from aos.source_adapter import ProjectSourceAdapter
 PROVIDER_FACTORIES = {
     "gemini": lambda model: GeminiPlannerProvider(model=model),
     "groq": lambda model: GroqPlannerProvider(model=model),
+    "nemotron": lambda model: NemotronPlannerProvider(model=model),
     "ollama": lambda model: OllamaPlannerProvider(model=model),
     "openai": lambda model: OpenAIPlannerProvider(model=model),
 }
