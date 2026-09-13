@@ -39,15 +39,39 @@ def project_nemotron_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return projected
 
 
+# Thinking budget policy bounds
+MIN_THINKING_BUDGET = 128
+MAX_THINKING_BUDGET = 32768
+
+
+def validate_thinking_budget(budget: Any) -> int:
+    """Validate reasoning_budget fail-closed.
+    
+    Budget must be an integer within [MIN_THINKING_BUDGET, MAX_THINKING_BUDGET].
+    """
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise ValueError(f"Invalid thinking budget: must be an integer, got {type(budget).__name__}")
+    if budget < MIN_THINKING_BUDGET or budget > MAX_THINKING_BUDGET:
+        raise ValueError(
+            f"Invalid thinking budget {budget}: out of policy bounds [{MIN_THINKING_BUDGET}, {MAX_THINKING_BUDGET}]"
+        )
+    return budget
+
+
 class NemotronPlannerProvider:
-    """PlannerProvider adapter for NVIDIA Nemotron using OpenAI-compatible API."""
+    """PlannerProvider adapter for NVIDIA Nemotron using OpenAI-compatible API.
+    
+    Per Controller Audit R2:
+    - Structured planner execution (generate_plan) strictly uses enable_thinking=False
+    - Deep reasoning is separated from the structured planner pass
+    - Errors are sanitized into bounded categories without leaking raw credentials or URLs
+    """
 
     NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
     DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
-    def __init__(self, model: str = DEFAULT_MODEL, thinking_budget: int = 0):
+    def __init__(self, model: str = DEFAULT_MODEL):
         self.model = model
-        self.thinking_budget = thinking_budget
 
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
         api_key = os.environ.get("NVIDIA_API_KEY")
@@ -67,14 +91,10 @@ class NemotronPlannerProvider:
         provider_schema = project_nemotron_schema(schema)
 
         # NVIDIA Nemotron 3 Ultra hosted contract:
-        # Structured mode requires explicit enable_thinking=False
-        # Deep reasoning mode requires explicit enable_thinking=True and numeric reasoning_budget
-        extra_body: Dict[str, Any] = {}
-        if self.thinking_budget > 0:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": True}
-            extra_body["reasoning_budget"] = self.thinking_budget
-        else:
-            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+        # Structured planner execution strictly disables deep reasoning (enable_thinking=False)
+        extra_body: Dict[str, Any] = {
+            "chat_template_kwargs": {"enable_thinking": False}
+        }
 
         try:
             response = client.chat.completions.create(
@@ -97,15 +117,17 @@ class NemotronPlannerProvider:
                 extra_body=extra_body,
             )
         except Exception as e:
-            err_name = e.__class__.__name__
-            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)):
-                raise PlannerTransientError(f"Nemotron transient error ({err_name}): {e}") from e
+            # Bounded sanitized error classification (no raw str(e) or headers leaked)
+            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError)):
+                raise PlannerTransientError("Nemotron transient error: TIMEOUT_OR_CONNECTION") from e
+            elif isinstance(e, openai.RateLimitError):
+                raise PlannerTransientError("Nemotron transient error: RATE_LIMIT") from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
-                raise PlannerCredentialError(f"Nemotron auth/permission failure ({err_name}): {e}") from e
+                raise PlannerCredentialError("Nemotron auth/permission failure: AUTH_OR_PERMISSION_DENIED") from e
             elif isinstance(e, openai.BadRequestError):
-                raise PlannerContractError(f"Nemotron invalid request/schema ({err_name}): {e}") from e
+                raise PlannerContractError("Nemotron invalid request/schema: BAD_REQUEST") from e
             else:
-                raise PlannerContractError(f"Nemotron provider contract failure ({err_name}): {e}") from e
+                raise PlannerContractError("Nemotron provider contract failure: PROVIDER_CONTRACT_ERROR") from e
 
         if not response.choices:
             raise PlannerContractError("Nemotron returned no choices")
