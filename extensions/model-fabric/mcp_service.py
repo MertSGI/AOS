@@ -1,7 +1,9 @@
 """AOS Nemotron MCP Service for Workspace Antigravity Integration.
 
 Exposes bounded advisory tools over MCP standard protocol.
+Exposes 9 bounded specialist tools corresponding exactly to the 9 internal specialist roles.
 NO ACTUATORS: strictly no shell execution, file write, Git mutation, or deploy authorities.
+Direct MCP tool calls are untrusted callers and fail-closed if data_classification != 'PUBLIC'.
 """
 
 from __future__ import annotations
@@ -95,6 +97,18 @@ class NemotronMcpServer:
             },
         },
         {
+            "name": "nemotron_evidence_contradiction_review",
+            "description": "Advisory analysis of potential contradictions between evidence records and canonical control state",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Evidence records, state claims, and diffs to review"},
+                    "data_classification": {"type": "string", "default": "PUBLIC"},
+                },
+                "required": ["prompt"],
+            },
+        },
+        {
             "name": "nemotron_design_text_review",
             "description": "Advisory text-based design critique (DOM semantics, CSS architecture, copy)",
             "inputSchema": {
@@ -127,6 +141,7 @@ class NemotronMcpServer:
         "nemotron_security_review": SpecialistRole.SECURITY_REVIEW,
         "nemotron_sql_schema_review": SpecialistRole.SQL_SCHEMA_REVIEW,
         "nemotron_long_context_analysis": SpecialistRole.LONG_CONTEXT_ANALYSIS,
+        "nemotron_evidence_contradiction_review": SpecialistRole.EVIDENCE_CONTRADICTION_REVIEW,
         "nemotron_design_text_review": SpecialistRole.DESIGN_TEXT_CRITIC,
         "nemotron_second_opinion": SpecialistRole.SECOND_OPINION,
     }
@@ -148,10 +163,12 @@ class NemotronMcpServer:
         prompt = arguments.get("prompt", "")
         data_classification = arguments.get("data_classification", "PUBLIC")
 
+        # Invariant: External MCP callers are untrusted by default (caller_trusted=False)
         req = SpecialistRequest(
             role=role,
             prompt=prompt,
             data_classification=data_classification,
+            caller_trusted=False,
         )
 
         resp = self.fabric.evaluate(req)
