@@ -139,16 +139,26 @@ class NemotronSpecialistFabric:
             f"==================================="
         )
 
+        messages = [
+            {"role": "system", "content": trusted_system_policy},
+        ]
+
+        # Trusted Control Context: usable ONLY when caller_trusted=True
+        if request.caller_trusted and request.context:
+            trusted_context_str = json.dumps(request.context, indent=2, sort_keys=True)
+            trusted_control_block = (
+                f"=== TRUSTED_CONTROL_CONTEXT ===\n"
+                f"{trusted_context_str}\n"
+                f"================================"
+            )
+            messages.append({"role": "system", "content": trusted_control_block})
+
         untrusted_content_block = (
             f"=== UNTRUSTED_REPOSITORY_OR_EXTERNAL_CONTENT ===\n"
             f"{request.prompt}\n"
             f"================================================"
         )
-
-        messages = [
-            {"role": "system", "content": trusted_system_policy},
-            {"role": "user", "content": untrusted_content_block},
-        ]
+        messages.append({"role": "user", "content": untrusted_content_block})
 
         kwargs: Dict[str, Any] = {
             "model": self.model,
@@ -160,8 +170,19 @@ class NemotronSpecialistFabric:
         # Exact NVIDIA Nemotron 3 Ultra hosted contract
         extra_body: Dict[str, Any] = {}
         if request.thinking_budget > 0:
+            # Validate budget
+            from aos.providers.nemotron import validate_thinking_budget
+            try:
+                valid_budget = validate_thinking_budget(request.thinking_budget)
+            except ValueError as e:
+                return SpecialistResponse(
+                    role=request.role,
+                    status="FAILED",
+                    answer="",
+                    rejection_reason=f"Invalid thinking budget: {e}",
+                )
             extra_body["chat_template_kwargs"] = {"enable_thinking": True}
-            extra_body["reasoning_budget"] = request.thinking_budget
+            extra_body["reasoning_budget"] = valid_budget
         else:
             extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
@@ -212,6 +233,19 @@ class NemotronSpecialistFabric:
                     status="FAILED",
                     answer="",
                     rejection_reason=f"Malformed JSON output from structured specialist mode: {e}",
+                )
+
+            # Strict local schema validation fail-closed
+            import jsonschema
+            from jsonschema import Draft202012Validator, FormatChecker
+            validator = Draft202012Validator(request.structured_schema, format_checker=FormatChecker())
+            schema_errors = list(validator.iter_errors(structured_parsed))
+            if schema_errors:
+                return SpecialistResponse(
+                    role=request.role,
+                    status="FAILED",
+                    answer="",
+                    rejection_reason=f"Structured specialist output failed schema validation: {schema_errors[0].message}",
                 )
 
         usage = {}

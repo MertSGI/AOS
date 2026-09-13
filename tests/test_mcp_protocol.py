@@ -134,6 +134,54 @@ def test_mcp_server_unknown_tool():
     assert "not in the allowed Nemotron tool registry" in resp["result"]["content"][0]["text"]
 
 
+def test_mcp_protocol_error_matrix_and_notifications():
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "extensions.model_fabric.mcp_cli"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(Path(__file__).parent.parent),
+    )
+
+    # 1. Parse Error: -32700
+    line1 = "this is not json\n"
+    # 2. Unknown Method: -32601
+    line2 = json.dumps({"jsonrpc": "2.0", "id": 201, "method": "unknown/method", "params": {}}) + "\n"
+    # 3. Notification (without id): MUST NOT receive response
+    line3 = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}) + "\n"
+    # 4. Invalid params on tools/call: -32602
+    line4 = json.dumps({"jsonrpc": "2.0", "id": 202, "method": "tools/call", "params": "invalid_params"}) + "\n"
+    # 5. Sequential valid tools/list with ID preservation
+    line5 = json.dumps({"jsonrpc": "2.0", "id": "custom-id-999", "method": "tools/list", "params": {}}) + "\n"
+
+    input_payload = line1 + line2 + line3 + line4 + line5
+    stdout, stderr = proc.communicate(input=input_payload, timeout=5)
+
+    lines = [l.strip() for l in stdout.strip().split("\n") if l.strip()]
+    # Expect exactly 4 responses (line 3 notification must produce zero stdout lines)
+    assert len(lines) == 4, f"Expected 4 responses, got {len(lines)}: {lines}"
+
+    r1 = json.loads(lines[0])
+    assert r1.get("error", {}).get("code") == -32700
+
+    r2 = json.loads(lines[1])
+    assert r2.get("id") == 201
+    assert r2.get("error", {}).get("code") == -32601
+
+    r3 = json.loads(lines[2])
+    assert r3.get("id") == 202
+    assert r3.get("error", {}).get("code") == -32602
+
+    r4 = json.loads(lines[3])
+    assert r4.get("id") == "custom-id-999"
+    assert "tools" in r4.get("result", {})
+
+    # Stderr received diagnostics without leaking secrets
+    assert "MCP connection initialized" in stderr
+    assert "nvapi" not in stderr
+
+
 def test_workspace_mcp_config_discovery():
     mcp_config_path = Path(__file__).parent.parent / ".agents" / "mcp_config.json"
     assert mcp_config_path.is_file(), "Workspace .agents/mcp_config.json must exist"

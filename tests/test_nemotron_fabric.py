@@ -108,10 +108,10 @@ def test_nemotron_error_mapping(monkeypatch):
             provider.generate_plan("Test", {"type": "object"})
 
 
-# 4. Exact NVIDIA API Contract: Structured Mode vs Deep Reasoning Mode
-def test_nemotron_nvidia_api_contract_structured_mode(monkeypatch):
+# 4. Exact NVIDIA API Contract: Structured Planner Mode Disables Thinking
+def test_nemotron_nvidia_api_contract_structured_planner_mode(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
-    provider = NemotronPlannerProvider(thinking_budget=0)
+    provider = NemotronPlannerProvider()
 
     with patch("openai.OpenAI") as mock_openai:
         mock_client = MagicMock()
@@ -139,44 +139,101 @@ def test_nemotron_nvidia_api_contract_structured_mode(monkeypatch):
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert "extra_body" in call_kwargs
         extra_body = call_kwargs["extra_body"]
-        # Invariant: Structured mode sets enable_thinking=False
+        # Invariant: Structured planner mode strictly sets enable_thinking=False
         assert extra_body["chat_template_kwargs"]["enable_thinking"] is False
         assert "reasoning_budget" not in extra_body
 
 
-def test_nemotron_nvidia_api_contract_deep_reasoning_mode(monkeypatch):
-    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
-    provider = NemotronPlannerProvider(thinking_budget=1024)
+def test_thinking_budget_validation():
+    from aos.providers.nemotron import validate_thinking_budget
 
-    with patch("openai.OpenAI") as mock_openai:
-        mock_client = MagicMock()
-        mock_openai.return_value = mock_client
+    assert validate_thinking_budget(128) == 128
+    assert validate_thinking_budget(4096) == 4096
+    assert validate_thinking_budget(32768) == 32768
 
-        mock_choice = MagicMock()
-        mock_choice.finish_reason = "stop"
-        mock_choice.message.content = json.dumps({"milestone": "M1", "next_action": "VERIFY"})
-        mock_resp = MagicMock()
-        mock_resp.choices = [mock_choice]
-        mock_resp.usage = None
-        mock_client.chat.completions.create.return_value = mock_resp
+    # Reject invalid budgets fail-closed
+    with pytest.raises(ValueError, match="must be an integer"):
+        validate_thinking_budget("1024")
+    with pytest.raises(ValueError, match="must be an integer"):
+        validate_thinking_budget(True)
+    with pytest.raises(ValueError, match="out of policy bounds"):
+        validate_thinking_budget(0)
+    with pytest.raises(ValueError, match="out of policy bounds"):
+        validate_thinking_budget(-50)
+    with pytest.raises(ValueError, match="out of policy bounds"):
+        validate_thinking_budget(65536)
 
-        schema = {
-            "type": "object",
-            "required": ["milestone", "next_action"],
-            "properties": {
-                "milestone": {"type": "string"},
-                "next_action": {"type": "string"},
-            },
-        }
 
-        provider.generate_plan("Test prompt", schema)
+def test_specialist_structured_schema_validation_fail_closed():
+    mock_client = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = json.dumps({"invalid_field": "test"})
+    mock_resp = MagicMock()
+    mock_resp.choices = [mock_choice]
+    mock_resp.usage = None
+    mock_client.chat.completions.create.return_value = mock_resp
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        assert "extra_body" in call_kwargs
-        extra_body = call_kwargs["extra_body"]
-        # Invariant: Deep reasoning mode sets enable_thinking=True and numeric reasoning_budget
-        assert extra_body["chat_template_kwargs"]["enable_thinking"] is True
-        assert extra_body["reasoning_budget"] == 1024
+    fabric = NemotronSpecialistFabric(client_factory=lambda: mock_client)
+
+    schema = {
+        "type": "object",
+        "required": ["verdict", "risk_level"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "risk_level": {"type": "string"},
+        },
+    }
+
+    req = SpecialistRequest(
+        role=SpecialistRole.ARCHITECTURE_REVIEW,
+        prompt="Review arch",
+        data_classification="PUBLIC",
+        structured_schema=schema,
+    )
+    res = fabric.evaluate(req)
+
+    assert res.status == "FAILED"
+    assert "failed schema validation" in res.rejection_reason
+
+
+def test_trusted_control_context_separation():
+    mock_client = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Analysis complete"
+    mock_resp = MagicMock()
+    mock_resp.choices = [mock_choice]
+    mock_resp.usage = None
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    fabric = NemotronSpecialistFabric(client_factory=lambda: mock_client)
+
+    # 1. Untrusted caller cannot supply trusted control context
+    req_untrusted = SpecialistRequest(
+        role=SpecialistRole.CODE_REVIEW,
+        prompt="Untrusted repo code",
+        data_classification="PUBLIC",
+        context={"policy_rule": "CANONICAL_ENFORCE"},
+        caller_trusted=False,
+    )
+    fabric.evaluate(req_untrusted)
+    messages = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert len(messages) == 2
+    assert "TRUSTED_CONTROL_CONTEXT" not in str(messages)
+
+    # 2. Trusted caller includes trusted control context in separate message
+    req_trusted = SpecialistRequest(
+        role=SpecialistRole.CODE_REVIEW,
+        prompt="Repository diff",
+        data_classification="INTERNAL_NON_SENSITIVE",
+        context={"policy_rule": "CANONICAL_ENFORCE"},
+        caller_trusted=True,
+    )
+    fabric.evaluate(req_trusted)
+    messages_trusted = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert len(messages_trusted) == 3
+    assert "TRUSTED_CONTROL_CONTEXT" in messages_trusted[1]["content"]
+    assert "CANONICAL_ENFORCE" in messages_trusted[1]["content"]
+    assert "UNTRUSTED_REPOSITORY_OR_EXTERNAL_CONTENT" in messages_trusted[2]["content"]
 
 
 # 5. Local Schema Validation Fail-Closed (JSON Parse Alone != Schema Validation)
