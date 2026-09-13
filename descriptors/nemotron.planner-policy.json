@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "routing_mode": "DETERMINISTIC",
+  "allow_paid_fallback": false,
+  "allow_provider_fallback": true,
+  "data_classification": "PUBLIC",
+  "risk_routes": {
+    "R0": {
+      "preferred_providers": ["nemotron", "gemini", "groq", "ollama"]
+    }
+  },
+  "providers": {
+    "nemotron": {
+      "provider_id": "nemotron",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "credential_env_var": "NVIDIA_API_KEY",
+      "billing_class": "FREE_TIER",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": ["PUBLIC"]
+    },
+    "gemini": {
+      "provider_id": "gemini",
+      "model_id": "gemini-3.6-flash",
+      "credential_env_var": "GEMINI_API_KEY",
+      "billing_class": "FREE_TIER",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": ["PUBLIC"]
+    },
+    "groq": {
+      "provider_id": "groq",
+      "model_id": "openai/gpt-oss-120b",
+      "credential_env_var": "GROQ_API_KEY",
+      "billing_class": "FREE_TIER",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": ["PUBLIC"]
+    },
+    "ollama": {
+      "provider_id": "ollama",
+      "model_id": "llama3.3:70b",
+      "credential_env_var": null,
+      "billing_class": "LOCAL",
+      "structured_output": true,
+      "cloud_local": "LOCAL",
+      "enabled": true,
+      "allowed_data_classifications": ["PUBLIC", "INTERNAL", "CONFIDENTIAL"]
+    }
+  }
+}

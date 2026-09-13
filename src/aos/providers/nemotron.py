@@ -1,10 +1,20 @@
-"""NVIDIA Nemotron PlannerProvider implementation reusing the OpenAI Python SDK."""
+"""NVIDIA Nemotron PlannerProvider implementation reusing the OpenAI Python SDK.
+
+Aligned with NVIDIA Nemotron 3 Ultra hosted API contract:
+- STRUCTURED_MODE: chat_template_kwargs={"enable_thinking": False}, response_format json_schema, temperature=0.0
+- DEEP_REASONING_MODE: chat_template_kwargs={"enable_thinking": True}, reasoning_budget=<budget>
+- Strict local JSON Schema validation fail-closed
+- Raw reasoning / chain-of-thought stripped and never persisted
+"""
 
 from __future__ import annotations
 
 import json
 import os
 from typing import Any, Dict, Tuple
+
+import jsonschema
+from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
@@ -56,9 +66,15 @@ class NemotronPlannerProvider:
 
         provider_schema = project_nemotron_schema(schema)
 
+        # NVIDIA Nemotron 3 Ultra hosted contract:
+        # Structured mode requires explicit enable_thinking=False
+        # Deep reasoning mode requires explicit enable_thinking=True and numeric reasoning_budget
         extra_body: Dict[str, Any] = {}
         if self.thinking_budget > 0:
-            extra_body["reasoning"] = {"effort": "high"}
+            extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+            extra_body["reasoning_budget"] = self.thinking_budget
+        else:
+            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
             response = client.chat.completions.create(
@@ -78,7 +94,7 @@ class NemotronPlannerProvider:
                 max_tokens=1000,
                 temperature=0.0,
                 store=False,
-                **({"extra_body": extra_body} if extra_body else {})
+                extra_body=extra_body,
             )
         except Exception as e:
             err_name = e.__class__.__name__
@@ -111,6 +127,12 @@ class NemotronPlannerProvider:
             parsed_decision = json.loads(content_str)
         except Exception as e:
             raise PlannerContractError(f"Nemotron output is not valid JSON: {e}") from e
+
+        # Local schema validation fail-closed (JSON parse alone is NOT schema validation)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        errors = list(validator.iter_errors(parsed_decision))
+        if errors:
+            raise PlannerContractError(f"Nemotron output failed canonical JSON schema validation: {errors[0].message}")
 
         response_id = getattr(response, "id", None)
 
