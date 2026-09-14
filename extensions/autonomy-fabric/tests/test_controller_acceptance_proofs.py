@@ -351,6 +351,18 @@ def test_browser_execution_backend_proof():
         for vp, h in res.artifact_hashes.items():
             assert len(h) == 64  # valid sha256
 
+        # Negative proof: BrowserExecutionBackend fails closed when measured fields are absent
+        class EmptyBrowserAdapter:
+            def capture_manifest(self, url, run_id):
+                class EmptyManifest:
+                    pass
+                return EmptyManifest()
+
+        empty_backend = BrowserExecutionBackend(capture_adapter=EmptyBrowserAdapter())
+        res_empty = empty_backend.execute(req)
+        assert res_empty.status == "FAILED"
+        assert "BROWSER_MEASURED_EVIDENCE_ABSENT" in res_empty.sanitized_errors[0]
+
 
 # -------------------------------------------------------------
 # Section 17: Real Model Provider Route and Execution Contract Proof

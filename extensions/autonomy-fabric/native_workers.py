@@ -744,15 +744,34 @@ class BrowserExecutionBackend(ExecutionBackend):
 
         try:
             manifest = adapter.capture_manifest(url, run_id)
-            viewports = getattr(manifest, "viewports_captured", [375, 390, 768, 1024, 1440, 1920])
-            hashes = getattr(manifest, "file_hashes", {})
-            screenshot_paths = getattr(manifest, "screenshot_paths", {})
+            viewports = getattr(manifest, "viewports_captured", None)
+            hashes = getattr(manifest, "file_hashes", None)
+            screenshot_paths = getattr(manifest, "screenshot_paths", None)
             overflow_map = getattr(manifest, "horizontal_overflow_detected", {})
             cta_map = getattr(manifest, "cta_visible", {})
             console_errors = getattr(manifest, "console_errors", [])
             page_errors = getattr(manifest, "page_errors", [])
-            dom_inspection = getattr(manifest, "dom_inspection", "PASS")
-            dom_metrics = getattr(manifest, "dom_metrics", {})
+            dom_inspection = getattr(manifest, "dom_inspection", None)
+            dom_metrics = getattr(manifest, "dom_metrics", None)
+
+            # Section 3: BrowserExecutionBackend must not synthesize PASS when measured fields are absent
+            if not viewports or not hashes or not screenshot_paths or dom_inspection is None or dom_metrics is None:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="browser_adapter",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest="Browser capture failed: measured fields absent from manifest",
+                    sanitized_errors=["BROWSER_MEASURED_EVIDENCE_ABSENT: required measured fields missing from capture adapter output"],
+                    evidence_payload={
+                        "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
+                        "viewports": viewports or [],
+                    },
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
 
             return ExecutionResult(
                 backend_id=self.backend_id,
@@ -774,6 +793,7 @@ class BrowserExecutionBackend(ExecutionBackend):
                     "page_errors": page_errors,
                     "dom_inspection": dom_inspection,
                     "dom_metrics": dom_metrics,
+                    "capture_adapter": getattr(manifest, "capture_adapter", "RealBrowserCaptureAdapter"),
                 },
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
@@ -910,7 +930,16 @@ class ModelReasoningBackend(ExecutionBackend):
                         if t_path and request.write_scope and not any(t_path.startswith(prefix) for prefix in request.write_scope):
                             raise PermissionError(f"Model proposed patch targeting unauthorized path {t_path}")
 
-                ev_class = EvidenceClass.LIVE_EXTERNAL_PROOF if routed_provider.startswith("live_") else EvidenceClass.SOURCE_PROOF
+                # Section 4: Evidence class must come from explicit provider/executor provenance
+                is_live_provider = getattr(provider_instance, "is_live", False) or getattr(provider_instance, "is_hosted", False)
+                # If provider is explicitly offline/deterministic or FakePlannerProvider -> LOCAL_RUNTIME_PROOF
+                if isinstance(provider_instance, object) and "Fake" in type(provider_instance).__name__:
+                    ev_class = EvidenceClass.LOCAL_RUNTIME_PROOF
+                elif is_live_provider or routed_provider in ("gemini_cloud", "openai_cloud", "nemotron_cloud", "live_hosted"):
+                    ev_class = EvidenceClass.LIVE_EXTERNAL_PROOF
+                else:
+                    ev_class = EvidenceClass.LOCAL_RUNTIME_PROOF
+
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="model_reasoner",
