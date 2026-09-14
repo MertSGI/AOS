@@ -30,7 +30,19 @@ class WorkerCapabilities:
     browser_capability: bool = False
     github_capability: bool = False
     vercel_capability: bool = False
+    file_read: bool = True
+    file_write: bool = True
+    patch_apply: bool = True
+    process_exec: bool = True
+    git_read: bool = True
+    git_write: bool = True
+    github_read: bool = True
+    ci_observe: bool = True
+    model_reasoning: bool = True
+    visual_reasoning: bool = False
+    antigravity: bool = False
     local_workspace_roots: List[str] = field(default_factory=list)
+    trust_zone: str = "RESTRICTED_WORKSPACE"
 
 
 @dataclass
@@ -40,6 +52,7 @@ class WorkerNode:
     capabilities: WorkerCapabilities
     status: WorkerStatus = WorkerStatus.ONLINE
     last_seen: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    active_leases: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)

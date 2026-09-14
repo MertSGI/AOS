@@ -16,6 +16,13 @@ from extensions.autonomy_fabric.run_registry import (
     InvalidStateTransitionError,
 )
 from extensions.autonomy_fabric.antigravity_adapter import BaseAntigravityAdapter, FakeAntigravityAdapter
+from extensions.autonomy_fabric.execution_backend import (
+    ExecutionBackend,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionCapability,
+    EvidenceClass,
+)
 
 
 class RunSupervisorError(ValueError):
@@ -62,11 +69,14 @@ class ParallelSupervisor:
     def __init__(
         self,
         registry: AgentRunRegistry,
-        adapter: Optional[BaseAntigravityAdapter] = None,
+        adapter: Optional[Any] = None,
         max_concurrent_active_runs: int = 4,
         heartbeat_timeout_seconds: float = 60.0,
+        router: Optional[Any] = None,
     ):
         self.registry = registry
+        self.router = router
+        # If adapter is ExecutionBackend, wrap/store it
         self.adapter = adapter or FakeAntigravityAdapter()
         self.max_concurrent_active_runs = max_concurrent_active_runs
         self.heartbeat_timeout_seconds = heartbeat_timeout_seconds
@@ -147,15 +157,42 @@ class ParallelSupervisor:
 
             if initial_prompt:
                 self.registry.transition(run.run_id, RunStatus.RUNNING, phase="PROMPT_PREPARATION")
-                resp = self.adapter.execute_prompt(
-                    prompt=initial_prompt,
-                    workspace_path=workspace_path,
-                )
-                self.registry.update_run_metadata(
-                    run.run_id, {"agent_conversation_id": resp.conversation_id}
-                )
-                if resp.mapped_aos_status != RunStatus.RUNNING:
-                    self.registry.transition(run.run_id, resp.mapped_aos_status, phase="EXECUTING_PROMPT")
+                if self.router:
+                    req = ExecutionRequest(
+                        task_id=run.run_id,
+                        project_id=project_id,
+                        workspace=workspace_path or os.getcwd(),
+                        operation_class=run_type,
+                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        authority_id=authority_id,
+                        payload={"prompt": initial_prompt},
+                    )
+                    exec_res = self.router.execute_with_failover(req)
+                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
+                    self.registry.transition(run.run_id, new_status, phase="EXECUTING_PROMPT")
+                elif hasattr(self.adapter, "execute") and not hasattr(self.adapter, "execute_prompt"):
+                    req = ExecutionRequest(
+                        task_id=run.run_id,
+                        project_id=project_id,
+                        workspace=workspace_path or os.getcwd(),
+                        operation_class=run_type,
+                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        authority_id=authority_id,
+                        payload={"prompt": initial_prompt},
+                    )
+                    exec_res = self.adapter.execute(req)
+                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
+                    self.registry.transition(run.run_id, new_status, phase="EXECUTING_PROMPT")
+                else:
+                    resp = self.adapter.execute_prompt(
+                        prompt=initial_prompt,
+                        workspace_path=workspace_path,
+                    )
+                    self.registry.update_run_metadata(
+                        run.run_id, {"agent_conversation_id": resp.conversation_id}
+                    )
+                    if resp.mapped_aos_status != RunStatus.RUNNING:
+                        self.registry.transition(run.run_id, resp.mapped_aos_status, phase="EXECUTING_PROMPT")
 
             return self.registry.get_run(run.run_id)  # type: ignore
 
@@ -204,19 +241,46 @@ class ParallelSupervisor:
                 if run.status != RunStatus.RUNNING:
                     self.registry.transition(run_id, RunStatus.RUNNING, phase="RESUME")
 
-                resp = self.adapter.execute_prompt(
-                    prompt=prompt,
-                    conversation_id=run.agent_conversation_id,
-                    workspace_path=run.workspace_path,
-                )
-
-                if resp.conversation_id:
-                    self.registry.update_run_metadata(
-                        run_id, {"agent_conversation_id": resp.conversation_id}
+                if self.router:
+                    req = ExecutionRequest(
+                        task_id=run_id,
+                        project_id=run.project_id,
+                        workspace=run.workspace_path or os.getcwd(),
+                        operation_class=run.run_type,
+                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        authority_id=run.authority_id,
+                        payload={"prompt": prompt},
+                    )
+                    exec_res = self.router.execute_with_failover(req)
+                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
+                    self.registry.transition(run_id, new_status, phase="RESUMED_EXECUTION")
+                elif hasattr(self.adapter, "execute") and not hasattr(self.adapter, "execute_prompt"):
+                    req = ExecutionRequest(
+                        task_id=run_id,
+                        project_id=run.project_id,
+                        workspace=run.workspace_path or os.getcwd(),
+                        operation_class=run.run_type,
+                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        authority_id=run.authority_id,
+                        payload={"prompt": prompt},
+                    )
+                    exec_res = self.adapter.execute(req)
+                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
+                    self.registry.transition(run_id, new_status, phase="RESUMED_EXECUTION")
+                else:
+                    resp = self.adapter.execute_prompt(
+                        prompt=prompt,
+                        conversation_id=run.agent_conversation_id,
+                        workspace_path=run.workspace_path,
                     )
 
-                if resp.mapped_aos_status != RunStatus.RUNNING:
-                    self.registry.transition(run_id, resp.mapped_aos_status, phase="RESUMED_EXECUTION")
+                    if resp.conversation_id:
+                        self.registry.update_run_metadata(
+                            run_id, {"agent_conversation_id": resp.conversation_id}
+                        )
+
+                    if resp.mapped_aos_status != RunStatus.RUNNING:
+                        self.registry.transition(run_id, resp.mapped_aos_status, phase="RESUMED_EXECUTION")
                 self.heartbeat(run_id)
                 return self.registry.get_run(run_id) # type: ignore
             else:
