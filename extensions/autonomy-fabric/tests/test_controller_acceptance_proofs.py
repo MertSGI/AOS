@@ -339,8 +339,12 @@ def test_browser_execution_backend_proof():
         viewports = payload.get("viewports", [])
         assert viewports == [375, 390, 768, 1024, 1440, 1920]
         assert payload.get("dom_inspection") == "PASS"
+        assert isinstance(payload.get("dom_metrics"), dict)
+        assert payload.get("dom_metrics", {}).get("title") == "AOS Visual Fixture"
+        assert payload.get("dom_metrics", {}).get("bodyChildCount") >= 2
         assert payload.get("console_errors") == []
         assert payload.get("page_errors") == []
+        assert payload.get("screenshot_paths") is not None
 
         # Validate artifact files exist and hashes are non-empty SHA256
         assert len(res.artifact_hashes) == 6
@@ -356,7 +360,22 @@ def test_model_backend_reasoning_route():
     from aos.provider_registry import ProviderRegistry, ProviderRouter
     from aos.planner import FakePlannerProvider
 
-    # Generic policy data supplied via request configuration, not hardcoded path
+    # 1. Verify fail-closed in RUNTIME_PROVIDER_REQUIRED mode when no executable provider is present
+    runtime_backend = ModelReasoningBackend(execution_mode="RUNTIME_PROVIDER_REQUIRED")
+    req_fail_closed = ExecutionRequest(
+        task_id="t-reason-fail-closed",
+        project_id="p",
+        workspace=".",
+        operation_class="REASON",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="a",
+        payload={"prompt": "Do work without provider executor"},
+    )
+    res_fc = runtime_backend.execute(req_fail_closed)
+    assert res_fc.status == "FAILED"
+    assert "PROVIDER_EXECUTOR_UNAVAILABLE" in res_fc.sanitized_errors[0]
+
+    # 2. Generic policy data supplied via request configuration, not hardcoded path
     policy_data = {
         "schema_version": "0.1.0",
         "routing_mode": "DETERMINISTIC",
@@ -395,6 +414,7 @@ def test_model_backend_reasoning_route():
     model_backend = ModelReasoningBackend(
         provider_router=router,
         provider_executor_factory=lambda pid, mid: fake_planner,
+        execution_mode="RUNTIME_PROVIDER_REQUIRED",
     )
     file_worker = NativeFileWorker()
 
@@ -477,9 +497,9 @@ def test_patch_precondition_binding_proof():
         )
         res_bad = file_worker.execute(req_bad)
         assert res_bad.status == "FAILED"
-        assert any("Precondition SHA mismatch" in err for err in res_bad.sanitized_errors)
+        assert "Precondition SHA mismatch" in res_bad.sanitized_errors[0]
 
-        # File content must remain unchanged
+        # Ensure file was not modified
         with open(target_file, "r", encoding="utf-8") as f:
             assert f.read() == "print('version 1')\n"
 
@@ -510,29 +530,62 @@ def test_patch_precondition_binding_proof():
 # Section 19: Checkpoint Fail-Closed Hardening Proof
 # -------------------------------------------------------------
 def test_checkpoint_fail_closed_corruption_proof():
-    """PersistentCoordinator fails closed when checkpoint is corrupt or truncated, preventing duplicate mutations."""
+    """PersistentCoordinator fails closed when checkpoint is corrupt, truncated, or incompatible."""
+    import hashlib
+    import json
     from extensions.autonomy_fabric.persistent_coordinator import CheckpointCorruptionError
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        checkpoint_path = os.path.join(tmpdir, "coord_corrupt.json")
-        with open(checkpoint_path, "w", encoding="utf-8") as f:
-            f.write("{corrupt-json-truncated...")
-
         registry = AgentRunRegistry()
         dag = TaskDAG("proj-fail-closed", registry)
         dag.add_node("n1", "DEV", "auth-1")
         router = ExecutionRouter(backends=[NativeFileWorker()])
 
-        with pytest.raises(CheckpointCorruptionError) as exc_info:
-            PersistentCoordinator(
+        def make_coord(cp):
+            return PersistentCoordinator(
                 project_id="proj-fail-closed",
                 workspace_path=tmpdir,
                 dag=dag,
                 router=router,
                 registry=registry,
-                checkpoint_file=checkpoint_path,
+                checkpoint_file=cp,
             )
-        assert "corrupt or truncated" in str(exc_info.value)
+
+        # 1. Corrupt/truncated JSON
+        cp1 = os.path.join(tmpdir, "c1.json")
+        with open(cp1, "w") as f: f.write("{corrupt...")
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp1)
+        assert "corrupt or truncated" in str(exc.value)
+
+        # 2. Missing checksum
+        cp2 = os.path.join(tmpdir, "c2.json")
+        with open(cp2, "w") as f: json.dump({"schema_version": "2.0.0", "project_id": "proj-fail-closed", "coordinator_id": "coord-proj-fail-closed", "state": {}}, f)
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp2)
+        assert "missing required integrity checksum" in str(exc.value)
+
+        # 3. Bad checksum
+        cp3 = os.path.join(tmpdir, "c3.json")
+        with open(cp3, "w") as f: json.dump({"schema_version": "2.0.0", "project_id": "proj-fail-closed", "coordinator_id": "coord-proj-fail-closed", "checksum": "badhash", "state": {"completed_task_ids": []}}, f)
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp3)
+        assert "checksum mismatch" in str(exc.value)
+
+        # 4. Incompatible schema version
+        cp4 = os.path.join(tmpdir, "c4.json")
+        with open(cp4, "w") as f: json.dump({"schema_version": "1.0.0", "project_id": "proj-fail-closed", "coordinator_id": "coord-proj-fail-closed", "checksum": "x", "state": {}}, f)
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp4)
+        assert "Incompatible or missing schema_version" in str(exc.value)
+
+        # 5. Wrong project_id
+        cp5 = os.path.join(tmpdir, "c5.json")
+        with open(cp5, "w") as f: json.dump({"schema_version": "2.0.0", "project_id": "other-proj", "coordinator_id": "coord-proj-fail-closed", "checksum": "x", "state": {}}, f)
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp5)
+        assert "project_id mismatch" in str(exc.value)
+
+        # 6. Wrong coordinator_id
+        cp6 = os.path.join(tmpdir, "c6.json")
+        with open(cp6, "w") as f: json.dump({"schema_version": "2.0.0", "project_id": "proj-fail-closed", "coordinator_id": "other-coord", "checksum": "x", "state": {}}, f)
+        with pytest.raises(CheckpointCorruptionError) as exc: make_coord(cp6)
+        assert "coordinator_id mismatch" in str(exc.value)
 
 
 # -------------------------------------------------------------
@@ -580,3 +633,7 @@ def test_ci_observer_transport_consistency_proof():
     res = ci_worker.execute(ExecutionRequest(task_id="t6", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-nonexistent"}))
     assert res.status == "FAILED"
 
+    # 7. Missing SHA fails closed
+    res_missing = ci_worker.execute(ExecutionRequest(task_id="t7", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={}))
+    assert res_missing.status == "FAILED"
+    assert "MISSING_EXPLICIT_CI_SHA" in res_missing.sanitized_errors[0]

@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set, Any
 import datetime
 import time
 import threading
+import os
 from extensions.autonomy_fabric.run_registry import (
     AgentRunRegistry,
     RunIdentity,
@@ -23,6 +24,25 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionCapability,
     EvidenceClass,
 )
+
+
+def derive_run_capabilities(run_type: str, payload: Optional[Dict[str, Any]] = None) -> List[ExecutionCapability]:
+    """Derives required execution capabilities dynamically from run_type consistent with PersistentCoordinator."""
+    payload = payload or {}
+    rt = (run_type or "").upper()
+    if rt in ("PLAN", "REASONING", "MODEL_REASONING"):
+        return [ExecutionCapability.MODEL_REASONING]
+    if rt in ("PATCH", "FILE_WRITE", "DEV"):
+        return [ExecutionCapability.FILE_WRITE] if payload.get("action") == "write_file" else [ExecutionCapability.PATCH_APPLY]
+    if rt in ("GIT", "GIT_WRITE", "GIT_COMMIT", "GIT_BRANCH"):
+        return [ExecutionCapability.GIT_WRITE]
+    if rt in ("GIT_READ",):
+        return [ExecutionCapability.GIT_READ]
+    if rt in ("BROWSER", "VISUAL"):
+        return [ExecutionCapability.BROWSER]
+    if rt in ("CI", "CI_OBSERVE"):
+        return [ExecutionCapability.CI_OBSERVE]
+    return [ExecutionCapability.PROCESS_EXEC]
 
 
 class RunSupervisorError(ValueError):
@@ -73,11 +93,16 @@ class ParallelSupervisor:
         max_concurrent_active_runs: int = 4,
         heartbeat_timeout_seconds: float = 60.0,
         router: Optional[Any] = None,
+        allow_fake_adapter: bool = True,
     ):
         self.registry = registry
         self.router = router
-        # If adapter is ExecutionBackend, wrap/store it
-        self.adapter = adapter or FakeAntigravityAdapter()
+        if not adapter and not router:
+            if not allow_fake_adapter:
+                raise RunSupervisorError("Production/runtime construction requires an eligible router or execution backend. Fake adapter not permitted.")
+            self.adapter = FakeAntigravityAdapter()
+        else:
+            self.adapter = adapter
         self.max_concurrent_active_runs = max_concurrent_active_runs
         self.heartbeat_timeout_seconds = heartbeat_timeout_seconds
         
@@ -103,6 +128,7 @@ class ParallelSupervisor:
         parent_run_id: Optional[str] = None,
         worker_id: Optional[str] = None,
         initial_prompt: Optional[str] = None,
+        execution_payload: Optional[Dict[str, Any]] = None,
     ) -> RunIdentity:
         with self._lock:
             # Check concurrency limit
@@ -155,17 +181,21 @@ class ParallelSupervisor:
             # Transition to STARTING
             self.registry.transition(run.run_id, RunStatus.STARTING, phase="LAUNCH")
 
-            if initial_prompt:
+            if initial_prompt or execution_payload:
                 self.registry.transition(run.run_id, RunStatus.RUNNING, phase="PROMPT_PREPARATION")
+                payload = dict(execution_payload or {})
+                if initial_prompt:
+                    payload.setdefault("prompt", initial_prompt)
+                caps = derive_run_capabilities(run_type, payload)
                 if self.router:
                     req = ExecutionRequest(
                         task_id=run.run_id,
                         project_id=project_id,
                         workspace=workspace_path or os.getcwd(),
                         operation_class=run_type,
-                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        required_capabilities=caps,
                         authority_id=authority_id,
-                        payload={"prompt": initial_prompt},
+                        payload=payload,
                     )
                     exec_res = self.router.execute_with_failover(req)
                     new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
@@ -176,16 +206,16 @@ class ParallelSupervisor:
                         project_id=project_id,
                         workspace=workspace_path or os.getcwd(),
                         operation_class=run_type,
-                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        required_capabilities=caps,
                         authority_id=authority_id,
-                        payload={"prompt": initial_prompt},
+                        payload=payload,
                     )
                     exec_res = self.adapter.execute(req)
                     new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
                     self.registry.transition(run.run_id, new_status, phase="EXECUTING_PROMPT")
                 else:
                     resp = self.adapter.execute_prompt(
-                        prompt=initial_prompt,
+                        prompt=initial_prompt or "",
                         workspace_path=workspace_path,
                     )
                     self.registry.update_run_metadata(
@@ -241,13 +271,14 @@ class ParallelSupervisor:
                 if run.status != RunStatus.RUNNING:
                     self.registry.transition(run_id, RunStatus.RUNNING, phase="RESUME")
 
+                caps = derive_run_capabilities(run.run_type, {"prompt": prompt})
                 if self.router:
                     req = ExecutionRequest(
                         task_id=run_id,
                         project_id=run.project_id,
                         workspace=run.workspace_path or os.getcwd(),
                         operation_class=run.run_type,
-                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        required_capabilities=caps,
                         authority_id=run.authority_id,
                         payload={"prompt": prompt},
                     )
@@ -260,7 +291,7 @@ class ParallelSupervisor:
                         project_id=run.project_id,
                         workspace=run.workspace_path or os.getcwd(),
                         operation_class=run.run_type,
-                        required_capabilities=[ExecutionCapability.PROCESS_EXEC],
+                        required_capabilities=caps,
                         authority_id=run.authority_id,
                         payload={"prompt": prompt},
                     )

@@ -96,30 +96,48 @@ class PersistentCoordinator:
                     f"Checkpoint file {self.checkpoint_file} is corrupt or truncated: {ex}"
                 )
 
-            # Integrity verification
+            if not isinstance(raw_data, dict):
+                raise CheckpointCorruptionError(f"Checkpoint file {self.checkpoint_file} must contain a JSON object")
+
+            # Checkpoint V2 strictly requires complete wrapper: schema_version, project_id, coordinator_id, checksum, state
+            schema_ver = raw_data.get("schema_version")
+            if schema_ver != "2.0.0":
+                raise CheckpointCorruptionError(
+                    f"Incompatible or missing schema_version in checkpoint: expected '2.0.0', got '{schema_ver}'"
+                )
+
+            proj_id = raw_data.get("project_id")
+            if not proj_id or proj_id != self.project_id:
+                raise CheckpointCorruptionError(
+                    f"Checkpoint project_id mismatch: expected '{self.project_id}', got '{proj_id}'"
+                )
+
+            coord_id = raw_data.get("coordinator_id")
+            if not coord_id or coord_id != self.state.coordinator_id:
+                raise CheckpointCorruptionError(
+                    f"Checkpoint coordinator_id mismatch: expected '{self.state.coordinator_id}', got '{coord_id}'"
+                )
+
             stored_checksum = raw_data.get("checksum")
             state_dict = raw_data.get("state")
-            if stored_checksum and state_dict:
-                computed_checksum = hashlib.sha256(json.dumps(state_dict, sort_keys=True).encode("utf-8")).hexdigest()
-                if stored_checksum != computed_checksum:
-                    raise CheckpointCorruptionError(
-                        f"Checkpoint integrity verification failed for {self.checkpoint_file}"
-                    )
-                data = state_dict
-            else:
-                data = raw_data
-
-            # Validate identity binding
-            if data.get("project_id") and data.get("project_id") != self.project_id:
+            if not stored_checksum or not isinstance(state_dict, dict):
                 raise CheckpointCorruptionError(
-                    f"Checkpoint project_id mismatch: expected {self.project_id}, got {data.get('project_id')}"
+                    f"Checkpoint missing required integrity checksum or state payload in {self.checkpoint_file}"
                 )
+
+            computed_checksum = hashlib.sha256(json.dumps(state_dict, sort_keys=True).encode("utf-8")).hexdigest()
+            if stored_checksum != computed_checksum:
+                raise CheckpointCorruptionError(
+                    f"Checkpoint integrity verification failed for {self.checkpoint_file}: checksum mismatch"
+                )
+
+            data = state_dict
 
             self.state.completed_task_ids = data.get("completed_task_ids", [])
             self.state.failed_task_ids = data.get("failed_task_ids", [])
             self.state.iteration_count = data.get("iteration_count", 0)
             self.state.last_checkpoint = data.get("last_checkpoint", "")
-            self.state.schema_version = data.get("schema_version", "2.0.0")
+            self.state.schema_version = "2.0.0"
 
             # Rehydrate completed nodes into DAG & Registry across process restarts
             for completed_id in self.state.completed_task_ids:
@@ -196,6 +214,10 @@ class PersistentCoordinator:
                 caps = [ExecutionCapability.GIT_WRITE]
             elif node.run_type in ("REASONING", "MODEL_REASONING", "PLAN"):
                 caps = [ExecutionCapability.MODEL_REASONING]
+            elif node.run_type in ("BROWSER", "VISUAL"):
+                caps = [ExecutionCapability.BROWSER]
+            elif node.run_type in ("CI", "CI_OBSERVE"):
+                caps = [ExecutionCapability.CI_OBSERVE]
             elif node.run_type in ("TEST", "BUILD", "PROCESS"):
                 caps = [ExecutionCapability.PROCESS_EXEC]
                 if not payload:

@@ -311,7 +311,7 @@ def test_browser_and_model_backends():
     assert res_b.status == "SUCCESS"
     assert len(res_b.evidence_payload["viewports"]) == 6
 
-    m_worker = ModelReasoningBackend()
+    m_worker = ModelReasoningBackend(execution_mode="OFFLINE_TEST_PROVIDER")
     assert m_worker.get_health() == ExecutionHealth.HEALTHY
     req_m = ExecutionRequest(
         task_id="t-model",

@@ -557,13 +557,29 @@ class GitHubCIWorker(ExecutionBackend):
         sha = request.payload.get("sha")
         repo = request.payload.get("repo", "MertSGI/AOS")
 
+        # Explicit target SHA is required for CI acceptance; HEAD cannot be treated as authoritative evidence
+        if not sha or sha == "HEAD":
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="ci_observer",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=request.workspace,
+                stdout_digest="Missing explicit target SHA for CI acceptance",
+                sanitized_errors=["MISSING_EXPLICIT_CI_SHA: explicit commit SHA is required for authoritative CI acceptance"],
+                evidence_payload={"sha": sha},
+                evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
+            )
+
         if self.mock_client:
             data = self.mock_client.get_run_status(repo, sha)
             conclusion = data.get("conclusion")
             status_val = data.get("status")
             mock_sha = data.get("sha")
             # Fail closed on missing or mismatched SHA
-            if sha and mock_sha and mock_sha != sha:
+            if not mock_sha or mock_sha != sha:
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="ci_observer",
@@ -730,6 +746,14 @@ class BrowserExecutionBackend(ExecutionBackend):
             manifest = adapter.capture_manifest(url, run_id)
             viewports = getattr(manifest, "viewports_captured", [375, 390, 768, 1024, 1440, 1920])
             hashes = getattr(manifest, "file_hashes", {})
+            screenshot_paths = getattr(manifest, "screenshot_paths", {})
+            overflow_map = getattr(manifest, "horizontal_overflow_detected", {})
+            cta_map = getattr(manifest, "cta_visible", {})
+            console_errors = getattr(manifest, "console_errors", [])
+            page_errors = getattr(manifest, "page_errors", [])
+            dom_inspection = getattr(manifest, "dom_inspection", "PASS")
+            dom_metrics = getattr(manifest, "dom_metrics", {})
+
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="browser_adapter",
@@ -743,9 +767,13 @@ class BrowserExecutionBackend(ExecutionBackend):
                 evidence_payload={
                     "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
                     "viewports": viewports,
-                    "console_errors": [],
-                    "page_errors": [],
-                    "dom_inspection": "PASS",
+                    "screenshot_paths": screenshot_paths,
+                    "horizontal_overflow_detected": overflow_map,
+                    "cta_visible": cta_map,
+                    "console_errors": console_errors,
+                    "page_errors": page_errors,
+                    "dom_inspection": dom_inspection,
+                    "dom_metrics": dom_metrics,
                 },
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
@@ -776,10 +804,12 @@ class ModelReasoningBackend(ExecutionBackend):
         provider_router: Optional[Any] = None,
         mock_reasoner: Optional[Any] = None,
         provider_executor_factory: Optional[Any] = None,
+        execution_mode: str = "RUNTIME_PROVIDER_REQUIRED",
     ):
         self.provider_router = provider_router
         self.mock_reasoner = mock_reasoner
         self.provider_executor_factory = provider_executor_factory
+        self.execution_mode = execution_mode  # RUNTIME_PROVIDER_REQUIRED or OFFLINE_TEST_PROVIDER
 
     def get_health(self) -> ExecutionHealth:
         return ExecutionHealth.HEALTHY
@@ -789,8 +819,9 @@ class ModelReasoningBackend(ExecutionBackend):
         context = request.payload.get("context", {})
         risk_class = request.payload.get("risk_class", "R0")
         schema = request.payload.get("schema", {})
+        exec_mode = request.payload.get("execution_mode", self.execution_mode)
 
-        # 1. Direct mock reasoner injection (if explicitly provided)
+        # 1. Direct mock reasoner injection (if explicitly provided for unit tests)
         if self.mock_reasoner:
             plan_response = self.mock_reasoner(prompt, context)
             return ExecutionResult(
@@ -863,6 +894,23 @@ class ModelReasoningBackend(ExecutionBackend):
         if provider_instance and hasattr(provider_instance, "generate_plan"):
             try:
                 plan_data, resp_id, usage = provider_instance.generate_plan(prompt, schema)
+                # Structured response validation
+                if not isinstance(plan_data, dict):
+                    raise ValueError(f"Provider response must be structured dictionary, got {type(plan_data)}")
+
+                suggested_patch = plan_data.get("suggested_patch")
+                if suggested_patch:
+                    # Validate patch syntax and target paths
+                    from extensions.autonomy_fabric.patch_engine import parse_unified_diff
+                    parsed = parse_unified_diff(suggested_patch)
+                    if not parsed:
+                        raise ValueError("Model suggested_patch contains invalid unified diff syntax")
+                    for p in parsed:
+                        t_path = p.new_path or p.orig_path
+                        if t_path and request.write_scope and not any(t_path.startswith(prefix) for prefix in request.write_scope):
+                            raise PermissionError(f"Model proposed patch targeting unauthorized path {t_path}")
+
+                ev_class = EvidenceClass.LIVE_EXTERNAL_PROOF if routed_provider.startswith("live_") else EvidenceClass.SOURCE_PROOF
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="model_reasoner",
@@ -879,8 +927,9 @@ class ModelReasoningBackend(ExecutionBackend):
                         "response_id": resp_id,
                         "usage": usage,
                         "selection_reason": selection_reason,
+                        "execution_mode": exec_mode,
                     },
-                    evidence_class=EvidenceClass.SOURCE_PROOF,
+                    evidence_class=ev_class,
                 )
             except Exception as ex:
                 return ExecutionResult(
@@ -896,7 +945,23 @@ class ModelReasoningBackend(ExecutionBackend):
                     evidence_class=EvidenceClass.SOURCE_PROOF,
                 )
 
-        # Fallback proposal generated deterministically from prompt/context without hardcoded template_patch
+        # 4. Fail closed in RUNTIME_PROVIDER_REQUIRED mode if no executable provider is available
+        if exec_mode == "RUNTIME_PROVIDER_REQUIRED":
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_reasoner",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=request.workspace,
+                stdout_digest=f"No executable provider instance available for {routed_provider} in runtime mode",
+                sanitized_errors=[f"PROVIDER_EXECUTOR_UNAVAILABLE: provider '{routed_provider}' has no executable contract instance in RUNTIME_PROVIDER_REQUIRED mode"],
+                evidence_payload={"provider_route": routed_provider, "execution_mode": exec_mode},
+                evidence_class=EvidenceClass.SOURCE_PROOF,
+            )
+
+        # 5. Explicit OFFLINE_TEST_PROVIDER mode only
         target_file = context.get("target_file", "output.txt")
         proposal = {
             "reasoning": f"Analyzed task {request.task_id} via provider {routed_provider} ({model_id}) on workspace {request.workspace}",
@@ -914,8 +979,8 @@ class ModelReasoningBackend(ExecutionBackend):
             status="SUCCESS",
             exit_code=0,
             workspace=request.workspace,
-            stdout_digest=f"Autonomous model reasoning completed via {routed_provider}",
-            evidence_payload={"proposal": proposal, "provider_route": routed_provider, "model_id": model_id},
+            stdout_digest=f"Autonomous offline reasoning completed via {routed_provider}",
+            evidence_payload={"proposal": proposal, "provider_route": routed_provider, "model_id": model_id, "execution_mode": exec_mode},
             evidence_class=EvidenceClass.SOURCE_PROOF,
         )
 

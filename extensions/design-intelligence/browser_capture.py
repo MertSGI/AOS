@@ -56,10 +56,23 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
             file_hashes: Dict[int, str] = {}
             viewports_captured: List[int] = []
 
+            console_events: List[Dict[str, Any]] = []
+            page_errors: List[str] = []
+            dom_metrics: Dict[str, Any] = {}
+
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 try:
                     page = await browser.new_page()
+
+                    def handle_console(msg):
+                        console_events.append({"type": msg.type, "text": msg.text, "location": msg.location})
+
+                    def handle_pageerror(err):
+                        page_errors.append(str(err))
+
+                    page.on("console", handle_console)
+                    page.on("pageerror", handle_pageerror)
 
                     for vp in REQUIRED_VIEWPORTS:
                         await page.set_viewport_size({"width": vp, "height": 900})
@@ -71,6 +84,12 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                             await page.goto(file_url, wait_until="networkidle", timeout=10000)
                         else:
                             await page.set_content(url)
+
+                        # Capture real DOM inspection metrics on the page
+                        if not dom_metrics:
+                            dom_metrics = await page.evaluate(
+                                "() => ({ title: document.title, bodyChildCount: document.body ? document.body.children.length : 0, readyState: document.readyState })"
+                            )
 
                         # Check horizontal overflow
                         overflow = await page.evaluate(
@@ -109,7 +128,7 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
             # Require offset-aware ISO timestamp
             captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-            return VisualEvidenceManifest(
+            manifest = VisualEvidenceManifest(
                 manifest_id=f"vis-{uuid.uuid4().hex[:8]}",
                 run_id=run_id,
                 viewports_captured=viewports_captured,
@@ -121,6 +140,13 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                 file_hashes=file_hashes,
                 captured_at=captured_at,
             )
+            # Attach measured layout & console evidence
+            setattr(manifest, "console_errors", [c["text"] for c in console_events if c["type"] in ("error", "warning")])
+            setattr(manifest, "console_events", console_events)
+            setattr(manifest, "page_errors", page_errors)
+            setattr(manifest, "dom_inspection", "PASS" if dom_metrics.get("readyState") == "complete" else "DEGRADED")
+            setattr(manifest, "dom_metrics", dom_metrics)
+            return manifest
         finally:
             # Restore environment variable state
             if env_browsers_path:

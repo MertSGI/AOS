@@ -135,3 +135,38 @@ def test_supervisor_crash_recovery():
     assert recovered == 1
     assert "/ws/crash" in new_supervisor.workspace_locks
     assert "feature/crash" in new_supervisor.branch_locks
+
+
+def test_supervisor_generic_routing_and_fail_closed_construction():
+    from extensions.autonomy_fabric.supervisor import derive_run_capabilities, RunSupervisorError
+    from extensions.autonomy_fabric.execution_backend import ExecutionCapability
+    from extensions.autonomy_fabric.execution_router import ExecutionRouter
+    from extensions.autonomy_fabric.native_workers import NativeFileWorker, NativeProcessWorker
+
+    # 1. Capability derivation from run_type
+    assert derive_run_capabilities("PLAN") == [ExecutionCapability.MODEL_REASONING]
+    assert derive_run_capabilities("PATCH", {"action": "apply_patch"}) == [ExecutionCapability.PATCH_APPLY]
+    assert derive_run_capabilities("FILE_WRITE", {"action": "write_file"}) == [ExecutionCapability.FILE_WRITE]
+    assert derive_run_capabilities("GIT_COMMIT") == [ExecutionCapability.GIT_WRITE]
+    assert derive_run_capabilities("BROWSER") == [ExecutionCapability.BROWSER]
+    assert derive_run_capabilities("TEST") == [ExecutionCapability.PROCESS_EXEC]
+
+    # 2. Production/runtime construction without router or adapter fails closed
+    registry = AgentRunRegistry()
+    with pytest.raises(RunSupervisorError) as exc:
+        ParallelSupervisor(registry, adapter=None, router=None, allow_fake_adapter=False)
+    assert "requires an eligible router or execution backend" in str(exc.value)
+
+    # 3. Router dispatch using derived capabilities without AG adapter
+    router = ExecutionRouter(backends=[NativeProcessWorker()])
+    supervisor = ParallelSupervisor(registry, router=router, allow_fake_adapter=False)
+    run = supervisor.launch_run(
+        project_id="p-router",
+        run_type="TEST",
+        authority_id="auth-1",
+        controller_id="ctrl-1",
+        agent_provider="native_router",
+        initial_prompt="Run python test",
+        execution_payload={"cmd": ["python", "-c", "print(1)"]},
+    )
+    assert run.status == RunStatus.COMPLETED
