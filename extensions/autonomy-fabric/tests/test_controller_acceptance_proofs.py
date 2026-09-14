@@ -12,6 +12,7 @@ Verifies:
 
 import pytest
 import os
+import sys
 import tempfile
 import subprocess
 from unittest.mock import MagicMock
@@ -121,46 +122,63 @@ def test_persistent_coordinator_real_proof():
         n1.payload = {"action": "write_file", "path": "f1.txt", "content": "first\n"}
         n2.payload = {"action": "write_file", "path": "f2.txt", "content": "second\n"}
 
-        # Process 1: run n1 only
-        coord1 = PersistentCoordinator(
-            project_id="proj-restart-proof",
-            workspace_path=tmpdir,
-            dag=dag,
-            router=router,
-            registry=registry,
-            checkpoint_file=checkpoint_path,
+        # Subprocess script to execute exactly 1 batch of the coordinator
+        worker_script = f"""
+import sys
+sys.path.insert(0, {repr(os.path.abspath('.'))})
+from extensions.autonomy_fabric.run_registry import AgentRunRegistry
+from extensions.autonomy_fabric.task_dag import TaskDAG
+from extensions.autonomy_fabric.execution_router import ExecutionRouter
+from extensions.autonomy_fabric.native_workers import NativeFileWorker
+from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator
+
+registry = AgentRunRegistry()
+dag = TaskDAG("proj-restart-proof", registry)
+n1 = dag.add_node("n1", "DEV", "auth-1")
+n2 = dag.add_node("n2", "DEV", "auth-1", dependencies=["n1"])
+n1.payload = {{"action": "write_file", "path": "f1.txt", "content": "first\\n"}}
+n2.payload = {{"action": "write_file", "path": "f2.txt", "content": "second\\n"}}
+
+router = ExecutionRouter(backends=[NativeFileWorker()])
+coord = PersistentCoordinator(
+    project_id="proj-restart-proof",
+    workspace_path={repr(tmpdir)},
+    dag=dag,
+    router=router,
+    registry=registry,
+    checkpoint_file={repr(checkpoint_path)},
+)
+res = coord.execute_next_batch(max_tasks=1)
+print("EXECUTED:", [r.task_id for r in res])
+"""
+        # Process A: Runs node n1 in a separate OS process, writes checkpoint, and terminates
+        proc_a = subprocess.run(
+            [sys.executable, "-c", worker_script],
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        res1 = coord1.execute_next_batch(max_tasks=1)
-        assert len(res1) == 1
-        assert "n1" in coord1.state.completed_task_ids
+        assert "EXECUTED: ['n1']" in proc_a.stdout
         assert os.path.exists(file1)
 
-        # Terminate Process 1 and simulate Process 2
-        del coord1
-
-        coord2 = PersistentCoordinator(
-            project_id="proj-restart-proof",
-            workspace_path=tmpdir,
-            dag=dag,
-            router=router,
-            registry=registry,
-            checkpoint_file=checkpoint_path,
+        # Process B: Starts in an independent OS process, resumes checkpoint, runs node n2, and terminates
+        proc_b = subprocess.run(
+            [sys.executable, "-c", worker_script],
+            capture_output=True,
+            text=True,
+            check=True,
         )
-
-        # Confirm n1 was remembered as completed
-        assert "n1" in coord2.state.completed_task_ids
-
-        # Run next batch: only n2 should execute
-        res2 = coord2.execute_next_batch(max_tasks=1)
-        assert len(res2) == 1
-        assert res2[0].task_id == "n2"
-        assert "n2" in coord2.state.completed_task_ids
+        assert "EXECUTED: ['n2']" in proc_b.stdout
         assert os.path.exists(file2)
 
-        # Total completed runs in registry is exactly 2 (no duplicate run for n1)
-        runs = registry.list_runs(project_id="proj-restart-proof")
-        completed_runs = [r for r in runs if r.status == RunStatus.COMPLETED]
-        assert len(completed_runs) == 2
+        # Process C: Starts in another independent process; since both are completed, 0 nodes are re-executed
+        proc_c = subprocess.run(
+            [sys.executable, "-c", worker_script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "EXECUTED: []" in proc_c.stdout
 
 
 # -------------------------------------------------------------

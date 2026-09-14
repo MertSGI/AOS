@@ -87,6 +87,26 @@ class PersistentCoordinator:
                     self.state.failed_task_ids = data.get("failed_task_ids", [])
                     self.state.iteration_count = data.get("iteration_count", 0)
                     self.state.last_checkpoint = data.get("last_checkpoint", "")
+
+                    # Rehydrate completed nodes into DAG & Registry across process restarts
+                    for completed_id in self.state.completed_task_ids:
+                        if completed_id in self.dag.nodes:
+                            node = self.dag.nodes[completed_id]
+                            synth_run_id = f"recovered-run-{completed_id}"
+                            if not self.registry.get_run(synth_run_id):
+                                run = self.registry.create_run(
+                                    project_id=self.project_id,
+                                    run_type=node.run_type,
+                                    authority_id=node.authority_id,
+                                    controller_id=self.state.coordinator_id,
+                                    agent_provider="recovered_checkpoint",
+                                    workspace_path=self.workspace_path,
+                                    run_id=synth_run_id,
+                                )
+                                self.registry.transition(run.run_id, RunStatus.STARTING)
+                                self.registry.transition(run.run_id, RunStatus.RUNNING)
+                                self.registry.transition(run.run_id, RunStatus.COMPLETED)
+                            self.dag.associate_run(completed_id, synth_run_id)
             except Exception:
                 pass
 

@@ -135,6 +135,104 @@ def test_native_file_worker_unified_patch():
         assert "return a + b" in content
 
 
+def test_native_file_worker_advanced_patch_engine():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        worker = NativeFileWorker()
+
+        # 1. Multi-hunk patch with line offset
+        f1 = os.path.join(tmpdir, "module.py")
+        with open(f1, "w") as f:
+            f.write("def f1():\n    return 1\n\n\ndef f2():\n    return 2\n")
+
+        multi_hunk_patch = """--- a/module.py
++++ b/module.py
+@@ -1,2 +1,3 @@
+ def f1():
++    # docstring
+     return 1
+@@ -4,2 +5,3 @@
+ def f2():
++    # docstring 2
+     return 2
+"""
+        req = ExecutionRequest(
+            task_id="t-multi-hunk",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="auth-1",
+            payload={"action": "apply_patch", "patch": multi_hunk_patch},
+        )
+        res = worker.execute(req)
+        assert res.status == "SUCCESS"
+        with open(f1, "r") as f:
+            c1 = f.read()
+        assert "# docstring" in c1
+        assert "# docstring 2" in c1
+
+        # 2. Context mismatch fails closed
+        bad_patch = """--- a/module.py
++++ b/module.py
+@@ -1,2 +1,2 @@
+ def non_existent():
+-    pass
++    return True
+"""
+        req_bad = ExecutionRequest(
+            task_id="t-bad-ctx",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="auth-1",
+            payload={"action": "apply_patch", "patch": bad_patch},
+        )
+        res_bad = worker.execute(req_bad)
+        assert res_bad.status == "FAILED"
+        assert any("Context mismatch" in e for e in res_bad.sanitized_errors)
+
+        # 3. New file creation via patch
+        new_file_patch = """--- /dev/null
++++ b/created.py
+@@ -0,0 +1,2 @@
++def created():
++    return True
+"""
+        req_new = ExecutionRequest(
+            task_id="t-new-file",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="auth-1",
+            payload={"action": "apply_patch", "patch": new_file_patch},
+        )
+        res_new = worker.execute(req_new)
+        assert res_new.status == "SUCCESS"
+        assert os.path.exists(os.path.join(tmpdir, "created.py"))
+
+        # 4. Deletion denied unless explicitly authorized
+        del_patch = """--- a/created.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-def created():
+-    return True
+"""
+        req_del_denied = ExecutionRequest(
+            task_id="t-del-denied",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="auth-1",
+            payload={"action": "apply_patch", "patch": del_patch},
+        )
+        res_del = worker.execute(req_del_denied)
+        assert res_del.status == "FAILED"
+        assert any("File deletion not authorized" in e for e in res_del.sanitized_errors)
+
+
 def test_native_process_worker_execution_and_policy_denial():
     with tempfile.TemporaryDirectory() as tmpdir:
         worker = NativeProcessWorker()

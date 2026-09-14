@@ -86,6 +86,7 @@ def run_benchmark():
             "quota_impact": "ZERO (INFERRED_FROM_INVOCATION_COUNT)",
             "completion": "PASS",
             "speedup_ratio": f"{speedup}x",
+            "benchmark_classification": "SYNTHETIC_ROUTING_BENCHMARK",
             "benchmark_evidence_class": "LOCAL_RUNTIME_PROOF",
         }
 
@@ -95,7 +96,7 @@ def run_benchmark():
 if __name__ == "__main__":
     benchmark_data = run_benchmark()
     print("============================================================")
-    print("QUOTA EFFICIENCY BENCHMARK RESULTS")
+    print("QUOTA EFFICIENCY BENCHMARK RESULTS (SYNTHETIC_ROUTING_BENCHMARK)")
     print("============================================================")
     for mode, data in benchmark_data.items():
         print(f"Mode: {mode}")
