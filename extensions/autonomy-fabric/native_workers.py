@@ -744,18 +744,27 @@ class BrowserExecutionBackend(ExecutionBackend):
 
         try:
             manifest = adapter.capture_manifest(url, run_id)
-            viewports = getattr(manifest, "viewports_captured", None)
-            hashes = getattr(manifest, "file_hashes", None)
-            screenshot_paths = getattr(manifest, "screenshot_paths", None)
-            overflow_map = getattr(manifest, "horizontal_overflow_detected", {})
-            cta_map = getattr(manifest, "cta_visible", {})
-            console_errors = getattr(manifest, "console_errors", [])
-            page_errors = getattr(manifest, "page_errors", [])
-            dom_inspection = getattr(manifest, "dom_inspection", None)
-            dom_metrics = getattr(manifest, "dom_metrics", None)
-
-            # Section 3: BrowserExecutionBackend must not synthesize PASS when measured fields are absent
-            if not viewports or not hashes or not screenshot_paths or dom_inspection is None or dom_metrics is None:
+            # Section 2: BrowserExecutionBackend must not synthesize evidence defaults.
+            # Require manifest to explicitly contain:
+            # viewports_captured, file_hashes, screenshot_paths, horizontal_overflow_detected,
+            # cta_visible, console_errors, page_errors, dom_inspection, dom_metrics,
+            # capture_adapter, capture_mode.
+            # Do NOT use getattr(..., []), getattr(..., "PASS"), etc. for acceptance-critical fields.
+            required_attrs = [
+                "viewports_captured",
+                "file_hashes",
+                "screenshot_paths",
+                "horizontal_overflow_detected",
+                "cta_visible",
+                "console_errors",
+                "page_errors",
+                "dom_inspection",
+                "dom_metrics",
+                "capture_adapter",
+                "capture_mode",
+            ]
+            missing_fields = [attr for attr in required_attrs if getattr(manifest, attr, None) is None]
+            if missing_fields:
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="browser_adapter",
@@ -764,11 +773,60 @@ class BrowserExecutionBackend(ExecutionBackend):
                     status="FAILED",
                     exit_code=1,
                     workspace=request.workspace,
-                    stdout_digest="Browser capture failed: measured fields absent from manifest",
-                    sanitized_errors=["BROWSER_MEASURED_EVIDENCE_ABSENT: required measured fields missing from capture adapter output"],
+                    stdout_digest=f"Browser capture failed: missing required measured fields {missing_fields}",
+                    sanitized_errors=[f"BROWSER_MEASURED_EVIDENCE_ABSENT: missing required measured fields: {', '.join(missing_fields)}"],
                     evidence_payload={
                         "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
-                        "viewports": viewports or [],
+                        "missing_fields": missing_fields,
+                    },
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+
+            viewports = manifest.viewports_captured
+            hashes = manifest.file_hashes
+            screenshot_paths = manifest.screenshot_paths
+            overflow_map = manifest.horizontal_overflow_detected
+            cta_map = manifest.cta_visible
+            console_errors = manifest.console_errors
+            page_errors = manifest.page_errors
+            dom_inspection = manifest.dom_inspection
+            dom_metrics = manifest.dom_metrics
+            cap_adapter = manifest.capture_adapter
+            cap_mode = manifest.capture_mode
+
+            # Require RealBrowserCaptureAdapter and REAL_LOCAL_BROWSER_SCREENSHOT for real-browser proof
+            if cap_adapter != "RealBrowserCaptureAdapter" or cap_mode != "REAL_LOCAL_BROWSER_SCREENSHOT":
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="browser_adapter",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"Browser capture failed: invalid adapter/mode ({cap_adapter}, {cap_mode})",
+                    sanitized_errors=[f"BROWSER_MEASURED_EVIDENCE_ABSENT: capture_adapter must be 'RealBrowserCaptureAdapter' and capture_mode must be 'REAL_LOCAL_BROWSER_SCREENSHOT', got adapter={cap_adapter}, mode={cap_mode}"],
+                    evidence_payload={
+                        "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
+                        "capture_adapter": cap_adapter,
+                        "capture_mode": cap_mode,
+                    },
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+
+            if not viewports or not hashes or not screenshot_paths:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="browser_adapter",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest="Browser capture failed: empty viewports or screenshots",
+                    sanitized_errors=["BROWSER_MEASURED_EVIDENCE_ABSENT: empty viewports, hashes, or screenshot paths in manifest"],
+                    evidence_payload={
+                        "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
                     },
                     evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
                 )
@@ -793,7 +851,8 @@ class BrowserExecutionBackend(ExecutionBackend):
                     "page_errors": page_errors,
                     "dom_inspection": dom_inspection,
                     "dom_metrics": dom_metrics,
-                    "capture_adapter": getattr(manifest, "capture_adapter", "RealBrowserCaptureAdapter"),
+                    "capture_adapter": cap_adapter,
+                    "capture_mode": cap_mode,
                 },
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
@@ -930,12 +989,18 @@ class ModelReasoningBackend(ExecutionBackend):
                         if t_path and request.write_scope and not any(t_path.startswith(prefix) for prefix in request.write_scope):
                             raise PermissionError(f"Model proposed patch targeting unauthorized path {t_path}")
 
-                # Section 4: Evidence class must come from explicit provider/executor provenance
-                is_live_provider = getattr(provider_instance, "is_live", False) or getattr(provider_instance, "is_hosted", False)
-                # If provider is explicitly offline/deterministic or FakePlannerProvider -> LOCAL_RUNTIME_PROOF
-                if isinstance(provider_instance, object) and "Fake" in type(provider_instance).__name__:
-                    ev_class = EvidenceClass.LOCAL_RUNTIME_PROOF
-                elif is_live_provider or routed_provider in ("gemini_cloud", "openai_cloud", "nemotron_cloud", "live_hosted"):
+                # Section 1: Remove provider-name heuristics entirely.
+                # Evidence class must derive only from explicit executor provenance.
+                # Expected contract: provider executor exposes execution_provenance ("LOCAL_OFFLINE" or "LIVE_EXTERNAL")
+                # Hosted provider: LIVE_EXTERNAL_PROOF only when executor explicitly reports a successful external invocation.
+                # Fake/offline provider: LOCAL_RUNTIME_PROOF
+                # Unknown/missing provenance: LOCAL_RUNTIME_PROOF; never promote to LIVE_EXTERNAL_PROOF.
+                prov = getattr(provider_instance, "execution_provenance", None)
+                if prov is None:
+                    # Backward compatibility for existing test mocks, but NEVER promote to LIVE_EXTERNAL based on name
+                    prov = "LOCAL_OFFLINE"
+
+                if prov == "LIVE_EXTERNAL":
                     ev_class = EvidenceClass.LIVE_EXTERNAL_PROOF
                 else:
                     ev_class = EvidenceClass.LOCAL_RUNTIME_PROOF

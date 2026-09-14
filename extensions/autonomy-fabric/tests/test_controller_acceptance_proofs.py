@@ -351,7 +351,8 @@ def test_browser_execution_backend_proof():
         for vp, h in res.artifact_hashes.items():
             assert len(h) == 64  # valid sha256
 
-        # Negative proof: BrowserExecutionBackend fails closed when measured fields are absent
+        # Negative proofs: BrowserExecutionBackend fails closed when measured fields or provenance fields are absent
+        # 1. Completely empty manifest
         class EmptyBrowserAdapter:
             def capture_manifest(self, url, run_id):
                 class EmptyManifest:
@@ -362,6 +363,71 @@ def test_browser_execution_backend_proof():
         res_empty = empty_backend.execute(req)
         assert res_empty.status == "FAILED"
         assert "BROWSER_MEASURED_EVIDENCE_ABSENT" in res_empty.sanitized_errors[0]
+
+        # 2. Test each individual required field missing
+        required_fields = [
+            "viewports_captured",
+            "file_hashes",
+            "screenshot_paths",
+            "horizontal_overflow_detected",
+            "cta_visible",
+            "console_errors",
+            "page_errors",
+            "dom_inspection",
+            "dom_metrics",
+            "capture_adapter",
+            "capture_mode",
+        ]
+        base_manifest_data = {
+            "manifest_id": "vis-test-1",
+            "run_id": "run-test-1",
+            "viewports_captured": [375, 390, 768, 1024, 1440, 1920],
+            "file_hashes": {vp: "a" * 64 for vp in [375, 390, 768, 1024, 1440, 1920]},
+            "screenshot_paths": {vp: f"/tmp/{vp}.png" for vp in [375, 390, 768, 1024, 1440, 1920]},
+            "horizontal_overflow_detected": {vp: False for vp in [375, 390, 768, 1024, 1440, 1920]},
+            "cta_visible": {vp: True for vp in [375, 390, 768, 1024, 1440, 1920]},
+            "console_errors": [],
+            "page_errors": [],
+            "dom_inspection": "PASS",
+            "dom_metrics": {"title": "Test", "bodyChildCount": 2, "readyState": "complete"},
+            "capture_adapter": "RealBrowserCaptureAdapter",
+            "capture_mode": "REAL_LOCAL_BROWSER_SCREENSHOT",
+        }
+
+        for missing_attr in required_fields:
+            class MissingFieldAdapter:
+                def __init__(self, attr):
+                    self.attr = attr
+                def capture_manifest(self, url, run_id):
+                    class ManifestObj:
+                        pass
+                    m = ManifestObj()
+                    for k, v in base_manifest_data.items():
+                        if k != self.attr:
+                            setattr(m, k, v)
+                    return m
+
+            backend = BrowserExecutionBackend(capture_adapter=MissingFieldAdapter(missing_attr))
+            res_missing = backend.execute(req)
+            assert res_missing.status == "FAILED"
+            assert "BROWSER_MEASURED_EVIDENCE_ABSENT" in res_missing.sanitized_errors[0]
+            assert missing_attr in res_missing.sanitized_errors[0]
+
+        # 3. Test wrong adapter or wrong capture mode fails closed
+        class WrongModeAdapter:
+            def capture_manifest(self, url, run_id):
+                class ManifestObj:
+                    pass
+                m = ManifestObj()
+                for k, v in base_manifest_data.items():
+                    setattr(m, k, v)
+                m.capture_mode = "FAKE_TEST_ARTIFACT"
+                return m
+
+        wrong_backend = BrowserExecutionBackend(capture_adapter=WrongModeAdapter())
+        res_wrong = wrong_backend.execute(req)
+        assert res_wrong.status == "FAILED"
+        assert "REAL_LOCAL_BROWSER_SCREENSHOT" in res_wrong.sanitized_errors[0]
 
 
 # -------------------------------------------------------------
@@ -471,6 +537,61 @@ def test_model_backend_reasoning_route():
         with open(target_file, "r", encoding="utf-8") as f:
             content = f.read()
         assert "return 'correct'" in content
+        assert res_model.evidence_class == EvidenceClass.LOCAL_RUNTIME_PROOF
+
+        # Section 1 Adversarial Test: A fake provider named "nemotron_cloud" CANNOT produce LIVE_EXTERNAL_PROOF
+        adversarial_policy = {
+            "schema_version": "0.1.0",
+            "routing_mode": "DETERMINISTIC",
+            "allow_paid_fallback": False,
+            "allow_provider_fallback": True,
+            "data_classification": "PUBLIC",
+            "risk_routes": {
+                "R0": {"preferred_providers": ["nemotron_cloud"]}
+            },
+            "providers": {
+                "nemotron_cloud": {
+                    "provider_id": "nemotron_cloud",
+                    "model_id": "nemotron-fake-ultra",
+                    "credential_env_var": None,
+                    "billing_class": "FREE_TIER",
+                    "structured_output": True,
+                    "cloud_local": "LOCAL",
+                    "enabled": True,
+                    "allowed_data_classifications": ["PUBLIC"]
+                }
+            }
+        }
+        adv_registry = ProviderRegistry(adversarial_policy)
+        adv_router = ProviderRouter(adv_registry)
+
+        class FakeNemotronCloudProvider:
+            """Adversarial fake provider with cloud name but offline execution."""
+            execution_provenance = "LOCAL_OFFLINE"
+
+            def generate_plan(self, prompt, schema=None):
+                return {"decision": "ACCEPT", "suggested_patch": None}, "resp-fake-cloud", {"prompt_tokens": 10, "completion_tokens": 10}
+
+        adv_backend = ModelReasoningBackend(
+            provider_router=adv_router,
+            provider_executor_factory=lambda pid, mid: FakeNemotronCloudProvider(),
+            execution_mode="RUNTIME_PROVIDER_REQUIRED",
+        )
+        req_adv = ExecutionRequest(
+            task_id="t-adv-nemotron",
+            project_id="p",
+            workspace=tmpdir,
+            operation_class="REASON",
+            required_capabilities=[ExecutionCapability.MODEL_REASONING],
+            authority_id="a",
+            payload={"prompt": "Test fake cloud provider", "routing_policy": adversarial_policy, "risk_class": "R0"},
+        )
+        res_adv = adv_backend.execute(req_adv)
+        assert res_adv.status == "SUCCESS"
+        assert res_adv.evidence_payload["provider_route"] == "nemotron_cloud"
+        # MUST NOT be LIVE_EXTERNAL_PROOF
+        assert res_adv.evidence_class != EvidenceClass.LIVE_EXTERNAL_PROOF
+        assert res_adv.evidence_class == EvidenceClass.LOCAL_RUNTIME_PROOF
 
 
 # -------------------------------------------------------------
