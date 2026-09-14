@@ -31,6 +31,7 @@ class FilePatch:
     new_path: Optional[str]
     is_new_file: bool = False
     is_deleted_file: bool = False
+    precondition_sha: Optional[str] = None
     hunks: List[DiffHunk] = field(default_factory=list)
 
 
@@ -39,7 +40,13 @@ class PatchApplicationError(ValueError):
     pass
 
 
+class PatchPreconditionError(ValueError):
+    """Raised when the actual source file SHA256 does not match the expected precondition SHA."""
+    pass
+
+
 HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+INDEX_HEADER_RE = re.compile(r"^index ([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)")
 
 
 def parse_unified_diff(diff_text: str) -> List[FilePatch]:
@@ -47,11 +54,17 @@ def parse_unified_diff(diff_text: str) -> List[FilePatch]:
     file_patches: List[FilePatch] = []
     current_patch: Optional[FilePatch] = None
     current_hunk: Optional[DiffHunk] = None
+    last_precondition_sha: Optional[str] = None
 
     lines = diff_text.splitlines(keepends=True)
     i = 0
     while i < len(lines):
         line = lines[i]
+
+        if line.startswith("index "):
+            m_idx = INDEX_HEADER_RE.match(line)
+            if m_idx:
+                last_precondition_sha = m_idx.group(1)
 
         if line.startswith("--- "):
             # Save prior hunk/patch
@@ -79,7 +92,9 @@ def parse_unified_diff(diff_text: str) -> List[FilePatch]:
                     new_path=None if is_del else clean_new,
                     is_new_file=is_new,
                     is_deleted_file=is_del,
+                    precondition_sha=last_precondition_sha,
                 )
+                last_precondition_sha = None
             i += 1
             continue
 

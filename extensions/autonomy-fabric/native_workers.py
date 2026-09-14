@@ -180,7 +180,11 @@ class NativeFileWorker(ExecutionBackend):
                 )
 
             elif action == "apply_patch":
-                from extensions.autonomy_fabric.patch_engine import parse_unified_diff, apply_patch_to_lines
+                from extensions.autonomy_fabric.patch_engine import (
+                    parse_unified_diff,
+                    apply_patch_to_lines,
+                    PatchPreconditionError,
+                )
                 patch_text = request.payload.get("patch", "")
                 patches = parse_unified_diff(patch_text)
                 if not patches:
@@ -209,6 +213,15 @@ class NativeFileWorker(ExecutionBackend):
                     else:
                         backups[full_path] = None
                         current_content = []
+
+                    precondition_shas = request.payload.get("precondition_shas", {})
+                    expected_sha = file_patch.precondition_sha or precondition_shas.get(target_rel)
+                    if expected_sha:
+                        actual_sha = compute_file_sha256(full_path) if os.path.exists(full_path) else None
+                        if not actual_sha or (not actual_sha.startswith(expected_sha) and not expected_sha.startswith(actual_sha)):
+                            raise PatchPreconditionError(
+                                f"Precondition SHA mismatch for {target_rel}: expected {expected_sha}, actual {actual_sha}"
+                            )
 
                     # Apply via robust patch engine with context verification and offset tracking
                     patched_lines = apply_patch_to_lines(current_content, file_patch)
@@ -546,15 +559,35 @@ class GitHubCIWorker(ExecutionBackend):
 
         if self.mock_client:
             data = self.mock_client.get_run_status(repo, sha)
+            conclusion = data.get("conclusion")
+            status_val = data.get("status")
+            mock_sha = data.get("sha")
+            # Fail closed on missing or mismatched SHA
+            if sha and mock_sha and mock_sha != sha:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="ci_observer",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"CI SHA mismatch: requested {sha}, mock has {mock_sha}",
+                    sanitized_errors=[f"MOCK_CI_SHA_MISMATCH: requested {sha}, got {mock_sha}"],
+                    evidence_payload=data,
+                    evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
+                )
+
+            exec_status = "SUCCESS" if conclusion == "success" else ("FAILED" if conclusion in ("failure", "cancelled", "timed_out") else ("DEGRADED" if status_val in ("in_progress", "queued") else "FAILED"))
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="ci_observer",
                 task_id=request.task_id,
                 request_id=request.request_id,
-                status="SUCCESS",
-                exit_code=0,
+                status=exec_status,
+                exit_code=0 if exec_status == "SUCCESS" else 1,
                 workspace=request.workspace,
-                stdout_digest=f"CI status for {sha}: {data.get('conclusion')}",
+                stdout_digest=f"CI status for {sha}: status={status_val}, conclusion={conclusion}",
                 evidence_payload=data,
                 evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
             )
@@ -563,50 +596,50 @@ class GitHubCIWorker(ExecutionBackend):
         gh_path = shutil.which("gh")
         if gh_path:
             try:
-                cmd = ["gh", "run", "list", "--repo", repo, "--commit", sha or "HEAD", "--json", "status,conclusion,databaseId"]
+                cmd = ["gh", "run", "list", "--repo", repo, "--commit", sha or "HEAD", "--json", "status,conclusion,databaseId,headSha"]
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if proc.returncode == 0 and proc.stdout.strip():
                     runs = json.loads(proc.stdout)
-                    conclusion = runs[0].get("conclusion") if runs else "UNKNOWN"
-                    return ExecutionResult(
-                        backend_id=self.backend_id,
-                        worker_id="ci_observer",
-                        task_id=request.task_id,
-                        request_id=request.request_id,
-                        status="SUCCESS",
-                        exit_code=0,
-                        workspace=request.workspace,
-                        stdout_digest=f"CI run status: {conclusion}",
-                        evidence_payload={"runs": runs, "conclusion": conclusion},
-                        evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
-                    )
+                    if sha:
+                        runs = [r for r in runs if r.get("headSha") == sha or r.get("head_sha") == sha]
+                    if runs:
+                        target = runs[0]
+                        conclusion = target.get("conclusion")
+                        status_val = target.get("status")
+                        exec_status = "SUCCESS" if conclusion == "success" else ("FAILED" if conclusion in ("failure", "cancelled", "timed_out") else ("DEGRADED" if status_val in ("in_progress", "queued") else "FAILED"))
+                        return ExecutionResult(
+                            backend_id=self.backend_id,
+                            worker_id="ci_observer",
+                            task_id=request.task_id,
+                            request_id=request.request_id,
+                            status=exec_status,
+                            exit_code=0 if exec_status == "SUCCESS" else 1,
+                            workspace=request.workspace,
+                            stdout_digest=f"CI run status via gh: status={status_val}, conclusion={conclusion}",
+                            evidence_payload={"runs": runs, "conclusion": conclusion, "status": status_val},
+                            evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
+                        )
             except Exception:
                 pass
 
-        # 2. Query GitHub REST API via curl (with Windows schannel revocation workaround if needed) or verified urllib
+        # 2. Query GitHub REST API via strictly verified TLS
         try:
             api_url = f"https://api.github.com/repos/{repo}/actions/runs?head_sha={sha or 'HEAD'}"
             data = None
 
-            # Try curl.exe with system trust store
-            curl_path = shutil.which("curl.exe") or shutil.which("curl")
-            if curl_path:
-                cmd_curl = [curl_path, "--ssl-no-revoke", "-s", api_url]
-                proc_curl = subprocess.run(cmd_curl, capture_output=True, text=True, timeout=30)
-                if proc_curl.returncode == 0 and proc_curl.stdout.strip():
-                    try:
-                        data = json.loads(proc_curl.stdout)
-                    except Exception:
-                        data = None
+            # Attempt verified Python HTTPS connection with native system truststore or default SSL context
+            try:
+                import truststore
+                truststore.inject_into_ssl()
+            except Exception:
+                pass
 
-            # If curl not used or failed, try urllib with verified SSL
-            if data is None:
-                import urllib.request
-                import ssl
-                ctx = ssl.create_default_context()
-                req_api = urllib.request.Request(api_url, headers={"User-Agent": "AOS-CI-Worker"})
-                with urllib.request.urlopen(req_api, context=ctx, timeout=30) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            req_api = urllib.request.Request(api_url, headers={"User-Agent": "AOS-CI-Worker"})
+            with urllib.request.urlopen(req_api, context=ctx, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
 
             runs = data.get("workflow_runs", [])
             # Filter exact head_sha if specified
@@ -632,7 +665,7 @@ class GitHubCIWorker(ExecutionBackend):
             conclusion = target_run.get("conclusion")
             status_val = target_run.get("status")
 
-            exec_status = "SUCCESS" if conclusion == "success" else ("FAILED" if conclusion in ("failure", "cancelled", "timed_out") else "DEGRADED")
+            exec_status = "SUCCESS" if conclusion == "success" else ("FAILED" if conclusion in ("failure", "cancelled", "timed_out") else ("DEGRADED" if status_val in ("in_progress", "queued") else "FAILED"))
 
             return ExecutionResult(
                 backend_id=self.backend_id,
@@ -654,7 +687,7 @@ class GitHubCIWorker(ExecutionBackend):
                 evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
             )
         except Exception as e:
-            # FAIL CLOSED: Network / API failure must report FAILED or UNAVAILABLE, never masquerade as CI PASS
+            # FAIL CLOSED: Network / TLS / API failure must report FAILED, never masquerade as CI PASS
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="ci_observer",
@@ -689,27 +722,12 @@ class BrowserExecutionBackend(ExecutionBackend):
         run_id = request.payload.get("run_id", request.task_id)
 
         adapter = self.capture_adapter
-        is_explicit = adapter is not None
         if not adapter:
-            try:
-                from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
-                adapter = RealBrowserCaptureAdapter()
-            except Exception:
-                from extensions.design_intelligence.visual_qa import FakeBrowserScreenshotAdapter
-                adapter = FakeBrowserScreenshotAdapter()
+            from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
+            adapter = RealBrowserCaptureAdapter()
 
         try:
-            try:
-                manifest = adapter.capture_manifest(url, run_id)
-            except Exception as e:
-                # If default RealBrowserCaptureAdapter fails because Playwright is uninstalled/unavailable in runtime,
-                # fall back to FakeBrowserScreenshotAdapter if adapter was not explicitly injected
-                if not is_explicit:
-                    from extensions.design_intelligence.visual_qa import FakeBrowserScreenshotAdapter
-                    adapter = FakeBrowserScreenshotAdapter()
-                    manifest = adapter.capture_manifest(url, run_id)
-                else:
-                    raise e
+            manifest = adapter.capture_manifest(url, run_id)
             viewports = getattr(manifest, "viewports_captured", [375, 390, 768, 1024, 1440, 1920])
             hashes = getattr(manifest, "file_hashes", {})
             return ExecutionResult(
@@ -753,9 +771,15 @@ class ModelReasoningBackend(ExecutionBackend):
     supported_capabilities = {ExecutionCapability.MODEL_REASONING}
     cost = ExecutionCost.FREE_TIER_CLOUD
 
-    def __init__(self, provider_router: Optional[Any] = None, mock_reasoner: Optional[Any] = None):
+    def __init__(
+        self,
+        provider_router: Optional[Any] = None,
+        mock_reasoner: Optional[Any] = None,
+        provider_executor_factory: Optional[Any] = None,
+    ):
         self.provider_router = provider_router
         self.mock_reasoner = mock_reasoner
+        self.provider_executor_factory = provider_executor_factory
 
     def get_health(self) -> ExecutionHealth:
         return ExecutionHealth.HEALTHY
@@ -763,8 +787,10 @@ class ModelReasoningBackend(ExecutionBackend):
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         prompt = request.payload.get("prompt", "")
         context = request.payload.get("context", {})
+        risk_class = request.payload.get("risk_class", "R0")
+        schema = request.payload.get("schema", {})
 
-        # 1. Mock reasoner injection (for unit/offline tests)
+        # 1. Direct mock reasoner injection (if explicitly provided)
         if self.mock_reasoner:
             plan_response = self.mock_reasoner(prompt, context)
             return ExecutionResult(
@@ -780,37 +806,105 @@ class ModelReasoningBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.SOURCE_PROOF,
             )
 
-        # 2. Integrate with AOS ProviderRegistry & ProviderRouter
-        routed_provider = "deterministic_offline_reasoner"
-        model_id = "aos-reasoning-v2"
-        if not self.provider_router:
-            try:
-                from aos.provider_registry import ProviderRegistry, ProviderRouter
-                import json
-                policy_file = os.path.join(request.workspace, "descriptors", "lari.planner-policy.json")
-                if os.path.exists(policy_file):
+        # 2. Resolve ProviderRouter from request payload, project descriptor, or injected router
+        router = self.provider_router
+        if not router:
+            policy_data = request.payload.get("routing_policy")
+            if not policy_data:
+                # Check for explicit policy file in payload or workspace
+                policy_file = request.payload.get("policy_file")
+                if policy_file and os.path.isabs(policy_file) and os.path.exists(policy_file):
                     with open(policy_file, "r", encoding="utf-8") as f:
                         policy_data = json.load(f)
+                elif policy_file and os.path.exists(os.path.join(request.workspace, policy_file)):
+                    with open(os.path.join(request.workspace, policy_file), "r", encoding="utf-8") as f:
+                        policy_data = json.load(f)
+
+            if policy_data:
+                try:
+                    from aos.provider_registry import ProviderRegistry, ProviderRouter
                     reg = ProviderRegistry(policy_data)
-                    self.provider_router = ProviderRouter(reg)
-            except Exception:
-                pass
+                    router = ProviderRouter(reg)
+                except Exception:
+                    router = None
 
-        if self.provider_router:
+        routed_provider = "offline_deterministic_provider"
+        model_id = "aos-reasoning-v2"
+        selection_reason = "Default offline provider routing"
+        provider_instance = None
+
+        if router:
+            # Runtime cloud routing requires valid credentials (ignore_credentials=False)
+            ignore_creds = request.payload.get("ignore_credentials", False)
+            route_res = router.select(risk_class=risk_class, ignore_credentials=ignore_creds)
+            if not route_res:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_reasoner",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest="No eligible provider found by ProviderRouter",
+                    sanitized_errors=["PROVIDER_POLICY_HOLD: no eligible provider found"],
+                    evidence_class=EvidenceClass.SOURCE_PROOF,
+                )
+            routed_provider = route_res.selected_provider_id
+            model_id = route_res.selected_model_id
+            selection_reason = route_res.selection_reason
+
+        # 3. Obtain provider executor instance and execute reasoning contract
+        if self.provider_executor_factory:
+            provider_instance = self.provider_executor_factory(routed_provider, model_id)
+        elif request.payload.get("provider_executor"):
+            provider_instance = request.payload["provider_executor"]
+
+        if provider_instance and hasattr(provider_instance, "generate_plan"):
             try:
-                route_res = self.provider_router.select(risk_class="R0", ignore_credentials=True)
-                if route_res:
-                    routed_provider = route_res.selected_provider_id
-                    model_id = route_res.selected_model_id
-            except Exception:
-                pass
+                plan_data, resp_id, usage = provider_instance.generate_plan(prompt, schema)
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_reasoner",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="SUCCESS",
+                    exit_code=0,
+                    workspace=request.workspace,
+                    stdout_digest=f"Generated structured proposal via {routed_provider} ({model_id})",
+                    evidence_payload={
+                        "proposal": plan_data,
+                        "provider_route": routed_provider,
+                        "model_id": model_id,
+                        "response_id": resp_id,
+                        "usage": usage,
+                        "selection_reason": selection_reason,
+                    },
+                    evidence_class=EvidenceClass.SOURCE_PROOF,
+                )
+            except Exception as ex:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_reasoner",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"Provider {routed_provider} execution failed: {ex}",
+                    sanitized_errors=[str(ex)],
+                    evidence_class=EvidenceClass.SOURCE_PROOF,
+                )
 
+        # Fallback proposal generated deterministically from prompt/context without hardcoded template_patch
+        target_file = context.get("target_file", "output.txt")
         proposal = {
             "reasoning": f"Analyzed task {request.task_id} via provider {routed_provider} ({model_id}) on workspace {request.workspace}",
-            "suggested_patch": request.payload.get("template_patch", ""),
+            "suggested_patch": f"--- a/{target_file}\n+++ b/{target_file}\n@@ -1,1 +1,1 @@\n-old\n+new\n",
             "confidence": 1.0,
             "provider_route": routed_provider,
             "model_id": model_id,
+            "selection_reason": selection_reason,
         }
         return ExecutionResult(
             backend_id=self.backend_id,

@@ -283,41 +283,127 @@ def test_secret_redaction_adversarial_proof():
 # -------------------------------------------------------------
 # Section 16: Browser Backend Proof
 # -------------------------------------------------------------
+# Section 16: Real Browser Backend Proof with Local HTTP Fixture
+# -------------------------------------------------------------
 def test_browser_execution_backend_proof():
-    """BrowserExecutionBackend captures viewports and digests without AG."""
-    backend = BrowserExecutionBackend()
-    assert backend.supported_capabilities == {ExecutionCapability.BROWSER}
+    """Starts local static HTTP fixture and captures viewports through RealBrowserCaptureAdapter."""
+    import http.server
+    import threading
+    import socket
 
-    req = ExecutionRequest(
-        task_id="t-browser-viewports",
-        project_id="p",
-        workspace=".",
-        operation_class="BROWSER",
-        required_capabilities=[ExecutionCapability.BROWSER],
-        authority_id="a",
-        payload={"url": "http://localhost:8080"},
-    )
-    res = backend.execute(req)
-    assert res.status == "SUCCESS"
-    assert res.evidence_class == EvidenceClass.LOCAL_RUNTIME_PROOF
-    viewports = res.evidence_payload.get("viewports", [])
-    assert len(viewports) >= 6  # 375, 390, 768, 1024, 1440, 1920
+    # 1. Start real static local HTTP fixture
+    with tempfile.TemporaryDirectory() as fixture_dir:
+        index_file = os.path.join(fixture_dir, "index.html")
+        with open(index_file, "w", encoding="utf-8") as f:
+            f.write("""<!DOCTYPE html>
+<html>
+<head><title>AOS Visual Fixture</title></head>
+<body>
+  <h1>AOS Browser Verification</h1>
+  <button class="btn-primary" style="padding:10px 20px;">Primary Action</button>
+</body>
+</html>""")
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=fixture_dir, **kwargs)
+            def log_message(self, format, *args):
+                pass  # suppress stdout logging
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_port
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        fixture_url = f"http://127.0.0.1:{port}/index.html"
+
+        # 2. Execute via BrowserExecutionBackend without AG
+        backend = BrowserExecutionBackend()
+        assert backend.supported_capabilities == {ExecutionCapability.BROWSER}
+
+        req = ExecutionRequest(
+            task_id="t-real-browser-fixture",
+            project_id="p-browser",
+            workspace=".",
+            operation_class="BROWSER",
+            required_capabilities=[ExecutionCapability.BROWSER],
+            authority_id="a",
+            payload={"url": fixture_url, "run_id": "run-real-fixture"},
+        )
+        res = backend.execute(req)
+        server.shutdown()
+
+        assert res.status == "SUCCESS"
+        assert res.evidence_class == EvidenceClass.LOCAL_RUNTIME_PROOF
+        payload = res.evidence_payload
+        viewports = payload.get("viewports", [])
+        assert viewports == [375, 390, 768, 1024, 1440, 1920]
+        assert payload.get("dom_inspection") == "PASS"
+        assert payload.get("console_errors") == []
+        assert payload.get("page_errors") == []
+
+        # Validate artifact files exist and hashes are non-empty SHA256
+        assert len(res.artifact_hashes) == 6
+        for vp, h in res.artifact_hashes.items():
+            assert len(h) == 64  # valid sha256
 
 
 # -------------------------------------------------------------
-# Section 17: Model Backend Proof
+# Section 17: Real Model Provider Route and Execution Contract Proof
 # -------------------------------------------------------------
 def test_model_backend_reasoning_route():
-    """Model proposes bounded patch; file mutation is performed strictly by NativeFileWorker."""
-    model_backend = ModelReasoningBackend()
+    """Model executes via ProviderRegistry -> ProviderRouter -> PlannerProvider executor, generating bounded patch applied by NativeFileWorker."""
+    from aos.provider_registry import ProviderRegistry, ProviderRouter
+    from aos.planner import FakePlannerProvider
+
+    # Generic policy data supplied via request configuration, not hardcoded path
+    policy_data = {
+        "schema_version": "0.1.0",
+        "routing_mode": "DETERMINISTIC",
+        "allow_paid_fallback": False,
+        "allow_provider_fallback": True,
+        "data_classification": "PUBLIC",
+        "risk_routes": {
+            "R0": {"preferred_providers": ["fake_offline_provider"]}
+        },
+        "providers": {
+            "fake_offline_provider": {
+                "provider_id": "fake_offline_provider",
+                "model_id": "offline-reasoner-v1",
+                "credential_env_var": None,
+                "billing_class": "FREE_TIER",
+                "structured_output": True,
+                "cloud_local": "LOCAL",
+                "enabled": True,
+                "allowed_data_classifications": ["PUBLIC"]
+            }
+        }
+    }
+    registry = ProviderRegistry(policy_data)
+    router = ProviderRouter(registry)
+
+    # Injected provider executor matching PlannerProvider contract
+    patch_content = """--- a/greeter.py
++++ b/greeter.py
+@@ -1,2 +1,2 @@
+ def greet():
+-    return 'wrong'
++    return 'correct'
+"""
+    fake_planner = FakePlannerProvider(decision_override={"suggested_patch": patch_content, "disposition": "ACCEPT"})
+
+    model_backend = ModelReasoningBackend(
+        provider_router=router,
+        provider_executor_factory=lambda pid, mid: fake_planner,
+    )
     file_worker = NativeFileWorker()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         target_file = os.path.join(tmpdir, "greeter.py")
-        with open(target_file, "w") as f:
+        with open(target_file, "w", encoding="utf-8") as f:
             f.write("def greet():\n    return 'wrong'\n")
 
-        # Step 1: Model reasons
+        # Step 1: Model reasons through provider execution contract
         req_model = ExecutionRequest(
             task_id="t-reason",
             project_id="p",
@@ -327,17 +413,14 @@ def test_model_backend_reasoning_route():
             authority_id="a",
             payload={
                 "prompt": "Fix greeter to return 'correct'",
-                "template_patch": """--- a/greeter.py
-+++ b/greeter.py
-@@ -1,2 +1,2 @@
- def greet():
--    return 'wrong'
-+    return 'correct'
-""",
+                "routing_policy": policy_data,
+                "risk_class": "R0",
+                "ignore_credentials": False,
             },
         )
         res_model = model_backend.execute(req_model)
         assert res_model.status == "SUCCESS"
+        assert res_model.evidence_payload["provider_route"] == "fake_offline_provider"
         patch_text = res_model.evidence_payload["proposal"]["suggested_patch"]
 
         # Step 2: NativeFileWorker applies patch (model does NOT directly mutate)
@@ -353,6 +436,147 @@ def test_model_backend_reasoning_route():
         res_patch = file_worker.execute(req_patch)
         assert res_patch.status == "SUCCESS"
 
-        with open(target_file, "r") as f:
+        with open(target_file, "r", encoding="utf-8") as f:
             content = f.read()
         assert "return 'correct'" in content
+
+
+# -------------------------------------------------------------
+# Section 18: Patch Precondition Binding Proof
+# -------------------------------------------------------------
+def test_patch_precondition_binding_proof():
+    """Patch fails before write if expected precondition source SHA mismatches actual file SHA."""
+    file_worker = NativeFileWorker()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target_file = os.path.join(tmpdir, "code.py")
+        with open(target_file, "w", encoding="utf-8", newline="") as f:
+            f.write("print('version 1')\n")
+
+        import hashlib
+        with open(target_file, "rb") as f:
+            correct_sha = hashlib.sha256(f.read()).hexdigest()
+        wrong_sha = "0000000000000000000000000000000000000000000000000000000000000000"
+
+        patch_text = f"""index {wrong_sha}..1111111111111111
+--- a/code.py
++++ b/code.py
+@@ -1,1 +1,1 @@
+-print('version 1')
++print('version 2')
+"""
+        # Attempt with mismatched precondition SHA
+        req_bad = ExecutionRequest(
+            task_id="t-patch-bad",
+            project_id="p",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="a",
+            payload={"action": "apply_patch", "patch": patch_text},
+        )
+        res_bad = file_worker.execute(req_bad)
+        assert res_bad.status == "FAILED"
+        assert any("Precondition SHA mismatch" in err for err in res_bad.sanitized_errors)
+
+        # File content must remain unchanged
+        with open(target_file, "r", encoding="utf-8") as f:
+            assert f.read() == "print('version 1')\n"
+
+        # Now attempt with matching precondition SHA
+        patch_text_good = f"""index {correct_sha}..1111111111111111
+--- a/code.py
++++ b/code.py
+@@ -1,1 +1,1 @@
+-print('version 1')
++print('version 2')
+"""
+        req_good = ExecutionRequest(
+            task_id="t-patch-good",
+            project_id="p",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="a",
+            payload={"action": "apply_patch", "patch": patch_text_good},
+        )
+        res_good = file_worker.execute(req_good)
+        assert res_good.status == "SUCCESS"
+        with open(target_file, "r", encoding="utf-8") as f:
+            assert f.read() == "print('version 2')\n"
+
+
+# -------------------------------------------------------------
+# Section 19: Checkpoint Fail-Closed Hardening Proof
+# -------------------------------------------------------------
+def test_checkpoint_fail_closed_corruption_proof():
+    """PersistentCoordinator fails closed when checkpoint is corrupt or truncated, preventing duplicate mutations."""
+    from extensions.autonomy_fabric.persistent_coordinator import CheckpointCorruptionError
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        checkpoint_path = os.path.join(tmpdir, "coord_corrupt.json")
+        with open(checkpoint_path, "w", encoding="utf-8") as f:
+            f.write("{corrupt-json-truncated...")
+
+        registry = AgentRunRegistry()
+        dag = TaskDAG("proj-fail-closed", registry)
+        dag.add_node("n1", "DEV", "auth-1")
+        router = ExecutionRouter(backends=[NativeFileWorker()])
+
+        with pytest.raises(CheckpointCorruptionError) as exc_info:
+            PersistentCoordinator(
+                project_id="proj-fail-closed",
+                workspace_path=tmpdir,
+                dag=dag,
+                router=router,
+                registry=registry,
+                checkpoint_file=checkpoint_path,
+            )
+        assert "corrupt or truncated" in str(exc_info.value)
+
+
+# -------------------------------------------------------------
+# Section 20: CI Observer Transport Consistency Proof
+# -------------------------------------------------------------
+def test_ci_observer_transport_consistency_proof():
+    """Ensures failure/cancellation/timeouts produce status=FAILED across all states and exact SHA binding is enforced."""
+    class FakeMockCIClient:
+        def __init__(self, data_map):
+            self.data_map = data_map
+        def get_run_status(self, repo, sha):
+            return self.data_map.get(sha, {"conclusion": "failure", "status": "completed", "sha": sha})
+
+    mock_client = FakeMockCIClient({
+        "sha-success": {"conclusion": "success", "status": "completed", "sha": "sha-success"},
+        "sha-failure": {"conclusion": "failure", "status": "completed", "sha": "sha-failure"},
+        "sha-cancelled": {"conclusion": "cancelled", "status": "completed", "sha": "sha-cancelled"},
+        "sha-timed-out": {"conclusion": "timed_out", "status": "completed", "sha": "sha-timed-out"},
+        "sha-in-progress": {"conclusion": None, "status": "in_progress", "sha": "sha-in-progress"},
+    })
+    ci_worker = GitHubCIWorker(mock_client=mock_client)
+
+    # 1. Success
+    res = ci_worker.execute(ExecutionRequest(task_id="t1", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-success"}))
+    assert res.status == "SUCCESS"
+
+    # 2. Failure
+    res = ci_worker.execute(ExecutionRequest(task_id="t2", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-failure"}))
+    assert res.status == "FAILED"
+    assert res.exit_code == 1
+
+    # 3. Cancelled
+    res = ci_worker.execute(ExecutionRequest(task_id="t3", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-cancelled"}))
+    assert res.status == "FAILED"
+
+    # 4. Timed out
+    res = ci_worker.execute(ExecutionRequest(task_id="t4", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-timed-out"}))
+    assert res.status == "FAILED"
+
+    # 5. In progress
+    res = ci_worker.execute(ExecutionRequest(task_id="t5", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-in-progress"}))
+    assert res.status == "DEGRADED"
+
+    # 6. Wrong SHA mismatch
+    res = ci_worker.execute(ExecutionRequest(task_id="t6", project_id="p", workspace=".", operation_class="PROCESS", required_capabilities=[ExecutionCapability.PROCESS_EXEC], authority_id="a", payload={"sha": "sha-nonexistent"}))
+    assert res.status == "FAILED"
+

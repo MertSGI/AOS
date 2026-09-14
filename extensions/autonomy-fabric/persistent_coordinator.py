@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import hashlib
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Set
 import datetime
@@ -35,6 +36,11 @@ from extensions.autonomy_fabric.evidence_aggregator import EvidenceAggregator, E
 from extensions.autonomy_fabric.completion_supervisor import CompletionSupervisor, ControllerReviewDisposition
 
 
+class CheckpointCorruptionError(ValueError):
+    """Raised when checkpoint is corrupt, truncated, or incompatible."""
+    pass
+
+
 @dataclass
 class CoordinatorState:
     coordinator_id: str
@@ -43,6 +49,7 @@ class CoordinatorState:
     completed_task_ids: List[str] = field(default_factory=list)
     failed_task_ids: List[str] = field(default_factory=list)
     iteration_count: int = 0
+    schema_version: str = "2.0.0"
     last_checkpoint: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,44 +89,77 @@ class PersistentCoordinator:
         if self.checkpoint_file and os.path.exists(self.checkpoint_file):
             try:
                 with open(self.checkpoint_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.state.completed_task_ids = data.get("completed_task_ids", [])
-                    self.state.failed_task_ids = data.get("failed_task_ids", [])
-                    self.state.iteration_count = data.get("iteration_count", 0)
-                    self.state.last_checkpoint = data.get("last_checkpoint", "")
+                    raw_data = json.load(f)
+            except Exception as ex:
+                # FAIL CLOSED on corrupt or truncated JSON
+                raise CheckpointCorruptionError(
+                    f"Checkpoint file {self.checkpoint_file} is corrupt or truncated: {ex}"
+                )
 
-                    # Rehydrate completed nodes into DAG & Registry across process restarts
-                    for completed_id in self.state.completed_task_ids:
-                        if completed_id in self.dag.nodes:
-                            node = self.dag.nodes[completed_id]
-                            synth_run_id = f"recovered-run-{completed_id}"
-                            if not self.registry.get_run(synth_run_id):
-                                run = self.registry.create_run(
-                                    project_id=self.project_id,
-                                    run_type=node.run_type,
-                                    authority_id=node.authority_id,
-                                    controller_id=self.state.coordinator_id,
-                                    agent_provider="recovered_checkpoint",
-                                    workspace_path=self.workspace_path,
-                                    run_id=synth_run_id,
-                                )
-                                self.registry.transition(run.run_id, RunStatus.STARTING)
-                                self.registry.transition(run.run_id, RunStatus.RUNNING)
-                                self.registry.transition(run.run_id, RunStatus.COMPLETED)
-                            self.dag.associate_run(completed_id, synth_run_id)
-            except Exception:
-                pass
+            # Integrity verification
+            stored_checksum = raw_data.get("checksum")
+            state_dict = raw_data.get("state")
+            if stored_checksum and state_dict:
+                computed_checksum = hashlib.sha256(json.dumps(state_dict, sort_keys=True).encode("utf-8")).hexdigest()
+                if stored_checksum != computed_checksum:
+                    raise CheckpointCorruptionError(
+                        f"Checkpoint integrity verification failed for {self.checkpoint_file}"
+                    )
+                data = state_dict
+            else:
+                data = raw_data
+
+            # Validate identity binding
+            if data.get("project_id") and data.get("project_id") != self.project_id:
+                raise CheckpointCorruptionError(
+                    f"Checkpoint project_id mismatch: expected {self.project_id}, got {data.get('project_id')}"
+                )
+
+            self.state.completed_task_ids = data.get("completed_task_ids", [])
+            self.state.failed_task_ids = data.get("failed_task_ids", [])
+            self.state.iteration_count = data.get("iteration_count", 0)
+            self.state.last_checkpoint = data.get("last_checkpoint", "")
+            self.state.schema_version = data.get("schema_version", "2.0.0")
+
+            # Rehydrate completed nodes into DAG & Registry across process restarts
+            for completed_id in self.state.completed_task_ids:
+                if completed_id in self.dag.nodes:
+                    node = self.dag.nodes[completed_id]
+                    synth_run_id = f"recovered-run-{completed_id}"
+                    if not self.registry.get_run(synth_run_id):
+                        run = self.registry.create_run(
+                            project_id=self.project_id,
+                            run_type=node.run_type,
+                            authority_id=node.authority_id,
+                            controller_id=self.state.coordinator_id,
+                            agent_provider="recovered_checkpoint",
+                            workspace_path=self.workspace_path,
+                            run_id=synth_run_id,
+                        )
+                        self.registry.transition(run.run_id, RunStatus.STARTING)
+                        self.registry.transition(run.run_id, RunStatus.RUNNING)
+                        self.registry.transition(run.run_id, RunStatus.COMPLETED)
+                    self.dag.associate_run(completed_id, synth_run_id)
 
     def _save_checkpoint(self):
         if self.checkpoint_file:
             self.state.last_checkpoint = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            state_dict = self.state.to_dict()
+            checksum = hashlib.sha256(json.dumps(state_dict, sort_keys=True).encode("utf-8")).hexdigest()
+            payload = {
+                "schema_version": self.state.schema_version,
+                "project_id": self.project_id,
+                "coordinator_id": self.state.coordinator_id,
+                "checksum": checksum,
+                "state": state_dict,
+            }
             tmp_path = f"{self.checkpoint_file}.tmp"
-            os.makedirs(os.path.dirname(self.checkpoint_file), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(self.checkpoint_file)), exist_ok=True)
             with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self.state.to_dict(), f, indent=2)
-            if os.path.exists(self.checkpoint_file):
-                os.remove(self.checkpoint_file)
-            os.rename(tmp_path, self.checkpoint_file)
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.checkpoint_file)
 
     def execute_next_batch(self, max_tasks: int = 5) -> List[ExecutionResult]:
         """Runs one bounded batch of eligible unblocked DAG tasks."""

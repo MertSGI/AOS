@@ -305,10 +305,11 @@ def test_browser_and_model_backends():
         operation_class="BROWSER",
         required_capabilities=[ExecutionCapability.BROWSER],
         authority_id="auth-1",
-        payload={"url": "http://localhost:3000"},
+        payload={"url": "data:text/html,<h1>AOS Browser</h1><button class='btn-primary'>Click</button>"},
     )
     res_b = b_worker.execute(req_b)
     assert res_b.status == "SUCCESS"
+    assert len(res_b.evidence_payload["viewports"]) == 6
 
     m_worker = ModelReasoningBackend()
     assert m_worker.get_health() == ExecutionHealth.HEALTHY
