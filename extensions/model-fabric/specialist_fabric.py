@@ -167,11 +167,26 @@ class NemotronSpecialistFabric:
             "store": False,
         }
 
-        # Exact NVIDIA Nemotron 3 Ultra hosted contract
+        # Exact NVIDIA Nemotron 3 Ultra hosted contract & Mode Separation:
+        # Invariant: Structured specialist requests strictly disable deep reasoning (thinking disabled)
+        # to guarantee deterministic JSON output without schema/thinking collision.
+        from aos.providers.nemotron import project_nemotron_schema, validate_thinking_budget
+
         extra_body: Dict[str, Any] = {}
-        if request.thinking_budget > 0:
-            # Validate budget
-            from aos.providers.nemotron import validate_thinking_budget
+        if request.structured_schema:
+            # Structured mode: thinking strictly disabled
+            extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+            projected_schema = project_nemotron_schema(request.structured_schema)
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": f"nemotron_{request.role.value.lower()}",
+                    "strict": True,
+                    "schema": projected_schema,
+                },
+            }
+        elif request.thinking_budget > 0:
+            # Deep reasoning mode
             try:
                 valid_budget = validate_thinking_budget(request.thinking_budget)
             except ValueError as e:
@@ -187,16 +202,6 @@ class NemotronSpecialistFabric:
             extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
         kwargs["extra_body"] = extra_body
-
-        if request.structured_schema:
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": f"nemotron_{request.role.value.lower()}",
-                    "strict": True,
-                    "schema": request.structured_schema,
-                },
-            }
 
         # 5. Execution with sanitized error mapping
         try:
@@ -220,11 +225,36 @@ class NemotronSpecialistFabric:
             )
 
         choice = resp.choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
+        if isinstance(finish_reason, str) and finish_reason not in ("stop", ""):
+            return SpecialistResponse(
+                role=request.role,
+                status="FAILED",
+                answer="",
+                rejection_reason=f"Nemotron response finished with unacceptable reason: {finish_reason}",
+            )
+
+        refusal = getattr(choice.message, "refusal", None)
+        if isinstance(refusal, str) and refusal:
+            return SpecialistResponse(
+                role=request.role,
+                status="FAILED",
+                answer="",
+                rejection_reason=f"Nemotron model refused response: {refusal}",
+            )
+
         content_str = getattr(choice.message, "content", "") or ""
+        if not content_str:
+            return SpecialistResponse(
+                role=request.role,
+                status="FAILED",
+                answer="",
+                rejection_reason="Nemotron returned empty content where answer is required",
+            )
 
         # INVARIANT: Raw reasoning / thoughts are stripped and never returned or persisted
         structured_parsed = None
-        if request.structured_schema and content_str:
+        if request.structured_schema:
             try:
                 structured_parsed = json.loads(content_str)
             except Exception as e:
@@ -235,7 +265,7 @@ class NemotronSpecialistFabric:
                     rejection_reason=f"Malformed JSON output from structured specialist mode: {e}",
                 )
 
-            # Strict local schema validation fail-closed
+            # Strict canonical local schema validation fail-closed against original schema
             import jsonschema
             from jsonschema import Draft202012Validator, FormatChecker
             validator = Draft202012Validator(request.structured_schema, format_checker=FormatChecker())

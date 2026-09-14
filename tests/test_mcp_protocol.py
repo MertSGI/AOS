@@ -152,15 +152,19 @@ def test_mcp_protocol_error_matrix_and_notifications():
     line3 = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}) + "\n"
     # 4. Invalid params on tools/call: -32602
     line4 = json.dumps({"jsonrpc": "2.0", "id": 202, "method": "tools/call", "params": "invalid_params"}) + "\n"
-    # 5. Sequential valid tools/list with ID preservation
-    line5 = json.dumps({"jsonrpc": "2.0", "id": "custom-id-999", "method": "tools/list", "params": {}}) + "\n"
+    # 5. Missing jsonrpc version: -32600 Invalid Request
+    line5 = json.dumps({"id": 203, "method": "tools/list"}) + "\n"
+    # 6. Wrong jsonrpc version: -32600 Invalid Request
+    line6 = json.dumps({"jsonrpc": "1.0", "id": 204, "method": "tools/list"}) + "\n"
+    # 7. Sequential valid tools/list with ID preservation
+    line7 = json.dumps({"jsonrpc": "2.0", "id": "custom-id-999", "method": "tools/list", "params": {}}) + "\n"
 
-    input_payload = line1 + line2 + line3 + line4 + line5
+    input_payload = line1 + line2 + line3 + line4 + line5 + line6 + line7
     stdout, stderr = proc.communicate(input=input_payload, timeout=5)
 
     lines = [l.strip() for l in stdout.strip().split("\n") if l.strip()]
-    # Expect exactly 4 responses (line 3 notification must produce zero stdout lines)
-    assert len(lines) == 4, f"Expected 4 responses, got {len(lines)}: {lines}"
+    # Expect exactly 6 responses (line 3 notification produces zero stdout lines)
+    assert len(lines) == 6, f"Expected 6 responses, got {len(lines)}: {lines}"
 
     r1 = json.loads(lines[0])
     assert r1.get("error", {}).get("code") == -32700
@@ -174,8 +178,18 @@ def test_mcp_protocol_error_matrix_and_notifications():
     assert r3.get("error", {}).get("code") == -32602
 
     r4 = json.loads(lines[3])
-    assert r4.get("id") == "custom-id-999"
-    assert "tools" in r4.get("result", {})
+    assert r4.get("id") == 203
+    assert r4.get("error", {}).get("code") == -32600
+    assert "must be exactly '2.0'" in r4.get("error", {}).get("message")
+
+    r5 = json.loads(lines[4])
+    assert r5.get("id") == 204
+    assert r5.get("error", {}).get("code") == -32600
+    assert "must be exactly '2.0'" in r5.get("error", {}).get("message")
+
+    r6 = json.loads(lines[5])
+    assert r6.get("id") == "custom-id-999"
+    assert "tools" in r6.get("result", {})
 
     # Stderr received diagnostics without leaking secrets
     assert "MCP connection initialized" in stderr

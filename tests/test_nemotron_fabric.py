@@ -196,6 +196,67 @@ def test_specialist_structured_schema_validation_fail_closed():
     assert "failed schema validation" in res.rejection_reason
 
 
+def test_specialist_mode_separation_and_response_contracts():
+    mock_client = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.refusal = None
+    mock_choice.message.content = json.dumps({"verdict": "APPROVE", "risk_level": "LOW"})
+    mock_resp = MagicMock()
+    mock_resp.choices = [mock_choice]
+    mock_resp.usage = None
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    fabric = NemotronSpecialistFabric(client_factory=lambda: mock_client)
+
+    schema = {
+        "type": "object",
+        "required": ["verdict", "risk_level"],
+        "properties": {
+            "verdict": {"type": "string"},
+            "risk_level": {"type": "string"},
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+    }
+
+    # 1. Structured specialist request enforces thinking=False and strips $schema from provider call
+    req = SpecialistRequest(
+        role=SpecialistRole.ARCHITECTURE_REVIEW,
+        prompt="Review arch",
+        data_classification="PUBLIC",
+        structured_schema=schema,
+        thinking_budget=2048,  # Intentionally provided: must be overridden to False in structured mode
+    )
+    res = fabric.evaluate(req)
+    assert res.status == "SUCCESS"
+    call_kwargs = mock_client.chat.completions.create.call_args[1]
+    assert call_kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
+    # Provider schema projected (no $schema)
+    assert "$schema" not in call_kwargs["response_format"]["json_schema"]["schema"]
+
+    # 2. Empty content rejection
+    mock_choice.message.content = ""
+    res_empty = fabric.evaluate(req)
+    assert res_empty.status == "FAILED"
+    assert "empty content" in res_empty.rejection_reason
+
+    # 3. Model refusal rejection
+    mock_choice.message.content = ""
+    mock_choice.message.refusal = "I cannot process this request."
+    res_refusal = fabric.evaluate(req)
+    assert res_refusal.status == "FAILED"
+    assert "refused response" in res_refusal.rejection_reason
+
+    # 4. Unacceptable finish_reason rejection
+    mock_choice.message.refusal = None
+    mock_choice.message.content = json.dumps({"verdict": "APPROVE", "risk_level": "LOW"})
+    mock_choice.finish_reason = "length"
+    res_finish = fabric.evaluate(req)
+    assert res_finish.status == "FAILED"
+    assert "unacceptable reason" in res_finish.rejection_reason
+
+
+
 def test_trusted_control_context_separation():
     mock_client = MagicMock()
     mock_choice = MagicMock()

@@ -61,11 +61,16 @@ def main() -> None:
 
         req_id = req.get("id")
         method = req.get("method")
+        jsonrpc = req.get("jsonrpc")
+
+        # JSON-RPC 2.0 version validation (fail-closed)
+        if jsonrpc != "2.0":
+            send_error(req_id, INVALID_REQUEST, "Invalid Request: 'jsonrpc' must be exactly '2.0'")
+            continue
 
         # JSON-RPC validation
         if not isinstance(method, str):
-            if req_id is not None:
-                send_error(req_id, INVALID_REQUEST, "Invalid Request: missing or invalid method")
+            send_error(req_id, INVALID_REQUEST, "Invalid Request: missing or invalid method")
             continue
 
         # Invariant: Notifications (without id) MUST NOT receive a response
