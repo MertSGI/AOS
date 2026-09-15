@@ -226,6 +226,7 @@ class RuntimeEngine:
             "runtime_slot_root": self.config.get("runtime_slot_root"),
             "runtime_slot_id": self.config.get("runtime_slot_id"),
             "runtime_launch_nonce": os.environ.get("AOS_RUNTIME_LAUNCH_NONCE"),
+            "runtime_supervisor_pid": os.environ.get("AOS_RUNTIME_SUPERVISOR_PID"),
             "production": "NO_GO",
             "ag_backend_enabled": False,
         }
@@ -346,6 +347,16 @@ def serve(config_path: Path) -> int:
         raise ValueError("Runtime launch slot identity does not match config")
     if env_sha and config.get("candidate_source_sha") != env_sha:
         raise ValueError("Runtime launch source SHA does not match config")
+    env_nonce = os.environ.get("AOS_RUNTIME_LAUNCH_NONCE")
+    env_supervisor = os.environ.get("AOS_RUNTIME_SUPERVISOR_PID")
+    if env_nonce or env_slot or env_sha:
+        if not env_nonce or not env_supervisor:
+            raise ValueError("Runtime supervisor launch identity is incomplete")
+        try:
+            if int(env_supervisor) <= 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError("Runtime supervisor PID is invalid")
     engine = RuntimeEngine(config)
     token = _load_runtime_token(config)
     server = ThreadingHTTPServer(("127.0.0.1", int(config["port"])), RuntimeHandler)
@@ -360,6 +371,7 @@ def serve(config_path: Path) -> int:
         "runtime_source_sha": config.get("candidate_source_sha"),
         "runtime_slot_id": config.get("runtime_slot_id"),
         "runtime_launch_nonce": os.environ.get("AOS_RUNTIME_LAUNCH_NONCE"),
+        "runtime_supervisor_pid": os.environ.get("AOS_RUNTIME_SUPERVISOR_PID"),
     })
     try:
         server.serve_forever(poll_interval=0.5)

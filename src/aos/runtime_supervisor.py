@@ -121,24 +121,67 @@ def _http_health(url: str) -> Optional[Dict[str, Any]]:
 
 
 def _runtime_health_matches(
-    slot: SlotRecord, child_pid: Any, health: Optional[Dict[str, Any]], launch_nonce: Optional[str] = None
+    slot: SlotRecord, health: Optional[Dict[str, Any]], launch_nonce: Optional[str], supervisor_pid: Any
 ) -> bool:
+    """Bind Runtime V1 health to the owning supervisor launch identity.
+
+    On Windows a venv ``pythonw.exe`` can be a redirector: the PID returned by
+    ``Popen`` is then only a short-lived launcher PID, while the actual API
+    process has a different PID. Process ownership therefore uses the
+    supervisor PID + cryptographic launch nonce + exact slot/SHA, not launcher
+    PID equality.
+    """
     if not isinstance(health, dict):
         return False
     try:
         observed_pid = int(health.get("pid"))
-        expected_pid = int(child_pid)
+        observed_supervisor = int(health.get("runtime_supervisor_pid"))
+        expected_supervisor = int(supervisor_pid)
     except (TypeError, ValueError):
         return False
-    if observed_pid != expected_pid:
+    if observed_pid <= 0 or observed_supervisor != expected_supervisor:
         return False
     if slot.source_sha and health.get("runtime_source_sha") != slot.source_sha:
         return False
     if health.get("runtime_slot_id") != slot.slot_id:
         return False
-    if launch_nonce is not None and health.get("runtime_launch_nonce") != launch_nonce:
+    if not launch_nonce or health.get("runtime_launch_nonce") != launch_nonce:
         return False
     return True
+
+
+
+def _terminate_pid(pid: Any) -> None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return
+    if value <= 0 or value == os.getpid():
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(value), "/F"],
+                text=True, capture_output=True, timeout=15,
+            )
+        else:
+            os.kill(value, 15)
+    except Exception:
+        return
+
+
+def _verified_runtime_identity(slot: SlotRecord, health: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(health, dict):
+        return False
+    try:
+        if int(health.get("pid")) <= 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if slot.source_sha and health.get("runtime_source_sha") != slot.source_sha:
+        return False
+    return health.get("runtime_slot_id") == slot.slot_id
+
 
 
 class RuntimeSupervisor:
@@ -154,6 +197,7 @@ class RuntimeSupervisor:
         self.failures = 0
         self.last_health: Optional[Dict[str, Any]] = None
         self.launch_nonce: Optional[str] = None
+        self.runtime_api_pid: Optional[int] = None
         self.singleton_name = str(self.config.get("singleton_name") or r"Local\AOS.RuntimeV1.Supervisor")
 
     def _write_state(self, **updates: Any) -> Dict[str, Any]:
@@ -169,9 +213,67 @@ class RuntimeSupervisor:
         atomic_json(self.state_path, state)
         return state
 
-    def _launch(self, slot: SlotRecord) -> None:
-        if self.child is not None and self.child.poll() is None and self.child_slot_id == slot.slot_id:
+    def _stop_owned_runtime(self) -> None:
+        """Stop only the API process proven to belong to this supervisor launch."""
+        health = self.last_health
+        if isinstance(health, dict):
+            try:
+                owner = int(health.get("runtime_supervisor_pid"))
+            except (TypeError, ValueError):
+                owner = -1
+            if (
+                owner == os.getpid()
+                and self.launch_nonce
+                and health.get("runtime_launch_nonce") == self.launch_nonce
+                and self.child_slot_id
+            ):
+                try:
+                    slot = self.slots.read_slot(self.child_slot_id)
+                except Exception:
+                    slot = None
+                if slot is not None and _verified_runtime_identity(slot, health):
+                    _terminate_pid(health.get("pid"))
+        self.runtime_api_pid = None
+        self.last_health = None
+
+    def _reclaim_orphan_runtime(self, slot: SlotRecord) -> None:
+        """Reclaim an exact-slot API left behind by a dead former supervisor.
+
+        Never kill a process merely because it owns the port. The endpoint must
+        prove the exact slot/SHA and identify a supervisor PID that is no longer
+        alive.
+        """
+        health = _http_health(slot.health_url) if slot.health_url else None
+        if not _verified_runtime_identity(slot, health):
             return
+        try:
+            owner = int(health.get("runtime_supervisor_pid"))
+            api_pid = int(health.get("pid"))
+        except (TypeError, ValueError):
+            return
+        if owner == os.getpid():
+            return
+        if pid_alive(owner):
+            # A live different owner should be impossible while our singleton is
+            # held. Fail closed and let health/activation expose the conflict.
+            return
+        _terminate_pid(api_pid)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if not pid_alive(api_pid):
+                break
+            time.sleep(0.2)
+
+    def _launch(self, slot: SlotRecord) -> None:
+        # A healthy API already bound to this exact launch is authoritative even
+        # if the Windows venv redirector PID returned by Popen has exited.
+        if self.child_slot_id == slot.slot_id and _runtime_health_matches(
+            slot, self.last_health, self.launch_nonce, os.getpid()
+        ):
+            return
+
+        if self.child_slot_id and self.child_slot_id != slot.slot_id:
+            self._stop_owned_runtime()
         if self.child is not None and self.child.poll() is None:
             try:
                 self.child.terminate()
@@ -181,12 +283,15 @@ class RuntimeSupervisor:
                     self.child.kill()
                 except Exception:
                     pass
+
+        self._reclaim_orphan_runtime(slot)
         self.launch_nonce = secrets.token_hex(24)
         child_env = dict(os.environ)
         child_env.update({
             "AOS_RUNTIME_LAUNCH_NONCE": self.launch_nonce,
             "AOS_RUNTIME_SLOT_ID": slot.slot_id,
             "AOS_RUNTIME_SOURCE_SHA": slot.source_sha or "",
+            "AOS_RUNTIME_SUPERVISOR_PID": str(os.getpid()),
             "AG_BACKEND_ENABLED": "FALSE",
         })
         self.child = subprocess.Popen(
@@ -199,11 +304,15 @@ class RuntimeSupervisor:
             env=child_env,
         )
         self.child_slot_id = slot.slot_id
+        self.runtime_api_pid = None
+        self.last_health = None
         self._write_state(
             state="STARTING",
             active_slot=slot.slot_id,
             active_kind=slot.kind,
-            child_pid=self.child.pid,
+            child_pid=self.child.pid,  # backward-compatible launcher PID field
+            launcher_pid=self.child.pid,
+            runtime_api_pid=None,
             source_sha=slot.source_sha,
             launch_nonce=self.launch_nonce,
             singleton_name=self.singleton_name,
@@ -211,16 +320,19 @@ class RuntimeSupervisor:
         )
 
     def _healthy(self, slot: SlotRecord) -> bool:
-        if self.child is None or self.child.poll() is not None:
-            self.last_health = None
-            return False
         if slot.kind == "runtime_v1":
             self.last_health = _http_health(slot.health_url) if slot.health_url else None
-            return _runtime_health_matches(slot, self.child.pid, self.last_health, self.launch_nonce)
+            matched = _runtime_health_matches(slot, self.last_health, self.launch_nonce, os.getpid())
+            if matched:
+                try:
+                    self.runtime_api_pid = int(self.last_health.get("pid"))
+                except (TypeError, ValueError):
+                    self.runtime_api_pid = None
+            return matched
         # Legacy fallback has no Runtime V1 API. Its acceptance here is limited to
         # process liveness; stable promotion is never inferred from this.
         self.last_health = None
-        return True
+        return self.child is not None and self.child.poll() is None
 
     def run(self) -> int:
         with SupervisorSingleton(self.root, self.singleton_name):
@@ -241,7 +353,7 @@ class RuntimeSupervisor:
             while time.time() < deadline:
                 if self._healthy(slot):
                     break
-                if self.child is None or self.child.poll() is not None:
+                if slot.kind != "runtime_v1" and (self.child is None or self.child.poll() is not None):
                     break
                 time.sleep(1)
 
@@ -254,7 +366,10 @@ class RuntimeSupervisor:
                     state="HEALTHY",
                     active_slot=slot.slot_id,
                     child_pid=self.child.pid if self.child else None,
+                    launcher_pid=self.child.pid if self.child else None,
+                    runtime_api_pid=observed.get("pid"),
                     observed_api_pid=observed.get("pid"),
+                    observed_runtime_supervisor_pid=observed.get("runtime_supervisor_pid"),
                     observed_runtime_source_sha=observed.get("runtime_source_sha"),
                     observed_runtime_slot_id=observed.get("runtime_slot_id"),
                     observed_launch_nonce=observed.get("runtime_launch_nonce"),
@@ -271,7 +386,10 @@ class RuntimeSupervisor:
                 active_slot=slot.slot_id,
                 consecutive_failures=self.failures,
                 child_pid=self.child.pid if self.child else None,
+                launcher_pid=self.child.pid if self.child else None,
+                runtime_api_pid=observed.get("pid"),
                 observed_api_pid=observed.get("pid"),
+                observed_runtime_supervisor_pid=observed.get("runtime_supervisor_pid"),
                 observed_runtime_source_sha=observed.get("runtime_source_sha"),
                 observed_runtime_slot_id=observed.get("runtime_slot_id"),
                 observed_launch_nonce=observed.get("runtime_launch_nonce"),
@@ -280,6 +398,7 @@ class RuntimeSupervisor:
             )
             max_failures = int(self.config.get("candidate_restart_limit", 3))
             if pointer.get("active") == "candidate" and self.failures >= max_failures:
+                self._stop_owned_runtime()
                 self.slots.rollback(reason=f"candidate failed health {self.failures} consecutive times")
                 self._write_state(state="ROLLED_BACK_TO_STABLE", rollback_from=slot.slot_id)
                 self.failures = 0

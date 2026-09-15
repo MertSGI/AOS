@@ -36,6 +36,7 @@ def _config(tmp_path: Path):
 
 def test_health_reports_exact_candidate_identity(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AOS_RUNTIME_LAUNCH_NONCE", "launch-123")
+    monkeypatch.setenv("AOS_RUNTIME_SUPERVISOR_PID", "4321")
     engine = RuntimeEngine(_config(tmp_path))
     try:
         health = engine.health()
@@ -44,6 +45,7 @@ def test_health_reports_exact_candidate_identity(tmp_path: Path, monkeypatch):
         assert health["runtime_slot_root"].endswith("slot")
         assert health["runtime_launch_nonce"] == "launch-123"
         assert health["runtime_slot_id"] == "candidate-runtime-v1.4-test"
+        assert health["runtime_supervisor_pid"] == "4321"
         assert health["production"] == "NO_GO"
         assert health["ag_backend_enabled"] is False
     finally:
