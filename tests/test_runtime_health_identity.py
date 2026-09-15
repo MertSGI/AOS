@@ -30,6 +30,7 @@ def _config(tmp_path: Path):
         "candidate_source_sha": "a" * 40,
         "runtime_asset_tree_sha256": "b" * 64,
         "runtime_slot_root": str(tmp_path / "slot"),
+        "runtime_slot_id": "candidate-runtime-v1.4-test",
     }
 
 
@@ -40,6 +41,7 @@ def test_health_reports_exact_candidate_identity(tmp_path: Path):
         assert health["runtime_source_sha"] == "a" * 40
         assert health["runtime_asset_tree_sha256"] == "b" * 64
         assert health["runtime_slot_root"].endswith("slot")
+        assert health["runtime_slot_id"] == "candidate-runtime-v1.4-test"
         assert health["production"] == "NO_GO"
         assert health["ag_backend_enabled"] is False
     finally:

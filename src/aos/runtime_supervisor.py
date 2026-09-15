@@ -43,16 +43,37 @@ def pid_alive(pid: Any) -> bool:
         return False
 
 
-def _http_health(url: str) -> bool:
+def _http_health(url: str) -> Optional[Dict[str, Any]]:
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "AOS-Supervisor/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             if int(resp.status) != 200:
-                return False
+                return None
             value = json.loads(resp.read().decode("utf-8"))
-            return isinstance(value, dict) and value.get("contract_version") == CONTRACT_VERSION and value.get("runtime_state") == "HEALTHY"
+            if not isinstance(value, dict):
+                return None
+            if value.get("contract_version") != CONTRACT_VERSION or value.get("runtime_state") != "HEALTHY":
+                return None
+            return value
     except Exception:
+        return None
+
+
+def _runtime_health_matches(slot: SlotRecord, child_pid: Any, health: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(health, dict):
         return False
+    try:
+        observed_pid = int(health.get("pid"))
+        expected_pid = int(child_pid)
+    except (TypeError, ValueError):
+        return False
+    if observed_pid != expected_pid:
+        return False
+    if slot.source_sha and health.get("runtime_source_sha") != slot.source_sha:
+        return False
+    if health.get("runtime_slot_id") != slot.slot_id:
+        return False
+    return True
 
 
 class RuntimeSupervisor:
@@ -66,6 +87,7 @@ class RuntimeSupervisor:
         self.child: Optional[subprocess.Popen] = None
         self.child_slot_id: Optional[str] = None
         self.failures = 0
+        self.last_health: Optional[Dict[str, Any]] = None
 
     def _write_state(self, **updates: Any) -> Dict[str, Any]:
         state = read_json(self.state_path, {})
@@ -111,11 +133,14 @@ class RuntimeSupervisor:
 
     def _healthy(self, slot: SlotRecord) -> bool:
         if self.child is None or self.child.poll() is not None:
+            self.last_health = None
             return False
         if slot.kind == "runtime_v1":
-            return bool(slot.health_url and _http_health(slot.health_url))
+            self.last_health = _http_health(slot.health_url) if slot.health_url else None
+            return _runtime_health_matches(slot, self.child.pid, self.last_health)
         # Legacy fallback has no Runtime V1 API. Its acceptance here is limited to
         # process liveness; stable promotion is never inferred from this.
+        self.last_health = None
         return True
 
     def run(self) -> int:
@@ -137,16 +162,28 @@ class RuntimeSupervisor:
                 self.failures = 0
                 if slot.kind == "runtime_v1" and pointer.get("active") == "candidate":
                     self.slots.mark_candidate_healthy()
-                self._write_state(state="HEALTHY", active_slot=slot.slot_id, child_pid=self.child.pid if self.child else None)
+                observed = self.last_health or {}
+                self._write_state(
+                    state="HEALTHY",
+                    active_slot=slot.slot_id,
+                    child_pid=self.child.pid if self.child else None,
+                    observed_api_pid=observed.get("pid"),
+                    observed_runtime_source_sha=observed.get("runtime_source_sha"),
+                    observed_runtime_slot_id=observed.get("runtime_slot_id"),
+                )
                 time.sleep(max(2, int(self.config.get("poll_seconds", 5))))
                 continue
 
             self.failures += 1
+            observed = self.last_health or {}
             self._write_state(
                 state="UNHEALTHY",
                 active_slot=slot.slot_id,
                 consecutive_failures=self.failures,
                 child_pid=self.child.pid if self.child else None,
+                observed_api_pid=observed.get("pid"),
+                observed_runtime_source_sha=observed.get("runtime_source_sha"),
+                observed_runtime_slot_id=observed.get("runtime_slot_id"),
             )
             max_failures = int(self.config.get("candidate_restart_limit", 3))
             if pointer.get("active") == "candidate" and self.failures >= max_failures:
