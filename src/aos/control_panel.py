@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
+from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -192,8 +193,8 @@ async function submitGoal() {
     red_lines: lines('goal-redlines'),
     max_batches: Number(document.getElementById('goal-batches').value || 12)
   };
-  if (!payload.descriptor_path || !payload.workspace || !payload.routing_policy_path || !payload.goal) {
-    out.textContent = 'Descriptor, workspace, routing policy and goal are required.'; return;
+  if (!payload.goal) {
+    out.textContent = 'Goal is required.'; return;
   }
   try {
     const r = await fetch('/api/goals', {
@@ -273,6 +274,21 @@ def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
+    if runtime_configured(config):
+        bridge = runtime_status(config)
+        providers = _provider_presence()
+        return {
+            "schema_version": "1.0.0",
+            "host_state": bridge.get("host_state", "UNKNOWN"),
+            "pending_jobs": int(bridge.get("pending_jobs", 0)),
+            "last_job": None,
+            "production": "NO_GO",
+            "ag_backend_enabled": False,
+            "providers": providers,
+            "default_project": config.get("default_project", {}),
+            "runtime_v1": bridge.get("runtime_v1", {}),
+        }
+
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
     host_status = _read_json(runtime_root / "host-status.json", {})
     pending = len(list((runtime_root / "inbox").glob("*.aosjob.json"))) if (runtime_root / "inbox").is_dir() else 0
@@ -290,8 +306,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "ag_backend_enabled": False,
         "providers": providers,
         "default_project": config.get("default_project", {}),
+        "runtime_v1": {"runtime_state": "NOT_CONFIGURED"},
     }
-
 
 def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = validate_job(payload, config)
@@ -318,6 +334,9 @@ def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any
 
 
 def submit_goal(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    if runtime_configured(config):
+        return submit_goal_to_runtime(payload, config)
+
     goal = payload.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         raise ValueError("Goal is required")
@@ -335,15 +354,14 @@ def submit_goal(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, An
         "constraints": payload.get("constraints", []),
         "red_lines": payload.get("red_lines", []),
         "max_batches": int(payload.get("max_batches", 12)),
-        "max_iterations": 30,
+        "max_iterations": int(payload.get("max_iterations", 30)),
     }
     if not (1 <= job["max_batches"] <= 50):
         raise ValueError("max_batches must be between 1 and 50")
     result = submit_job(job, config)
-    result["mode"] = "AUTONOMOUS_GOAL"
+    result["mode"] = "AUTONOMOUS_GOAL_LEGACY_COMPATIBILITY"
     result["run_plan_required"] = False
     return result
-
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "AOSDirect/1.0"

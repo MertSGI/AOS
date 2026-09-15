@@ -553,8 +553,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+def hydrate_local_reasoning_credentials() -> Dict[str, bool]:
+    # Hydrate provider secrets from the OS vault into this process only.
+    # Secret values are not returned, logged, serialized, or written to runtime state.
+    try:
+        from aos.secure_store import hydrate_environment
+    except Exception:
+        return {}
+    try:
+        return hydrate_environment(overwrite=False)
+    except Exception:
+        return {}
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    hydrate_local_reasoning_credentials()
     try:
         descriptor_path = Path(args.project).resolve()
         workspace = Path(args.workspace).resolve()

@@ -31,6 +31,9 @@ aos-validate = "aos.validate:main"
 aos-run = "aos.autonomous_host:main"
 aos-coordinator = "aos.local_host:main"
 aos-panel = "aos.control_panel:main"
+aos-runtime = "aos.runtime_server:main"
+aos-runtime-supervisor = "aos.runtime_supervisor:main"
+aosctl = "aos.runtime_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
