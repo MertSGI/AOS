@@ -322,10 +322,21 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 
 def _run_readonly(cmd: Sequence[str], cwd: Path, timeout: int = 30) -> Tuple[int, str, str]:
-    proc = subprocess.run(
-        list(cmd), cwd=str(cwd), shell=False, text=True, capture_output=True, timeout=timeout
-    )
-    return proc.returncode, redact_secrets(proc.stdout or "")[:20000], redact_secrets(proc.stderr or "")[:10000]
+    try:
+        proc = subprocess.run(
+            list(cmd), cwd=str(cwd), shell=False, text=True, capture_output=True, timeout=timeout
+        )
+        return proc.returncode, redact_secrets(proc.stdout or "")[:20000], redact_secrets(proc.stderr or "")[:10000]
+    except FileNotFoundError as exc:
+        # Optional read-only discovery helpers (for example `gh`) must never
+        # terminate autonomous project synthesis. Callers already handle a
+        # non-zero return code by recording unavailable/empty discovery state.
+        # Mutating workers have their own strict executable/authority gates.
+        return 127, "", redact_secrets(str(exc))[:10000]
+    except OSError as exc:
+        # Preserve fail-closed mutation semantics while making read-only
+        # environmental discovery degradable instead of process-fatal.
+        return 126, "", redact_secrets(str(exc))[:10000]
 
 
 def _repo_head(workspace: Path) -> str:

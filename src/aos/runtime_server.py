@@ -189,7 +189,9 @@ class RuntimeEngine:
         active = []
         waiting = []
         terminal = []
-        for command_id in self.store.list_command_ids()[-200:]:
+        command_ids = self.store.list_command_ids()[-200:]
+        latest_summary = None
+        for command_id in command_ids:
             state = self.store.read_state(command_id)
             current = str(state.get("state") or "UNKNOWN")
             if current in ("QUEUED", "RUNNING", "RECOVERING"):
@@ -198,6 +200,17 @@ class RuntimeEngine:
                 waiting.append(command_id)
             else:
                 terminal.append(command_id)
+        if command_ids:
+            latest_id = command_ids[-1]
+            latest_state = self.store.read_state(latest_id)
+            latest_summary = {
+                "command_id": latest_id,
+                "state": latest_state.get("state"),
+                "disposition": latest_state.get("disposition"),
+                "completed_batch_count": int(latest_state.get("completed_batch_count", 0) or 0),
+                "failure_class": latest_state.get("failure_class"),
+                "canonical_source_sha": latest_state.get("canonical_source_sha"),
+            }
         return {
             "contract_version": CONTRACT_VERSION,
             "runtime_state": "HEALTHY",
@@ -206,6 +219,7 @@ class RuntimeEngine:
             "active_commands": active,
             "waiting_commands": waiting,
             "terminal_command_count": len(terminal),
+            "latest_command": latest_summary,
             "default_project": self.config["default_project"],
             "production": "NO_GO",
             "ag_backend_enabled": False,

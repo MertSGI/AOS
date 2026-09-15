@@ -15,7 +15,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
-from aos.planning_kernel import DEFAULT_RED_LINES, run_autonomous_project
+from aos.planning_kernel import (
+    DEFAULT_RED_LINES,
+    AuthorityDenied,
+    CanonicalDrift,
+    HumanRequired,
+    run_autonomous_project,
+)
+from extensions.autonomy_fabric.native_workers import redact_secrets
 from aos.runtime_contract import ContinueProjectCommand, RuntimeResult, utc_now
 from aos.runtime_store import RuntimeStore, exclusive_file_lock, read_json
 from aos.secure_store import hydrate_environment
@@ -114,6 +121,28 @@ class PlanningArtifactWatcher(threading.Thread):
             self.stop_event.wait(0.5)
 
 
+def _safe_exception_message(exc: BaseException) -> str:
+    return redact_secrets(str(exc))[:1500]
+
+
+def _classify_exception(exc: BaseException) -> tuple[str, str]:
+    message = _safe_exception_message(exc).lower()
+    if isinstance(exc, (HumanRequired, AuthorityDenied, CanonicalDrift)):
+        return "HUMAN_REQUIRED", exc.__class__.__name__.upper()
+    canonical_markers = (
+        "missing required execution base sha",
+        "next_action_execution_base_sha",
+        "target base sha",
+        "canonical contradiction",
+        "canonical drift",
+    )
+    if any(marker in message for marker in canonical_markers):
+        return "HUMAN_REQUIRED", "CANONICAL_CONTRADICTION"
+    if isinstance(exc, FileNotFoundError):
+        return "FAILED", "READONLY_OR_RUNTIME_EXECUTABLE_MISSING"
+    return "FAILED", "RUNTIME_EXECUTION_FAILURE"
+
+
 def _terminal_state(disposition: str) -> str:
     if disposition == "PROJECT_COMPLETE":
         return "PROJECT_COMPLETE"
@@ -161,13 +190,14 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 "completed_batch_count": len(checkpoint.get("completed_batches", []) or []),
             })
 
-        hydrate_environment(overwrite=True)
         stop = threading.Event()
-        watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
-        watcher.start()
+        watcher: Optional[PlanningArtifactWatcher] = None
         receipt: Dict[str, Any] = {}
         cycle = 0
         try:
+            hydrate_environment(overwrite=True)
+            watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
+            watcher.start()
             while True:
                 cycle += 1
                 store.append_event(command_id, "continuation.cycle_started", {
@@ -250,26 +280,52 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 })
                 return result
         except BaseException as exc:
-            # SystemExit/KeyboardInterrupt are included because a detached worker may
-            # be terminated externally during restart proof. A hard process kill will
-            # skip this block; server recovery handles that case from durable state.
+            # Hard termination bypasses this block and is recovered from the durable
+            # checkpoint. Ordinary failures always become structured Runtime V1 IPC.
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
+            state, failure_class = _classify_exception(exc)
+            message = _safe_exception_message(exc)
+            failure_receipt = {
+                "reason": message,
+                "failure_class": failure_class,
+                "error_class": exc.__class__.__name__,
+                "structured_runtime_failure": True,
+            }
+            checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
+            completed = len(checkpoint.get("completed_batches", []) or [])
+            result = RuntimeResult(
+                command_id=command_id,
+                state=state,
+                disposition=state,
+                completed_batch_count=completed,
+                canonical_source_sha=checkpoint.get("canonical_source_sha"),
+                canonical_execution_base_sha=checkpoint.get("canonical_execution_base_sha"),
+                receipt=failure_receipt,
+            ).to_dict()
+            store.write_result(command_id, result)
             store.write_state(
                 command_id,
-                state="FAILED",
+                state=state,
+                disposition=state,
                 worker_pid=None,
                 error_class=exc.__class__.__name__,
-                error=str(exc)[:1500],
+                failure_class=failure_class,
+                error=message,
+                completed_batch_count=completed,
             )
-            store.append_event(command_id, "run.failed", {
+            store.append_event(command_id, "run.human_required" if state == "HUMAN_REQUIRED" else "run.failed", {
                 "error_class": exc.__class__.__name__,
-                "message": str(exc)[:1000],
+                "failure_class": failure_class,
+                "message": message[:1000],
             })
+            if state == "HUMAN_REQUIRED":
+                return result
             raise
         finally:
             stop.set()
-            watcher.join(timeout=2.0)
+            if watcher is not None:
+                watcher.join(timeout=2.0)
 
 
 def build_parser() -> argparse.ArgumentParser:
