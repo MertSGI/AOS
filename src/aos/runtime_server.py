@@ -221,6 +221,9 @@ class RuntimeEngine:
             "terminal_command_count": len(terminal),
             "latest_command": latest_summary,
             "default_project": self.config["default_project"],
+            "runtime_source_sha": self.config.get("candidate_source_sha"),
+            "runtime_asset_tree_sha256": self.config.get("runtime_asset_tree_sha256"),
+            "runtime_slot_root": self.config.get("runtime_slot_root"),
             "production": "NO_GO",
             "ag_backend_enabled": False,
         }
