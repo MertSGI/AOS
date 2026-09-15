@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from aos.autonomous_host import run_host
+from aos.planning_kernel import DEFAULT_GOAL, run_autonomous_project
 from aos.secure_store import hydrate_environment, provider_presence
 
 
@@ -111,12 +112,25 @@ def validate_job(job: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"Routing policy does not exist: {routing_policy}")
 
     plan = job.get("run_plan")
-    if not isinstance(plan, dict):
-        raise ValueError("Job requires embedded run_plan object")
-    if plan.get("schema_version") != "1.0.0":
-        raise ValueError("Embedded run_plan schema_version must be 1.0.0")
-    if not isinstance(plan.get("tasks"), list) or not plan["tasks"]:
-        raise ValueError("Embedded run_plan requires at least one task")
+    goal = job.get("goal")
+    has_plan = isinstance(plan, dict)
+    has_goal = isinstance(goal, str) and bool(goal.strip())
+    if has_plan == has_goal:
+        raise ValueError("Job must provide exactly one of run_plan or goal")
+    if has_plan:
+        if plan.get("schema_version") != "1.0.0":
+            raise ValueError("Embedded run_plan schema_version must be 1.0.0")
+        if not isinstance(plan.get("tasks"), list) or not plan["tasks"]:
+            raise ValueError("Embedded run_plan requires at least one task")
+    else:
+        if len(goal.strip()) > 8000:
+            raise ValueError("Goal is too long")
+        for key in ("constraints", "red_lines"):
+            value = job.get(key, [])
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                raise ValueError(f"{key} must be an array of strings")
+            if len(value) > 64:
+                raise ValueError(f"{key} has too many items")
 
     normalized = dict(job)
     normalized["descriptor_path"] = str(descriptor)
@@ -157,26 +171,41 @@ def process_one(job_path: Path, config: Dict[str, Any], runtime_root: Path) -> D
     job_id = job["job_id"]
     job_runtime = runtime_root / "jobs" / job_id
     job_runtime.mkdir(parents=True, exist_ok=True)
-    plan_path = job_runtime / "run-plan.json"
-    _atomic_json(plan_path, job["run_plan"])
-
-    receipt = run_host(
-        descriptor_path=Path(job["descriptor_path"]),
-        plan_path=plan_path,
-        workspace=Path(job["workspace"]),
-        runtime_dir=job_runtime / "host",
-        routing_policy_path=Path(job["routing_policy_path"]),
-        max_iterations=int(job.get("max_iterations", 20)),
-    )
+    if isinstance(job.get("run_plan"), dict):
+        plan_path = job_runtime / "run-plan.json"
+        _atomic_json(plan_path, job["run_plan"])
+        receipt = run_host(
+            descriptor_path=Path(job["descriptor_path"]),
+            plan_path=plan_path,
+            workspace=Path(job["workspace"]),
+            runtime_dir=job_runtime / "host",
+            routing_policy_path=Path(job["routing_policy_path"]),
+            max_iterations=int(job.get("max_iterations", 20)),
+        )
+        success = float(receipt.get("progress", 0.0)) >= 100.0 and not receipt.get("failed_task_ids")
+        status = "SUCCESS" if success else "HOLD_INCOMPLETE_OR_FAILED"
+        mode = "MANUAL_RUN_PLAN"
+    else:
+        receipt = run_autonomous_project(
+            descriptor_path=Path(job["descriptor_path"]),
+            workspace=Path(job["workspace"]),
+            runtime_dir=job_runtime / "autonomous",
+            routing_policy_path=Path(job["routing_policy_path"]),
+            goal=str(job.get("goal") or DEFAULT_GOAL),
+            constraints=tuple(job.get("constraints", [])),
+            red_lines=tuple(job.get("red_lines", [])) or tuple(),
+            max_batches=int(job.get("max_batches", 12)),
+            max_iterations_per_batch=int(job.get("max_iterations", 30)),
+        )
+        disposition = str(receipt.get("disposition", ""))
+        status = "SUCCESS" if disposition == "PROJECT_COMPLETE" else disposition or "HOLD_INCOMPLETE_OR_FAILED"
+        mode = "AUTONOMOUS_GOAL"
     result = {
         "schema_version": "1.0.0",
         "job_id": job_id,
         "processed_at": _utc_now(),
-        "status": (
-            "SUCCESS"
-            if float(receipt.get("progress", 0.0)) >= 100.0 and not receipt.get("failed_task_ids")
-            else "HOLD_INCOMPLETE_OR_FAILED"
-        ),
+        "status": status,
+        "mode": mode,
         "receipt": receipt,
         "production": "NO_GO",
         "ag_invocation_count": receipt.get("ag_invocation_count", 0),
@@ -218,6 +247,9 @@ def run_cycle(config_path: Path) -> Dict[str, Any]:
             if result["status"] == "SUCCESS":
                 destination = processed / job_path.name
                 state = "JOB_PROCESSED"
+            elif result["status"] in ("WAITING_FOR_REASONING_PROVIDER", "BOUNDED_RUN_EXHAUSTED"):
+                destination = processed / job_path.name
+                state = result["status"]
             else:
                 destination = failed / job_path.name
                 state = "JOB_HOLD"

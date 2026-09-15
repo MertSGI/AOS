@@ -47,7 +47,10 @@ small { color:#9eabb7; }
 a { color:#8ab4f8; }
 .providers-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; margin-top:12px; }
 .provider-box { border:1px solid #2b333c; border-radius:8px; padding:12px; background:#14191f; }
-input[type=password] { width:100%; box-sizing:border-box; background:#0d1014; color:#e8edf2; border:1px solid #36414c; border-radius:7px; padding:9px; margin:8px 0; }
+input[type=password], input[type=text], input[type=number] { width:100%; box-sizing:border-box; background:#0d1014; color:#e8edf2; border:1px solid #36414c; border-radius:7px; padding:9px; margin:8px 0; }
+.goal-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.goal-grid .wide { grid-column:1 / -1; }
+textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
 .danger { background:#5b2b32; color:#fff; margin-left:6px; }
 </style>
 </head>
@@ -96,15 +99,31 @@ input[type=password] { width:100%; box-sizing:border-box; background:#0d1014; co
 </div>
 
 <div class="card" style="margin-top:12px">
-  <div class="label">Submit bounded AOS job</div>
-  <p><small>This bridge accepts validated non-production job envelopes only. Natural-language Goal Mode will be enabled after canonical execution-base binding and provider readiness are complete.</small></p>
-  <textarea id="job" spellcheck="false" placeholder='Paste a validated *.aosjob.json envelope here'></textarea>
+  <div class="label">Autonomous Goal Mode</div>
+  <p><small>Normal mode requires no human-authored run plan. AOS fresh-reads canonical state, selects the next objective, generates its own DAG, executes, tests, fresh-reads and replans. Production remains NO_GO.</small></p>
+  <div class="goal-grid">
+    <div><small>Project descriptor</small><input id="goal-descriptor" type="text" placeholder="C:\\Projects\\AOS\\descriptors\\lari.autonomous-host.descriptor.json"></div>
+    <div><small>Workspace</small><input id="goal-workspace" type="text" placeholder="Local project workspace"></div>
+    <div class="wide"><small>Routing policy</small><input id="goal-policy" type="text" placeholder="C:\\Projects\\AOS\\descriptors\\nemotron.planner-policy.json"></div>
+    <div class="wide"><small>Goal</small><textarea class="goal" id="goal-text" spellcheck="true">Continue this project to completion under standing authority.</textarea></div>
+    <div><small>Constraints · one per line</small><textarea class="goal" id="goal-constraints" spellcheck="true"></textarea></div>
+    <div><small>Additional red lines · one per line</small><textarea class="goal" id="goal-redlines" spellcheck="true"></textarea></div>
+    <div><small>Max autonomous batches this invocation</small><input id="goal-batches" type="number" min="1" max="50" value="12"></div>
+  </div>
   <div style="margin-top:10px">
-    <button onclick="submitJob()">Submit to AOS</button>
+    <button onclick="submitGoal()">Start / Continue Autonomous Project</button>
     <button class="secondary" onclick="refreshStatus()">Refresh</button>
   </div>
-  <div id="message"></div>
+  <div id="goal-message"></div>
 </div>
+
+<details class="card" style="margin-top:12px">
+  <summary>Manual bounded run-plan override · debug/replay only</summary>
+  <p><small>This is not required for normal autonomous mode.</small></p>
+  <textarea id="job" spellcheck="false" placeholder='Paste a validated *.aosjob.json envelope here'></textarea>
+  <div style="margin-top:10px"><button onclick="submitJob()">Submit manual override</button></div>
+  <div id="message"></div>
+</details>
 </main>
 <script>
 const TOKEN = __AOS_TOKEN_JSON__;
@@ -120,6 +139,10 @@ async function refreshStatus() {
     const p = s.providers || {};
     document.getElementById('providers').textContent =
       ['NVIDIA','GEMINI','GROQ','OPENAI','OLLAMA'].map(k => `${k}: ${p[k] ? 'ready' : 'not ready'}`).join(' · ');
+    const d = s.default_project || {};
+    if (!document.getElementById('goal-descriptor').value && d.descriptor_path) document.getElementById('goal-descriptor').value = d.descriptor_path;
+    if (!document.getElementById('goal-workspace').value && d.workspace) document.getElementById('goal-workspace').value = d.workspace;
+    if (!document.getElementById('goal-policy').value && d.routing_policy_path) document.getElementById('goal-policy').value = d.routing_policy_path;
   } catch (e) {
     document.getElementById('host').textContent = 'PANEL_ERROR';
     document.getElementById('host').className = 'value hold';
@@ -155,6 +178,33 @@ async function clearProvider(provider) {
     out.textContent = provider + (data.deleted ? ' removed.' : ' had no stored credential.');
     await refreshStatus();
   } catch (e) { out.textContent = 'Provider clear failed: ' + e; }
+}
+
+async function submitGoal() {
+  const out = document.getElementById('goal-message');
+  const lines = id => document.getElementById(id).value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const payload = {
+    descriptor_path: document.getElementById('goal-descriptor').value.trim(),
+    workspace: document.getElementById('goal-workspace').value.trim(),
+    routing_policy_path: document.getElementById('goal-policy').value.trim(),
+    goal: document.getElementById('goal-text').value.trim(),
+    constraints: lines('goal-constraints'),
+    red_lines: lines('goal-redlines'),
+    max_batches: Number(document.getElementById('goal-batches').value || 12)
+  };
+  if (!payload.descriptor_path || !payload.workspace || !payload.routing_policy_path || !payload.goal) {
+    out.textContent = 'Descriptor, workspace, routing policy and goal are required.'; return;
+  }
+  try {
+    const r = await fetch('/api/goals', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-AOS-Panel-Token':TOKEN},
+      body:JSON.stringify(payload)
+    });
+    const data = await r.json();
+    out.textContent = JSON.stringify(data, null, 2);
+    await refreshStatus();
+  } catch (e) { out.textContent = 'Goal submission failed: ' + e; }
 }
 
 async function submitJob() {
@@ -239,6 +289,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "production": "NO_GO",
         "ag_backend_enabled": False,
         "providers": providers,
+        "default_project": config.get("default_project", {}),
     }
 
 
@@ -264,6 +315,34 @@ def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any
         "production": "NO_GO",
         "ag_backend_enabled": False,
     }
+
+
+def submit_goal(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    goal = payload.get("goal")
+    if not isinstance(goal, str) or not goal.strip():
+        raise ValueError("Goal is required")
+    if len(goal.strip()) > 8000:
+        raise ValueError("Goal is too long")
+    job = {
+        "schema_version": "1.0.0",
+        "job_id": "goal-" + secrets.token_hex(12),
+        "production": "NO_GO",
+        "ag_backend_enabled": False,
+        "descriptor_path": payload.get("descriptor_path"),
+        "workspace": payload.get("workspace"),
+        "routing_policy_path": payload.get("routing_policy_path"),
+        "goal": goal.strip(),
+        "constraints": payload.get("constraints", []),
+        "red_lines": payload.get("red_lines", []),
+        "max_batches": int(payload.get("max_batches", 12)),
+        "max_iterations": 30,
+    }
+    if not (1 <= job["max_batches"] <= 50):
+        raise ValueError("max_batches must be between 1 and 50")
+    result = submit_job(job, config)
+    result["mode"] = "AUTONOMOUS_GOAL"
+    result["run_plan_required"] = False
+    return result
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -317,7 +396,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/jobs", "/api/providers"):
+        if parsed.path not in ("/api/jobs", "/api/providers", "/api/goals"):
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
         if self.headers.get("X-AOS-Panel-Token") != self.token:
@@ -340,6 +419,10 @@ class _Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/providers":
                 result = configure_provider(payload)
                 self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/api/goals":
+                result = submit_goal(payload, self.config)
+                self._json(HTTPStatus.ACCEPTED, result)
                 return
             result = submit_job(payload, self.config)
             self._json(HTTPStatus.ACCEPTED, result)

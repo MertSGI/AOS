@@ -83,6 +83,7 @@ class ProviderAttemptStatus(str, Enum):
     UNAVAILABLE = "UNAVAILABLE"
     QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
     TIMED_OUT = "TIMED_OUT"
+    DENIED = "DENIED"
 
 
 @dataclass
@@ -514,9 +515,35 @@ def run_host(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AOS Autonomous Host V1 (Zero-AG, non-production)")
     parser.add_argument("--project", required=True, help="Project descriptor JSON")
-    parser.add_argument("--run-plan", required=True, help="Exact-source-bound autonomous run plan JSON")
-    parser.add_argument("--workspace", required=True, help="Authorized project workspace")
-    parser.add_argument("--runtime-dir", required=True, help="Durable AOS host state directory")
+    parser.add_argument(
+        "--run-plan",
+        help="Optional exact-source-bound manual run plan (debug/test/replay override only)",
+    )
+    parser.add_argument(
+        "--goal",
+        default="Continue this project to completion under standing authority.",
+        help="Natural-language autonomous project goal used when --run-plan is omitted",
+    )
+    parser.add_argument(
+        "--constraints-json",
+        default="[]",
+        help="JSON array of project constraints for autonomous mode",
+    )
+    parser.add_argument(
+        "--red-lines-json",
+        default="[]",
+        help="JSON array of additional red lines for autonomous mode",
+    )
+    parser.add_argument(
+        "--workspace",
+        default=".",
+        help="Authorized project workspace (defaults to current directory)",
+    )
+    parser.add_argument(
+        "--runtime-dir",
+        help="Durable AOS host state directory (defaults inside workspace)",
+    )
+    parser.add_argument("--max-batches", type=int, default=12)
     parser.add_argument(
         "--routing-policy",
         default="descriptors/nemotron.planner-policy.json",
@@ -529,14 +556,42 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        receipt = run_host(
-            descriptor_path=Path(args.project).resolve(),
-            plan_path=Path(args.run_plan).resolve(),
-            workspace=Path(args.workspace).resolve(),
-            runtime_dir=Path(args.runtime_dir).resolve(),
-            routing_policy_path=Path(args.routing_policy).resolve(),
-            max_iterations=args.max_iterations,
+        descriptor_path = Path(args.project).resolve()
+        workspace = Path(args.workspace).resolve()
+        runtime_dir = (
+            Path(args.runtime_dir).resolve()
+            if args.runtime_dir
+            else (workspace / ".aos-runtime" / "autonomous-project").resolve()
         )
+        routing_policy_path = Path(args.routing_policy).resolve()
+        if args.run_plan:
+            receipt = run_host(
+                descriptor_path=descriptor_path,
+                plan_path=Path(args.run_plan).resolve(),
+                workspace=workspace,
+                runtime_dir=runtime_dir,
+                routing_policy_path=routing_policy_path,
+                max_iterations=args.max_iterations,
+            )
+        else:
+            from aos.planning_kernel import DEFAULT_RED_LINES, run_autonomous_project
+            constraints = json.loads(args.constraints_json)
+            extra_red_lines = json.loads(args.red_lines_json)
+            if not isinstance(constraints, list) or not all(isinstance(x, str) for x in constraints):
+                raise ValueError("--constraints-json must be a JSON array of strings")
+            if not isinstance(extra_red_lines, list) or not all(isinstance(x, str) for x in extra_red_lines):
+                raise ValueError("--red-lines-json must be a JSON array of strings")
+            receipt = run_autonomous_project(
+                descriptor_path=descriptor_path,
+                workspace=workspace,
+                runtime_dir=runtime_dir,
+                routing_policy_path=routing_policy_path,
+                goal=args.goal,
+                constraints=tuple(constraints),
+                red_lines=tuple(DEFAULT_RED_LINES) + tuple(extra_red_lines),
+                max_batches=args.max_batches,
+                max_iterations_per_batch=args.max_iterations,
+            )
     except Exception as exc:
         print(f"AOS_HOST_HOLD: {_bounded_error_message(exc)}", file=sys.stderr)
         return 1
