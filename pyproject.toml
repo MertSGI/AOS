@@ -28,9 +28,18 @@ postgres = [
 
 [project.scripts]
 aos-validate = "aos.validate:main"
+aos-run = "aos.autonomous_host:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["aos*", "extensions"]
+
+[tool.setuptools.package-data]
+extensions = [
+    "autonomy-fabric/*.py",
+    "design-intelligence/*.py",
+    "model-fabric/*.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
