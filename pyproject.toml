@@ -29,6 +29,7 @@ postgres = [
 [project.scripts]
 aos-validate = "aos.validate:main"
 aos-run = "aos.autonomous_host:main"
+aos-coordinator = "aos.local_host:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]

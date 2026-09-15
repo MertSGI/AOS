@@ -31,3 +31,5 @@ Thumbs.db
 # Build artifacts
 *.egg-info/
 
+.aos-runtime/
+build/

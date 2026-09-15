@@ -120,6 +120,52 @@ def test_stale_run_plan_is_rejected(tmp_path):
         load_bound_run_plan(plan, "lari", "b" * 40)
 
 
+def test_stale_execution_base_run_plan_is_rejected(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        (
+            '{"schema_version":"1.0.0","project_id":"lari",'
+            '"bound_source_sha":"' + "a" * 40 + '",'
+            '"bound_execution_base_sha":"' + "c" * 40 + '",'
+            '"tasks":[{"node_id":"x","run_type":"TEST","authority_id":"AUTH"}]}'
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="bound_execution_base_sha"):
+        load_bound_run_plan(plan, "lari", "a" * 40, "b" * 40)
+
+
+def test_exact_execution_base_run_plan_is_accepted(tmp_path):
+    plan = tmp_path / "plan.json"
+    expected_base = "b" * 40
+    plan.write_text(
+        (
+            '{"schema_version":"1.0.0","project_id":"lari",'
+            '"bound_source_sha":"' + "a" * 40 + '",'
+            '"bound_execution_base_sha":"' + expected_base + '",'
+            '"tasks":[{"node_id":"x","run_type":"TEST","authority_id":"AUTH"}]}'
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_bound_run_plan(plan, "lari", "a" * 40, expected_base)
+    assert loaded["bound_execution_base_sha"] == expected_base
+
+
+def test_execution_base_binding_fails_closed_when_canonical_base_missing(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        (
+            '{"schema_version":"1.0.0","project_id":"lari",'
+            '"bound_source_sha":"' + "a" * 40 + '",'
+            '"bound_execution_base_sha":"' + "b" * 40 + '",'
+            '"tasks":[{"node_id":"x","run_type":"TEST","authority_id":"AUTH"}]}'
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="canonical source exposes no execution base"):
+        load_bound_run_plan(plan, "lari", "a" * 40)
+
+
 def test_dag_requires_live_authority():
     registry = AgentRunRegistry()
     plan = {

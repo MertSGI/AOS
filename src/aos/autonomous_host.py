@@ -365,6 +365,11 @@ def refresh_canonical_binding(descriptor_path: Path, binding_path: Path) -> Dict
     )
     if snapshot.get("has_ambiguity"):
         raise RuntimeError(f"Canonical source ambiguity: {snapshot.get('ambiguity_reasons', [])}")
+
+    execution_base_sha = snapshot.get("next_action_execution_base_sha")
+    if execution_base_sha:
+        adapter.resolve_exact_revision(execution_base_sha)
+
     binding = {
         "schema_version": "1.0.0",
         "verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -377,12 +382,18 @@ def refresh_canonical_binding(descriptor_path: Path, binding_path: Path) -> Dict
         "current_milestone": snapshot.get("current_milestone"),
         "canonical_next_action": snapshot.get("canonical_next_action"),
         "target_base_sha": snapshot.get("target_base_sha"),
+        "execution_base_sha": execution_base_sha,
     }
     _atomic_json_write(binding_path, binding)
     return binding
 
 
-def load_bound_run_plan(plan_path: Path, project_id: str, source_sha: str) -> Dict[str, Any]:
+def load_bound_run_plan(
+    plan_path: Path,
+    project_id: str,
+    source_sha: str,
+    execution_base_sha: Optional[str] = None,
+) -> Dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if plan.get("schema_version") != "1.0.0":
         raise ValueError("Autonomous host run plan schema_version must be 1.0.0")
@@ -390,6 +401,15 @@ def load_bound_run_plan(plan_path: Path, project_id: str, source_sha: str) -> Di
         raise ValueError("Run plan project_id does not match project descriptor")
     if plan.get("bound_source_sha") != source_sha:
         raise ValueError("Run plan is stale: bound_source_sha does not match fresh canonical source")
+    if execution_base_sha:
+        if plan.get("bound_execution_base_sha") != execution_base_sha:
+            raise ValueError(
+                "Run plan is stale: bound_execution_base_sha does not match fresh canonical execution base"
+            )
+    elif plan.get("bound_execution_base_sha"):
+        raise ValueError(
+            "Run plan declares bound_execution_base_sha but canonical source exposes no execution base"
+        )
     tasks = plan.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         raise ValueError("Run plan must contain at least one task")
@@ -456,6 +476,7 @@ def run_host(
         plan_path,
         canonical_binding["project_id"],
         canonical_binding["source_sha"],
+        canonical_binding.get("execution_base_sha"),
     )
 
     run_journal = FileRunJournal(str(runtime_dir / "run-events.jsonl"))
@@ -476,6 +497,7 @@ def run_host(
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "project_id": canonical_binding["project_id"],
         "canonical_source_sha": canonical_binding["source_sha"],
+        "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
         "completed_task_ids": state.completed_task_ids,
         "failed_task_ids": state.failed_task_ids,
         "iteration_count": state.iteration_count,

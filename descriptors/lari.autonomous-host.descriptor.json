@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "lari",
+  "repository": "MertSGI/Randapp-main",
+  "control_ref": "control/lari-project-control-plane",
+  "description": "LARİ autonomous-host descriptor with exact execution-base binding",
+  "control": {
+    "state": "docs/project-control/STATE.json",
+    "decisions": "docs/project-control/DECISIONS.md",
+    "evidence": "docs/project-control/EVIDENCE.jsonl",
+    "roadmap": "docs/project-control/ROADMAP_12W.md",
+    "ai_handoff": "docs/project-control/AI_HANDOFF.md",
+    "update_protocol": "docs/project-control/UPDATE_PROTOCOL.md"
+  },
+  "projection": {
+    "current_status_pointer": "/current_status",
+    "current_milestone_pointer": "/current_milestone",
+    "canonical_next_action_pointer": "/next_action",
+    "next_action_execution_base_sha_pointer": "/next_action_execution_base_sha",
+    "next_action_execution_base_sha_required": true
+  },
+  "authority": {
+    "production_mutation": "human_required",
+    "roadmap_change": "human_required",
+    "destructive_data": "human_required",
+    "security_boundary_change": "human_required",
+    "payment_activation": "human_required"
+  },
+  "workers": {
+    "branch_prefix": "aos/",
+    "isolated_worktree_required": true,
+    "max_concurrent_workers": 2
+  }
+}
