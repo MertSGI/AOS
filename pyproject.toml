@@ -30,6 +30,7 @@ postgres = [
 aos-validate = "aos.validate:main"
 aos-run = "aos.autonomous_host:main"
 aos-coordinator = "aos.local_host:main"
+aos-panel = "aos.control_panel:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
