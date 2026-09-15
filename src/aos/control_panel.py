@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
+from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -43,6 +44,11 @@ button { background:#e8edf2; color:#111418; border:0; border-radius:7px; padding
 button.secondary { background:#27313b; color:#e8edf2; margin-left:8px; }
 #message { margin-top:10px; white-space:pre-wrap; }
 small { color:#9eabb7; }
+a { color:#8ab4f8; }
+.providers-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; margin-top:12px; }
+.provider-box { border:1px solid #2b333c; border-radius:8px; padding:12px; background:#14191f; }
+input[type=password] { width:100%; box-sizing:border-box; background:#0d1014; color:#e8edf2; border:1px solid #36414c; border-radius:7px; padding:9px; margin:8px 0; }
+.danger { background:#5b2b32; color:#fff; margin-left:6px; }
 </style>
 </head>
 <body>
@@ -60,6 +66,35 @@ small { color:#9eabb7; }
   <div id="providers" class="value"></div>
   <small>AOS Direct does not consume Antigravity model quota. A reasoning provider is still required for autonomous free-text planning.</small>
 </div>
+
+<div class="card" style="margin-top:12px">
+  <div class="label">Provider settings · Windows Credential Manager</div>
+  <p><small>Secrets are stored only in your Windows user credential vault. They are never returned by this page, written to Git, or placed in AOS job JSON.</small></p>
+  <div class="providers-grid">
+    <div class="provider-box">
+      <strong>NVIDIA / Nemotron</strong> · <a href="https://ngc.nvidia.com/" target="_blank" rel="noreferrer">provider console</a>
+      <input id="key-NVIDIA" type="password" autocomplete="off" placeholder="Paste NVIDIA API key">
+      <button onclick="saveProvider('NVIDIA')">Save securely</button><button class="danger" onclick="clearProvider('NVIDIA')">Clear</button>
+    </div>
+    <div class="provider-box">
+      <strong>Gemini</strong> · <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">API keys</a>
+      <input id="key-GEMINI" type="password" autocomplete="off" placeholder="Paste Gemini API key">
+      <button onclick="saveProvider('GEMINI')">Save securely</button><button class="danger" onclick="clearProvider('GEMINI')">Clear</button>
+    </div>
+    <div class="provider-box">
+      <strong>Groq</strong> · <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">API keys</a>
+      <input id="key-GROQ" type="password" autocomplete="off" placeholder="Paste Groq API key">
+      <button onclick="saveProvider('GROQ')">Save securely</button><button class="danger" onclick="clearProvider('GROQ')">Clear</button>
+    </div>
+    <div class="provider-box">
+      <strong>OpenAI (optional)</strong> · <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">API keys</a>
+      <input id="key-OPENAI" type="password" autocomplete="off" placeholder="Paste OpenAI API key">
+      <button onclick="saveProvider('OPENAI')">Save securely</button><button class="danger" onclick="clearProvider('OPENAI')">Clear</button>
+    </div>
+  </div>
+  <div id="provider-message"></div>
+</div>
+
 <div class="card" style="margin-top:12px">
   <div class="label">Submit bounded AOS job</div>
   <p><small>This bridge accepts validated non-production job envelopes only. Natural-language Goal Mode will be enabled after canonical execution-base binding and provider readiness are complete.</small></p>
@@ -90,6 +125,38 @@ async function refreshStatus() {
     document.getElementById('host').className = 'value hold';
   }
 }
+
+async function saveProvider(provider) {
+  const input = document.getElementById('key-' + provider);
+  const out = document.getElementById('provider-message');
+  const secret = input.value.trim();
+  if (!secret) { out.textContent = 'Enter a key for ' + provider; return; }
+  try {
+    const r = await fetch('/api/providers', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-AOS-Panel-Token':TOKEN},
+      body:JSON.stringify({provider, secret, action:'save'})
+    });
+    const data = await r.json();
+    input.value = '';
+    out.textContent = data.ready ? provider + ' saved securely and is ready.' : JSON.stringify(data);
+    await refreshStatus();
+  } catch (e) { out.textContent = 'Provider save failed: ' + e; }
+}
+async function clearProvider(provider) {
+  const out = document.getElementById('provider-message');
+  try {
+    const r = await fetch('/api/providers', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-AOS-Panel-Token':TOKEN},
+      body:JSON.stringify({provider, action:'delete'})
+    });
+    const data = await r.json();
+    out.textContent = provider + (data.deleted ? ' removed.' : ' had no stored credential.');
+    await refreshStatus();
+  } catch (e) { out.textContent = 'Provider clear failed: ' + e; }
+}
+
 async function submitJob() {
   const out = document.getElementById('message');
   let payload;
@@ -123,15 +190,36 @@ def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _provider_presence() -> Dict[str, bool]:
-    result = {
-        "NVIDIA": bool(os.environ.get("NVIDIA_API_KEY")),
-        "GEMINI": bool(os.environ.get("GEMINI_API_KEY")),
-        "GROQ": bool(os.environ.get("GROQ_API_KEY")),
-        "OPENAI": bool(os.environ.get("OPENAI_API_KEY")),
-        "OLLAMA": False,
-    }
-    # Keep the panel network-free. Ollama readiness is projected from host status if available.
+    result = provider_presence()
+    result["OLLAMA"] = False
     return result
+
+
+def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
+    provider = str(payload.get("provider", "")).strip().upper()
+    action = str(payload.get("action", "save")).strip().lower()
+    if action == "save":
+        secret = payload.get("secret")
+        if not isinstance(secret, str):
+            raise ValueError("Provider secret is required")
+        write_provider_secret(provider, secret)
+        return {
+            "schema_version": "1.0.0",
+            "provider": provider,
+            "ready": True,
+            "stored": "WINDOWS_CREDENTIAL_MANAGER",
+            "secret_returned": False,
+        }
+    if action == "delete":
+        deleted = delete_provider_secret(provider)
+        return {
+            "schema_version": "1.0.0",
+            "provider": provider,
+            "deleted": bool(deleted),
+            "ready": False,
+            "secret_returned": False,
+        }
+    raise ValueError("Unsupported provider action")
 
 
 def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -229,7 +317,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/api/jobs":
+        if parsed.path not in ("/api/jobs", "/api/providers"):
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
         if self.headers.get("X-AOS-Panel-Token") != self.token:
@@ -248,7 +336,11 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
-                raise ValueError("Job body must be a JSON object")
+                raise ValueError("Request body must be a JSON object")
+            if parsed.path == "/api/providers":
+                result = configure_provider(payload)
+                self._json(HTTPStatus.OK, result)
+                return
             result = submit_job(payload, self.config)
             self._json(HTTPStatus.ACCEPTED, result)
         except Exception as exc:

@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from aos.control_panel import build_status, submit_job
+import aos.control_panel as control_panel
+from aos.control_panel import build_status, configure_provider, submit_job
 
 
 def _config(tmp_path: Path):
@@ -76,3 +77,29 @@ def test_build_status_is_fail_closed_and_ag_disabled(tmp_path, monkeypatch):
     assert status["production"] == "NO_GO"
     assert status["ag_backend_enabled"] is False
     assert status["host_state"] == "UNKNOWN"
+
+
+def test_configure_provider_never_returns_secret(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        control_panel,
+        "write_provider_secret",
+        lambda provider, secret: captured.update(provider=provider, secret=secret),
+    )
+    result = configure_provider({
+        "provider": "GEMINI",
+        "action": "save",
+        "secret": "super-secret-value",
+    })
+    assert captured == {"provider": "GEMINI", "secret": "super-secret-value"}
+    assert result["ready"] is True
+    assert result["secret_returned"] is False
+    assert "super-secret-value" not in repr(result)
+
+
+def test_configure_provider_delete(monkeypatch):
+    monkeypatch.setattr(control_panel, "delete_provider_secret", lambda provider: True)
+    result = configure_provider({"provider": "GROQ", "action": "delete"})
+    assert result["provider"] == "GROQ"
+    assert result["deleted"] is True
+    assert result["secret_returned"] is False

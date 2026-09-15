@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from aos.autonomous_host import run_host
+from aos.secure_store import hydrate_environment, provider_presence
 
 
 JOB_ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,96}$")
@@ -186,6 +187,9 @@ def process_one(job_path: Path, config: Dict[str, Any], runtime_root: Path) -> D
 
 def run_cycle(config_path: Path) -> Dict[str, Any]:
     config = load_config(config_path)
+    # Refresh provider credentials from the Windows user vault every cycle so
+    # rotations made through AOS Direct become effective without restarting.
+    hydrate_environment(overwrite=True)
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
     inbox = runtime_root / "inbox"
     processed = runtime_root / "processed"
@@ -204,6 +208,7 @@ def run_cycle(config_path: Path) -> Dict[str, Any]:
         "pending_jobs": len(jobs),
         "production": "NO_GO",
         "ag_backend_enabled": False,
+        "providers": provider_presence(),
     }
 
     if jobs:
