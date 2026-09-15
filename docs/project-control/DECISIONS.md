@@ -204,3 +204,20 @@ Human-critical categories requiring explicit human authorization include:
 
 Ordinary implementation failures, test failures, CI failures, worker timeouts, capability reprobes within budget, and routine retries do NOT by themselves require human intervention. Planner `human_gate_required` setting is advisory only; deterministic `HumanGatePolicy` owns the authoritative decision. Planner cannot downgrade `HUMAN_REQUIRED` or force unnecessary gates. Independent verification remains required to close tasks, and contradictions trigger `HOLD`.
 
+---
+
+## DECISION-028: Autonomous Zero-to-One-Hundred Project Operator Activation & Fabric Integration
+
+- **Date**: 2026-09-14
+- **Authority**: Zero-to-One-Hundred Project Autonomy Completion Directive / Standing Autonomy
+- **Outcome**: `AUTO_EXECUTE`
+- **Scope**:
+  1. `NATIVE_EXECUTION_FABRIC_V2`: Formally integrated into canonical `main` (`3c0e63d`). Deterministic native workers, execution router, persistent coordinator, and patch engine proven offline with zero-AG fallback capability (631 passed).
+  2. `NEMOTRON_3_MODEL_FABRIC_R3`: Source and offline runtime verified and integrated into canonical `main` (`0aad619`). Enforces strict JSON-RPC 2.0 version validation, separate structured specialist mode, hardened response contracts, and MCP service protocol (654 full regression passed, 23 targeted passed).
+     - *Caveat*: No live external NVIDIA API calls are certified. `NEMOTRON_LIVE_EXTERNAL_PROOF` and `NVIDIA_ENDPOINT_RUNTIME_PROVEN` remain strictly unproven until an authorized real API key is independently discovered and exercised in an authorized environment. Offline reasoning and alternative eligible providers remain primary.
+  3. `CONTROLLER_RELAY_VERCEL_PACKAGING`: Clean rebase prepared against `0aad619` (`b0bf518`), with all 164 relay unit tests passing offline. Published as reviewable candidate branch `candidate/controller-relay-rebased-main` on remote origin. Canonical remote branch `control/controller-relay` (`7e80378`) remains untouched. Live Vercel deployment and secret management remain `HUMAN_REQUIRED`.
+  4. `LARI_PROGRAM_V2_FRONTIER`: Observed canonical progress through Phase 5 unified acceptance (`EV-088`), Phase 6 Node 1 inventory foundation (`EV-092`), and Phase 6 Node 2 procurement and receiving (`EV-093`, CI run `34835325826` green across 20 steps). Product execution advances autonomously to Phase 6 Node 3.
+  5. `PRODUCTION_STATUS`: Remains `NO_GO` strictly fail-closed.
+
+
+
