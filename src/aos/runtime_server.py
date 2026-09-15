@@ -225,6 +225,7 @@ class RuntimeEngine:
             "runtime_asset_tree_sha256": self.config.get("runtime_asset_tree_sha256"),
             "runtime_slot_root": self.config.get("runtime_slot_root"),
             "runtime_slot_id": self.config.get("runtime_slot_id"),
+            "runtime_launch_nonce": os.environ.get("AOS_RUNTIME_LAUNCH_NONCE"),
             "production": "NO_GO",
             "ag_backend_enabled": False,
         }
@@ -339,6 +340,12 @@ def _load_runtime_token(config: Dict[str, Any]) -> str:
 
 def serve(config_path: Path) -> int:
     config = load_config(config_path)
+    env_slot = os.environ.get("AOS_RUNTIME_SLOT_ID")
+    env_sha = os.environ.get("AOS_RUNTIME_SOURCE_SHA")
+    if env_slot and config.get("runtime_slot_id") != env_slot:
+        raise ValueError("Runtime launch slot identity does not match config")
+    if env_sha and config.get("candidate_source_sha") != env_sha:
+        raise ValueError("Runtime launch source SHA does not match config")
     engine = RuntimeEngine(config)
     token = _load_runtime_token(config)
     server = ThreadingHTTPServer(("127.0.0.1", int(config["port"])), RuntimeHandler)
@@ -350,6 +357,9 @@ def serve(config_path: Path) -> int:
         "pid": os.getpid(),
         "started_at": utc_now(),
         "contract_version": CONTRACT_VERSION,
+        "runtime_source_sha": config.get("candidate_source_sha"),
+        "runtime_slot_id": config.get("runtime_slot_id"),
+        "runtime_launch_nonce": os.environ.get("AOS_RUNTIME_LAUNCH_NONCE"),
     })
     try:
         server.serve_forever(poll_interval=0.5)
