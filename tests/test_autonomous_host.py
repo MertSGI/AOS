@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import pytest
+import subprocess
 
 from aos.autonomous_host import (
     ProviderAttemptStatus,
     ProviderFailoverReasoningBackend,
+    assert_workspace_execution_lineage,
     build_dag,
     load_bound_run_plan,
 )
@@ -182,6 +184,34 @@ def test_execution_base_binding_fails_closed_when_canonical_base_missing(tmp_pat
     )
     with pytest.raises(ValueError, match="canonical source exposes no execution base"):
         load_bound_run_plan(plan, "lari", "a" * 40)
+
+
+def test_workspace_execution_lineage_accepts_base_and_descendant_but_rejects_divergence(tmp_path):
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q")
+    git("config", "user.email", "aos-test@example.invalid")
+    git("config", "user.name", "AOS Test")
+    (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
+    git("add", "base.txt")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    assert assert_workspace_execution_lineage(tmp_path, base) == base
+
+    (tmp_path / "child.txt").write_text("child\n", encoding="utf-8")
+    git("add", "child.txt")
+    git("commit", "-q", "-m", "child")
+    child = git("rev-parse", "HEAD")
+    assert assert_workspace_execution_lineage(tmp_path, base) == child
+
+    git("checkout", "-q", "--orphan", "divergent")
+    git("rm", "-q", "-rf", ".")
+    (tmp_path / "other.txt").write_text("other\n", encoding="utf-8")
+    git("add", "other.txt")
+    git("commit", "-q", "-m", "other")
+    with pytest.raises(ValueError, match="not bound to canonical execution lineage"):
+        assert_workspace_execution_lineage(tmp_path, base)
 
 
 def test_dag_requires_live_authority():

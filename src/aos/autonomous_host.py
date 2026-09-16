@@ -15,6 +15,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -424,6 +425,31 @@ def load_bound_run_plan(
     return plan
 
 
+def assert_workspace_execution_lineage(workspace: Path, execution_base_sha: Optional[str]) -> str:
+    """Fail closed unless the managed workspace is the canonical base or its descendant."""
+    try:
+        actual_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True, stderr=subprocess.STDOUT
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(f"Managed workspace HEAD is unavailable: {exc}") from exc
+    if not execution_base_sha or actual_sha == execution_base_sha:
+        return actual_sha
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", execution_base_sha, actual_sha],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise ValueError(
+            "Managed workspace is not bound to canonical execution lineage: "
+            f"expected base {execution_base_sha}, actual HEAD {actual_sha}"
+        )
+    return actual_sha
+
+
 def build_dag(project_id: str, registry: AgentRunRegistry, plan: Dict[str, Any]) -> TaskDAG:
     dag = TaskDAG(project_id, registry)
     for item in plan["tasks"]:
@@ -480,6 +506,7 @@ def run_host(
     canonical_binding = refresh_canonical_binding(
         descriptor_path, runtime_dir / "canonical-binding.json"
     )
+    assert_workspace_execution_lineage(workspace, canonical_binding.get("execution_base_sha"))
     plan = load_bound_run_plan(
         plan_path,
         canonical_binding["project_id"],

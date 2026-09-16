@@ -71,6 +71,11 @@ DEFAULT_RED_LINES = (
 
 _MUTATING_RUN_TYPES = {"FILE", "PROCESS", "GIT", "BUILD"}
 _ALLOWED_RUN_TYPES = {"FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING"}
+_ALLOWED_GIT_ACTIONS = {
+    "status", "diff", "log", "show", "rev-parse", "branch", "remote", "ls-files",
+    "fetch", "add", "commit", "push", "checkout", "switch", "tag", "merge",
+    "cherry-pick", "restore", "worktree",
+}
 _DANGEROUS_PATTERNS = (
     r"\bforce[- ]?push\b",
     r"\bpush\b[^\n]*\s--force(?:-with-lease)?\b",
@@ -251,7 +256,51 @@ PLAN_SCHEMA: Dict[str, Any] = {
                     "dependencies": {"type": "array", "items": {"type": "string"}},
                     "scope_tags": {"type": "array", "items": {"type": "string"}},
                     "write_scope": {"type": "array", "items": {"type": "string"}},
-                    "payload": {"type": "object", "minProperties": 1},
+                    "payload": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "additionalProperties": False,
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": sorted(
+                                    _ALLOWED_GIT_ACTIONS
+                                    | {"read_file", "write_file", "apply_patch", "observe_run"}
+                                ),
+                            },
+                            "args": {"type": "array", "items": {"type": "string"}},
+                            "cmd": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {"type": "string"},
+                            },
+                            "env": {"type": "object", "additionalProperties": {"type": "string"}},
+                            "path": {"type": "string"},
+                            "content": {"type": "string"},
+                            "precondition_sha": {"type": "string"},
+                            "patch": {"type": "string"},
+                            "precondition_shas": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "allow_deletion": {"type": "boolean", "enum": [False]},
+                            "sha": {"type": "string"},
+                            "repo": {"type": "string"},
+                            "url": {"type": "string"},
+                            "run_id": {"type": "string"},
+                            "prompt": {"type": "string"},
+                            "schema": {"type": "object"},
+                            "risk_class": {"type": "string"},
+                            "ignore_credentials": {"type": "boolean"},
+                        },
+                        "anyOf": [
+                            {"required": ["action"]},
+                            {"required": ["cmd"]},
+                            {"required": ["sha"]},
+                            {"required": ["url"]},
+                            {"required": ["prompt", "schema"]},
+                        ],
+                    },
                     "expected_artifacts": {"type": "array", "items": {"type": "string"}},
                     "tests": {"type": "array", "items": {"type": "string"}},
                     "evidence_requirements": {"type": "array", "items": {"type": "string"}},
@@ -964,17 +1013,19 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
         action = payload.get("action")
         if action not in ("read_file", "write_file", "apply_patch"):
             raise PlanningKernelError(f"Task {node_id} FILE payload has unsupported action")
-        if action in ("read_file", "write_file") and not isinstance(payload.get("path"), str):
+        if action in ("read_file", "write_file") and not str(payload.get("path", "")).strip():
             raise PlanningKernelError(f"Task {node_id} FILE {action} payload requires path")
         if action == "write_file" and not isinstance(payload.get("content"), str):
             raise PlanningKernelError(f"Task {node_id} FILE write_file payload requires content")
-        if action == "apply_patch" and not isinstance(payload.get("patch"), str):
+        if action == "apply_patch" and not str(payload.get("patch", "")).strip():
             raise PlanningKernelError(f"Task {node_id} FILE apply_patch payload requires patch")
         return
 
     if run_type in ("PROCESS", "TEST", "BUILD"):
         cmd = payload.get("cmd")
-        if not isinstance(cmd, list) or not cmd or not all(isinstance(arg, str) and arg for arg in cmd):
+        if not isinstance(cmd, list) or not cmd or not all(
+            isinstance(arg, str) and arg and arg == arg.strip() for arg in cmd
+        ):
             raise PlanningKernelError(f"Task {node_id} {run_type} payload requires non-empty string argv cmd")
         binary = Path(cmd[0]).name.lower()
         if binary.endswith(".exe"):
@@ -991,11 +1042,16 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
         args = payload.get("args", [])
         if not isinstance(action, str) or not action.strip():
             raise PlanningKernelError(f"Task {node_id} GIT payload requires action")
-        if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        action = action.strip().lower()
+        if action not in _ALLOWED_GIT_ACTIONS:
+            raise PlanningKernelError(f"Task {node_id} requests unsupported git action: {action}")
+        if not isinstance(args, list) or not all(
+            isinstance(arg, str) and arg == arg.strip() for arg in args
+        ):
             raise PlanningKernelError(f"Task {node_id} GIT payload args must be a string array")
-        if action.lower() in NativeGitWorker.PROHIBITED_SUBCOMMANDS:
+        if action in NativeGitWorker.PROHIBITED_SUBCOMMANDS:
             raise PlanningKernelError(f"Task {node_id} requests prohibited git action: {action}")
-        if action.lower() == "push" and any(
+        if action == "push" and any(
             arg in ("--force", "-f", "--force-with-lease", "--force-if-includes")
             or arg.startswith("--force=")
             or arg.startswith("--force-with-lease=")
@@ -1004,12 +1060,12 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
             raise PlanningKernelError(f"Task {node_id} requests prohibited force push")
         return
 
-    if run_type == "CI" and not isinstance(payload.get("sha"), str):
+    if run_type == "CI" and not str(payload.get("sha", "")).strip():
         raise PlanningKernelError(f"Task {node_id} CI payload requires explicit sha")
-    if run_type == "BROWSER" and not isinstance(payload.get("url"), str):
+    if run_type == "BROWSER" and not str(payload.get("url", "")).strip():
         raise PlanningKernelError(f"Task {node_id} BROWSER payload requires url")
     if run_type == "MODEL_REASONING":
-        if not isinstance(payload.get("prompt"), str) or not isinstance(payload.get("schema"), dict):
+        if not str(payload.get("prompt", "")).strip() or not isinstance(payload.get("schema"), dict):
             raise PlanningKernelError(f"Task {node_id} MODEL_REASONING payload requires prompt and schema")
 
 
@@ -1055,11 +1111,37 @@ def compile_execution_plan(
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
-    proposal = _reason(
-        situation, routing_policy_path, runtime_dir, "plan-dag", prompt, PLAN_SCHEMA,
-        objective.authority_id, backend_override=backend_override,
-    )
-    normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+    proposal: Dict[str, Any] = {}
+    normalized: Optional[Dict[str, Any]] = None
+    for attempt in range(2):
+        attempt_prompt = prompt
+        if attempt:
+            attempt_prompt += (
+                "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
+                "Return a corrected full plan; do not repeat the defect.\n"
+                f"VALIDATION_ERROR={validation_error}\n"
+                f"PREVIOUS_INVALID_PLAN={json.dumps(proposal, ensure_ascii=False, sort_keys=True)[:6000]}"
+            )
+        proposal = _reason(
+            situation,
+            routing_policy_path,
+            runtime_dir,
+            "plan-dag" if attempt == 0 else "plan-dag-repair",
+            attempt_prompt,
+            PLAN_SCHEMA,
+            objective.authority_id,
+            backend_override=backend_override,
+        )
+        try:
+            normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+            break
+        except PlanningKernelError as exc:
+            if attempt:
+                raise
+            validation_error = redact_secrets(str(exc))[:500]
+
+    if normalized is None:  # pragma: no cover - loop either succeeds or raises
+        raise PlanningKernelError("Execution plan validation did not produce a plan")
     resolver = CanonicalAuthorityResolver(situation)
     for task in normalized["tasks"]:
         resolver.validate_task(task)

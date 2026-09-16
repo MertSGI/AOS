@@ -16,6 +16,7 @@ from aos.planning_kernel import (
     _situation_prompt_payload,
     _validate_plan_shape,
     _worker_contract_summary,
+    compile_execution_plan,
     detect_completion,
     run_autonomous_project,
 )
@@ -151,7 +152,9 @@ def test_plan_schema_constrains_canonical_run_types():
         "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING",
     }
     assert "NATIVE_PROCESS" not in run_type["enum"]
-    assert PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["payload"]["minProperties"] == 1
+    payload = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["payload"]
+    assert payload["minProperties"] == 1
+    assert {"action", "cmd", "sha", "url", "prompt"}.issubset(payload["properties"])
 
 
 def test_canonical_excerpt_prioritizes_state_and_roadmap_over_large_history():
@@ -169,14 +172,21 @@ def test_canonical_excerpt_prioritizes_state_and_roadmap_over_large_history():
 
 @pytest.mark.parametrize(
     ("run_type", "payload"),
-    [("GIT", {}), ("GIT", {"args": []}), ("PROCESS", {}), ("PROCESS", {"cmd": []})],
+    [
+        ("GIT", {}),
+        ("GIT", {"args": []}),
+        ("GIT", {"action": "git", "args": ["status"]}),
+        ("PROCESS", {}),
+        ("PROCESS", {"cmd": []}),
+        ("PROCESS", {"cmd": ["python", " -c", "print('bad option spacing')"]}),
+    ],
 )
 def test_plan_rejects_non_executable_worker_payload(run_type, payload):
     plan = _plan()
     plan["tasks"][0]["run_type"] = run_type
     plan["tasks"][0]["payload"] = payload
 
-    with pytest.raises(Exception, match="payload|cmd"):
+    with pytest.raises(Exception, match="payload|cmd|git action"):
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
@@ -190,6 +200,23 @@ def test_plan_rejects_git_force_with_lease_payload():
 
     with pytest.raises(Exception, match="force push"):
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
+
+
+def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {}
+    backend = QueueBackend([invalid, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"][0] == "python"
+    assert backend.calls == 2
 
 
 def test_arbitrary_authority_id_is_rejected():
