@@ -98,9 +98,9 @@ _SECRET_KEYS = {
     "password", "passwd", "secret", "api_key", "apikey", "access_token",
     "refresh_token", "private_key", "client_secret", "authorization", "bearer_token",
 }
-_SYNTHETIC_BOOKKEEPING_ARTIFACTS = (
-    "next_action.txt",
-    "next-action.txt",
+_SYNTHETIC_BOOKKEEPING_STEMS = (
+    "next_action",
+    "next-action",
     "completion_marker",
     "completion-marker",
     "status_marker",
@@ -1070,8 +1070,9 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
             raise PlanningKernelError(f"Task {node_id} payload must be object")
         _validate_worker_payload(node_id, run_type, task["payload"])
         if run_type == "FILE" and task["mutating"]:
-            payload_text = json.dumps(task["payload"], ensure_ascii=False, sort_keys=True).lower()
-            if any(marker in payload_text for marker in _SYNTHETIC_BOOKKEEPING_ARTIFACTS):
+            target_name = Path(str(task["payload"].get("path", "")).replace("\\", "/")).name.lower()
+            target_stem = target_name.split(".", 1)[0]
+            if target_name in _SYNTHETIC_BOOKKEEPING_STEMS or target_stem in _SYNTHETIC_BOOKKEEPING_STEMS:
                 raise PlanningKernelError(
                     f"Task {node_id} attempts to create a synthetic bookkeeping artifact"
                 )
@@ -1520,10 +1521,18 @@ def run_autonomous_project(
             return result
 
         if recent_receipt:
-            completion = detect_completion(
-                situation, routing_policy_path, runtime_dir, recent_receipt,
-                backend_override=backend_override,
-            )
+            try:
+                completion = detect_completion(
+                    situation, routing_policy_path, runtime_dir, recent_receipt,
+                    backend_override=backend_override,
+                )
+            except WaitingForReasoningProvider as exc:
+                result = _final_result(
+                    situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
+                    recent_receipt, runtime_dir,
+                )
+                _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
+                return result
             if completion["disposition"] == "PROJECT_COMPLETE":
                 result = _final_result(
                     situation, batch_number, completed_batches, "PROJECT_COMPLETE", completion.get("rationale", ""),

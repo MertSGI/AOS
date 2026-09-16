@@ -243,13 +243,14 @@ def test_mutating_file_plan_requires_and_honors_write_scope():
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
-def test_mutating_file_plan_rejects_synthetic_next_action_artifact():
+@pytest.mark.parametrize("path", ["notes/next_action.txt", "NEXT_ACTION.md", "notes/status-marker.json"])
+def test_mutating_file_plan_rejects_synthetic_next_action_artifact(path):
     plan = _plan()
     plan["tasks"][0].update({
         "run_type": "FILE",
         "mutating": True,
-        "payload": {"action": "write_file", "path": "notes/next_action.txt", "content": "done"},
-        "write_scope": ["notes"],
+        "payload": {"action": "write_file", "path": path, "content": "done"},
+        "write_scope": [str(Path(path).parent).replace(".", "") or path],
     })
 
     with pytest.raises(Exception, match="synthetic bookkeeping"):
@@ -559,6 +560,50 @@ def test_provider_wait_retry_skips_duplicate_objective_reasoning(tmp_path):
 
     assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
     assert backend.calls == 1
+
+
+def test_completion_provider_wait_is_durable_not_terminal_failure(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    receipt = {
+        "progress": 100.0,
+        "completed_task_ids": ["already-complete"],
+        "failed_task_ids": [],
+        "ag_invocation_count": 0,
+        "production": "NO_GO",
+    }
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "BATCH_COMPLETE",
+        "batch_number": 1,
+        "completed_batches": [{"batch_number": 0, "receipt": receipt}],
+        "last_receipt": receipt,
+    }), encoding="utf-8")
+
+    class WaitingBackend:
+        def execute(self, request):
+            return SimpleNamespace(
+                status="WAITING_FOR_REASONING_PROVIDER",
+                evidence_payload={"failure_class": "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"},
+            )
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=WaitingBackend(),
+        situation_factory=lambda **kwargs: situation,
+        batch_executor=lambda **kwargs: pytest.fail("must not execute"),
+        max_batches=1,
+    )
+
+    checkpoint = json.loads((runtime / "planning-kernel-checkpoint.json").read_text(encoding="utf-8"))
+    assert result["disposition"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert result["completed_batch_count"] == 1
+    assert checkpoint["phase"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert checkpoint["last_receipt"]["completed_task_ids"] == ["already-complete"]
 
 
 def test_restart_resumes_active_generated_plan_without_regenerating_it(tmp_path):
