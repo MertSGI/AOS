@@ -56,6 +56,7 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
 
 
 SCHEMA_VERSION = "1.0.0"
+PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 6500
 DEFAULT_GOAL = "Continue this project to completion under standing authority."
 DEFAULT_RED_LINES = (
     "production activation",
@@ -689,7 +690,10 @@ def _available_process_binaries() -> List[str]:
     return sorted(binary for binary in NativeProcessWorker.ALLOWED_BINARIES if shutil.which(binary))
 
 
-def _bounded_prompt_excerpt(excerpt: str, max_chars: int = 8000) -> str:
+def _bounded_prompt_excerpt(
+    excerpt: str,
+    max_chars: int = PLANNER_CANONICAL_EXCERPT_MAX_CHARS,
+) -> str:
     """Project a large canonical excerpt into a deterministic bounded prompt.
 
     The full canonical artifact remains durable and all authority checks continue

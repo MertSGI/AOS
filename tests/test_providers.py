@@ -645,7 +645,7 @@ class TestGroqSchemaAndCompletion:
         assert proposal["payload"]["cmd"] == ["python", "-V"]
         call = mock_client.chat.completions.create.call_args.kwargs
         assert call["response_format"] == {"type": "json_object"}
-        assert call["max_tokens"] == 1800
+        assert call["max_tokens"] == 2200
         assert "AOS will validate it locally" in call["messages"][0]["content"]
 
     def test_groq_json_object_fallback_fails_closed_on_canonical_schema_violation(self, monkeypatch):

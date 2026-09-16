@@ -130,7 +130,7 @@ def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
 
     projected = _situation_prompt_payload(situation)
 
-    assert len(projected["canonical_excerpt"]) <= 8000
+    assert len(projected["canonical_excerpt"]) <= 6500
     assert projected["canonical_excerpt_chars"] == len(large_excerpt)
     assert projected["canonical_excerpt_sha256"] == hashlib.sha256(large_excerpt.encode()).hexdigest()
     assert situation.canonical_excerpt == large_excerpt
