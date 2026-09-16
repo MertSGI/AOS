@@ -10,6 +10,7 @@ from aos.planning_kernel import (
     AuthorityDenied,
     CanonicalAuthorityResolver,
     Objective,
+    PLAN_SCHEMA,
     ProjectSituation,
     _situation_prompt_payload,
     _worker_contract_summary,
@@ -137,6 +138,17 @@ def test_worker_contract_summary_is_compact_and_complete():
     assert len(summary) < 5000
     assert all(name in summary for name in ("NativeFileWorker", "NativeProcessWorker", "NativeGitWorker"))
     assert "force push" in summary
+    assert '"run_type":"FILE"' in summary
+    assert '"run_type":"PROCESS"' in summary
+    assert '"run_type":"GIT"' in summary
+
+
+def test_plan_schema_constrains_canonical_run_types():
+    run_type = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["run_type"]
+    assert set(run_type["enum"]) == {
+        "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING",
+    }
+    assert "NATIVE_PROCESS" not in run_type["enum"]
 
 
 def test_arbitrary_authority_id_is_rejected():

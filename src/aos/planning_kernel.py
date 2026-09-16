@@ -244,7 +244,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
                 ],
                 "properties": {
                     "node_id": {"type": "string"},
-                    "run_type": {"type": "string"},
+                    "run_type": {"type": "string", "enum": sorted(_ALLOWED_RUN_TYPES)},
                     "authority_id": {"type": "string"},
                     "risk_class": {"type": "string"},
                     "mutating": {"type": "boolean"},
@@ -522,6 +522,7 @@ def _worker_contract_summary() -> str:
     return json.dumps(
         {
             "NativeFileWorker": {
+                "run_type": "FILE",
                 "actions": {
                     "read_file": {"path": "workspace-relative string"},
                     "write_file": {
@@ -538,11 +539,13 @@ def _worker_contract_summary() -> str:
                 "safety": "workspace confinement and declared write_scope are enforced",
             },
             "NativeProcessWorker": {
+                "run_type": "PROCESS",
                 "payload": {"cmd": "non-empty argv array", "env": "non-secret string map"},
                 "allowed_binaries": sorted(NativeProcessWorker.ALLOWED_BINARIES),
                 "safety": "shell=False; bounded timeout; clean environment",
             },
             "NativeGitWorker": {
+                "run_type": "GIT",
                 "payload": {"action": "git subcommand", "args": "argv array"},
                 "prohibited_subcommands": sorted(NativeGitWorker.PROHIBITED_SUBCOMMANDS),
                 "safety": "force push and prohibited subcommands are denied",
