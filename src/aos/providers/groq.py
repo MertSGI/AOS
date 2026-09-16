@@ -12,6 +12,7 @@ from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTra
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
 GROQ_MAX_OUTPUT_TOKENS = 2200
+GROQ_PLAN_MAX_OUTPUT_TOKENS = 3200
 GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS = 1000
 GROQ_COMPLETION_MAX_OUTPUT_TOKENS = 600
 
@@ -26,6 +27,8 @@ def groq_max_output_tokens(schema: Dict[str, Any]) -> int:
         return GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS
     if {"disposition", "satisfied_criteria", "unsatisfied_criteria"}.issubset(keys):
         return GROQ_COMPLETION_MAX_OUTPUT_TOKENS
+    if {"objective_id", "tasks", "parallel_safe_groups"}.issubset(keys):
+        return GROQ_PLAN_MAX_OUTPUT_TOKENS
     return GROQ_MAX_OUTPUT_TOKENS
 
 

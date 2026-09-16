@@ -175,6 +175,7 @@ def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, m
 
 
 def test_plan_schema_constrains_canonical_run_types():
+    assert PLAN_SCHEMA["properties"]["tasks"]["maxItems"] == 4
     run_type = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["run_type"]
     assert set(run_type["enum"]) == {
         "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING",

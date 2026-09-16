@@ -254,6 +254,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
         "objective_id": {"type": "string"},
         "tasks": {
             "type": "array",
+            "maxItems": 4,
             "items": {
                 "type": "object",
                 "required": [
@@ -1230,7 +1231,7 @@ def compile_execution_plan(
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
         "Every task payload MUST be non-empty and executable as-is; never emit placeholder or omitted worker arguments. "
         "Never create bookkeeping, status, next_action, or completion marker files; tasks must advance or verify canonical product work. "
-        "Prefer small meaningful batches, explicit tests/evidence, safe parallelism, and rollback where relevant. "
+        "Use at most four concise tasks in one small meaningful batch, with concise tests/evidence and safe parallelism. "
         "Every task requires a canonical authority_id. Never emit production, force-push, history rewrite, destructive, secret, payment, "
         "legal/compliance, or material trust/security changes. Do not invent evidence. "
         "The top-level schema_version MUST be the exact string \"1.0.0\". Return exactly the requested JSON.\n\n"
