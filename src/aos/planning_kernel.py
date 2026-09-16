@@ -633,7 +633,7 @@ def _worker_contract_summary() -> str:
                 "run_type": "PROCESS",
                 "payload": {"cmd": "non-empty argv array", "env": "non-secret string map"},
                 "allowed_binaries": sorted(NativeProcessWorker.ALLOWED_BINARIES),
-                "safety": "non-mutating verification only; shell=False; no inline -c/-e interpreter code; bounded timeout; clean environment",
+                "safety": "non-mutating verification only; shell=False; Python -c and -m are forbidden; invoke an available binary directly or pass Python an existing workspace-relative script path; bounded timeout; clean environment",
             },
             "NativeGitWorker": {
                 "run_type": "GIT",
@@ -1450,7 +1450,8 @@ def compile_execution_plan(
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
         f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
         "PROCESS_BINARY_RULE=Use PROCESS/TEST/BUILD only when cmd[0] is listed in AVAILABLE_PROCESS_BINARIES; "
-        "an allowlisted but unavailable binary is not executable and must not be planned.\n"
+        "an allowlisted but unavailable binary is not executable and must not be planned. Never use python -c or "
+        "python -m; Python may only receive an existing workspace-relative script path.\n"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
@@ -1488,6 +1489,26 @@ def compile_execution_plan(
             if workspace is not None:
                 workspace_root = workspace.resolve()
                 tasks_by_id = {task["node_id"]: task for task in normalized["tasks"]}
+                for task in normalized["tasks"]:
+                    if task["run_type"] not in ("PROCESS", "TEST", "BUILD"):
+                        continue
+                    cmd = task["payload"]["cmd"]
+                    binary = Path(str(cmd[0])).name.lower().removesuffix(".exe")
+                    if binary not in ("python", "py"):
+                        continue
+                    if len(cmd) < 2 or str(cmd[1]).startswith("-"):
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} Python payload requires an existing workspace-relative script"
+                        )
+                    script = (workspace_root / str(cmd[1])).resolve()
+                    if script != workspace_root and workspace_root not in script.parents:
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} Python script escapes managed workspace"
+                        )
+                    if not script.is_file():
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} Python script does not exist: {cmd[1]}"
+                        )
 
                 def dependency_ancestors(task: Mapping[str, Any]) -> set[str]:
                     ancestors: set[str] = set()

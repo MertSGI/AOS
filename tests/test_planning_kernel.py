@@ -111,7 +111,7 @@ def _plan():
                 "dependencies": [],
                 "scope_tags": ["LARI"],
                 "write_scope": [],
-                "payload": {"cmd": ["python", "verify.py"]},
+                "payload": {"cmd": ["git", "diff", "--check"]},
                 "expected_artifacts": [],
                 "tests": ["self"],
                 "evidence_requirements": ["exit zero"],
@@ -181,6 +181,7 @@ def test_worker_contract_summary_is_compact_and_complete():
     assert '"run_type":"FILE"' in summary
     assert '"run_type":"PROCESS"' in summary
     assert '"run_type":"GIT"' in summary
+    assert "Python -c and -m are forbidden" in summary
 
 
 def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, monkeypatch):
@@ -484,7 +485,7 @@ def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_pa
         backend_override=backend,
     )
 
-    assert result["tasks"][0]["payload"]["cmd"][0] == "python"
+    assert result["tasks"][0]["payload"]["cmd"][0] == "git"
     assert backend.calls == 2
 
 
@@ -533,7 +534,25 @@ def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_pa
         backend_override=backend,
     )
 
-    assert result["tasks"][0]["payload"]["cmd"][0] == "python"
+    assert result["tasks"][0]["payload"]["cmd"][0] == "git"
+    assert backend.calls == 2
+
+
+def test_plan_compiler_repairs_invented_python_script_path(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "missing-verifier.py"]}
+    backend = QueueBackend([invalid, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"] == ["git", "diff", "--check"]
     assert backend.calls == 2
 
 
