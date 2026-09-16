@@ -107,3 +107,41 @@ def test_same_latest_evidence_with_two_product_shas_remains_ambiguous(tmp_path: 
 
     with pytest.raises(CanonicalReconciliationError):
         derive_latest_accepted_product_sha(control, product)
+
+
+def test_fresh_no_checkout_clone_is_checked_only_after_exact_checkout(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init")
+    _commit(source, "STATE.json", '{"current_status":"ACTIVE","current_milestone":"TEST","next_action":"continue"}')
+    _git(source, "branch", "control/test")
+    expected = _git(source, "rev-parse", "control/test")
+
+    real_run = cr._run
+
+    def redirected_run(cmd, *, cwd, check=True, timeout=300):
+        cmd = list(cmd)
+        if len(cmd) >= 5 and cmd[:3] == ["git", "clone", "--no-checkout"]:
+            cmd[3] = str(source)
+        return real_run(cmd, cwd=cwd, check=check, timeout=timeout)
+
+    monkeypatch.setattr(cr, "_run", redirected_run)
+
+    runtime_dir = tmp_path / "runtime"
+    scratch = runtime_dir / "canonical-reconciliation" / "control"
+    scratch.mkdir(parents=True)
+    (scratch / "stale.txt").write_text("stale", encoding="utf-8")
+
+    control, observed = cr._ensure_control_clone(
+        "example/example",
+        "control/test",
+        runtime_dir,
+    )
+
+    assert observed == expected
+    assert control == scratch.resolve()
+    assert not (control / "stale.txt").exists()
+    assert _git(control, "status", "--porcelain=v1", "--untracked-files=all") == ""
+    assert _git(control, "rev-parse", "HEAD") == expected

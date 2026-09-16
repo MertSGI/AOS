@@ -192,27 +192,36 @@ def bind_missing_execution_base(state: Mapping[str, Any], base_sha: str) -> Tupl
 
 
 def _ensure_control_clone(repository: str, control_ref: str, runtime_dir: Path) -> Tuple[Path, str]:
-    reconciliation_root = runtime_dir / "canonical-reconciliation"
-    control = reconciliation_root / "control"
+    reconciliation_root = (runtime_dir / "canonical-reconciliation").resolve()
+    control = (reconciliation_root / "control").resolve()
     reconciliation_root.mkdir(parents=True, exist_ok=True)
     repo_url = f"https://github.com/{repository}.git"
 
-    if not (control / ".git").is_dir():
-        if control.exists():
-            shutil.rmtree(control)
-        _run(["git", "clone", "--no-checkout", repo_url, str(control)], cwd=reconciliation_root, timeout=900)
+    # This checkout is AOS-owned disposable scratch state, never the product
+    # workspace or a user checkout. Re-materialize it for every bounded
+    # reconciliation so a prior interrupted attempt cannot influence the next
+    # fresh canonical read.
+    if control.parent != reconciliation_root:
+        raise CanonicalReconciliationError("Canonical scratch path escaped reconciliation root")
+    if control.exists():
+        shutil.rmtree(control)
 
-    _git(["remote", "set-url", "origin", repo_url], cwd=control)
-    if (_git(["status", "--porcelain=v1"], cwd=control).stdout or "").strip():
-        raise CanonicalReconciliationError("Canonical reconciliation control clone is dirty")
-
+    # `git clone --no-checkout` intentionally leaves the worktree empty. Such a
+    # repository can appear dirty before checkout because tracked files are not
+    # present. Therefore cleanliness is checked ONLY after the exact fetched
+    # control SHA has been checked out.
+    _run(["git", "clone", "--no-checkout", repo_url, str(control)], cwd=reconciliation_root, timeout=900)
     _git(["fetch", "origin", control_ref], cwd=control, timeout=900)
     remote_sha = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip()
     if not HEX40.fullmatch(remote_sha):
         raise CanonicalReconciliationError(f"Invalid fresh control SHA: {remote_sha!r}")
+
     _git(["checkout", "--detach", remote_sha], cwd=control)
-    if (_git(["status", "--porcelain=v1"], cwd=control).stdout or "").strip():
-        raise CanonicalReconciliationError("Control checkout became dirty")
+    dirty = (_git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=control).stdout or "").strip()
+    if dirty:
+        raise CanonicalReconciliationError(
+            f"Canonical scratch checkout is dirty after exact checkout: {dirty[:1000]}"
+        )
     return control, remote_sha
 
 
