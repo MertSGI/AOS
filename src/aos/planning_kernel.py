@@ -1130,6 +1130,7 @@ def compile_execution_plan(
     backend_override: Optional[Any] = None,
     repair_context: Optional[Mapping[str, Any]] = None,
     forbidden_task_ids: Sequence[str] = (),
+    workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
     prompt = (
@@ -1170,6 +1171,21 @@ def compile_execution_plan(
         )
         try:
             normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+            if workspace is not None:
+                workspace_root = workspace.resolve()
+                for task in normalized["tasks"]:
+                    if task["run_type"] != "FILE" or task["payload"].get("action") != "read_file":
+                        continue
+                    target = (workspace_root / str(task["payload"].get("path", ""))).resolve()
+                    if target != workspace_root and workspace_root not in target.parents:
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} FILE read target escapes managed workspace"
+                        )
+                    if not target.is_file():
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} FILE read target does not exist: "
+                            f"{task['payload'].get('path')}"
+                        )
             duplicates = sorted(
                 task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
             )
@@ -1318,11 +1334,15 @@ def run_autonomous_project(
                 receipt = dict(batch_executor(plan_path=plan_path, batch_runtime=batch_runtime, resume=True))
             resumed_receipt = dict(receipt)
             completed_batches.append({"batch_number": batch_number, "receipt": resumed_receipt, "resumed": True})
+            batch_number += 1
             _write_kernel_checkpoint(runtime_dir, {
                 **checkpoint,
                 "phase": "BATCH_COMPLETE",
+                "batch_number": batch_number,
                 "completed_batches": completed_batches,
                 "last_receipt": dict(receipt),
+                "active_plan_path": None,
+                "active_batch_runtime": None,
             })
             replan_reason = "PROCESS_RESTART_RESUME"
 
@@ -1394,6 +1414,7 @@ def run_autonomous_project(
                 backend_override=backend_override,
                 repair_context=repair_context,
                 forbidden_task_ids=completed_task_ids,
+                workspace=workspace,
             )
         except WaitingForReasoningProvider as exc:
             result = _final_result(

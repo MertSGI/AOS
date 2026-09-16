@@ -270,6 +270,27 @@ def test_plan_compiler_rejects_and_repairs_duplicate_completed_task_identity(tmp
     assert backend.calls == 2
 
 
+def test_plan_compiler_repairs_nonexistent_file_read_before_execution(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "missing-control.md"},
+    })
+    backend = QueueBackend([invalid, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+
+
 def test_arbitrary_authority_id_is_rejected():
     resolver = CanonicalAuthorityResolver(_situation())
     task = _plan()["tasks"][0]
@@ -408,3 +429,59 @@ def test_restart_resumes_active_generated_plan_without_regenerating_it(tmp_path)
     assert result["disposition"] == "PROJECT_COMPLETE"
     assert result["completed_batches"][0]["resumed"] is True
     assert result["ag_invocation_count"] == 0
+
+
+def test_restart_advances_batch_number_before_replanning(tmp_path):
+    runtime = tmp_path / "runtime"
+    interrupted = runtime / "batches" / "batch-0001"
+    interrupted.mkdir(parents=True)
+    interrupted_plan = interrupted / "generated-run-plan.json"
+    interrupted_plan.write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "project_id": "lari",
+        "tasks": [{"node_id": "interrupted"}],
+    }), encoding="utf-8")
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "EXECUTING",
+        "batch_number": 1,
+        "active_plan_path": str(interrupted_plan),
+        "active_batch_runtime": str(interrupted),
+        "completed_batches": [],
+    }), encoding="utf-8")
+    calls = []
+
+    def batch_executor(**kwargs):
+        calls.append((kwargs["resume"], Path(kwargs["plan_path"])))
+        if kwargs["resume"]:
+            return {
+                "progress": 50.0,
+                "completed_task_ids": ["interrupted-read"],
+                "failed_task_ids": ["interrupted-missing"],
+                "ag_invocation_count": 0,
+                "production": "NO_GO",
+            }
+        return {
+            "progress": 100.0,
+            "completed_task_ids": ["bounded-test"],
+            "failed_task_ids": [],
+            "ag_invocation_count": 0,
+            "production": "NO_GO",
+        }
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=QueueBackend([_objective(), _plan()]),
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=batch_executor,
+        max_batches=1,
+    )
+
+    assert calls[0] == (True, interrupted_plan)
+    assert calls[1][0] is False
+    assert calls[1][1].parent.name == "batch-0002"
+    assert result["completed_batches"][0]["batch_number"] == 1
+    assert result["completed_batches"][1]["batch_number"] == 2
