@@ -785,6 +785,60 @@ def _bounded_completed_read_context(
     }
 
 
+def _task_signature(task: Mapping[str, Any]) -> str:
+    payload = task.get("payload", {})
+    normalized_payload = payload if isinstance(payload, Mapping) else {}
+    return f"{str(task.get('run_type', '')).upper()}:" + json.dumps(
+        dict(normalized_payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+
+
+def _completed_task_signatures(
+    runtime_dir: Path,
+    completed_batches: Sequence[Mapping[str, Any]],
+) -> List[str]:
+    signatures: set[str] = set()
+    for completed in completed_batches:
+        if not isinstance(completed, Mapping):
+            continue
+        try:
+            batch_number = int(completed.get("batch_number"))
+        except (TypeError, ValueError):
+            continue
+        receipt = completed.get("receipt", {})
+        if not isinstance(receipt, Mapping):
+            continue
+        completed_ids = {
+            str(task_id) for task_id in receipt.get("completed_task_ids", [])
+            if str(task_id).strip()
+        }
+        plan = _read_json(runtime_dir / "batches" / f"batch-{batch_number:04d}" / "generated-run-plan.json")
+        tasks = plan.get("tasks", [])
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if isinstance(task, Mapping) and str(task.get("node_id")) in completed_ids:
+                signatures.add(_task_signature(task))
+    return sorted(signatures)
+
+
+def _is_generic_readiness_task(task: Mapping[str, Any]) -> bool:
+    run_type = str(task.get("run_type", "")).upper()
+    payload = task.get("payload", {})
+    if not isinstance(payload, Mapping):
+        return False
+    if run_type == "GIT":
+        return str(payload.get("action", "")).lower() in {"status", "rev-parse", "branch", "remote"}
+    if run_type in {"PROCESS", "TEST", "BUILD"}:
+        cmd = payload.get("cmd", [])
+        return (
+            isinstance(cmd, list)
+            and len(cmd) <= 2
+            and any(str(arg).lower() in {"--version", "-v", "version"} for arg in cmd)
+        )
+    return False
+
+
 def _available_process_binaries() -> List[str]:
     """Return the allowlisted process binaries executable in this runtime environment."""
     return sorted(binary for binary in NativeProcessWorker.ALLOWED_BINARIES if shutil.which(binary))
@@ -1317,12 +1371,16 @@ def compile_execution_plan(
     repair_context: Optional[Mapping[str, Any]] = None,
     forbidden_task_ids: Sequence[str] = (),
     forbidden_read_paths: Sequence[str] = (),
+    forbidden_task_signatures: Sequence[str] = (),
     workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
     forbidden_reads = {
         str(item).strip().replace("\\", "/").casefold()
         for item in forbidden_read_paths if str(item).strip()
+    }
+    forbidden_signatures = {
+        str(item) for item in forbidden_task_signatures if str(item).strip()
     }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     available_process_binaries = _available_process_binaries()
@@ -1340,8 +1398,11 @@ def compile_execution_plan(
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
         f"COMPLETED_READ_PATHS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_reads), ensure_ascii=False)}\n"
+        f"COMPLETED_ACTION_SIGNATURES_NOT_TO_REPEAT={json.dumps(sorted(forbidden_signatures), ensure_ascii=False)}\n"
         "COMPLETED_READ_CONTEXT_RULE=Treat completed_read_context as fresh, hash-bound local observation. "
         "Use it to plan concrete product work or verification; do not reread those exact paths.\n"
+        "PROGRESS_RULE=Do not repeat a completed action under a new task id. A batch made entirely of generic "
+        "git identity/status checks and runtime version probes is invalid because it does not advance product work.\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
@@ -1435,6 +1496,19 @@ def compile_execution_plan(
             if duplicates:
                 raise PlanningKernelError(
                     f"Execution plan repeats completed task identities: {duplicates}"
+                )
+            repeated_actions = sorted({
+                _task_signature(task)
+                for task in normalized["tasks"]
+                if _task_signature(task) in forbidden_signatures
+            })
+            if repeated_actions:
+                raise PlanningKernelError(
+                    f"Execution plan repeats completed action signatures: {repeated_actions}"
+                )
+            if normalized["tasks"] and all(_is_generic_readiness_task(task) for task in normalized["tasks"]):
+                raise PlanningKernelError(
+                    "Execution plan contains only generic environment readiness checks and does not advance product work"
                 )
             break
         except PlanningKernelError as exc:
@@ -1771,6 +1845,9 @@ def run_autonomous_project(
             completed_read_context = _bounded_completed_read_context(
                 runtime_dir, workspace, completed_batches,
             )
+            completed_task_signatures = _completed_task_signatures(
+                runtime_dir, completed_batches,
+            )
             repair_context = {
                 "replan_reason": replan_reason,
                 "recent_receipt": {
@@ -1779,6 +1856,7 @@ def run_autonomous_project(
                     "progress": recent_receipt.get("progress"),
                 },
                 "completed_task_ids": completed_task_ids,
+                "completed_task_signatures": completed_task_signatures,
                 "completed_read_context": completed_read_context,
             } if replan_reason or recent_receipt else {}
             plan = compile_execution_plan(
@@ -1787,6 +1865,7 @@ def run_autonomous_project(
                 repair_context=repair_context,
                 forbidden_task_ids=completed_task_ids,
                 forbidden_read_paths=completed_read_context["completed_read_paths"],
+                forbidden_task_signatures=completed_task_signatures,
                 workspace=workspace,
             )
         except WaitingForReasoningProvider as exc:

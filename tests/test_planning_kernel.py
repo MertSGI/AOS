@@ -108,7 +108,7 @@ def _plan():
                 "dependencies": [],
                 "scope_tags": ["LARI"],
                 "write_scope": [],
-                "payload": {"cmd": ["python", "--version"]},
+                "payload": {"cmd": ["python", "verify.py"]},
                 "expected_artifacts": [],
                 "tests": ["self"],
                 "evidence_requirements": ["exit zero"],
@@ -235,6 +235,52 @@ def test_plan_compiler_rejects_renamed_repeat_of_completed_read_path(tmp_path):
     assert backend.calls == 2
 
 
+def test_plan_compiler_rejects_renamed_repeat_of_completed_action(tmp_path):
+    repeated = _plan()
+    repeated["tasks"][0].update({
+        "node_id": "renamed-status-check",
+        "run_type": "GIT",
+        "payload": {"action": "status", "args": []},
+    })
+    backend = QueueBackend([repeated, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        forbidden_task_signatures=['GIT:{"action":"status","args":[]}'],
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+
+
+def test_plan_compiler_rejects_generic_readiness_only_batch(tmp_path):
+    generic = _plan()
+    first = generic["tasks"][0]
+    generic["tasks"] = [
+        {**first, "node_id": "status-again", "run_type": "GIT", "payload": {"action": "status", "args": []}},
+        {**first, "node_id": "runtime-version", "run_type": "PROCESS", "dependencies": ["status-again"], "payload": {"cmd": ["python", "--version"]}},
+    ]
+    generic["parallel_safe_groups"] = [["status-again"], ["runtime-version"]]
+    backend = QueueBackend([generic, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+
+
 def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
     workspace = tmp_path / "workspace"
     runtime = tmp_path / "runtime"
@@ -295,6 +341,7 @@ def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
     assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
     assert "Implement endpoint Z next." in plan_prompt
     assert '"completed_read_paths": ["ROADMAP.md"]' in plan_prompt
+    assert 'FILE:{\\"action\\":\\"read_file\\",\\"path\\":\\"ROADMAP.md\\"}' in plan_prompt
 
 
 def test_plan_schema_constrains_canonical_run_types():
