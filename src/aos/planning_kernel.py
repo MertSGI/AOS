@@ -132,6 +132,10 @@ class WaitingForReasoningProvider(PlanningKernelError):
     pass
 
 
+class PlannerValidationExhausted(PlanningKernelError):
+    pass
+
+
 class CanonicalDrift(PlanningKernelError):
     pass
 
@@ -1551,7 +1555,10 @@ def compile_execution_plan(
             break
         except PlanningKernelError as exc:
             if attempt:
-                raise
+                message = redact_secrets(str(exc))[:500]
+                raise PlannerValidationExhausted(
+                    f"PLANNER_VALIDATION_REPAIR_EXHAUSTED: {message}"
+                ) from exc
             validation_error = redact_secrets(str(exc))[:500]
 
     if normalized is None:  # pragma: no cover - loop either succeeds or raises
@@ -1904,7 +1911,7 @@ def run_autonomous_project(
                 forbidden_task_signatures=completed_task_signatures,
                 workspace=workspace,
             )
-        except WaitingForReasoningProvider as exc:
+        except (WaitingForReasoningProvider, PlannerValidationExhausted) as exc:
             result = _final_result(
                 situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
                 recent_receipt, runtime_dir,

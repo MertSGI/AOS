@@ -488,6 +488,34 @@ def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_pa
     assert backend.calls == 2
 
 
+def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-m", "pytest"]}
+    backend = QueueBackend([_objective(), invalid, invalid])
+    executed = []
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=lambda **kwargs: executed.append(kwargs),
+        max_batches=1,
+    )
+
+    checkpoint = json.loads(
+        (tmp_path / "runtime" / "planning-kernel-checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert result["disposition"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert result["reason"].startswith("PLANNER_VALIDATION_REPAIR_EXHAUSTED:")
+    assert checkpoint["phase"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert backend.calls == 3
+    assert executed == []
+    assert not (tmp_path / "runtime" / "batches" / "batch-0000" / "generated-run-plan.json").exists()
+
+
 def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_path, monkeypatch):
     invalid = _plan()
     invalid["tasks"][0]["payload"] = {"cmd": ["npm", "test"]}
