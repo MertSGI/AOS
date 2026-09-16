@@ -1521,6 +1521,76 @@ def _write_kernel_checkpoint(runtime_dir: Path, state: Mapping[str, Any]) -> Non
     _atomic_json(_kernel_checkpoint_path(runtime_dir), payload)
 
 
+def _receipt_sha256(receipt: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(receipt), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _recover_waiting_completion(
+    runtime_dir: Path,
+    batch_number: int,
+    checkpoint: Mapping[str, Any],
+    prior_situation: Mapping[str, Any],
+    fresh_situation: ProjectSituation,
+    recent_receipt: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Reuse a REPLAN decision only across its exact provider-wait boundary."""
+    if checkpoint.get("phase") != "WAITING_FOR_REASONING_PROVIDER":
+        return None
+    situation_id = fresh_situation.identity()
+    if (
+        checkpoint.get("batch_number") != batch_number
+        or checkpoint.get("situation_id") != situation_id
+        or checkpoint.get("canonical_source_sha") != fresh_situation.control_sha
+        or checkpoint.get("canonical_execution_base_sha") != fresh_situation.execution_base_sha
+        or prior_situation.get("situation_id") != situation_id
+        or prior_situation.get("control_sha") != fresh_situation.control_sha
+        or prior_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
+    ):
+        return None
+    artifact = _read_json(runtime_dir / f"completion-{batch_number:04d}.json")
+    if set(artifact) != {
+        "schema_version", "situation_id", "canonical_source_sha",
+        "canonical_execution_base_sha", "recent_receipt_sha256", "completion",
+    }:
+        return None
+    if (
+        artifact.get("schema_version") != SCHEMA_VERSION
+        or artifact.get("situation_id") != situation_id
+        or artifact.get("canonical_source_sha") != fresh_situation.control_sha
+        or artifact.get("canonical_execution_base_sha") != fresh_situation.execution_base_sha
+        or artifact.get("recent_receipt_sha256") != _receipt_sha256(recent_receipt)
+    ):
+        return None
+    completion = artifact.get("completion")
+    if not isinstance(completion, dict) or not Draft202012Validator(COMPLETION_SCHEMA).is_valid(completion):
+        return None
+    if completion.get("disposition") != "REPLAN":
+        return None
+    return dict(completion)
+
+
+def _save_replan_completion(
+    runtime_dir: Path,
+    batch_number: int,
+    situation: ProjectSituation,
+    recent_receipt: Mapping[str, Any],
+    completion: Mapping[str, Any],
+) -> None:
+    if completion.get("disposition") != "REPLAN":
+        return
+    _atomic_json(runtime_dir / f"completion-{batch_number:04d}.json", {
+        "schema_version": SCHEMA_VERSION,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "recent_receipt_sha256": _receipt_sha256(recent_receipt),
+        "completion": dict(completion),
+    })
+
+
 def _recover_waiting_objective(
     runtime_dir: Path,
     batch_number: int,
@@ -1645,18 +1715,25 @@ def run_autonomous_project(
             return result
 
         if recent_receipt:
-            try:
-                completion = detect_completion(
-                    situation, routing_policy_path, runtime_dir, recent_receipt,
-                    backend_override=backend_override,
+            completion = _recover_waiting_completion(
+                runtime_dir, batch_number, checkpoint, prior_situation, situation, recent_receipt,
+            )
+            if completion is None:
+                try:
+                    completion = detect_completion(
+                        situation, routing_policy_path, runtime_dir, recent_receipt,
+                        backend_override=backend_override,
+                    )
+                except WaitingForReasoningProvider as exc:
+                    result = _final_result(
+                        situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
+                        recent_receipt, runtime_dir,
+                    )
+                    _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
+                    return result
+                _save_replan_completion(
+                    runtime_dir, batch_number, situation, recent_receipt, completion,
                 )
-            except WaitingForReasoningProvider as exc:
-                result = _final_result(
-                    situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
-                    recent_receipt, runtime_dir,
-                )
-                _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
-                return result
             if completion["disposition"] == "PROJECT_COMPLETE":
                 result = _final_result(
                     situation, batch_number, completed_batches, "PROJECT_COMPLETE", completion.get("rationale", ""),

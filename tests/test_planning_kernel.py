@@ -15,6 +15,7 @@ from aos.planning_kernel import (
     _canonical_excerpt,
     _bounded_completed_read_context,
     _bounded_workspace_file_manifest,
+    _receipt_sha256,
     _recover_waiting_objective,
     _situation_prompt_payload,
     _validate_plan_shape,
@@ -688,6 +689,76 @@ def test_provider_wait_retry_skips_duplicate_objective_reasoning(tmp_path):
 
     assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
     assert backend.calls == 1
+
+
+def test_provider_wait_retry_reuses_exact_bound_replan_and_objective(tmp_path):
+    runtime = tmp_path / "runtime"
+    batch_runtime = runtime / "batches" / "batch-0000"
+    batch_runtime.mkdir(parents=True)
+    situation = _situation()
+    receipt = {
+        "progress": 100.0,
+        "completed_task_ids": ["read-roadmap"],
+        "failed_task_ids": [],
+        "ag_invocation_count": 0,
+        "production": "NO_GO",
+    }
+    completed_plan = _plan()
+    completed_plan["tasks"][0].update({
+        "node_id": "read-roadmap",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "ROADMAP.md"},
+    })
+    (batch_runtime / "generated-run-plan.json").write_text(json.dumps(completed_plan), encoding="utf-8")
+    (tmp_path / "ROADMAP.md").write_text("Implement endpoint Z next.\n", encoding="utf-8")
+    (runtime / "situation-0001.json").write_text(json.dumps(situation.to_dict()), encoding="utf-8")
+    (runtime / "objective-0001.json").write_text(json.dumps(_objective()), encoding="utf-8")
+    replan = {
+        "disposition": "REPLAN",
+        "rationale": "Authorized work remains.",
+        "satisfied_criteria": [],
+        "unsatisfied_criteria": ["All roadmap work complete"],
+    }
+    (runtime / "completion-0001.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "recent_receipt_sha256": _receipt_sha256(receipt),
+        "completion": replan,
+    }), encoding="utf-8")
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "WAITING_FOR_REASONING_PROVIDER",
+        "batch_number": 1,
+        "completed_batches": [{"batch_number": 0, "receipt": receipt}],
+        "last_receipt": receipt,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }), encoding="utf-8")
+    backend = QueueBackend([_plan()])
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: situation,
+        batch_executor=lambda **kwargs: {
+            "progress": 100.0,
+            "completed_task_ids": ["bounded-test"],
+            "failed_task_ids": [],
+            "ag_invocation_count": 0,
+            "production": "NO_GO",
+        },
+        max_batches=1,
+    )
+
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert backend.calls == 1
+    assert "Implement endpoint Z next." in backend.requests[0].payload["prompt"]
 
 
 def test_completion_provider_wait_is_durable_not_terminal_failure(tmp_path):
