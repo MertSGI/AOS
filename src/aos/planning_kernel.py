@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from jsonschema import Draft202012Validator
+
 from aos.provider_registry import ProviderRouter, load_routing_policy
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
@@ -1394,6 +1396,40 @@ def _write_kernel_checkpoint(runtime_dir: Path, state: Mapping[str, Any]) -> Non
     _atomic_json(_kernel_checkpoint_path(runtime_dir), payload)
 
 
+def _recover_waiting_objective(
+    runtime_dir: Path,
+    batch_number: int,
+    checkpoint: Mapping[str, Any],
+    prior_situation: Mapping[str, Any],
+    fresh_situation: ProjectSituation,
+) -> Optional[Objective]:
+    """Reuse a durable objective only across an identical provider-wait retry."""
+    if checkpoint.get("phase") != "WAITING_FOR_REASONING_PROVIDER":
+        return None
+    situation_id = fresh_situation.identity()
+    if (
+        checkpoint.get("batch_number") != batch_number
+        or checkpoint.get("situation_id") != situation_id
+        or checkpoint.get("canonical_source_sha") != fresh_situation.control_sha
+        or checkpoint.get("canonical_execution_base_sha") != fresh_situation.execution_base_sha
+        or prior_situation.get("situation_id") != situation_id
+        or prior_situation.get("control_sha") != fresh_situation.control_sha
+        or prior_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
+    ):
+        return None
+    raw_objective = _read_json(runtime_dir / f"objective-{batch_number:04d}.json")
+    if not raw_objective or not Draft202012Validator(OBJECTIVE_SCHEMA).is_valid(raw_objective):
+        return None
+    try:
+        objective = Objective.from_dict(raw_objective)
+    except (PlanningKernelError, TypeError, ValueError):
+        return None
+    record = fresh_situation.authority_records.get(objective.authority_id.upper())
+    if objective.risk_class not in ("R0", "R1") or record is None or record.superseded:
+        return None
+    return objective
+
+
 def _bounded_runtime_evidence(batch_runtime: Path) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     for name in ("host-receipt.json", "canonical-binding.json"):
@@ -1465,6 +1501,8 @@ def run_autonomous_project(
     recent_receipt: Dict[str, Any] = resumed_receipt or (dict(checkpoint.get("last_receipt", {})) if isinstance(checkpoint.get("last_receipt"), dict) else {})
 
     for _ in range(max_batches):
+        situation_path = runtime_dir / f"situation-{batch_number:04d}.json"
+        prior_situation = _read_json(situation_path)
         situation = synth(
             descriptor_path=descriptor_path,
             workspace=workspace,
@@ -1472,7 +1510,7 @@ def run_autonomous_project(
             constraints=constraints,
             red_lines=red_lines,
         )
-        _atomic_json(runtime_dir / f"situation-{batch_number:04d}.json", situation.to_dict())
+        _atomic_json(situation_path, situation.to_dict())
         if situation.ambiguity_reasons:
             result = _final_result(
                 situation, batch_number, completed_batches, "HUMAN_REQUIRED", "CANONICAL_CONTRADICTION",
@@ -1503,10 +1541,14 @@ def run_autonomous_project(
             replan_reason = completion.get("rationale") or replan_reason or "AUTHORIZED_WORK_REMAINS"
 
         try:
-            objective = select_objective(
-                situation, routing_policy_path, runtime_dir,
-                backend_override=backend_override, replan_reason=replan_reason,
+            objective = _recover_waiting_objective(
+                runtime_dir, batch_number, checkpoint, prior_situation, situation,
             )
+            if objective is None:
+                objective = select_objective(
+                    situation, routing_policy_path, runtime_dir,
+                    backend_override=backend_override, replan_reason=replan_reason,
+                )
             _atomic_json(runtime_dir / f"objective-{batch_number:04d}.json", dataclasses.asdict(objective))
             completed_task_ids = sorted({
                 str(task_id)

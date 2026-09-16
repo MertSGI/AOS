@@ -14,6 +14,7 @@ from aos.planning_kernel import (
     ProjectSituation,
     _canonical_excerpt,
     _bounded_workspace_file_manifest,
+    _recover_waiting_objective,
     _situation_prompt_payload,
     _validate_plan_shape,
     _worker_contract_summary,
@@ -490,6 +491,74 @@ def test_canonical_ambiguity_holds_before_reasoning(tmp_path):
     assert result["disposition"] == "HUMAN_REQUIRED"
     assert "CANONICAL_CONTRADICTION" in result["reason"]
     assert backend.calls == 0
+
+
+def test_provider_wait_retry_reuses_only_exactly_bound_durable_objective(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    prior_situation = situation.to_dict()
+    checkpoint = {
+        "phase": "WAITING_FOR_REASONING_PROVIDER",
+        "batch_number": 0,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (runtime / "objective-0000.json").write_text(json.dumps(_objective()), encoding="utf-8")
+
+    recovered = _recover_waiting_objective(runtime, 0, checkpoint, prior_situation, situation)
+
+    assert recovered is not None
+    assert recovered.objective_id == "obj-1"
+    assert _recover_waiting_objective(
+        runtime, 0, {**checkpoint, "canonical_source_sha": "f" * 40}, prior_situation, situation,
+    ) is None
+    assert _recover_waiting_objective(
+        runtime, 0, checkpoint, {**prior_situation, "situation_id": "stale"}, situation,
+    ) is None
+    (runtime / "objective-0000.json").write_text(
+        json.dumps({**_objective(), "unbound_extension": True}), encoding="utf-8",
+    )
+    assert _recover_waiting_objective(runtime, 0, checkpoint, prior_situation, situation) is None
+
+
+def test_provider_wait_retry_skips_duplicate_objective_reasoning(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    (runtime / "situation-0000.json").write_text(json.dumps(situation.to_dict()), encoding="utf-8")
+    (runtime / "objective-0000.json").write_text(json.dumps(_objective()), encoding="utf-8")
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "WAITING_FOR_REASONING_PROVIDER",
+        "batch_number": 0,
+        "completed_batches": [],
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }), encoding="utf-8")
+    backend = QueueBackend([_plan()])
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: situation,
+        batch_executor=lambda **kwargs: {
+            "progress": 100.0,
+            "completed_task_ids": ["bounded-test"],
+            "failed_task_ids": [],
+            "ag_invocation_count": 0,
+            "production": "NO_GO",
+        },
+        max_batches=1,
+    )
+
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert backend.calls == 1
 
 
 def test_restart_resumes_active_generated_plan_without_regenerating_it(tmp_path):
