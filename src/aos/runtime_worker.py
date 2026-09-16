@@ -26,6 +26,7 @@ from extensions.autonomy_fabric.native_workers import redact_secrets
 from aos.runtime_contract import ContinueProjectCommand, RuntimeResult, utc_now
 from aos.runtime_store import RuntimeStore, exclusive_file_lock, read_json
 from aos.secure_store import hydrate_environment
+from aos.canonical_reconciler import reconcile_missing_execution_base
 
 
 class PlanningArtifactWatcher(threading.Thread):
@@ -194,6 +195,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
         watcher: Optional[PlanningArtifactWatcher] = None
         receipt: Dict[str, Any] = {}
         cycle = 0
+        prior_repair = read_json(project_runtime / "canonical-repair.json")
+        canonical_repair_attempted = bool(prior_repair)
         try:
             hydrate_environment(overwrite=True)
             watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
@@ -217,6 +220,48 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 )
                 disposition = str(receipt.get("disposition", ""))
                 completed = int(receipt.get("completed_batch_count", 0) or 0)
+
+                if (
+                    disposition == "HUMAN_REQUIRED"
+                    and str(receipt.get("reason") or "").strip().upper() == "CANONICAL_CONTRADICTION"
+                    and command.project.standing_authority
+                    and not canonical_repair_attempted
+                ):
+                    canonical_repair_attempted = True
+                    store.append_event(command_id, "canonical.reconciliation_started", {
+                        "cycle": cycle,
+                        "policy": "BOUNDED_MISSING_EXECUTION_BASE_ONLY",
+                        "production": "NO_GO",
+                    })
+                    repair = reconcile_missing_execution_base(
+                        descriptor_path=Path(command.project.descriptor_path),
+                        product_workspace=Path(command.project.workspace),
+                        runtime_dir=project_runtime,
+                    )
+                    store.append_event(command_id, "canonical.reconciliation_result", {
+                        "status": repair.get("status"),
+                        "reason": repair.get("reason"),
+                        "control_sha_before": repair.get("control_sha_before"),
+                        "control_sha_after": repair.get("control_sha_after"),
+                        "accepted_execution_base_sha": repair.get("accepted_execution_base_sha"),
+                        "push_mode": repair.get("push_mode"),
+                        "frontier_injected": False,
+                        "run_plan_injected": False,
+                    })
+                    if repair.get("status") == "APPLIED":
+                        receipt = {}
+                        store.write_state(
+                            command_id,
+                            state="RUNNING",
+                            disposition="CANONICAL_RECONCILIATION_APPLIED",
+                            canonical_repair_control_sha=repair.get("control_sha_after"),
+                            canonical_execution_base_sha=repair.get("accepted_execution_base_sha"),
+                            worker_pid=os.getpid(),
+                        )
+                        continue
+                    receipt = dict(receipt)
+                    receipt["canonical_reconciliation"] = repair
+
                 store.write_state(
                     command_id,
                     state=_terminal_state(disposition),
