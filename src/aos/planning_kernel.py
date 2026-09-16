@@ -732,6 +732,114 @@ def _walk_keys(value: Any) -> Iterable[str]:
             yield from _walk_keys(child)
 
 
+
+def _repairable_schema_version(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return float(value) == 1.0
+    if not isinstance(value, str):
+        return False
+    text = value.strip().lower()
+    if not text:
+        return True
+    if text.startswith("v"):
+        text = text[1:]
+    parts = text.split(".")
+    if not all(part.isdigit() for part in parts):
+        return False
+    if len(parts) == 1:
+        parts += ["0", "0"]
+    elif len(parts) == 2:
+        parts += ["0"]
+    if len(parts) != 3:
+        return False
+    return tuple(int(part) for part in parts) == (1, 0, 0)
+
+
+def _assert_plan_schema_envelope_only_defect(plan: Mapping[str, Any]) -> None:
+    expected_top = set(PLAN_SCHEMA["properties"])
+    actual_top = set(str(key) for key in plan)
+    missing_top = (expected_top - {"schema_version"}) - actual_top
+    extra_top = actual_top - expected_top
+    if missing_top or extra_top:
+        raise PlanningKernelError(
+            f"Execution plan has non-envelope top-level contract defects: "
+            f"missing={sorted(missing_top)} extra={sorted(extra_top)}"
+        )
+
+    raw_tasks = plan.get("tasks")
+    if not isinstance(raw_tasks, list) or not raw_tasks:
+        raise PlanningKernelError("Execution plan must contain at least one task")
+
+    task_schema = PLAN_SCHEMA["properties"]["tasks"]["items"]
+    expected_task = set(task_schema["properties"])
+    for index, raw in enumerate(raw_tasks):
+        if not isinstance(raw, dict):
+            raise PlanningKernelError(f"Execution plan task {index} must be an object")
+        actual_task = set(str(key) for key in raw)
+        missing_task = expected_task - actual_task
+        extra_task = actual_task - expected_task
+        if missing_task or extra_task:
+            raise PlanningKernelError(
+                f"Execution plan task {index} has non-envelope contract defects: "
+                f"missing={sorted(missing_task)} extra={sorted(extra_task)}"
+            )
+
+    groups = plan.get("parallel_safe_groups")
+    if not isinstance(groups, list):
+        raise PlanningKernelError("parallel_safe_groups must be an array")
+    for group in groups:
+        if not isinstance(group, list) or any(not isinstance(item, str) or not item.strip() for item in group):
+            raise PlanningKernelError("parallel_safe_groups must contain arrays of non-empty node ids")
+
+    rollback = plan.get("rollback_strategy")
+    if not isinstance(rollback, str) or not rollback.strip():
+        raise PlanningKernelError("rollback_strategy must be non-empty text")
+
+
+def _normalize_plan_schema_envelope(
+    plan: Mapping[str, Any],
+    objective: Objective,
+    situation: ProjectSituation,
+    runtime_dir: Path,
+) -> Dict[str, Any]:
+    raw_version = plan.get("schema_version")
+    if raw_version == SCHEMA_VERSION:
+        return _validate_plan_shape(plan, objective, situation)
+
+    if not _repairable_schema_version(raw_version):
+        raise PlanningKernelError(
+            f"Execution plan schema_version is not repairable as v1 envelope: {redact_secrets(str(raw_version))[:120]}"
+        )
+
+    # Fail closed unless schema_version is the sole envelope-level defect.
+    _assert_plan_schema_envelope_only_defect(plan)
+
+    candidate = dict(plan)
+    candidate["schema_version"] = SCHEMA_VERSION
+    normalized = _validate_plan_shape(candidate, objective, situation)
+
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "status": "APPLIED",
+        "repair_scope": "PLAN_SCHEMA_ENVELOPE_METADATA_ONLY",
+        "original_schema_version_type": type(raw_version).__name__,
+        "original_schema_version": redact_secrets(str(raw_version))[:120] if raw_version is not None else None,
+        "normalized_schema_version": SCHEMA_VERSION,
+        "objective_id": objective.objective_id,
+        "task_count": len(normalized.get("tasks", [])),
+        "task_content_modified_by_repair": False,
+        "authority_bypass": False,
+        "unsafe_contract_bypass": False,
+        "production": "NO_GO",
+    }
+    _atomic_json(runtime_dir / "plan-schema-envelope-repair.json", artifact)
+    return normalized
+
+
 def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situation: ProjectSituation) -> Dict[str, Any]:
     if plan.get("schema_version") != SCHEMA_VERSION:
         raise PlanningKernelError("Execution plan schema_version must be 1.0.0")
@@ -822,7 +930,8 @@ def compile_execution_plan(
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
         "Prefer small meaningful batches, explicit tests/evidence, safe parallelism, and rollback where relevant. "
         "Every task requires a canonical authority_id. Never emit production, force-push, history rewrite, destructive, secret, payment, "
-        "legal/compliance, or material trust/security changes. Do not invent evidence. Return exactly the requested JSON.\n\n"
+        "legal/compliance, or material trust/security changes. Do not invent evidence. "
+        "The top-level schema_version MUST be the exact string \"1.0.0\". Return exactly the requested JSON.\n\n"
         f"OBJECTIVE={json.dumps(dataclasses.asdict(objective), ensure_ascii=False, sort_keys=True)}\n"
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
@@ -832,7 +941,7 @@ def compile_execution_plan(
         situation, routing_policy_path, runtime_dir, "plan-dag", prompt, PLAN_SCHEMA,
         objective.authority_id, backend_override=backend_override,
     )
-    normalized = _validate_plan_shape(proposal, objective, situation)
+    normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
     resolver = CanonicalAuthorityResolver(situation)
     for task in normalized["tasks"]:
         resolver.validate_task(task)
