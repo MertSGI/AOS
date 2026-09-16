@@ -291,6 +291,68 @@ def test_plan_compiler_repairs_nonexistent_file_read_before_execution(tmp_path):
     assert backend.calls == 2
 
 
+def test_plan_compiler_allows_read_of_declared_upstream_artifact(tmp_path):
+    plan = _plan()
+    producer = plan["tasks"][0]
+    producer["node_id"] = "produce-security-report"
+    producer["expected_artifacts"] = ["security_test_report.txt"]
+    reader = {
+        **producer,
+        "node_id": "read-security-report",
+        "run_type": "FILE",
+        "dependencies": ["produce-security-report"],
+        "payload": {"action": "read_file", "path": "security_test_report.txt"},
+        "expected_artifacts": [],
+        "tests": [],
+    }
+    plan["tasks"] = [producer, reader]
+    plan["parallel_safe_groups"] = [["produce-security-report"], ["read-security-report"]]
+    backend = QueueBackend([plan])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][1]["payload"]["path"] == "security_test_report.txt"
+    assert backend.calls == 1
+
+
+def test_plan_compiler_rejects_artifact_declared_by_non_dependency(tmp_path):
+    invalid = _plan()
+    producer = invalid["tasks"][0]
+    producer["node_id"] = "unrelated-producer"
+    producer["expected_artifacts"] = ["security_test_report.txt"]
+    reader = {
+        **producer,
+        "node_id": "unordered-reader",
+        "run_type": "FILE",
+        "dependencies": [],
+        "payload": {"action": "read_file", "path": "security_test_report.txt"},
+        "expected_artifacts": [],
+        "tests": [],
+    }
+    invalid["tasks"] = [producer, reader]
+    invalid["parallel_safe_groups"] = [["unrelated-producer", "unordered-reader"]]
+    backend = QueueBackend([invalid, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert len(result["tasks"]) == 1
+    assert backend.calls == 2
+
+
 def test_arbitrary_authority_id_is_rejected():
     resolver = CanonicalAuthorityResolver(_situation())
     task = _plan()["tasks"][0]

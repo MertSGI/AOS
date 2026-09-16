@@ -1173,6 +1173,32 @@ def compile_execution_plan(
             normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
             if workspace is not None:
                 workspace_root = workspace.resolve()
+                tasks_by_id = {task["node_id"]: task for task in normalized["tasks"]}
+
+                def dependency_ancestors(task: Mapping[str, Any]) -> set[str]:
+                    ancestors: set[str] = set()
+                    pending = list(task.get("dependencies", []))
+                    while pending:
+                        dependency_id = pending.pop()
+                        if dependency_id in ancestors:
+                            continue
+                        ancestors.add(dependency_id)
+                        dependency = tasks_by_id.get(dependency_id)
+                        if dependency is not None:
+                            pending.extend(dependency.get("dependencies", []))
+                    return ancestors
+
+                def is_declared_upstream_artifact(task: Mapping[str, Any], target: Path) -> bool:
+                    for dependency_id in dependency_ancestors(task):
+                        dependency = tasks_by_id[dependency_id]
+                        for artifact in dependency.get("expected_artifacts", []):
+                            artifact_path = (workspace_root / str(artifact)).resolve()
+                            if artifact_path != workspace_root and workspace_root not in artifact_path.parents:
+                                continue
+                            if artifact_path == target:
+                                return True
+                    return False
+
                 for task in normalized["tasks"]:
                     if task["run_type"] != "FILE" or task["payload"].get("action") != "read_file":
                         continue
@@ -1181,7 +1207,7 @@ def compile_execution_plan(
                         raise PlanningKernelError(
                             f"Task {task['node_id']} FILE read target escapes managed workspace"
                         )
-                    if not target.is_file():
+                    if not target.is_file() and not is_declared_upstream_artifact(task, target):
                         raise PlanningKernelError(
                             f"Task {task['node_id']} FILE read target does not exist: "
                             f"{task['payload'].get('path')}"
