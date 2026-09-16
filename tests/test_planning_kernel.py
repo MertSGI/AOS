@@ -137,6 +137,11 @@ def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
     assert situation.canonical_excerpt == large_excerpt
     assert "BOUNDED_CANONICAL_EXCERPT" in projected["canonical_excerpt"]
 
+    compact = _situation_prompt_payload(situation, canonical_excerpt_max_chars=3000)
+    assert len(compact["canonical_excerpt"]) <= 3000
+    assert compact["canonical_excerpt_chars"] == len(large_excerpt)
+    assert compact["canonical_excerpt_sha256"] == projected["canonical_excerpt_sha256"]
+
 
 def test_worker_contract_summary_is_compact_and_complete():
     summary = _worker_contract_summary()

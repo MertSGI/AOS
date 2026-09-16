@@ -59,6 +59,8 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
 
 SCHEMA_VERSION = "1.0.0"
 PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 6500
+OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS = 3000
+COMPLETION_CANONICAL_EXCERPT_MAX_CHARS = 2500
 DEFAULT_GOAL = "Continue this project to completion under standing authority."
 DEFAULT_RED_LINES = (
     "production activation",
@@ -764,7 +766,11 @@ def _reason(
     return proposal
 
 
-def _situation_prompt_payload(situation: ProjectSituation) -> Dict[str, Any]:
+def _situation_prompt_payload(
+    situation: ProjectSituation,
+    *,
+    canonical_excerpt_max_chars: int = PLANNER_CANONICAL_EXCERPT_MAX_CHARS,
+) -> Dict[str, Any]:
     return {
         "schema_version": situation.schema_version,
         "project_id": situation.project_id,
@@ -786,7 +792,9 @@ def _situation_prompt_payload(situation: ProjectSituation) -> Dict[str, Any]:
         "red_lines": list(situation.red_lines),
         "completion_criteria": list(situation.completion_criteria),
         "ambiguity_reasons": list(situation.ambiguity_reasons),
-        "canonical_excerpt": _bounded_prompt_excerpt(situation.canonical_excerpt),
+        "canonical_excerpt": _bounded_prompt_excerpt(
+            situation.canonical_excerpt, max_chars=canonical_excerpt_max_chars,
+        ),
         "canonical_excerpt_chars": len(situation.canonical_excerpt),
         "canonical_excerpt_sha256": hashlib.sha256(
             situation.canonical_excerpt.encode("utf-8")
@@ -811,7 +819,13 @@ def select_objective(
         "If multiple independent lanes are ready, identify them in parallel_candidates. Do not select production, "
         "destructive, secret-management, payment, legal/compliance or other red-line work. Return exactly the requested JSON.\n\n"
         f"REPLAN_REASON={replan_reason or 'INITIAL'}\n"
-        + json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)
+        + json.dumps(
+            _situation_prompt_payload(
+                situation, canonical_excerpt_max_chars=OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS,
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     )
     proposal = _reason(
         situation, routing_policy_path, runtime_dir, "objective-selection", prompt, OBJECTIVE_SCHEMA,
@@ -1362,7 +1376,7 @@ def detect_completion(
         "PROJECT_COMPLETE is allowed only if all applicable canonical roadmap/completion criteria are actually satisfied by evidence. "
         "If authorized work remains, return REPLAN. If a genuine human red-line/authority boundary is reached, return HUMAN_REQUIRED. "
         "Do not infer completion from absence of a current task. Return exactly the requested JSON.\n\n"
-        f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
+        f"SITUATION={json.dumps(_situation_prompt_payload(situation, canonical_excerpt_max_chars=COMPLETION_CANONICAL_EXCERPT_MAX_CHARS), ensure_ascii=False, sort_keys=True)}\n"
         f"RECENT_RECEIPT={json.dumps(dict(recent_receipt), ensure_ascii=False, sort_keys=True)}"
     )
     authority_hint = next(iter(sorted(situation.authority_records)), "NONE")
