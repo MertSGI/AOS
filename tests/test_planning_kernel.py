@@ -13,6 +13,7 @@ from aos.planning_kernel import (
     PLAN_SCHEMA,
     ProjectSituation,
     _canonical_excerpt,
+    _bounded_workspace_file_manifest,
     _situation_prompt_payload,
     _validate_plan_shape,
     _worker_contract_summary,
@@ -144,6 +145,27 @@ def test_worker_contract_summary_is_compact_and_complete():
     assert '"run_type":"FILE"' in summary
     assert '"run_type":"PROCESS"' in summary
     assert '"run_type":"GIT"' in summary
+
+
+def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, monkeypatch):
+    tracked = "\n".join([
+        "package.json",
+        "SECURITY_TODO.md",
+        *[f"docs/dependency-safe/item-{index:03d}.md" for index in range(100)],
+    ]) + "\n"
+    monkeypatch.setattr(
+        "aos.planning_kernel.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=tracked),
+    )
+
+    manifest = _bounded_workspace_file_manifest(tmp_path, Objective.from_dict(_objective()), max_chars=500)
+
+    encoded = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    assert len(encoded) <= 500
+    assert manifest["tracked_count"] == 102
+    assert len(manifest["path_set_sha256"]) == 64
+    assert "package.json" in manifest["representative_existing_paths"]
+    assert all("content" not in path.lower() for path in manifest["representative_existing_paths"])
 
 
 def test_plan_schema_constrains_canonical_run_types():

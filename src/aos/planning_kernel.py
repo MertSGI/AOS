@@ -620,6 +620,69 @@ def _worker_contract_summary() -> str:
     )
 
 
+def _bounded_workspace_file_manifest(
+    workspace: Optional[Path],
+    objective: Objective,
+    *,
+    max_chars: int = 1400,
+) -> Dict[str, Any]:
+    """Return a compact path-only view of the tracked workspace for the planner.
+
+    This is advisory context, not a security boundary. Exact confinement and
+    existence/dependency checks still run locally after provider output.
+    """
+    if workspace is None:
+        return {"status": "UNAVAILABLE", "reason": "workspace_not_bound"}
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files"],
+            cwd=workspace.resolve(),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"status": "UNAVAILABLE", "reason": "tracked_file_inventory_failed"}
+
+    paths = sorted({line.strip().replace("\\", "/") for line in completed.stdout.splitlines() if line.strip()})
+    if not paths:
+        return {"status": "AVAILABLE", "tracked_count": 0, "representative_existing_paths": []}
+
+    objective_text = " ".join(
+        [objective.title, objective.description, *objective.scope_tags, *objective.completion_criteria]
+    ).lower()
+    stop_words = {
+        "continue", "within", "under", "standing", "authority", "program", "phase",
+        "development", "completion", "current", "project", "bounded", "non", "production",
+    }
+    tokens = {
+        token for token in re.findall(r"[a-z0-9]+", objective_text)
+        if len(token) >= 4 and token not in stop_words
+    }
+
+    def priority(path: str) -> tuple[int, int, str]:
+        lowered = path.lower()
+        root_rank = 0 if "/" not in path else 1
+        match_count = sum(1 for token in tokens if token in lowered)
+        return (root_rank, -match_count, lowered)
+
+    ordered = sorted(paths, key=priority)
+    manifest: Dict[str, Any] = {
+        "status": "AVAILABLE",
+        "tracked_count": len(paths),
+        "path_set_sha256": hashlib.sha256("\n".join(paths).encode("utf-8")).hexdigest(),
+        "representative_existing_paths": [],
+    }
+    for path in ordered:
+        manifest["representative_existing_paths"].append(path)
+        if len(json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))) > max_chars:
+            manifest["representative_existing_paths"].pop()
+            break
+    return manifest
+
+
 def _bounded_prompt_excerpt(excerpt: str, max_chars: int = 8000) -> str:
     """Project a large canonical excerpt into a deterministic bounded prompt.
 
@@ -1133,6 +1196,7 @@ def compile_execution_plan(
     workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
+    workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
@@ -1146,6 +1210,10 @@ def compile_execution_plan(
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
+        "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
+        "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
+        "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
+        f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     proposal: Dict[str, Any] = {}
