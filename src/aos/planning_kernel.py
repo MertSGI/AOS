@@ -58,7 +58,8 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
 
 
 SCHEMA_VERSION = "1.0.0"
-PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 6500
+PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 3000
+PLANNER_COMPLETED_SIGNATURES_MAX_CHARS = 1800
 OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS = 3000
 COMPLETION_CANONICAL_EXCERPT_MAX_CHARS = 2500
 DEFAULT_GOAL = "Continue this project to completion under standing authority."
@@ -647,7 +648,7 @@ def _bounded_workspace_file_manifest(
     workspace: Optional[Path],
     objective: Objective,
     *,
-    max_chars: int = 1400,
+    max_chars: int = 800,
 ) -> Dict[str, Any]:
     """Return a compact path-only view of the tracked workspace for the planner.
 
@@ -712,7 +713,7 @@ def _bounded_completed_read_context(
     completed_batches: Sequence[Mapping[str, Any]],
     *,
     max_files: int = 4,
-    max_chars_per_file: int = 1400,
+    max_chars_per_file: int = 800,
 ) -> Dict[str, Any]:
     """Fresh-read bounded outputs of completed FILE reads for the next planner.
 
@@ -830,6 +831,32 @@ def _completed_task_signatures(
             if isinstance(task, Mapping) and str(task.get("node_id")) in completed_ids:
                 signatures.add(_task_signature(task))
     return sorted(signatures)
+
+
+def _bounded_task_signatures_for_prompt(
+    signatures: Sequence[str],
+    *,
+    max_chars: int = PLANNER_COMPLETED_SIGNATURES_MAX_CHARS,
+    max_signature_chars: int = 240,
+) -> Dict[str, Any]:
+    normalized = sorted({str(item) for item in signatures if str(item).strip()})
+    digest = hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
+    result: Dict[str, Any] = {
+        "total_count": len(normalized),
+        "signature_set_sha256": digest,
+        "representative_signatures": [],
+    }
+    for signature in normalized:
+        rendered = signature
+        if len(rendered) > max_signature_chars:
+            item_digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+            suffix = f"...<sha256={item_digest}>"
+            rendered = rendered[:max_signature_chars - len(suffix)] + suffix
+        result["representative_signatures"].append(rendered)
+        if len(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))) > max_chars:
+            result["representative_signatures"].pop()
+            break
+    return result
 
 
 def _is_generic_readiness_task(task: Mapping[str, Any]) -> bool:
@@ -1408,7 +1435,8 @@ def compile_execution_plan(
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
         f"COMPLETED_READ_PATHS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_reads), ensure_ascii=False)}\n"
-        f"COMPLETED_ACTION_SIGNATURES_NOT_TO_REPEAT={json.dumps(sorted(forbidden_signatures), ensure_ascii=False)}\n"
+        "COMPLETED_ACTION_SIGNATURES_NOT_TO_REPEAT="
+        f"{json.dumps(_bounded_task_signatures_for_prompt(sorted(forbidden_signatures)), ensure_ascii=False, sort_keys=True)}\n"
         "COMPLETED_READ_CONTEXT_RULE=Treat completed_read_context as fresh, hash-bound local observation. "
         "Use it to plan concrete product work or verification; do not reread those exact paths.\n"
         "PROGRESS_RULE=Do not repeat a completed action under a new task id. A batch made entirely of generic "
@@ -1431,7 +1459,7 @@ def compile_execution_plan(
                 "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
                 "Return a corrected full plan; do not repeat the defect.\n"
                 f"VALIDATION_ERROR={validation_error}\n"
-                f"PREVIOUS_INVALID_PLAN={json.dumps(proposal, ensure_ascii=False, sort_keys=True)[:6000]}"
+                f"PREVIOUS_INVALID_PLAN={json.dumps(proposal, ensure_ascii=False, sort_keys=True)[:2500]}"
             )
         proposal = _reason(
             situation,
@@ -1865,8 +1893,6 @@ def run_autonomous_project(
                     "failed_task_ids": list(recent_receipt.get("failed_task_ids", [])),
                     "progress": recent_receipt.get("progress"),
                 },
-                "completed_task_ids": completed_task_ids,
-                "completed_task_signatures": completed_task_signatures,
                 "completed_read_context": completed_read_context,
             } if replan_reason or recent_receipt else {}
             plan = compile_execution_plan(

@@ -16,6 +16,7 @@ from aos.planning_kernel import (
     ProjectSituation,
     _canonical_excerpt,
     _bounded_completed_read_context,
+    _bounded_task_signatures_for_prompt,
     _bounded_workspace_file_manifest,
     _receipt_sha256,
     _recover_waiting_objective,
@@ -160,7 +161,7 @@ def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
 
     projected = _situation_prompt_payload(situation)
 
-    assert len(projected["canonical_excerpt"]) <= 6500
+    assert len(projected["canonical_excerpt"]) <= 3000
     assert projected["canonical_excerpt_chars"] == len(large_excerpt)
     assert projected["canonical_excerpt_sha256"] == hashlib.sha256(large_excerpt.encode()).hexdigest()
     assert situation.canonical_excerpt == large_excerpt
@@ -281,6 +282,18 @@ def test_plan_compiler_rejects_renamed_repeat_of_completed_action(tmp_path):
 
     assert result["tasks"][0]["run_type"] == "TEST"
     assert backend.calls == 2
+
+
+def test_completed_action_signatures_are_bounded_for_provider_prompt():
+    signatures = [f"FILE:{{\"patch\":\"{index}-{'x' * 1000}\"}}" for index in range(100)]
+
+    bounded = _bounded_task_signatures_for_prompt(signatures)
+
+    assert bounded["total_count"] == 100
+    assert len(bounded["signature_set_sha256"]) == 64
+    assert bounded["representative_signatures"]
+    assert all(len(item) <= 240 for item in bounded["representative_signatures"])
+    assert len(json.dumps(bounded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))) <= 1800
 
 
 def test_plan_compiler_rejects_generic_readiness_only_batch(tmp_path):
