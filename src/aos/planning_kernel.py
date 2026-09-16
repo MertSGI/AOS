@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -683,6 +684,11 @@ def _bounded_workspace_file_manifest(
     return manifest
 
 
+def _available_process_binaries() -> List[str]:
+    """Return the allowlisted process binaries executable in this runtime environment."""
+    return sorted(binary for binary in NativeProcessWorker.ALLOWED_BINARIES if shutil.which(binary))
+
+
 def _bounded_prompt_excerpt(excerpt: str, max_chars: int = 8000) -> str:
     """Project a large canonical excerpt into a deterministic bounded prompt.
 
@@ -1197,6 +1203,7 @@ def compile_execution_plan(
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
+    available_process_binaries = _available_process_binaries()
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
@@ -1214,6 +1221,9 @@ def compile_execution_plan(
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
         f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
+        "PROCESS_BINARY_RULE=Use PROCESS/TEST/BUILD only when cmd[0] is listed in AVAILABLE_PROCESS_BINARIES; "
+        "an allowlisted but unavailable binary is not executable and must not be planned.\n"
+        f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     proposal: Dict[str, Any] = {}
@@ -1239,6 +1249,14 @@ def compile_execution_plan(
         )
         try:
             normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+            for task in normalized["tasks"]:
+                if task["run_type"] not in ("PROCESS", "TEST", "BUILD"):
+                    continue
+                binary = str(task["payload"]["cmd"][0])
+                if shutil.which(binary) is None:
+                    raise PlanningKernelError(
+                        f"Task {task['node_id']} process binary is unavailable in runtime environment: {binary}"
+                    )
             if workspace is not None:
                 workspace_root = workspace.resolve()
                 tasks_by_id = {task["node_id"]: task for task in normalized["tasks"]}

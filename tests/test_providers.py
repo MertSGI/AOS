@@ -708,6 +708,26 @@ class TestGroqSchemaAndCompletion:
             with pytest.raises(PlannerTransientError, match="Groq transient error"):
                 provider.generate_plan("test prompt", {})
 
+    def test_groq_provider_json_generation_miss_is_transient(self, monkeypatch):
+        """A provider-side empty failed_generation can be retried without weakening local schema validation."""
+        import httpx2
+        import openai
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        request = httpx2.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        response = httpx2.Response(400, request=request)
+        generation_error = openai.BadRequestError(
+            "Failed to validate JSON",
+            response=response,
+            body={"error": {"code": "json_validate_failed", "failed_generation": ""}},
+        )
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = generation_error
+
+        with patch("openai.OpenAI", return_value=mock_client):
+            with pytest.raises(PlannerTransientError, match="structured generation transient"):
+                GroqPlannerProvider().generate_plan("test prompt", {})
+
 
 # =========================================================================
 # 21-22. Benchmark Execution Identity Tests

@@ -38,6 +38,18 @@ def _is_transient_capacity_error(exc: Exception) -> bool:
     )
 
 
+def _is_transient_generation_error(exc: Exception) -> bool:
+    """Identify provider-side structured-generation misses, not request schema defects."""
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    try:
+        body = json.dumps(getattr(exc, "body", {}), ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        body = ""
+    details = f"{exc} {body}".lower()
+    return "json_validate_failed" in details and "failed_generation" in details
+
+
 def groq_strict_schema_compatible(schema: Any) -> bool:
     """Return whether every object is closed as required by Groq strict mode."""
     if isinstance(schema, list):
@@ -133,6 +145,8 @@ class GroqPlannerProvider:
                 raise PlannerTransientError(f"Groq transient error ({err_name}): {e}") from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                 raise PlannerCredentialError(f"Groq auth/permission failure ({err_name}): {e}") from e
+            elif isinstance(e, openai.BadRequestError) and _is_transient_generation_error(e):
+                raise PlannerTransientError(f"Groq structured generation transient failure ({err_name}): {e}") from e
             elif isinstance(e, openai.BadRequestError):
                 raise PlannerContractError(f"Groq invalid request/schema ({err_name}): {e}") from e
             else:

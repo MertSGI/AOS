@@ -272,6 +272,27 @@ def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_pa
     assert backend.calls == 2
 
 
+def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_path, monkeypatch):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["npm", "test"]}
+    backend = QueueBackend([invalid, _plan()])
+    monkeypatch.setattr(
+        "aos.planning_kernel.shutil.which",
+        lambda binary: None if binary == "npm" else f"/available/{binary}",
+    )
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"][0] == "python"
+    assert backend.calls == 2
+
+
 def test_plan_compiler_rejects_and_repairs_duplicate_completed_task_identity(tmp_path):
     duplicate = _plan()
     corrected = _plan()
