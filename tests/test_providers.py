@@ -21,7 +21,12 @@ from aos.provider_registry import (
     load_routing_policy,
 )
 from aos.providers.gemini import GeminiPlannerProvider, project_gemini_schema
-from aos.providers.groq import GroqPlannerProvider, groq_strict_schema_compatible, project_groq_schema
+from aos.providers.groq import (
+    GroqPlannerProvider,
+    groq_max_output_tokens,
+    groq_strict_schema_compatible,
+    project_groq_schema,
+)
 from aos.providers.ollama import OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document, validate_file
@@ -647,6 +652,27 @@ class TestGroqSchemaAndCompletion:
         assert call["response_format"] == {"type": "json_object"}
         assert call["max_tokens"] == 2200
         assert "AOS will validate it locally" in call["messages"][0]["content"]
+
+    def test_groq_output_capacity_tracks_reasoning_contract(self):
+        objective_schema = {
+            "properties": {
+                "objective_id": {},
+                "parallel_candidates": {},
+                "completion_criteria": {},
+            },
+        }
+        completion_schema = {
+            "properties": {
+                "disposition": {},
+                "satisfied_criteria": {},
+                "unsatisfied_criteria": {},
+            },
+        }
+        plan_schema = {"properties": {"objective_id": {}, "tasks": {}}}
+
+        assert groq_max_output_tokens(objective_schema) == 1000
+        assert groq_max_output_tokens(completion_schema) == 600
+        assert groq_max_output_tokens(plan_schema) == 2200
 
     def test_groq_json_object_fallback_fails_closed_on_canonical_schema_violation(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "fake-key")

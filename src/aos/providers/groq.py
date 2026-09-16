@@ -12,6 +12,21 @@ from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTra
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
 GROQ_MAX_OUTPUT_TOKENS = 2200
+GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS = 1000
+GROQ_COMPLETION_MAX_OUTPUT_TOKENS = 600
+
+
+def groq_max_output_tokens(schema: Dict[str, Any]) -> int:
+    """Reserve output capacity proportionate to the known reasoning contract."""
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    if not isinstance(properties, dict):
+        return GROQ_MAX_OUTPUT_TOKENS
+    keys = set(properties)
+    if {"objective_id", "parallel_candidates", "completion_criteria"}.issubset(keys) and "tasks" not in keys:
+        return GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS
+    if {"disposition", "satisfied_criteria", "unsatisfied_criteria"}.issubset(keys):
+        return GROQ_COMPLETION_MAX_OUTPUT_TOKENS
+    return GROQ_MAX_OUTPUT_TOKENS
 
 
 def _is_transient_capacity_error(exc: Exception) -> bool:
@@ -135,7 +150,7 @@ class GroqPlannerProvider:
                     {"role": "user", "content": prompt},
                 ],
                 response_format=response_format,
-                max_tokens=GROQ_MAX_OUTPUT_TOKENS,
+                max_tokens=groq_max_output_tokens(schema),
                 temperature=0.0,
                 store=False,
             )
