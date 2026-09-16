@@ -330,6 +330,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             workspace=request.workspace,
             sanitized_errors=["ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"],
             evidence_payload={
+                "failure_class": "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE",
                 "provider_attempts": [item.to_dict() for item in attempts],
                 "local_reasoning_result": (
                     "LOCAL_REASONING_UNAVAILABLE"

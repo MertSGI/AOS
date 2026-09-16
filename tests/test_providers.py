@@ -623,6 +623,27 @@ class TestGroqSchemaAndCompletion:
             with pytest.raises(PlannerContractError, match="unacceptable reason: length"):
                 provider.generate_plan("test prompt", {})
 
+    def test_groq_tpm_capacity_413_is_transient(self, monkeypatch):
+        """A Groq throughput-capacity 413 must remain eligible for provider failover."""
+        import httpx2
+        import openai
+
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        provider = GroqPlannerProvider()
+        request = httpx2.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        response = httpx2.Response(413, request=request)
+        capacity_error = openai.APIStatusError(
+            "Request too large for model on tokens per minute (TPM): rate_limit_exceeded",
+            response=response,
+            body={"error": {"code": "rate_limit_exceeded"}},
+        )
+        mock_openai_client = MagicMock()
+        mock_openai_client.chat.completions.create.side_effect = capacity_error
+
+        with patch("openai.OpenAI", return_value=mock_openai_client):
+            with pytest.raises(PlannerTransientError, match="Groq transient error"):
+                provider.generate_plan("test prompt", {})
+
 
 # =========================================================================
 # 21-22. Benchmark Execution Identity Tests

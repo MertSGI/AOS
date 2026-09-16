@@ -94,6 +94,23 @@ def test_post_invocation_transient_failure_advances_provider(tmp_path):
     assert result.evidence_payload["fallback_used"] is True
 
 
+def test_exhausted_transient_providers_preserve_waiting_failure_class(tmp_path):
+    backend = ProviderFailoverReasoningBackend(
+        ProviderRouter(ProviderRegistry(_policy())),
+        provider_factory=lambda provider_id, model_id: _Transient(),
+    )
+    result = backend.execute(_request(tmp_path))
+
+    assert result.status == "DEGRADED"
+    assert result.evidence_payload["failure_class"] == "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"
+    assert [attempt["provider_id"] for attempt in result.evidence_payload["provider_attempts"]] == [
+        "nemotron",
+        "gemini",
+        "groq",
+        "ollama",
+    ]
+
+
 def test_contract_failure_is_not_routed_around(tmp_path):
     calls = []
 

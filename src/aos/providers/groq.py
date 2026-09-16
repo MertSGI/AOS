@@ -11,6 +11,30 @@ from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTra
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
 
 
+def _is_transient_capacity_error(exc: Exception) -> bool:
+    """Return whether Groq rejected the request for replaceable capacity reasons.
+
+    Groq can report organization token-throughput exhaustion as HTTP 413 via
+    the generic APIStatusError instead of the SDK's RateLimitError.  That is a
+    provider-capacity condition, not a planner schema/security violation.
+    """
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None and int(status_code) >= 500:
+        return True
+    if status_code != 413:
+        return False
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "tokens per minute",
+            "rate_limit_exceeded",
+            "rate limit",
+            "tpm",
+        )
+    )
+
+
 def project_groq_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Derive a provider schema projection by stripping meta-schema keywords for Groq strict Structured Outputs."""
     if not isinstance(schema, dict):
@@ -75,7 +99,7 @@ class GroqPlannerProvider:
             )
         except Exception as e:
             err_name = e.__class__.__name__
-            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)):
+            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)) or _is_transient_capacity_error(e):
                 raise PlannerTransientError(f"Groq transient error ({err_name}): {e}") from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                 raise PlannerCredentialError(f"Groq auth/permission failure ({err_name}): {e}") from e
