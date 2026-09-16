@@ -38,6 +38,28 @@ class PlanningArtifactWatcher(threading.Thread):
         self.stop_event = stop
         self.seen: Set[str] = set()
         self.last_checkpoint_signature: Optional[str] = None
+        self._prime_existing_artifacts()
+
+    def _prime_existing_artifacts(self) -> None:
+        """Baseline durable artifacts so a recovered worker emits only changes."""
+        if not self.project_runtime.is_dir():
+            return
+        for pattern in ("situation-*.json", "objective-*.json", "batches/batch-*/generated-run-plan.json"):
+            for path in self.project_runtime.glob(pattern):
+                self.seen.add(path.relative_to(self.project_runtime).as_posix())
+        checkpoint = read_json(self.project_runtime / "planning-kernel-checkpoint.json")
+        if checkpoint:
+            self.last_checkpoint_signature = self._checkpoint_signature(checkpoint)
+
+    @staticmethod
+    def _checkpoint_signature(data: Dict[str, Any]) -> str:
+        return json.dumps({
+            "phase": data.get("phase"),
+            "batch_number": data.get("batch_number"),
+            "completed_batch_count": len(data.get("completed_batches", []) or []),
+            "replan_reason": data.get("replan_reason"),
+            "canonical_source_sha": data.get("canonical_source_sha"),
+        }, sort_keys=True)
 
     def _emit_file(self, path: Path) -> None:
         rel = path.relative_to(self.project_runtime).as_posix()
@@ -78,13 +100,7 @@ class PlanningArtifactWatcher(threading.Thread):
         data = read_json(path)
         if not data:
             return
-        signature = json.dumps({
-            "phase": data.get("phase"),
-            "batch_number": data.get("batch_number"),
-            "completed_batch_count": len(data.get("completed_batches", []) or []),
-            "replan_reason": data.get("replan_reason"),
-            "canonical_source_sha": data.get("canonical_source_sha"),
-        }, sort_keys=True)
+        signature = self._checkpoint_signature(data)
         if signature == self.last_checkpoint_signature:
             return
         self.last_checkpoint_signature = signature
@@ -359,6 +375,13 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 error=message,
                 completed_batch_count=completed,
             )
+            # A terminal event must be the final event for this worker attempt.
+            # Stop telemetry before publishing it so a recovery watcher cannot
+            # replay an older WAITING checkpoint after run.failed.
+            stop.set()
+            if watcher is not None:
+                watcher.join(timeout=2.0)
+                watcher = None
             store.append_event(command_id, "run.human_required" if state == "HUMAN_REQUIRED" else "run.failed", {
                 "error_class": exc.__class__.__name__,
                 "failure_class": failure_class,

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import subprocess
+import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
@@ -54,6 +58,60 @@ class ProjectSourceAdapter:
         self.user_agent = user_agent
         self.tls_context = tls_context if tls_context is not None else _create_system_trust_tls_context()
 
+    def _validated_github_coordinates(self) -> tuple[str, str]:
+        repository = str(self.repository).strip()
+        control_ref = str(self.control_ref).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise ValueError(f"Invalid GitHub repository coordinate: '{repository}'")
+        if not control_ref or control_ref.startswith("-") or ".." in control_ref or not re.fullmatch(
+            r"[A-Za-z0-9._/-]+", control_ref
+        ):
+            raise ValueError(f"Invalid GitHub control ref: '{control_ref}'")
+        return repository, control_ref
+
+    @staticmethod
+    def _is_api_capacity_error(exc: BaseException) -> bool:
+        return isinstance(exc, urllib.error.HTTPError) and exc.code in (403, 429)
+
+    def _resolve_ref_via_git_transport(self) -> str:
+        """Resolve one exact branch through GitHub's read-only Git transport.
+
+        This is a narrow availability fallback for GitHub REST rate limiting. It
+        neither consults nor mutates a local checkout, and it accepts exactly one
+        advertised branch ref with an exact 40-character SHA.
+        """
+        repository, control_ref = self._validated_github_coordinates()
+        expected_ref = f"refs/heads/{control_ref}"
+        env = dict(os.environ)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        completed = subprocess.run(
+            ["git", "ls-remote", f"https://github.com/{repository}.git", expected_ref],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        matches = []
+        for line in completed.stdout.splitlines():
+            fields = line.split()
+            if len(fields) == 2 and fields[1] == expected_ref and re.fullmatch(r"[0-9a-f]{40}", fields[0]):
+                matches.append(fields[0])
+        if len(matches) != 1:
+            raise RuntimeError(f"Git transport did not resolve exactly one branch ref '{control_ref}'")
+        return matches[0]
+
+    def _verify_revision_via_github_html(self, exact_sha: str) -> str:
+        """Verify an exact revision through GitHub's non-API immutable commit URL."""
+        repository, _ = self._validated_github_coordinates()
+        url = f"https://github.com/{repository}/commit/{exact_sha}"
+        req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
+        with urllib.request.urlopen(req, timeout=15, context=self.tls_context) as resp:
+            status = getattr(resp, "status", 200)
+            if status != 200:
+                raise RuntimeError(f"GitHub commit page returned HTTP {status}")
+        return exact_sha.lower()
+
     def resolve_ref_to_sha(self) -> str:
         """Resolve configured control ref to exact 40-character commit SHA."""
         url = f"https://api.github.com/repos/{self.repository}/branches/{self.control_ref}"
@@ -69,6 +127,14 @@ class ProjectSourceAdapter:
                     raise ValueError(f"Invalid SHA format resolved from ref {self.control_ref}: {sha}")
                 return sha
         except Exception as e:
+            if self._is_api_capacity_error(e):
+                try:
+                    return self._resolve_ref_via_git_transport()
+                except Exception as fallback_error:
+                    raise RuntimeError(
+                        f"Failed to resolve ref '{self.control_ref}' for repository '{self.repository}' "
+                        f"after GitHub API capacity fallback: {fallback_error}"
+                    ) from fallback_error
             raise RuntimeError(f"Failed to resolve ref '{self.control_ref}' for repository '{self.repository}': {e}") from e
 
     def resolve_exact_revision(self, exact_sha: str) -> str:
@@ -80,7 +146,6 @@ class ProjectSourceAdapter:
         - Fails closed on missing commit, format mismatch, network/source error.
         - Returns the verified exact lowercase SHA.
         """
-        import re
         if not isinstance(exact_sha, str) or not re.match(r"^[0-9a-f]{40}$", exact_sha):
             raise ValueError(f"Invalid exact SHA format for revision existence verification: '{exact_sha}'")
 
@@ -97,6 +162,14 @@ class ProjectSourceAdapter:
                     raise ValueError(f"Repository returned commit SHA '{returned_sha}' which does not match requested '{exact_sha}'")
                 return exact_sha.lower()
         except Exception as e:
+            if self._is_api_capacity_error(e):
+                try:
+                    return self._verify_revision_via_github_html(exact_sha)
+                except Exception as fallback_error:
+                    raise RuntimeError(
+                        f"Failed to resolve revision '{exact_sha}' in repository '{self.repository}' "
+                        f"after GitHub API capacity fallback: {fallback_error}"
+                    ) from fallback_error
             raise RuntimeError(f"Failed to resolve revision '{exact_sha}' in repository '{self.repository}': {e}") from e
 
     def fetch_file_at_sha(self, path: str, exact_sha: str) -> str:

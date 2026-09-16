@@ -3,6 +3,8 @@
 import io
 import ssl
 import ssl as _ssl_mod
+import subprocess
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -77,6 +79,43 @@ def test_fetch_file_at_sha_passes_explicit_context(mock_urlopen):
     assert mock_urlopen.call_count == 1
     _, kwargs = mock_urlopen.call_args
     assert kwargs.get("context") is dummy_ctx
+
+
+@patch("aos.source_adapter.subprocess.run")
+@patch("urllib.request.urlopen")
+def test_resolve_ref_uses_read_only_git_transport_on_api_rate_limit(mock_urlopen, mock_run):
+    api_error = urllib.error.HTTPError("https://api.github.com/example", 403, "rate limit", {}, None)
+    mock_urlopen.side_effect = api_error
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout="0123456789abcdef0123456789abcdef01234567\trefs/heads/control/main\n",
+        stderr="",
+    )
+    adapter = ProjectSourceAdapter("MertSGI/AOS", "control/main", tls_context=ssl.create_default_context())
+
+    assert adapter.resolve_ref_to_sha() == "0123456789abcdef0123456789abcdef01234567"
+    args, kwargs = mock_run.call_args
+    assert args[0] == [
+        "git", "ls-remote", "https://github.com/MertSGI/AOS.git", "refs/heads/control/main"
+    ]
+    assert kwargs["check"] is True
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+@patch("urllib.request.urlopen")
+def test_resolve_exact_revision_uses_immutable_html_on_api_rate_limit(mock_urlopen):
+    api_error = urllib.error.HTTPError("https://api.github.com/example", 429, "rate limit", {}, None)
+    html_response = MagicMock()
+    html_response.status = 200
+    html_response.__enter__.return_value = html_response
+    mock_urlopen.side_effect = [api_error, html_response]
+    adapter = ProjectSourceAdapter("MertSGI/AOS", "main", tls_context=ssl.create_default_context())
+    target_sha = "0123456789abcdef0123456789abcdef01234567"
+
+    assert adapter.resolve_exact_revision(target_sha) == target_sha
+    assert mock_urlopen.call_count == 2
+    fallback_request = mock_urlopen.call_args_list[1].args[0]
+    assert fallback_request.full_url == f"https://github.com/MertSGI/AOS/commit/{target_sha}"
 
 
 @patch("urllib.request.urlopen")
