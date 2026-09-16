@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
+GROQ_MAX_OUTPUT_TOKENS = 1800
 
 
 def _is_transient_capacity_error(exc: Exception) -> bool:
@@ -122,7 +123,7 @@ class GroqPlannerProvider:
                     {"role": "user", "content": prompt},
                 ],
                 response_format=response_format,
-                max_tokens=2500,
+                max_tokens=GROQ_MAX_OUTPUT_TOKENS,
                 temperature=0.0,
                 store=False,
             )
