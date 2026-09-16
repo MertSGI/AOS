@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import aos.planning_kernel as planning_kernel
+
 from aos.planning_kernel import (
     AuthorityDenied,
     CanonicalAuthorityResolver,
@@ -127,6 +129,29 @@ def _complete():
         "satisfied_criteria": ["All roadmap work complete"],
         "unsatisfied_criteria": [],
     }
+
+
+def test_atomic_json_retries_transient_windows_destination_lock(tmp_path, monkeypatch):
+    destination = tmp_path / "checkpoint.json"
+    destination.write_text('{"old": true}\n', encoding="utf-8")
+    real_replace = planning_kernel.os.replace
+    attempts = []
+
+    def transient_replace(source, target):
+        attempts.append((source, target))
+        if len(attempts) < 3:
+            raise PermissionError("transient Windows sharing violation")
+        real_replace(source, target)
+
+    monkeypatch.setattr(planning_kernel.os, "name", "nt")
+    monkeypatch.setattr(planning_kernel.os, "replace", transient_replace)
+    monkeypatch.setattr(planning_kernel.time, "sleep", lambda _seconds: None)
+
+    planning_kernel._atomic_json(destination, {"new": True})
+
+    assert len(attempts) == 3
+    assert json.loads(destination.read_text(encoding="utf-8")) == {"new": True}
+    assert not destination.with_suffix(".json.tmp").exists()
 
 
 def test_reasoning_projection_is_bounded_without_weakening_durable_situation():

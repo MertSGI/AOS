@@ -379,7 +379,17 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    for attempt in range(8):
+        try:
+            os.replace(tmp, path)
+            break
+        except PermissionError:
+            if os.name != "nt" or attempt == 7:
+                raise
+            # Windows scanners and readers can briefly retain a handle to the
+            # destination. Preserve atomic replacement while tolerating that
+            # bounded, transient sharing violation.
+            time.sleep(min(0.05 * (2 ** attempt), 0.5))
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
