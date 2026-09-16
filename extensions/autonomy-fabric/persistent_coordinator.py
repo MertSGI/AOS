@@ -205,13 +205,24 @@ class PersistentCoordinator:
             # 2. Build execution request
             caps = [ExecutionCapability.PROCESS_EXEC]
             payload = getattr(node, "payload", {})
-            if node.run_type in ("PATCH", "FILE_WRITE", "DEV"):
-                caps = [ExecutionCapability.FILE_WRITE] if payload.get("action") == "write_file" else [ExecutionCapability.PATCH_APPLY]
+            if node.run_type in ("FILE", "PATCH", "FILE_WRITE", "DEV"):
+                action = payload.get("action")
+                if action == "read_file":
+                    caps = [ExecutionCapability.FILE_READ]
+                elif action == "write_file":
+                    caps = [ExecutionCapability.FILE_WRITE]
+                else:
+                    caps = [ExecutionCapability.PATCH_APPLY]
                 if not payload:
                     # Default empty no-op file or patch payload for test runs
                     payload = {"action": "write_file", "path": f".aos_{node.node_id}.txt", "content": "done\n"}
-            elif node.run_type in ("GIT_COMMIT", "GIT_BRANCH"):
-                caps = [ExecutionCapability.GIT_WRITE]
+            elif node.run_type in ("GIT", "GIT_COMMIT", "GIT_BRANCH"):
+                read_actions = {"status", "diff", "log", "show", "rev-parse", "branch", "remote", "ls-files"}
+                caps = [
+                    ExecutionCapability.GIT_READ
+                    if str(payload.get("action", "")).lower() in read_actions
+                    else ExecutionCapability.GIT_WRITE
+                ]
             elif node.run_type in ("REASONING", "MODEL_REASONING", "PLAN"):
                 caps = [ExecutionCapability.MODEL_REASONING]
             elif node.run_type in ("BROWSER", "VISUAL"):
@@ -253,14 +264,16 @@ class PersistentCoordinator:
             # 5. Update status
             if res.status == "SUCCESS":
                 self.registry.transition(run.run_id, RunStatus.COMPLETED, phase="EXECUTION_SUCCESS")
-                self.state.completed_task_ids.append(node.node_id)
+                if node.node_id not in self.state.completed_task_ids:
+                    self.state.completed_task_ids.append(node.node_id)
                 if node.gate_type != NodeGateType.NONE:
                     self.dag.pass_gate(node.node_id)
             else:
                 self.registry.transition(
                     run.run_id, RunStatus.FAILED, phase="EXECUTION_FAILURE", payload={"errors": res.sanitized_errors}
                 )
-                self.state.failed_task_ids.append(node.node_id)
+                if node.node_id not in self.state.failed_task_ids:
+                    self.state.failed_task_ids.append(node.node_id)
 
             self._save_checkpoint()
 
@@ -281,7 +294,12 @@ class PersistentCoordinator:
                 # No ready tasks (blocked on dependency, failure, or human gate)
                 break
 
-            self.execute_next_batch(max_tasks=3)
+            results = self.execute_next_batch(max_tasks=3)
+            if results and not any(result.status == "SUCCESS" for result in results):
+                # A failed node remains eligible in the DAG so it can be retried
+                # after replanning, but spinning on it in the same bounded batch
+                # only duplicates work and evidence.
+                break
 
         self._save_checkpoint()
         return self.state

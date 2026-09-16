@@ -12,7 +12,9 @@ from aos.planning_kernel import (
     Objective,
     PLAN_SCHEMA,
     ProjectSituation,
+    _canonical_excerpt,
     _situation_prompt_payload,
+    _validate_plan_shape,
     _worker_contract_summary,
     detect_completion,
     run_autonomous_project,
@@ -149,6 +151,45 @@ def test_plan_schema_constrains_canonical_run_types():
         "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING",
     }
     assert "NATIVE_PROCESS" not in run_type["enum"]
+    assert PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["payload"]["minProperties"] == 1
+
+
+def test_canonical_excerpt_prioritizes_state_and_roadmap_over_large_history():
+    excerpt = _canonical_excerpt({
+        "docs/project-control/EVIDENCE.jsonl": "E" * 1000,
+        "docs/project-control/DECISIONS.md": "D" * 1000,
+        "docs/project-control/ROADMAP_12W.md": "CURRENT-ROADMAP",
+        "docs/project-control/STATE.json": '{"next_action":"CURRENT-ACTION"}',
+    }, max_chars=200)
+
+    assert "CURRENT-ACTION" in excerpt
+    assert "CURRENT-ROADMAP" in excerpt
+    assert "E" * 20 not in excerpt
+
+
+@pytest.mark.parametrize(
+    ("run_type", "payload"),
+    [("GIT", {}), ("GIT", {"args": []}), ("PROCESS", {}), ("PROCESS", {"cmd": []})],
+)
+def test_plan_rejects_non_executable_worker_payload(run_type, payload):
+    plan = _plan()
+    plan["tasks"][0]["run_type"] = run_type
+    plan["tasks"][0]["payload"] = payload
+
+    with pytest.raises(Exception, match="payload|cmd"):
+        _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
+
+
+def test_plan_rejects_git_force_with_lease_payload():
+    plan = _plan()
+    plan["tasks"][0].update({
+        "run_type": "GIT",
+        "mutating": True,
+        "payload": {"action": "push", "args": ["--force-with-lease", "origin", "candidate"]},
+    })
+
+    with pytest.raises(Exception, match="force push"):
+        _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
 def test_arbitrary_authority_id_is_rejected():

@@ -251,7 +251,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
                     "dependencies": {"type": "array", "items": {"type": "string"}},
                     "scope_tags": {"type": "array", "items": {"type": "string"}},
                     "write_scope": {"type": "array", "items": {"type": "string"}},
-                    "payload": {"type": "object"},
+                    "payload": {"type": "object", "minProperties": 1},
                     "expected_artifacts": {"type": "array", "items": {"type": "string"}},
                     "tests": {"type": "array", "items": {"type": "string"}},
                     "evidence_requirements": {"type": "array", "items": {"type": "string"}},
@@ -373,12 +373,18 @@ def _ci_state(repository: str, repository_head: str, workspace: Path) -> List[Di
 def _canonical_excerpt(contents: Mapping[str, Any], max_chars: int = 90000) -> str:
     chunks: List[str] = []
     remaining = max_chars
+
+    def priority_rank(path: str) -> Tuple[int, str]:
+        """Keep current state/roadmap ahead of large historical journals."""
+        upper = path.upper()
+        for rank, token in enumerate(("STATE", "ROADMAP", "RESUME", "CURRENT", "DECISION", "EVIDENCE")):
+            if token in upper:
+                return rank, path
+        return 6, path
+
     priority = sorted(
         contents,
-        key=lambda p: (
-            0 if any(token in p.upper() for token in ("STATE", "ROADMAP", "DECISION", "EVIDENCE", "RESUME", "CURRENT")) else 1,
-            p,
-        ),
+        key=priority_rank,
     )
     for path in priority:
         raw = contents[path]
@@ -924,6 +930,7 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
         task["write_scope"] = _string_list(task.get("write_scope", []), "write_scope", 64, 500)
         if not isinstance(task.get("payload"), dict):
             raise PlanningKernelError(f"Task {node_id} payload must be object")
+        _validate_worker_payload(node_id, run_type, task["payload"])
         for key in ("expected_artifacts", "tests", "evidence_requirements", "completion_criteria"):
             task[key] = _string_list(task.get(key, []), key, 64, 500)
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
@@ -946,6 +953,64 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
     normalized["objective"] = dataclasses.asdict(objective)
     normalized["generated_at"] = _utc_now()
     return normalized
+
+
+def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, Any]) -> None:
+    """Reject planner output that cannot be dispatched by the selected native worker."""
+    if not payload:
+        raise PlanningKernelError(f"Task {node_id} payload must not be empty")
+
+    if run_type == "FILE":
+        action = payload.get("action")
+        if action not in ("read_file", "write_file", "apply_patch"):
+            raise PlanningKernelError(f"Task {node_id} FILE payload has unsupported action")
+        if action in ("read_file", "write_file") and not isinstance(payload.get("path"), str):
+            raise PlanningKernelError(f"Task {node_id} FILE {action} payload requires path")
+        if action == "write_file" and not isinstance(payload.get("content"), str):
+            raise PlanningKernelError(f"Task {node_id} FILE write_file payload requires content")
+        if action == "apply_patch" and not isinstance(payload.get("patch"), str):
+            raise PlanningKernelError(f"Task {node_id} FILE apply_patch payload requires patch")
+        return
+
+    if run_type in ("PROCESS", "TEST", "BUILD"):
+        cmd = payload.get("cmd")
+        if not isinstance(cmd, list) or not cmd or not all(isinstance(arg, str) and arg for arg in cmd):
+            raise PlanningKernelError(f"Task {node_id} {run_type} payload requires non-empty string argv cmd")
+        binary = Path(cmd[0]).name.lower()
+        if binary.endswith(".exe"):
+            binary = binary[:-4]
+        if binary not in NativeProcessWorker.ALLOWED_BINARIES:
+            raise PlanningKernelError(f"Task {node_id} requests unsupported process binary: {binary}")
+        env = payload.get("env", {})
+        if not isinstance(env, dict) or any(not isinstance(key, str) for key in env):
+            raise PlanningKernelError(f"Task {node_id} {run_type} env must be an object with string keys")
+        return
+
+    if run_type == "GIT":
+        action = payload.get("action")
+        args = payload.get("args", [])
+        if not isinstance(action, str) or not action.strip():
+            raise PlanningKernelError(f"Task {node_id} GIT payload requires action")
+        if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+            raise PlanningKernelError(f"Task {node_id} GIT payload args must be a string array")
+        if action.lower() in NativeGitWorker.PROHIBITED_SUBCOMMANDS:
+            raise PlanningKernelError(f"Task {node_id} requests prohibited git action: {action}")
+        if action.lower() == "push" and any(
+            arg in ("--force", "-f", "--force-with-lease", "--force-if-includes")
+            or arg.startswith("--force=")
+            or arg.startswith("--force-with-lease=")
+            for arg in args
+        ):
+            raise PlanningKernelError(f"Task {node_id} requests prohibited force push")
+        return
+
+    if run_type == "CI" and not isinstance(payload.get("sha"), str):
+        raise PlanningKernelError(f"Task {node_id} CI payload requires explicit sha")
+    if run_type == "BROWSER" and not isinstance(payload.get("url"), str):
+        raise PlanningKernelError(f"Task {node_id} BROWSER payload requires url")
+    if run_type == "MODEL_REASONING":
+        if not isinstance(payload.get("prompt"), str) or not isinstance(payload.get("schema"), dict):
+            raise PlanningKernelError(f"Task {node_id} MODEL_REASONING payload requires prompt and schema")
 
 
 def _assert_acyclic(tasks: Sequence[Mapping[str, Any]]) -> None:
@@ -980,6 +1045,7 @@ def compile_execution_plan(
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
+        "Every task payload MUST be non-empty and executable as-is; never emit placeholder or omitted worker arguments. "
         "Prefer small meaningful batches, explicit tests/evidence, safe parallelism, and rollback where relevant. "
         "Every task requires a canonical authority_id. Never emit production, force-push, history rewrite, destructive, secret, payment, "
         "legal/compliance, or material trust/security changes. Do not invent evidence. "

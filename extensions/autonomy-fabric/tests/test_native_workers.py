@@ -281,6 +281,17 @@ def test_native_git_worker_bounded_actions_and_prohibited_protection():
         res_force = worker.execute(req_force)
         assert res_force.status == "DENIED"
 
+        req_force_lease = ExecutionRequest(
+            task_id="t-git-force-lease",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="GIT",
+            required_capabilities=[ExecutionCapability.GIT_WRITE],
+            authority_id="auth-1",
+            payload={"action": "push", "args": ["origin", "main", "--force-with-lease"]},
+        )
+        assert worker.execute(req_force_lease).status == "DENIED"
+
         # Prohibited destructive reset
         req_reset = ExecutionRequest(
             task_id="t-git-reset",

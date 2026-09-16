@@ -667,8 +667,8 @@ class TestGroqSchemaAndCompletion:
             with pytest.raises(PlannerContractError, match="canonical JSON schema validation"):
                 GroqPlannerProvider().generate_plan("plan", schema)
 
-    def test_groq_finish_reason_length_fails_closed(self, monkeypatch):
-        """20. Groq finish_reason=length fails closed."""
+    def test_groq_finish_reason_length_remains_failover_eligible(self, monkeypatch):
+        """20. Output-capacity truncation can fail over to another provider."""
         monkeypatch.setenv("GROQ_API_KEY", "fake-key")
         provider = GroqPlannerProvider()
 
@@ -683,7 +683,7 @@ class TestGroqSchemaAndCompletion:
         mock_openai_client.chat.completions.create.return_value = mock_response
 
         with patch("openai.OpenAI", return_value=mock_openai_client):
-            with pytest.raises(PlannerContractError, match="unacceptable reason: length"):
+            with pytest.raises(PlannerTransientError, match="output capacity"):
                 provider.generate_plan("test prompt", {})
 
     def test_groq_tpm_capacity_413_is_transient(self, monkeypatch):

@@ -484,7 +484,12 @@ class NativeGitWorker(ExecutionBackend):
                 evidence_class=EvidenceClass.SOURCE_PROOF,
             )
 
-        if action == "push" and ("--force" in args or "-f" in args):
+        if action == "push" and any(
+            arg in ("--force", "-f", "--force-with-lease", "--force-if-includes")
+            or str(arg).startswith("--force=")
+            or str(arg).startswith("--force-with-lease=")
+            for arg in args
+        ):
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="local_git_worker",

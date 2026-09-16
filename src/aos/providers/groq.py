@@ -122,7 +122,7 @@ class GroqPlannerProvider:
                     {"role": "user", "content": prompt},
                 ],
                 response_format=response_format,
-                max_tokens=1000,
+                max_tokens=2500,
                 temperature=0.0,
                 store=False,
             )
@@ -143,6 +143,8 @@ class GroqPlannerProvider:
 
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason == "length":
+            raise PlannerTransientError("Groq response reached the configured output capacity before completing JSON")
         if finish_reason and finish_reason != "stop":
             raise PlannerContractError(f"Groq response finished with unacceptable reason: {finish_reason}")
 
