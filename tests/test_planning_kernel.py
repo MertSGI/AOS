@@ -13,6 +13,7 @@ from aos.planning_kernel import (
     PLAN_SCHEMA,
     ProjectSituation,
     _canonical_excerpt,
+    _bounded_completed_read_context,
     _bounded_workspace_file_manifest,
     _recover_waiting_objective,
     _situation_prompt_payload,
@@ -64,9 +65,11 @@ class QueueBackend:
     def __init__(self, proposals):
         self.proposals = list(proposals)
         self.calls = 0
+        self.requests = []
 
     def execute(self, request):
         self.calls += 1
+        self.requests.append(request)
         if not self.proposals:
             raise AssertionError("unexpected reasoning call")
         proposal = self.proposals.pop(0)
@@ -172,6 +175,125 @@ def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, m
     assert len(manifest["path_set_sha256"]) == 64
     assert "package.json" in manifest["representative_existing_paths"]
     assert all("content" not in path.lower() for path in manifest["representative_existing_paths"])
+
+
+def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    batch_runtime = runtime / "batches" / "batch-0000"
+    batch_runtime.mkdir(parents=True)
+    workspace.mkdir()
+    roadmap = workspace / "ROADMAP.md"
+    roadmap.write_text("Phase 2: implement the bounded API.\n", encoding="utf-8")
+    (workspace / ".env").write_text("TOKEN=must-not-appear-anywhere\n", encoding="utf-8")
+    (workspace / "not-completed.md").write_text("not evidence\n", encoding="utf-8")
+    plan = _plan()
+    template = plan["tasks"][0]
+    plan["tasks"] = [
+        {**template, "node_id": "read-roadmap", "run_type": "FILE", "payload": {"action": "read_file", "path": "ROADMAP.md"}},
+        {**template, "node_id": "read-env", "run_type": "FILE", "payload": {"action": "read_file", "path": ".env"}},
+        {**template, "node_id": "unfinished", "run_type": "FILE", "payload": {"action": "read_file", "path": "not-completed.md"}},
+    ]
+    (batch_runtime / "generated-run-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    context = _bounded_completed_read_context(
+        runtime,
+        workspace,
+        [{"batch_number": 0, "receipt": {"completed_task_ids": ["read-roadmap", "read-env"]}}],
+    )
+
+    assert context["status"] == "AVAILABLE"
+    assert context["completed_read_paths"] == ["ROADMAP.md"]
+    assert context["files"][0]["redacted_excerpt"] == "Phase 2: implement the bounded API.\n"
+    assert context["files"][0]["content_sha256"] == hashlib.sha256(roadmap.read_bytes()).hexdigest()
+    assert "must-not-appear" not in json.dumps(context)
+
+
+def test_plan_compiler_rejects_renamed_repeat_of_completed_read_path(tmp_path):
+    roadmap = tmp_path / "ROADMAP.md"
+    roadmap.write_text("next work\n", encoding="utf-8")
+    repeated = _plan()
+    repeated["tasks"][0].update({
+        "node_id": "renamed-roadmap-read",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "ROADMAP.md"},
+    })
+    backend = QueueBackend([repeated, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        forbidden_read_paths=["roadmap.md"],
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+
+
+def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    batch_runtime = runtime / "batches" / "batch-0000"
+    batch_runtime.mkdir(parents=True)
+    workspace.mkdir()
+    (workspace / "ROADMAP.md").write_text("Implement endpoint Z next.\n", encoding="utf-8")
+    completed_plan = _plan()
+    completed_plan["tasks"][0].update({
+        "node_id": "read-roadmap",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "ROADMAP.md"},
+    })
+    (batch_runtime / "generated-run-plan.json").write_text(json.dumps(completed_plan), encoding="utf-8")
+    prior_receipt = {
+        "progress": 100.0,
+        "completed_task_ids": ["read-roadmap"],
+        "failed_task_ids": [],
+        "ag_invocation_count": 0,
+        "production": "NO_GO",
+    }
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "BATCH_COMPLETE",
+        "batch_number": 1,
+        "completed_batches": [{"batch_number": 0, "receipt": prior_receipt}],
+        "last_receipt": prior_receipt,
+    }), encoding="utf-8")
+    backend = QueueBackend([
+        {
+            "disposition": "REPLAN",
+            "rationale": "Authorized work remains.",
+            "satisfied_criteria": [],
+            "unsatisfied_criteria": ["All roadmap work complete"],
+        },
+        _objective(),
+        _plan(),
+    ])
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=workspace,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=lambda **kwargs: {
+            "progress": 100.0,
+            "completed_task_ids": ["bounded-test"],
+            "failed_task_ids": [],
+            "ag_invocation_count": 0,
+            "production": "NO_GO",
+        },
+        max_batches=1,
+    )
+
+    plan_prompt = backend.requests[2].payload["prompt"]
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert "Implement endpoint Z next." in plan_prompt
+    assert '"completed_read_paths": ["ROADMAP.md"]' in plan_prompt
 
 
 def test_plan_schema_constrains_canonical_run_types():

@@ -108,6 +108,12 @@ _SYNTHETIC_BOOKKEEPING_STEMS = (
     "status_marker",
     "status-marker",
 )
+_PLANNER_READ_CONTEXT_SUFFIXES = {
+    ".md", ".markdown", ".txt", ".rst", ".json", ".jsonl", ".yaml", ".yml", ".toml",
+}
+_SENSITIVE_READ_CONTEXT_PARTS = {
+    ".env", ".npmrc", ".pypirc", "credentials", "credential", "private-key", "private_key",
+}
 
 
 class PlanningKernelError(RuntimeError):
@@ -690,6 +696,95 @@ def _bounded_workspace_file_manifest(
     return manifest
 
 
+def _bounded_completed_read_context(
+    runtime_dir: Path,
+    workspace: Path,
+    completed_batches: Sequence[Mapping[str, Any]],
+    *,
+    max_files: int = 4,
+    max_chars_per_file: int = 1400,
+) -> Dict[str, Any]:
+    """Fresh-read bounded outputs of completed FILE reads for the next planner.
+
+    Execution evidence is deliberately not copied wholesale into durable receipts.
+    Instead, the planning kernel reopens only completed, locally validated text reads
+    from their durable plans. This keeps the context current, workspace-confined,
+    bounded, hash-bound, and redacted while allowing discovery batches to inform the
+    next dependency-safe plan.
+    """
+    workspace_root = workspace.resolve()
+    selected: List[Tuple[int, str, Path]] = []
+    seen_paths: set[str] = set()
+
+    for completed in reversed(list(completed_batches)):
+        if not isinstance(completed, Mapping):
+            continue
+        try:
+            batch_number = int(completed.get("batch_number"))
+        except (TypeError, ValueError):
+            continue
+        receipt = completed.get("receipt", {})
+        if not isinstance(receipt, Mapping):
+            continue
+        completed_ids = {
+            str(task_id) for task_id in receipt.get("completed_task_ids", [])
+            if str(task_id).strip()
+        }
+        plan = _read_json(runtime_dir / "batches" / f"batch-{batch_number:04d}" / "generated-run-plan.json")
+        tasks = plan.get("tasks", [])
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if not isinstance(task, Mapping) or str(task.get("node_id")) not in completed_ids:
+                continue
+            payload = task.get("payload", {})
+            if task.get("run_type") != "FILE" or not isinstance(payload, Mapping):
+                continue
+            if payload.get("action") != "read_file":
+                continue
+            raw_path = str(payload.get("path", "")).strip()
+            normalized_path = raw_path.replace("\\", "/")
+            path_key = normalized_path.casefold()
+            if not raw_path or path_key in seen_paths:
+                continue
+            parts = {part.casefold() for part in Path(normalized_path).parts}
+            if parts & _SENSITIVE_READ_CONTEXT_PARTS:
+                continue
+            target = (workspace_root / raw_path).resolve()
+            if target != workspace_root and workspace_root not in target.parents:
+                continue
+            if target.suffix.casefold() not in _PLANNER_READ_CONTEXT_SUFFIXES or not target.is_file():
+                continue
+            seen_paths.add(path_key)
+            selected.append((batch_number, normalized_path, target))
+            if len(selected) >= max_files:
+                break
+        if len(selected) >= max_files:
+            break
+
+    files: List[Dict[str, Any]] = []
+    for batch_number, normalized_path, target in selected:
+        try:
+            raw_bytes = target.read_bytes()
+        except OSError:
+            continue
+        raw = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        redacted = redact_secrets(raw)
+        files.append({
+            "batch_number": batch_number,
+            "path": normalized_path,
+            "content_chars": len(raw),
+            "content_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            "redacted_excerpt": _bounded_prompt_excerpt(redacted, max_chars=max_chars_per_file),
+        })
+    return {
+        "status": "AVAILABLE" if files else "NONE",
+        "fresh_read": True,
+        "files": files,
+        "completed_read_paths": [entry["path"] for entry in files],
+    }
+
+
 def _available_process_binaries() -> List[str]:
     """Return the allowlisted process binaries executable in this runtime environment."""
     return sorted(binary for binary in NativeProcessWorker.ALLOWED_BINARIES if shutil.which(binary))
@@ -1221,9 +1316,14 @@ def compile_execution_plan(
     backend_override: Optional[Any] = None,
     repair_context: Optional[Mapping[str, Any]] = None,
     forbidden_task_ids: Sequence[str] = (),
+    forbidden_read_paths: Sequence[str] = (),
     workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
+    forbidden_reads = {
+        str(item).strip().replace("\\", "/").casefold()
+        for item in forbidden_read_paths if str(item).strip()
+    }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     available_process_binaries = _available_process_binaries()
     prompt = (
@@ -1239,6 +1339,9 @@ def compile_execution_plan(
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
+        f"COMPLETED_READ_PATHS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_reads), ensure_ascii=False)}\n"
+        "COMPLETED_READ_CONTEXT_RULE=Treat completed_read_context as fresh, hash-bound local observation. "
+        "Use it to plan concrete product work or verification; do not reread those exact paths.\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
@@ -1310,6 +1413,12 @@ def compile_execution_plan(
                 for task in normalized["tasks"]:
                     if task["run_type"] != "FILE" or task["payload"].get("action") != "read_file":
                         continue
+                    normalized_read_path = str(task["payload"].get("path", "")).strip().replace("\\", "/").casefold()
+                    if normalized_read_path in forbidden_reads:
+                        raise PlanningKernelError(
+                            f"Task {task['node_id']} repeats completed FILE read target: "
+                            f"{task['payload'].get('path')}"
+                        )
                     target = (workspace_root / str(task["payload"].get("path", ""))).resolve()
                     if target != workspace_root and workspace_root not in target.parents:
                         raise PlanningKernelError(
@@ -1582,6 +1691,9 @@ def run_autonomous_project(
                 if isinstance(receipt, Mapping)
                 for task_id in receipt.get("completed_task_ids", [])
             })
+            completed_read_context = _bounded_completed_read_context(
+                runtime_dir, workspace, completed_batches,
+            )
             repair_context = {
                 "replan_reason": replan_reason,
                 "recent_receipt": {
@@ -1590,12 +1702,14 @@ def run_autonomous_project(
                     "progress": recent_receipt.get("progress"),
                 },
                 "completed_task_ids": completed_task_ids,
+                "completed_read_context": completed_read_context,
             } if replan_reason or recent_receipt else {}
             plan = compile_execution_plan(
                 situation, objective, routing_policy_path, runtime_dir,
                 backend_override=backend_override,
                 repair_context=repair_context,
                 forbidden_task_ids=completed_task_ids,
+                forbidden_read_paths=completed_read_context["completed_read_paths"],
                 workspace=workspace,
             )
         except WaitingForReasoningProvider as exc:
