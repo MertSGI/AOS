@@ -13,7 +13,11 @@ UNSUPPORTED_GEMINI_KEYWORDS = {"$schema", "$id", "pattern", "minLength", "maxLen
 
 
 def project_gemini_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Derive a provider schema projection by stripping unsupported JSON Schema keywords and narrowing schema_version."""
+    """Strip only Gemini-unsupported keywords from the caller's schema.
+
+    Canonical constraints such as a schema_version enum belong to the calling
+    contract and must not be replaced with a provider-wide legacy value.
+    """
     if not isinstance(schema, dict):
         return schema
 
@@ -33,14 +37,21 @@ def project_gemini_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         return clean_obj
 
     projected = _clean(schema)
-
-    if isinstance(projected, dict) and "properties" in projected and isinstance(projected["properties"], dict):
-        if "schema_version" in projected["properties"]:
-            projected["properties"]["schema_version"] = {
-                "type": "string",
-                "enum": ["0.1.0"],
-            }
-
+    raw_properties = schema.get("properties") if isinstance(schema, dict) else None
+    projected_properties = projected.get("properties") if isinstance(projected, dict) else None
+    if isinstance(raw_properties, dict) and isinstance(projected_properties, dict):
+        raw_version = raw_properties.get("schema_version")
+        projected_version = projected_properties.get("schema_version")
+        if (
+            isinstance(raw_version, dict)
+            and isinstance(projected_version, dict)
+            and "enum" not in projected_version
+            and raw_version.get("pattern") == r"^0\.1(\.[0-9]+)?$"
+        ):
+            # Gemini does not support pattern. Preserve the legacy planner
+            # decision contract by narrowing its accepted 0.1.x range to the
+            # current canonical version, without affecting other callers.
+            projected_version["enum"] = ["0.1.0"]
     return projected
 
 
@@ -60,15 +71,25 @@ class GeminiPlannerProvider:
 
         client = genai.Client(api_key=api_key)
 
+        provider_schema = project_gemini_schema(schema)
+        version_instruction = (
+            "All schema fields, including schema_version when present, MUST match the provided schema exactly. "
+        )
+        version_schema = provider_schema.get("properties", {}).get("schema_version", {})
+        allowed_versions = version_schema.get("enum") if isinstance(version_schema, dict) else None
+        if isinstance(allowed_versions, list) and len(allowed_versions) == 1:
+            version_instruction = (
+                "For the current AOS planner decision contract, schema_version MUST be exactly "
+                f'"{allowed_versions[0]}". '
+            )
+
         instructions = (
             "You are the AOS Shadow Planner. Your task is to evaluate canonical project control "
             "context and output a bounded planner decision JSON matching the provided schema. "
-            'For the current AOS planner decision contract, schema_version MUST be exactly "0.1.0". '
-            "You MUST select the canonical milestone and canonical next_action EXACTLY as provided "
+            + version_instruction
+            + "You MUST select the canonical milestone and canonical next_action EXACTLY as provided "
             "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
         )
-
-        provider_schema = project_gemini_schema(schema)
 
         try:
             response = client.models.generate_content(

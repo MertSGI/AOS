@@ -560,6 +560,21 @@ class TestGeminiSchemaProjection:
         assert "minLength" not in projected["properties"]["project_id"]
         assert projected["properties"]["project_id"]["type"] == "string"
 
+    def test_gemini_schema_projection_preserves_caller_schema_version(self):
+        raw_schema = {
+            "type": "object",
+            "properties": {
+                "schema_version": {"type": "string", "enum": ["1.0.0"]},
+            },
+        }
+
+        projected = project_gemini_schema(raw_schema)
+
+        assert projected["properties"]["schema_version"] == {
+            "type": "string",
+            "enum": ["1.0.0"],
+        }
+
     def test_canonical_validation_catches_pattern_violation_after_gemini_projection(self):
         """18. Malformed output passing reduced Gemini projection is still caught by canonical AOS validation."""
         bad_decision = {
