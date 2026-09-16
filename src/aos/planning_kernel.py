@@ -12,7 +12,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as _dt
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -519,14 +518,60 @@ def synthesize_project_situation(
 
 
 def _worker_contract_summary() -> str:
-    chunks = []
-    for cls in (NativeFileWorker, NativeProcessWorker, NativeGitWorker):
-        try:
-            source = inspect.getsource(cls)
-        except (OSError, TypeError):
-            source = repr(cls)
-        chunks.append(f"\n### {cls.__name__}\n{source[:16000]}")
-    return "\n".join(chunks)
+    """Return the planner-visible worker payload contract without source bloat."""
+    return json.dumps(
+        {
+            "NativeFileWorker": {
+                "actions": {
+                    "read_file": {"path": "workspace-relative string"},
+                    "write_file": {
+                        "path": "workspace-relative string",
+                        "content": "string",
+                        "precondition_sha": "optional sha256",
+                    },
+                    "apply_patch": {
+                        "patch": "unified diff string",
+                        "precondition_shas": "optional path-to-sha object",
+                        "allow_deletion": False,
+                    },
+                },
+                "safety": "workspace confinement and declared write_scope are enforced",
+            },
+            "NativeProcessWorker": {
+                "payload": {"cmd": "non-empty argv array", "env": "non-secret string map"},
+                "allowed_binaries": sorted(NativeProcessWorker.ALLOWED_BINARIES),
+                "safety": "shell=False; bounded timeout; clean environment",
+            },
+            "NativeGitWorker": {
+                "payload": {"action": "git subcommand", "args": "argv array"},
+                "prohibited_subcommands": sorted(NativeGitWorker.PROHIBITED_SUBCOMMANDS),
+                "safety": "force push and prohibited subcommands are denied",
+            },
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _bounded_prompt_excerpt(excerpt: str, max_chars: int = 8000) -> str:
+    """Project a large canonical excerpt into a deterministic bounded prompt.
+
+    The full canonical artifact remains durable and all authority checks continue
+    to use the unabridged ProjectSituation. The model receives both ends plus a
+    hash/length binding so omitted middle text cannot be mistaken for absence.
+    """
+    if len(excerpt) <= max_chars:
+        return excerpt
+    digest = hashlib.sha256(excerpt.encode("utf-8")).hexdigest()
+    marker = (
+        f"\n...[BOUNDED_CANONICAL_EXCERPT original_chars={len(excerpt)} "
+        f"sha256={digest}]...\n"
+    )
+    available = max(0, max_chars - len(marker))
+    head_len = available // 2
+    tail_len = available - head_len
+    return excerpt[:head_len] + marker + excerpt[-tail_len:]
 
 
 def _hydrate_credentials() -> None:
@@ -600,7 +645,11 @@ def _situation_prompt_payload(situation: ProjectSituation) -> Dict[str, Any]:
         "red_lines": list(situation.red_lines),
         "completion_criteria": list(situation.completion_criteria),
         "ambiguity_reasons": list(situation.ambiguity_reasons),
-        "canonical_excerpt": situation.canonical_excerpt,
+        "canonical_excerpt": _bounded_prompt_excerpt(situation.canonical_excerpt),
+        "canonical_excerpt_chars": len(situation.canonical_excerpt),
+        "canonical_excerpt_sha256": hashlib.sha256(
+            situation.canonical_excerpt.encode("utf-8")
+        ).hexdigest(),
     }
 
 

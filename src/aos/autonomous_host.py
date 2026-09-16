@@ -259,7 +259,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     exit_code=1,
                     workspace=request.workspace,
                     sanitized_errors=["PROVIDER_CONTRACT_FAILURE"],
-                    evidence_payload={"provider_attempts": [item.to_dict() for item in attempts]},
+                    evidence_payload={
+                        "failure_class": "PROVIDER_CONTRACT_FAILURE",
+                        "provider_attempts": [item.to_dict() for item in attempts],
+                    },
                     evidence_class=EvidenceClass.SOURCE_PROOF,
                 )
             except PlannerCredentialError as exc:
@@ -304,7 +307,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     exit_code=1,
                     workspace=request.workspace,
                     sanitized_errors=["UNKNOWN_PROVIDER_FAILURE_FAIL_CLOSED"],
-                    evidence_payload={"provider_attempts": [item.to_dict() for item in attempts]},
+                    evidence_payload={
+                        "failure_class": "UNKNOWN_PROVIDER_FAILURE_FAIL_CLOSED",
+                        "provider_attempts": [item.to_dict() for item in attempts],
+                    },
                     evidence_class=EvidenceClass.SOURCE_PROOF,
                 )
 

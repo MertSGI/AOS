@@ -1,3 +1,5 @@
+import dataclasses
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,8 @@ from aos.planning_kernel import (
     CanonicalAuthorityResolver,
     Objective,
     ProjectSituation,
+    _situation_prompt_payload,
+    _worker_contract_summary,
     detect_completion,
     run_autonomous_project,
 )
@@ -113,6 +117,26 @@ def _complete():
         "satisfied_criteria": ["All roadmap work complete"],
         "unsatisfied_criteria": [],
     }
+
+
+def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
+    large_excerpt = "A" * 50000 + "CURRENT-FRONTIER" + "Z" * 50000
+    situation = dataclasses.replace(_situation(), canonical_excerpt=large_excerpt)
+
+    projected = _situation_prompt_payload(situation)
+
+    assert len(projected["canonical_excerpt"]) <= 8000
+    assert projected["canonical_excerpt_chars"] == len(large_excerpt)
+    assert projected["canonical_excerpt_sha256"] == hashlib.sha256(large_excerpt.encode()).hexdigest()
+    assert situation.canonical_excerpt == large_excerpt
+    assert "BOUNDED_CANONICAL_EXCERPT" in projected["canonical_excerpt"]
+
+
+def test_worker_contract_summary_is_compact_and_complete():
+    summary = _worker_contract_summary()
+    assert len(summary) < 5000
+    assert all(name in summary for name in ("NativeFileWorker", "NativeProcessWorker", "NativeGitWorker"))
+    assert "force push" in summary
 
 
 def test_arbitrary_authority_id_is_rejected():

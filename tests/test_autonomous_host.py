@@ -124,6 +124,7 @@ def test_contract_failure_is_not_routed_around(tmp_path):
     result = backend.execute(_request(tmp_path))
     assert result.status == "FAILED"
     assert calls == ["nemotron"]
+    assert result.evidence_payload["failure_class"] == "PROVIDER_CONTRACT_FAILURE"
     assert result.evidence_payload["provider_attempts"][0]["status"] == ProviderAttemptStatus.NON_RETRYABLE_FAILED.value
 
 

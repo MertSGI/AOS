@@ -21,7 +21,7 @@ from aos.provider_registry import (
     load_routing_policy,
 )
 from aos.providers.gemini import GeminiPlannerProvider, project_gemini_schema
-from aos.providers.groq import GroqPlannerProvider, project_groq_schema
+from aos.providers.groq import GroqPlannerProvider, groq_strict_schema_compatible, project_groq_schema
 from aos.providers.ollama import OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document, validate_file
@@ -618,6 +618,54 @@ class TestGroqSchemaAndCompletion:
         assert "$schema" not in projected
         assert "$id" not in projected
         assert projected["additionalProperties"] is False
+        assert groq_strict_schema_compatible(projected) is True
+
+    def test_groq_open_object_schema_uses_json_object_and_local_validation(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        schema = {
+            "type": "object",
+            "required": ["payload"],
+            "additionalProperties": False,
+            "properties": {"payload": {"type": "object"}},
+        }
+        assert groq_strict_schema_compatible(schema) is False
+
+        mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
+        mock_choice.message.content = '{"payload":{"cmd":["python","-V"]}}'
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = None
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("openai.OpenAI", return_value=mock_client):
+            proposal, _, _ = GroqPlannerProvider().generate_plan("plan", schema)
+
+        assert proposal["payload"]["cmd"] == ["python", "-V"]
+        call = mock_client.chat.completions.create.call_args.kwargs
+        assert call["response_format"] == {"type": "json_object"}
+        assert "AOS will validate it locally" in call["messages"][0]["content"]
+
+    def test_groq_json_object_fallback_fails_closed_on_canonical_schema_violation(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        schema = {
+            "type": "object",
+            "required": ["payload"],
+            "additionalProperties": False,
+            "properties": {"payload": {"type": "object"}},
+        }
+        mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
+        mock_choice.message.content = '{}'
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("openai.OpenAI", return_value=mock_client):
+            with pytest.raises(PlannerContractError, match="canonical JSON schema validation"):
+                GroqPlannerProvider().generate_plan("plan", schema)
 
     def test_groq_finish_reason_length_fails_closed(self, monkeypatch):
         """20. Groq finish_reason=length fails closed."""

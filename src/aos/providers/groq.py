@@ -6,6 +6,8 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
@@ -19,7 +21,7 @@ def _is_transient_capacity_error(exc: Exception) -> bool:
     provider-capacity condition, not a planner schema/security violation.
     """
     status_code = getattr(exc, "status_code", None)
-    if status_code is not None and int(status_code) >= 500:
+    if isinstance(status_code, int) and status_code >= 500:
         return True
     if status_code != 413:
         return False
@@ -33,6 +35,21 @@ def _is_transient_capacity_error(exc: Exception) -> bool:
             "tpm",
         )
     )
+
+
+def groq_strict_schema_compatible(schema: Any) -> bool:
+    """Return whether every object is closed as required by Groq strict mode."""
+    if isinstance(schema, list):
+        return all(groq_strict_schema_compatible(item) for item in schema)
+    if not isinstance(schema, dict):
+        return True
+    declared_type = schema.get("type")
+    is_object = declared_type == "object" or (
+        isinstance(declared_type, list) and "object" in declared_type
+    )
+    if is_object and schema.get("additionalProperties") is not False:
+        return False
+    return all(groq_strict_schema_compatible(value) for value in schema.values())
 
 
 def project_groq_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,6 +94,25 @@ class GroqPlannerProvider:
         )
 
         provider_schema = project_groq_schema(schema)
+        strict_schema = groq_strict_schema_compatible(provider_schema)
+        if not strict_schema:
+            instructions += (
+                " The provider cannot represent this open-ended canonical schema in strict mode. "
+                "Return a JSON object matching this canonical schema exactly; AOS will validate it locally: "
+                + json.dumps(provider_schema, ensure_ascii=False, sort_keys=True)
+            )
+        response_format = (
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "planner_decision",
+                    "strict": True,
+                    "schema": provider_schema,
+                },
+            }
+            if strict_schema
+            else {"type": "json_object"}
+        )
 
         try:
             response = client.chat.completions.create(
@@ -85,14 +121,7 @@ class GroqPlannerProvider:
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": prompt},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "planner_decision",
-                        "strict": True,
-                        "schema": provider_schema,
-                    },
-                },
+                response_format=response_format,
                 max_tokens=1000,
                 temperature=0.0,
                 store=False,
@@ -128,6 +157,12 @@ class GroqPlannerProvider:
             parsed_decision = json.loads(content_str)
         except Exception as e:
             raise PlannerContractError(f"Groq output is not valid JSON: {e}") from e
+
+        errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
+        if errors:
+            raise PlannerContractError(
+                f"Groq output failed canonical JSON schema validation: {errors[0].message}"
+            )
 
         response_id = getattr(response, "id", None)
 
