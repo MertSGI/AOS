@@ -24,6 +24,8 @@ class DAGNode:
     authority_id: str
     dependencies: List[str] = field(default_factory=list)  # list of node_ids
     gate_type: NodeGateType = NodeGateType.NONE
+    write_scope: List[str] = field(default_factory=list)
+    expected_artifacts: List[str] = field(default_factory=list)
     associated_run_id: Optional[str] = None
     gate_passed: bool = False
 
@@ -43,6 +45,8 @@ class TaskDAG:
         authority_id: str,
         dependencies: Optional[List[str]] = None,
         gate_type: NodeGateType = NodeGateType.NONE,
+        write_scope: Optional[List[str]] = None,
+        expected_artifacts: Optional[List[str]] = None,
     ) -> DAGNode:
         if node_id in self.nodes:
             raise ValueError(f"Node {node_id} already exists in DAG {self.project_id}")
@@ -59,6 +63,8 @@ class TaskDAG:
             authority_id=authority_id,
             dependencies=deps,
             gate_type=gate_type,
+            write_scope=list(write_scope or []),
+            expected_artifacts=list(expected_artifacts or []),
         )
         self.nodes[node_id] = node
         return node

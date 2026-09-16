@@ -221,3 +221,22 @@ def test_dag_requires_live_authority():
     }
     with pytest.raises(ValueError, match="authority"):
         build_dag("lari", registry, plan)
+
+
+def test_build_dag_preserves_declared_write_scope_and_expected_artifacts():
+    registry = AgentRunRegistry()
+    plan = {
+        "tasks": [{
+            "node_id": "write",
+            "run_type": "FILE",
+            "authority_id": "AUTH",
+            "write_scope": ["src/feature"],
+            "expected_artifacts": ["src/feature/result.txt"],
+            "payload": {"action": "write_file", "path": "src/feature/result.txt", "content": "ok"},
+        }]
+    }
+
+    dag = build_dag("lari", registry, plan)
+
+    assert dag.nodes["write"].write_scope == ["src/feature"]
+    assert dag.nodes["write"].expected_artifacts == ["src/feature/result.txt"]

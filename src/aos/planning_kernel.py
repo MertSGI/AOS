@@ -94,6 +94,14 @@ _SECRET_KEYS = {
     "password", "passwd", "secret", "api_key", "apikey", "access_token",
     "refresh_token", "private_key", "client_secret", "authorization", "bearer_token",
 }
+_SYNTHETIC_BOOKKEEPING_ARTIFACTS = (
+    "next_action.txt",
+    "next-action.txt",
+    "completion_marker",
+    "completion-marker",
+    "status_marker",
+    "status-marker",
+)
 
 
 class PlanningKernelError(RuntimeError):
@@ -597,11 +605,11 @@ def _worker_contract_summary() -> str:
                 "run_type": "PROCESS",
                 "payload": {"cmd": "non-empty argv array", "env": "non-secret string map"},
                 "allowed_binaries": sorted(NativeProcessWorker.ALLOWED_BINARIES),
-                "safety": "shell=False; bounded timeout; clean environment",
+                "safety": "non-mutating verification only; shell=False; no inline -c/-e interpreter code; bounded timeout; clean environment",
             },
             "NativeGitWorker": {
                 "run_type": "GIT",
-                "payload": {"action": "git subcommand", "args": "argv array"},
+                "payload": {"action": {"enum": sorted(_ALLOWED_GIT_ACTIONS)}, "args": "argv array"},
                 "prohibited_subcommands": sorted(NativeGitWorker.PROHIBITED_SUBCOMMANDS),
                 "safety": "force push and prohibited subcommands are denied",
             },
@@ -974,12 +982,31 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
         task["risk_class"] = _bounded_text(task.get("risk_class", objective.risk_class), 16, "risk_class")
         if not isinstance(task.get("mutating"), bool):
             raise PlanningKernelError(f"Task {node_id} mutating must be boolean")
+        if run_type == "PROCESS" and task["mutating"]:
+            raise PlanningKernelError(
+                f"Task {node_id} PROCESS execution cannot be mutating; use bounded FILE or GIT workers"
+            )
         task["dependencies"] = _string_list(task.get("dependencies", []), "dependencies", 64, 120)
         task["scope_tags"] = _string_list(task.get("scope_tags", []), "scope_tags", 32, 120)
         task["write_scope"] = _string_list(task.get("write_scope", []), "write_scope", 64, 500)
+        if run_type == "FILE" and task["mutating"] and not task["write_scope"]:
+            raise PlanningKernelError(f"Task {node_id} mutating FILE task requires non-empty write_scope")
         if not isinstance(task.get("payload"), dict):
             raise PlanningKernelError(f"Task {node_id} payload must be object")
         _validate_worker_payload(node_id, run_type, task["payload"])
+        if run_type == "FILE" and task["mutating"]:
+            payload_text = json.dumps(task["payload"], ensure_ascii=False, sort_keys=True).lower()
+            if any(marker in payload_text for marker in _SYNTHETIC_BOOKKEEPING_ARTIFACTS):
+                raise PlanningKernelError(
+                    f"Task {node_id} attempts to create a synthetic bookkeeping artifact"
+                )
+        if run_type == "FILE" and task["payload"].get("action") == "write_file":
+            target = str(task["payload"].get("path", ""))
+            if task["mutating"] and not any(
+                target == scope.rstrip("/") or target.startswith(scope.rstrip("/") + "/")
+                for scope in task["write_scope"]
+            ):
+                raise PlanningKernelError(f"Task {node_id} FILE target is outside declared write_scope")
         for key in ("expected_artifacts", "tests", "evidence_requirements", "completion_criteria"):
             task[key] = _string_list(task.get(key, []), key, 64, 500)
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
@@ -1032,6 +1059,11 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
             binary = binary[:-4]
         if binary not in NativeProcessWorker.ALLOWED_BINARIES:
             raise PlanningKernelError(f"Task {node_id} requests unsupported process binary: {binary}")
+        lowered_args = [arg.lower() for arg in cmd[1:]]
+        if binary in ("python", "py") and any(arg in ("-c", "-m") for arg in lowered_args):
+            raise PlanningKernelError(f"Task {node_id} cannot use inline/module Python execution")
+        if binary == "node" and any(arg in ("-e", "--eval", "-p", "--print") for arg in lowered_args):
+            raise PlanningKernelError(f"Task {node_id} cannot use inline Node execution")
         env = payload.get("env", {})
         if not isinstance(env, dict) or any(not isinstance(key, str) for key in env):
             raise PlanningKernelError(f"Task {node_id} {run_type} env must be an object with string keys")
@@ -1097,11 +1129,14 @@ def compile_execution_plan(
     *,
     backend_override: Optional[Any] = None,
     repair_context: Optional[Mapping[str, Any]] = None,
+    forbidden_task_ids: Sequence[str] = (),
 ) -> Dict[str, Any]:
+    forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
         "Every task payload MUST be non-empty and executable as-is; never emit placeholder or omitted worker arguments. "
+        "Never create bookkeeping, status, next_action, or completion marker files; tasks must advance or verify canonical product work. "
         "Prefer small meaningful batches, explicit tests/evidence, safe parallelism, and rollback where relevant. "
         "Every task requires a canonical authority_id. Never emit production, force-push, history rewrite, destructive, secret, payment, "
         "legal/compliance, or material trust/security changes. Do not invent evidence. "
@@ -1109,6 +1144,7 @@ def compile_execution_plan(
         f"OBJECTIVE={json.dumps(dataclasses.asdict(objective), ensure_ascii=False, sort_keys=True)}\n"
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
+        f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     proposal: Dict[str, Any] = {}
@@ -1134,6 +1170,13 @@ def compile_execution_plan(
         )
         try:
             normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+            duplicates = sorted(
+                task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
+            )
+            if duplicates:
+                raise PlanningKernelError(
+                    f"Execution plan repeats completed task identities: {duplicates}"
+                )
             break
         except PlanningKernelError as exc:
             if attempt:
@@ -1329,10 +1372,28 @@ def run_autonomous_project(
                 backend_override=backend_override, replan_reason=replan_reason,
             )
             _atomic_json(runtime_dir / f"objective-{batch_number:04d}.json", dataclasses.asdict(objective))
-            repair_context = _bounded_runtime_evidence(Path(checkpoint.get("active_batch_runtime", runtime_dir))) if replan_reason else {}
+            completed_task_ids = sorted({
+                str(task_id)
+                for completed in completed_batches
+                if isinstance(completed, Mapping)
+                for receipt in [completed.get("receipt", {})]
+                if isinstance(receipt, Mapping)
+                for task_id in receipt.get("completed_task_ids", [])
+            })
+            repair_context = {
+                "replan_reason": replan_reason,
+                "recent_receipt": {
+                    "completed_task_ids": list(recent_receipt.get("completed_task_ids", [])),
+                    "failed_task_ids": list(recent_receipt.get("failed_task_ids", [])),
+                    "progress": recent_receipt.get("progress"),
+                },
+                "completed_task_ids": completed_task_ids,
+            } if replan_reason or recent_receipt else {}
             plan = compile_execution_plan(
                 situation, objective, routing_policy_path, runtime_dir,
-                backend_override=backend_override, repair_context=repair_context,
+                backend_override=backend_override,
+                repair_context=repair_context,
+                forbidden_task_ids=completed_task_ids,
             )
         except WaitingForReasoningProvider as exc:
             result = _final_result(

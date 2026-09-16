@@ -241,6 +241,8 @@ class PersistentCoordinator:
                 operation_class=node.run_type,
                 required_capabilities=caps,
                 authority_id=node.authority_id,
+                write_scope=list(node.write_scope),
+                expected_artifacts=list(node.expected_artifacts),
                 payload=payload,
             )
 

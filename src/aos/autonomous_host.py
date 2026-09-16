@@ -467,6 +467,8 @@ def build_dag(project_id: str, registry: AgentRunRegistry, plan: Dict[str, Any])
             authority_id=authority_id,
             dependencies=item.get("dependencies", []),
             gate_type=gate_type,
+            write_scope=item.get("write_scope", []),
+            expected_artifacts=item.get("expected_artifacts", []),
         )
         # PersistentCoordinator intentionally treats payload as an extensible node field.
         node.payload = item.get("payload", {})

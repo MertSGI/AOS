@@ -102,7 +102,7 @@ def _plan():
                 "dependencies": [],
                 "scope_tags": ["LARI"],
                 "write_scope": [],
-                "payload": {"cmd": ["python", "-c", "print('ok')"]},
+                "payload": {"cmd": ["python", "--version"]},
                 "expected_artifacts": [],
                 "tests": ["self"],
                 "evidence_requirements": ["exit zero"],
@@ -179,6 +179,8 @@ def test_canonical_excerpt_prioritizes_state_and_roadmap_over_large_history():
         ("PROCESS", {}),
         ("PROCESS", {"cmd": []}),
         ("PROCESS", {"cmd": ["python", " -c", "print('bad option spacing')"]}),
+        ("PROCESS", {"cmd": ["python", "-c", "print('write bypass')"]}),
+        ("PROCESS", {"cmd": ["node", "--eval", "require('fs').writeFileSync('x','y')"]}),
     ],
 )
 def test_plan_rejects_non_executable_worker_payload(run_type, payload):
@@ -186,7 +188,7 @@ def test_plan_rejects_non_executable_worker_payload(run_type, payload):
     plan["tasks"][0]["run_type"] = run_type
     plan["tasks"][0]["payload"] = payload
 
-    with pytest.raises(Exception, match="payload|cmd|git action"):
+    with pytest.raises(Exception, match="payload|cmd|git action|inline"):
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
@@ -199,6 +201,35 @@ def test_plan_rejects_git_force_with_lease_payload():
     })
 
     with pytest.raises(Exception, match="force push"):
+        _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
+
+
+def test_mutating_file_plan_requires_and_honors_write_scope():
+    plan = _plan()
+    plan["tasks"][0].update({
+        "run_type": "FILE",
+        "mutating": True,
+        "payload": {"action": "write_file", "path": "src/feature/result.txt", "content": "ok"},
+        "write_scope": [],
+    })
+    with pytest.raises(Exception, match="write_scope"):
+        _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
+
+    plan["tasks"][0]["write_scope"] = ["docs"]
+    with pytest.raises(Exception, match="outside declared write_scope"):
+        _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
+
+
+def test_mutating_file_plan_rejects_synthetic_next_action_artifact():
+    plan = _plan()
+    plan["tasks"][0].update({
+        "run_type": "FILE",
+        "mutating": True,
+        "payload": {"action": "write_file", "path": "notes/next_action.txt", "content": "done"},
+        "write_scope": ["notes"],
+    })
+
+    with pytest.raises(Exception, match="synthetic bookkeeping"):
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
@@ -216,6 +247,26 @@ def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_pa
     )
 
     assert result["tasks"][0]["payload"]["cmd"][0] == "python"
+    assert backend.calls == 2
+
+
+def test_plan_compiler_rejects_and_repairs_duplicate_completed_task_identity(tmp_path):
+    duplicate = _plan()
+    corrected = _plan()
+    corrected["tasks"][0]["node_id"] = "new-bounded-test"
+    corrected["parallel_safe_groups"] = [["new-bounded-test"]]
+    backend = QueueBackend([duplicate, corrected])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        forbidden_task_ids=["bounded-test"],
+    )
+
+    assert result["tasks"][0]["node_id"] == "new-bounded-test"
     assert backend.calls == 2
 
 
