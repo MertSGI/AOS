@@ -671,7 +671,7 @@ class TestGroqSchemaAndCompletion:
         plan_schema = {"properties": {"objective_id": {}, "tasks": {}}}
 
         assert groq_max_output_tokens(objective_schema) == 1000
-        assert groq_max_output_tokens(completion_schema) == 600
+        assert groq_max_output_tokens(completion_schema) == 1000
         plan_schema["properties"]["parallel_safe_groups"] = {}
         assert groq_max_output_tokens(plan_schema) == 2600
 
