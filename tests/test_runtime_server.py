@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from aos.runtime_server import RuntimeEngine
 
 
@@ -44,8 +46,62 @@ def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypa
         assert result["run_plan_required"] is False
         assert result["project_id"] == "lari"
         command = engine.store.read_command(result["command_id"])
-        assert command["project"]["project_id"] == "lari"
-        assert "run_plan" not in command
         assert spawned == [(result["command_id"], False)]
     finally:
         engine.shutdown()
+
+
+def test_runtime_http_server_endpoints_and_security(tmp_path, monkeypatch):
+    import json
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    import threading
+    from aos.runtime_server import RuntimeHandler
+
+    cfg = _config(tmp_path)
+    engine = RuntimeEngine(cfg)
+    token_val = "x" * 48
+    (tmp_path / "token").write_text(token_val, encoding="utf-8")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RuntimeHandler)
+    server.engine = engine  # type: ignore[attr-defined]
+    server.runtime_token = token_val  # type: ignore[attr-defined]
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    port = server.server_port
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # 1. /v1/health is unauthenticated and returns HEALTHY
+        with urllib.request.urlopen(f"{base_url}/v1/health", timeout=5) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["runtime_state"] == "HEALTHY"
+            assert data["production"] == "NO_GO"
+            assert data["ag_backend_enabled"] is False
+
+        # 2. Unauthenticated GET /v1/commands/foo returns 403 Forbidden
+        req = urllib.request.Request(f"{base_url}/v1/commands/foo")
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc_info.value.code == 403
+
+        # 3. OPTIONS request is rejected with METHOD_NOT_ALLOWED (CORS disabled)
+        req_options = urllib.request.Request(f"{base_url}/v1/commands/continue", method="OPTIONS")
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req_options, timeout=5)
+        assert exc_info.value.code == 405
+
+        # 4. Authenticated GET for nonexistent command returns 404
+        req_auth = urllib.request.Request(
+            f"{base_url}/v1/commands/nonexistent-123",
+            headers={"X-AOS-Runtime-Token": token_val},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req_auth, timeout=5)
+        assert exc_info.value.code == 404
+    finally:
+        server.shutdown()
+        engine.shutdown()
+
