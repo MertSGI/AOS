@@ -52,6 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     events = sub.add_parser("events")
     events.add_argument("command_id")
     events.add_argument("--after-seq", type=int, default=0)
+
+    proj = sub.add_parser("project-state", help="Expose current project state from the detached runtime")
+    proj.add_argument("--command-id", default=None)
     return parser
 
 
@@ -73,6 +76,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         elif args.command == "show":
             value = client.command(args.command_id)
+        elif args.command == "project-state":
+            value = client.current_project_state(args.command_id)
         else:
             value = client.events(args.command_id, after_seq=args.after_seq)
         print(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2))

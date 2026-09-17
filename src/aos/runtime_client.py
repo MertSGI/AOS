@@ -92,3 +92,14 @@ class RuntimeClient:
     def events(self, command_id: str, *, after_seq: int = 0) -> Dict[str, Any]:
         safe = urllib.parse.quote(command_id, safe="")
         return self._request("GET", f"/v1/commands/{safe}/events?after_seq={int(after_seq)}")
+
+    def current_project_state(self, command_id: Optional[str] = None) -> Dict[str, Any]:
+        """Expose current project runtime state for AG and administrative observers."""
+        if command_id:
+            return self.command(command_id)
+        health = self.health()
+        latest = health.get("latest_command")
+        if isinstance(latest, dict) and latest.get("command_id"):
+            return self.command(str(latest["command_id"]))
+        return {"health": health, "command": None, "state": None}
+
