@@ -161,7 +161,7 @@ def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
 
     projected = _situation_prompt_payload(situation)
 
-    assert len(projected["canonical_excerpt"]) <= 3000
+    assert len(projected["canonical_excerpt"]) <= 2500
     assert projected["canonical_excerpt_chars"] == len(large_excerpt)
     assert projected["canonical_excerpt_sha256"] == hashlib.sha256(large_excerpt.encode()).hexdigest()
     assert situation.canonical_excerpt == large_excerpt
@@ -237,7 +237,7 @@ def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_p
     assert "must-not-appear" not in json.dumps(context)
 
 
-def test_completed_read_context_keeps_only_two_recent_bounded_files(tmp_path):
+def test_completed_read_context_keeps_only_most_recent_bounded_file(tmp_path):
     workspace = tmp_path / "workspace"
     runtime = tmp_path / "runtime"
     workspace.mkdir()
@@ -261,9 +261,9 @@ def test_completed_read_context_keeps_only_two_recent_bounded_files(tmp_path):
 
     context = _bounded_completed_read_context(runtime, workspace, completed_batches)
 
-    assert context["completed_read_paths"] == ["discovery-3.md", "discovery-2.md"]
-    assert len(context["files"]) == 2
-    assert all(len(item["redacted_excerpt"]) <= 600 for item in context["files"])
+    assert context["completed_read_paths"] == ["discovery-3.md"]
+    assert len(context["files"]) == 1
+    assert all(len(item["redacted_excerpt"]) <= 500 for item in context["files"])
     assert all(len(item["content_sha256"]) == 64 for item in context["files"])
 
 

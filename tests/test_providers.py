@@ -673,7 +673,7 @@ class TestGroqSchemaAndCompletion:
         assert groq_max_output_tokens(objective_schema) == 1000
         assert groq_max_output_tokens(completion_schema) == 1000
         plan_schema["properties"]["parallel_safe_groups"] = {}
-        assert groq_max_output_tokens(plan_schema) == 2600
+        assert groq_max_output_tokens(plan_schema) == 3200
 
     def test_groq_json_object_fallback_fails_closed_on_canonical_schema_violation(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "fake-key")
