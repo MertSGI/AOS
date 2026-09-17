@@ -32,7 +32,7 @@ def read_json(path: Path, default: Optional[Dict[str, Any]] = None) -> Dict[str,
 
 
 @contextmanager
-def exclusive_file_lock(path: Path) -> Iterator[Any]:
+def exclusive_file_lock(path: Path, *, blocking: bool = True) -> Iterator[Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
     handle = path.open("r+b")
@@ -44,20 +44,34 @@ def exclusive_file_lock(path: Path) -> Iterator[Any]:
         handle.seek(0)
         if os.name == "nt":
             import msvcrt
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+            try:
+                msvcrt.locking(handle.fileno(), mode, 1)
+            except OSError as exc:
+                raise BlockingIOError(f"File lock busy: {path}") from exc
         else:
             import fcntl
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(handle.fileno(), flags)
+            except OSError as exc:
+                raise BlockingIOError(f"File lock busy: {path}") from exc
         yield handle
     finally:
         try:
             handle.seek(0)
             if os.name == "nt":
                 import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
             else:
                 import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
         finally:
             handle.close()
 

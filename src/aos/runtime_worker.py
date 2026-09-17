@@ -183,37 +183,48 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
     project_runtime.mkdir(parents=True, exist_ok=True)
 
     worker_lock = command_root / "worker.lock"
+    workspace_dir = Path(command.project.workspace).expanduser().resolve()
+    workspace_lock = workspace_dir / ".aos_workspace_active.lock"
+    ws_lock_ctx = None
     with exclusive_file_lock(worker_lock):
-        previous = store.read_state(command_id)
-        attempts = int(previous.get("attempts", 0)) + 1
-        recovered = str(previous.get("state")) in ("RUNNING", "RECOVERING") or attempts > 1
-        store.write_state(
-            command_id,
-            state="RUNNING",
-            worker_pid=os.getpid(),
-            attempts=attempts,
-            recovery_count=int(previous.get("recovery_count", 0)) + (1 if recovered else 0),
-        )
-        store.append_event(command_id, "runtime.worker_started", {
-            "worker_pid": os.getpid(),
-            "attempt": attempts,
-            "recovered": recovered,
-        })
-        if recovered:
-            checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
-            store.append_event(command_id, "runtime.worker_recovered", {
-                "checkpoint_phase": checkpoint.get("phase"),
-                "batch_number": checkpoint.get("batch_number"),
-                "completed_batch_count": len(checkpoint.get("completed_batches", []) or []),
-            })
-
-        stop = threading.Event()
-        watcher: Optional[PlanningArtifactWatcher] = None
-        receipt: Dict[str, Any] = {}
-        cycle = 0
-        prior_repair = read_json(project_runtime / "canonical-repair.json")
-        canonical_repair_attempted = bool(prior_repair)
         try:
+            ws_lock_ctx = exclusive_file_lock(workspace_lock, blocking=False)
+            ws_lock_handle = ws_lock_ctx.__enter__()
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"Workspace conflict: workspace '{workspace_dir}' is already actively locked by another running command or worker"
+            ) from exc
+
+        try:
+            previous = store.read_state(command_id)
+            attempts = int(previous.get("attempts", 0)) + 1
+            recovered = str(previous.get("state")) in ("RUNNING", "RECOVERING") or attempts > 1
+            store.write_state(
+                command_id,
+                state="RUNNING",
+                worker_pid=os.getpid(),
+                attempts=attempts,
+                recovery_count=int(previous.get("recovery_count", 0)) + (1 if recovered else 0),
+            )
+            store.append_event(command_id, "runtime.worker_started", {
+                "worker_pid": os.getpid(),
+                "attempt": attempts,
+                "recovered": recovered,
+            })
+            if recovered:
+                checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
+                store.append_event(command_id, "runtime.worker_recovered", {
+                    "checkpoint_phase": checkpoint.get("phase"),
+                    "batch_number": checkpoint.get("batch_number"),
+                    "completed_batch_count": len(checkpoint.get("completed_batches", []) or []),
+                })
+
+            stop = threading.Event()
+            watcher: Optional[PlanningArtifactWatcher] = None
+            receipt: Dict[str, Any] = {}
+            cycle = 0
+            prior_repair = read_json(project_runtime / "canonical-repair.json")
+            canonical_repair_attempted = bool(prior_repair)
             hydrate_environment(overwrite=True)
             watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
             watcher.start()
@@ -394,6 +405,11 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             stop.set()
             if watcher is not None:
                 watcher.join(timeout=2.0)
+            if ws_lock_ctx is not None:
+                try:
+                    ws_lock_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
 
 
 def build_parser() -> argparse.ArgumentParser:

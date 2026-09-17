@@ -186,13 +186,17 @@ class RuntimeEngine:
         active = []
         waiting = []
         terminal = []
+        active_by_project: Dict[str, List[str]] = {}
         command_ids = self.store.list_command_ids()[-200:]
         latest_summary = None
         for command_id in command_ids:
             state = self.store.read_state(command_id)
             current = str(state.get("state") or "UNKNOWN")
+            cmd = self.store.read_command(command_id)
+            proj_id = (cmd.get("project") or {}).get("project_id") or self.config["default_project"]
             if current in ("QUEUED", "RUNNING", "RECOVERING"):
                 active.append(command_id)
+                active_by_project.setdefault(proj_id, []).append(command_id)
             elif current == "WAITING_FOR_REASONING_PROVIDER":
                 waiting.append(command_id)
             else:
@@ -214,6 +218,8 @@ class RuntimeEngine:
             "pid": os.getpid(),
             "timestamp": utc_now(),
             "active_commands": active,
+            "active_commands_by_project": active_by_project,
+            "registered_projects": list((self.config.get("projects") or {}).keys()),
             "waiting_commands": waiting,
             "terminal_command_count": len(terminal),
             "latest_command": latest_summary,

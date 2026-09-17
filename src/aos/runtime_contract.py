@@ -269,6 +269,35 @@ def validate_runtime_config(value: Mapping[str, Any]) -> Dict[str, Any]:
     default_project = str(value.get("default_project", ""))
     if default_project not in projects:
         raise ValueError("Runtime config default_project must exist in projects")
+
+    # Verify workspace disjointness across all project profiles to guarantee
+    # safe concurrent multi-lane execution without state pollution or git collisions.
+    normalized_workspaces: Dict[str, Path] = {}
+    for proj_id, proj_dict in projects.items():
+        w_path = Path(proj_dict["workspace"]).expanduser().resolve()
+        for other_id, other_path in normalized_workspaces.items():
+            if w_path == other_path:
+                raise ValueError(
+                    f"Workspace collision detected: project '{proj_id}' and '{other_id}' share identical workspace '{w_path}'"
+                )
+            try:
+                w_path.relative_to(other_path)
+                raise ValueError(
+                    f"Workspace nesting collision: project '{proj_id}' workspace '{w_path}' is inside '{other_id}' workspace '{other_path}'"
+                )
+            except ValueError as e:
+                if "Workspace nesting collision" in str(e):
+                    raise
+            try:
+                other_path.relative_to(w_path)
+                raise ValueError(
+                    f"Workspace nesting collision: project '{other_id}' workspace '{other_path}' is inside '{proj_id}' workspace '{w_path}'"
+                )
+            except ValueError as e:
+                if "Workspace nesting collision" in str(e):
+                    raise
+        normalized_workspaces[proj_id] = w_path
+
     return {
         **dict(value),
         "contract_version": CONTRACT_VERSION,
