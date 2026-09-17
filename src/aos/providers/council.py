@@ -3,14 +3,16 @@
 Features:
 - Bounded decision trigger evaluating uncertainty, impact, reversibility, evidence strength, confidence
 - Shadow mode execution (SHADOW_ONLY) with real decision recording without altering execution
-- Independent blinded proposals from policy-approved providers/roles
-- Blinded proposal normalization (stripping provider/model/identity signatures)
+- Target 3 council members, min real quorum >= 2
+- Independent blinded proposals from policy-approved providers/roles before cross-exposure
+- Positional bias elimination (Proposal A is not always primary; randomized/blinded labels)
 - Anonymous peer critique and scoring across structured evaluation dimensions
 - Structured scoring + quorum + synthesis (not simple raw majority voting)
-- Fails closed to deterministic policy, authority, and evidence validators
-- Durable sanitized shadow-decision ledger persistence (decision_id, project_id, command_id, etc.)
+- Fails closed to deterministic policy, authority, and evidence validators (cannot be voted away)
+- Durable sanitized shadow-decision ledger persistence and state reconstruction across restarts
 - Non-blocking spare-capacity checking with skip/defer metrics
 - Correlated consensus risk detection (tracking semantic, evidence, and provider diversity)
+- Real shadow sample counting requiring quorum >= 2, independent proposals >= 2, and real execution
 """
 
 from __future__ import annotations
@@ -18,9 +20,14 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+
+COUNCIL_TARGET_MEMBER_COUNT = 3
+COUNCIL_MIN_REAL_QUORUM = 2
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,17 +116,31 @@ class BlindedProposal:
     raw_payload: Dict[str, Any]
     normalized_summary: str
     member_hash: str  # blinded digest of original member provider/role
+    is_primary: bool = False
 
 
-def blind_proposals(raw_proposals: Sequence[Tuple[str, Mapping[str, Any]]]) -> List[BlindedProposal]:
-    """Strip provider/model/agent identity from proposals and anonymize as Proposal A/B/C."""
+def blind_proposals(
+    raw_proposals: Sequence[Tuple[str, Mapping[str, Any]]],
+    *,
+    seed: Optional[Any] = None,
+    shuffle: bool = True,
+) -> List[BlindedProposal]:
+    """Strip provider/model/agent identity from proposals and anonymize as Proposal A/B/C.
+
+    Shuffles proposals to eliminate positional bias (Primary planner is not always Proposal A).
+    Maintains internal is_primary flag for private retrospective evaluation only.
+    """
+    labels = ["Proposal A", "Proposal B", "Proposal C", "Proposal D", "Proposal E", "Proposal F"]
+    indexed = list(enumerate(raw_proposals))
+    if shuffle and len(indexed) > 1:
+        rng = random.Random(seed) if seed is not None else random.Random()
+        rng.shuffle(indexed)
+
     blinded = []
-    labels = ["Proposal A", "Proposal B", "Proposal C", "Proposal D", "Proposal E"]
-    for idx, (member_id, proposal) in enumerate(raw_proposals):
-        label = labels[idx] if idx < len(labels) else f"Proposal {idx+1}"
+    for label_idx, (orig_idx, (member_id, proposal)) in enumerate(indexed):
+        label = labels[label_idx] if label_idx < len(labels) else f"Proposal {label_idx+1}"
         member_hash = hashlib.sha256(member_id.encode("utf-8")).hexdigest()[:12]
 
-        # Deep copy and strip identifiable metadata
         clean_payload = dict(proposal)
         for key in ("provider", "model", "agent_id", "author", "persona", "provider_name", "backend"):
             clean_payload.pop(key, None)
@@ -130,11 +151,13 @@ def blind_proposals(raw_proposals: Sequence[Tuple[str, Mapping[str, Any]]]) -> L
             or clean_payload.get("title")
             or json.dumps(clean_payload, sort_keys=True)[:300]
         )
+        is_primary = (member_id == "primary_planner" or orig_idx == 0)
         blinded.append(BlindedProposal(
             proposal_id=label,
             raw_payload=clean_payload,
             normalized_summary=str(summary),
             member_hash=member_hash,
+            is_primary=is_primary,
         ))
     return blinded
 
@@ -197,16 +220,19 @@ class DeliberationCouncilV1:
     Operates in SHADOW_ONLY mode by default.
     Ensures council shadow work is strictly non-blocking and consumes only spare reasoning capacity.
     Persists durable, sanitized decision ledger entries without secrets or raw chain-of-thought.
+    Reconstructs aggregate metrics from durable ledger on instantiation.
     """
 
     def __init__(
         self,
         mode: str = "SHADOW_ONLY",
-        min_quorum: int = 2,
+        min_quorum: int = COUNCIL_MIN_REAL_QUORUM,
+        target_members: int = COUNCIL_TARGET_MEMBER_COUNT,
         ledger_dir: Optional[Path] = None,
     ) -> None:
         self.mode = mode
         self.min_quorum = min_quorum
+        self.target_members = target_members
         self.ledger_dir = ledger_dir
         self.shadow_sample_count = 0
         self.real_shadow_sample_count = 0
@@ -223,6 +249,56 @@ class DeliberationCouncilV1:
         self.total_cost_delta_estimate = 0.0
         self.primary_execution_interference_count = 0
 
+        if self.ledger_dir:
+            self._reconstruct_from_ledger()
+
+    def _reconstruct_from_ledger(self) -> None:
+        """Reconstruct durable council metrics from ledger file if present."""
+        if not self.ledger_dir:
+            return
+        ledger_file = self.ledger_dir / "deliberation-shadow-ledger.jsonl"
+        if not ledger_file.is_file():
+            return
+        try:
+            with open(ledger_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    self.trigger_count += 1
+                    if rec.get("council_trigger_reason") == "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS":
+                        self.skipped_capacity_count += 1
+                        continue
+
+                    self.shadow_sample_count += 1
+                    if (
+                        rec.get("quorum_obtained")
+                        and rec.get("anonymous_proposal_count", 0) >= self.min_quorum
+                        and rec.get("is_real_execution", True)
+                    ):
+                        self.real_shadow_sample_count += 1
+
+                    if rec.get("council_agreement", True):
+                        self.agreement_count += 1
+                    else:
+                        self.disagreement_count += 1
+                        if rec.get("policy_violation_caught") or rec.get("canonical_conflict_detected"):
+                            self.primary_errors_caught += 1
+                        else:
+                            self.false_disagreement_count += 1
+
+                    if rec.get("policy_violation_caught"):
+                        self.policy_violations_caught += 1
+                    if rec.get("canonical_conflict_detected"):
+                        self.canonical_contradictions_caught += 1
+                    if rec.get("correlated_consensus_risk"):
+                        self.correlated_consensus_risk_count += 1
+                    self.total_latency_delta_ms += float(rec.get("latency_delta_ms", 0.0))
+                    self.total_cost_delta_estimate += float(rec.get("estimated_request_cost_delta", 0.0))
+        except Exception:
+            pass
+
     def evaluate_decision(
         self,
         decision_type: str,
@@ -235,6 +311,7 @@ class DeliberationCouncilV1:
         command_id: Optional[str] = None,
         is_spare_capacity_available: bool = True,
         is_real_execution: bool = True,
+        seed: Optional[Any] = None,
     ) -> DeliberationResult:
         """Run deliberative multi-agent scoring and synthesis.
 
@@ -267,8 +344,10 @@ class DeliberationCouncilV1:
                 "contradiction_detected": False,
                 "policy_violation_caught": False,
                 "canonical_conflict_detected": False,
+                "correlated_consensus_risk": False,
                 "estimated_request_cost_delta": 0.0,
                 "latency_delta_ms": 0.0,
+                "is_real_execution": is_real_execution,
                 "execution_affected": False,
             }
             self._persist_decision_ledger(skip_record)
@@ -284,7 +363,7 @@ class DeliberationCouncilV1:
             )
 
         all_candidates = [("primary_planner", primary_proposal)] + list(alternate_proposals)
-        blinded = blind_proposals(all_candidates)
+        blinded = blind_proposals(all_candidates, seed=seed, shuffle=True)
 
         scores: Dict[str, ProposalScore] = {}
         contradiction_found = False
@@ -294,7 +373,7 @@ class DeliberationCouncilV1:
         for b in blinded:
             payload = b.raw_payload
 
-            # Dimension checks
+            # Authority / policy gates: cannot be overridden by votes
             has_authority = True
             contradiction_count = 0
             req_auth = str(payload.get("authority_id", "")).strip()
@@ -310,8 +389,8 @@ class DeliberationCouncilV1:
             policy_compliant = True
             tasks = payload.get("tasks", [])
             for t in tasks:
-                t_str = str(t).lower()
-                if any(k in t_str for k in ("force_push", "rm -rf", "drop database", "sudo")):
+                t_str = json.dumps(t, sort_keys=True).lower() if isinstance(t, (dict, list)) else str(t).lower()
+                if any(k in t_str for k in ("force_push", "--force", "-f", "rm -rf", "drop database", "sudo", "bypass_human_gate")):
                     policy_compliant = False
                     contradiction_count += 1
                     policy_violation_found = True
@@ -321,8 +400,8 @@ class DeliberationCouncilV1:
 
             score = ProposalScore(
                 proposal_id=b.proposal_id,
-                evidence_consistency=0.9 if not contradiction_count else 0.3,
-                canonical_consistency=0.9 if has_authority else 0.2,
+                evidence_consistency=0.9 if not contradiction_count else 0.2,
+                canonical_consistency=0.9 if has_authority else 0.1,
                 dependency_correctness=0.85,
                 authority_compatibility=1.0 if has_authority else 0.0,
                 reversibility_score=assessment.reversibility,
@@ -335,7 +414,6 @@ class DeliberationCouncilV1:
             scores[b.proposal_id] = score
 
         # Correlated Consensus Risk Detection:
-        # Check proposal semantic diversity and common unsupported assumptions
         proposal_summaries = [b.normalized_summary.strip() for b in blinded]
         semantic_diversity = len(set(proposal_summaries)) / max(1, len(proposal_summaries))
         correlated_risk = False
@@ -348,10 +426,12 @@ class DeliberationCouncilV1:
         eligible.sort(key=lambda item: item[1].composite_score, reverse=True)
 
         quorum_reached = len(blinded) >= self.min_quorum
-        winning_proposal_id = eligible[0][0] if eligible else None
+        winning_proposal_id = eligible[0][0] if (eligible and quorum_reached) else (eligible[0][0] if eligible else None)
 
-        # Primary is Proposal A
-        agreement_with_primary = (winning_proposal_id == "Proposal A")
+        # Check agreement with primary without exposing primary's identity externally
+        primary_proposal_id = next((b.proposal_id for b in blinded if b.is_primary), None)
+        agreement_with_primary = (winning_proposal_id == primary_proposal_id)
+
         if agreement_with_primary:
             self.agreement_count += 1
         else:
@@ -374,12 +454,18 @@ class DeliberationCouncilV1:
         self.total_cost_delta_estimate += cost_delta
 
         self.shadow_sample_count += 1
-        if is_real_execution:
+        # Only increment real_shadow_sample_count if quorum was reached with >= 2 independent proposals
+        if is_real_execution and quorum_reached and len(blinded) >= self.min_quorum:
             self.real_shadow_sample_count += 1
 
         primary_fingerprint = hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         result_fingerprint = hashlib.sha256(json.dumps(selected_payload or {}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
+
+        # Confidence: if correlated consensus risk is high, reduce confidence
+        base_confidence = eligible[0][1].confidence if eligible else 0.0
+        if correlated_risk:
+            base_confidence = min(base_confidence, 0.45)
 
         record = {
             "decision_id": decision_id,
@@ -394,13 +480,14 @@ class DeliberationCouncilV1:
             "quorum_obtained": quorum_reached,
             "council_result_fingerprint": result_fingerprint,
             "council_agreement": agreement_with_primary,
-            "council_confidence": eligible[0][1].confidence if eligible else 0.0,
+            "council_confidence": base_confidence,
             "contradiction_detected": contradiction_found,
             "policy_violation_caught": policy_violation_found,
             "canonical_conflict_detected": canonical_conflict_found,
             "correlated_consensus_risk": correlated_risk,
             "estimated_request_cost_delta": cost_delta,
             "latency_delta_ms": elapsed_ms,
+            "is_real_execution": is_real_execution,
             "execution_affected": False,  # INVARIANT: never alters live execution in SHADOW_ONLY
         }
 
@@ -412,7 +499,7 @@ class DeliberationCouncilV1:
             scores=scores,
             agreement_with_primary=agreement_with_primary,
             quorum_reached=quorum_reached,
-            confidence=eligible[0][1].confidence if eligible else 0.0,
+            confidence=base_confidence,
             mode=self.mode,
             decision_record=record,
         )

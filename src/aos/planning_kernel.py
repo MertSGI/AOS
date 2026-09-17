@@ -25,7 +25,12 @@ from jsonschema import Draft202012Validator
 
 from aos.process_utils import run_headless
 from aos.provider_registry import ProviderRouter, load_routing_policy
-from aos.providers.council import DeliberationCouncilV1, assess_council_trigger
+from aos.providers.council import (
+    COUNCIL_MIN_REAL_QUORUM,
+    COUNCIL_TARGET_MEMBER_COUNT,
+    DeliberationCouncilV1,
+    assess_council_trigger,
+)
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
 
@@ -983,6 +988,9 @@ def _shadow_deliberate(
     primary_proposal: Mapping[str, Any],
     *,
     command_id: Optional[str] = None,
+    routing_policy_path: Optional[Path] = None,
+    schema: Optional[Dict[str, Any]] = None,
+    alternate_proposals: Sequence[Tuple[str, Mapping[str, Any]]] = (),
 ) -> None:
     """Non-blocking shadow deliberation integration for real planning decisions.
 
@@ -990,11 +998,18 @@ def _shadow_deliberate(
     - Never blocks or delays primary execution
     - Never mutates the primary decision or execution plan
     - Only consumes spare capacity (skips/defers if provider constrained)
+    - Target 3 council members, min real quorum >= 2
     - Records durable sanitized decision ledger in runtime_dir / 'deliberation'
+    - Durable metrics aggregate across runtime restarts
     """
     try:
         ledger_dir = runtime_dir / "deliberation"
-        council = DeliberationCouncilV1(mode="SHADOW_ONLY", min_quorum=1, ledger_dir=ledger_dir)
+        council = DeliberationCouncilV1(
+            mode="SHADOW_ONLY",
+            min_quorum=COUNCIL_MIN_REAL_QUORUM,
+            target_members=COUNCIL_TARGET_MEMBER_COUNT,
+            ledger_dir=ledger_dir,
+        )
         assessment = assess_council_trigger(decision_type, prompt, primary_proposal)
         if not assessment.council_required:
             return
@@ -1010,12 +1025,40 @@ def _shadow_deliberate(
             except Exception:
                 pass
 
+        # Attempt to gather independent alternate proposals if spare capacity exists and alternates not provided
+        collected_alternates: List[Tuple[str, Mapping[str, Any]]] = list(alternate_proposals)
+        if spare_capacity and not collected_alternates and routing_policy_path and routing_policy_path.is_file() and schema:
+            try:
+                from aos.provider_registry import ProviderRouter, load_routing_policy
+                from aos.autonomous_host import _PROVIDER_FACTORIES
+                router = ProviderRouter(load_routing_policy(str(routing_policy_path)))
+                available_providers = router.registry.list_providers()
+                # Target up to 2 alternate policy-approved providers to reach 3 members total
+                for entry in available_providers:
+                    if len(collected_alternates) >= (COUNCIL_TARGET_MEMBER_COUNT - 1):
+                        break
+                    p_id = entry.provider_id
+                    if entry.cloud_local == "CLOUD" and entry.credential_env_var and not os.environ.get(entry.credential_env_var):
+                        continue
+                    factory = _PROVIDER_FACTORIES.get(p_id)
+                    if factory is None:
+                        continue
+                    try:
+                        provider_inst = factory(entry.model_id)
+                        plan_data, _, _ = provider_inst.generate_plan(prompt, schema)
+                        if isinstance(plan_data, dict):
+                            collected_alternates.append((p_id, plan_data))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         auth_records = {k: v.to_dict() for k, v in situation.authority_records.items()}
         council.evaluate_decision(
             decision_type=decision_type,
             prompt=prompt,
             primary_proposal=primary_proposal,
-            alternate_proposals=(),
+            alternate_proposals=collected_alternates,
             authority_records=auth_records,
             project_id=situation.project_id,
             command_id=command_id or situation.identity(),
@@ -1098,6 +1141,8 @@ def select_objective(
         "FRONTIER_SELECTION",
         prompt,
         proposal,
+        routing_policy_path=routing_policy_path,
+        schema=OBJECTIVE_SCHEMA,
     )
     objective = Objective.from_dict(proposal)
     if objective.risk_class not in ("R0", "R1"):
@@ -1686,6 +1731,8 @@ def compile_execution_plan(
         "REPLANNING" if repair_context else "ARCHITECTURE",
         prompt,
         normalized,
+        routing_policy_path=routing_policy_path,
+        schema=PLAN_SCHEMA,
     )
     return normalized
 
@@ -1753,6 +1800,8 @@ def detect_completion(
         "COMPLETION_ASSESSMENT",
         prompt,
         proposal,
+        routing_policy_path=routing_policy_path,
+        schema=COMPLETION_SCHEMA,
     )
     return dict(proposal)
 

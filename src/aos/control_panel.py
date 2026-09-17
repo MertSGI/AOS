@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
 from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime
+from aos.provenance import is_valid_full_sha, validate_exact_sha_provenance
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -343,6 +344,9 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        provenance_valid = is_valid_full_sha(active_sha)
+        provenance_status = "PROVEN" if provenance_valid else "UNPROVEN"
+
         return {
             "schema_version": "1.0.0",
             "host_state": bridge.get("host_state", "UNKNOWN"),
@@ -355,6 +359,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "runtime_v1": runtime_v1,
             "active_slot": active_slot,
             "active_sha": active_sha,
+            "provenance_status": provenance_status,
+            "provenance_valid": provenance_valid,
             "active_commands": active_cmds,
             "waiting_commands": waiting_cmds,
             "latest_command": latest_cmd,

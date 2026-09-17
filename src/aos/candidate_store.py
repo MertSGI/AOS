@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aos.process_utils import run_headless
+from aos.provenance import is_valid_full_sha
 
 CANDIDATE_STORE_CONTRACT_VERSION = "0.1.0"
 QUARANTINE_STORE_CONTRACT_VERSION = "0.1.0"
@@ -222,6 +223,17 @@ def persist_verified_candidate(
 
         # Verify candidate git repository has zero remotes
         _verify_candidate_zero_remotes(target_ws)
+
+        for sha_name, sha_val in [
+            ("control_source_sha", control_source_sha),
+            ("execution_base_sha", execution_base_sha),
+            ("initial_head_sha", initial_head_sha),
+            ("final_head_sha", final_head_sha),
+        ]:
+            if not is_valid_full_sha(sha_val):
+                raise CandidateStoreError(
+                    f"Candidate SHA provenance violation: '{sha_name}' is not an authoritative 40-character hex SHA: '{sha_val}'"
+                )
 
         # Validate and inspect changed paths to build manifest
         paths_manifest = _build_paths_manifest(target_ws, changed_paths)
