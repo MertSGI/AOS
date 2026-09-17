@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
+
+from aos.process_utils import run_headless
 
 SHA_REGEX = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -67,12 +68,10 @@ def is_valid_full_sha(sha: Optional[str]) -> bool:
 
 
 def get_authoritative_git_head(repo_path: Path) -> str:
-    """Read authoritative 40-character commit SHA directly from local Git repository."""
+    """Read authoritative 40-character commit SHA directly from local Git repository using headless execution."""
     resolved_repo = Path(repo_path).resolve()
-    proc = subprocess.run(
+    proc = run_headless(
         ["git", "-C", str(resolved_repo), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
         check=False,
     )
     if proc.returncode != 0:

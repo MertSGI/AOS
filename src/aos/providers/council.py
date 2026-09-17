@@ -160,6 +160,114 @@ def blind_proposals(
             is_primary=is_primary,
         ))
     return blinded
+PEER_REVIEW_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "evidence_consistency",
+        "canonical_consistency",
+        "dependency_correctness",
+        "authority_compatibility",
+        "risk",
+        "reversibility",
+        "implementation_complexity",
+        "expected_value",
+        "contradictions",
+        "ranked_preference",
+        "confidence",
+        "short_bounded_rationale",
+    ],
+    "properties": {
+        "evidence_consistency": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "canonical_consistency": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "dependency_correctness": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "authority_compatibility": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "risk": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "reversibility": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "implementation_complexity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "expected_value": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "contradictions": {"type": "array", "items": {"type": "string"}},
+        "ranked_preference": {"type": "integer", "minimum": 1, "maximum": 10},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "short_bounded_rationale": {"type": "string", "maxLength": 500},
+    },
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class StructuredPeerReview:
+    proposal_id: str
+    evidence_consistency: float
+    canonical_consistency: float
+    dependency_correctness: float
+    authority_compatibility: float
+    risk: float
+    reversibility: float
+    implementation_complexity: float
+    expected_value: float
+    contradictions: Tuple[str, ...]
+    ranked_preference: int
+    confidence: float
+    short_bounded_rationale: str
+
+    @classmethod
+    def from_dict(cls, proposal_id: str, data: Mapping[str, Any]) -> "StructuredPeerReview":
+        def _num(val: Any, default: float = 0.5) -> float:
+            try:
+                v = float(val)
+                return max(0.0, min(1.0, v))
+            except (TypeError, ValueError):
+                return default
+
+        def _int(val: Any, default: int = 1) -> int:
+            try:
+                v = int(val)
+                return max(1, min(10, v))
+            except (TypeError, ValueError):
+                return default
+
+        def _str_bounded(val: Any, max_len: int = 500) -> str:
+            s = str(val or "").strip()
+            return s[:max_len]
+
+        contras = data.get("contradictions", [])
+        if isinstance(contras, list):
+            clean_contras = tuple(_str_bounded(c, 120) for c in contras if str(c).strip())
+        else:
+            clean_contras = ()
+
+        return cls(
+            proposal_id=str(proposal_id),
+            evidence_consistency=_num(data.get("evidence_consistency"), 0.8),
+            canonical_consistency=_num(data.get("canonical_consistency"), 0.8),
+            dependency_correctness=_num(data.get("dependency_correctness"), 0.85),
+            authority_compatibility=_num(data.get("authority_compatibility"), 0.9),
+            risk=_num(data.get("risk"), 0.2),
+            reversibility=_num(data.get("reversibility"), 0.8),
+            implementation_complexity=_num(data.get("implementation_complexity"), 0.7),
+            expected_value=_num(data.get("expected_value"), 0.8),
+            contradictions=clean_contras,
+            ranked_preference=_int(data.get("ranked_preference"), 1),
+            confidence=_num(data.get("confidence"), 0.85),
+            short_bounded_rationale=_str_bounded(data.get("short_bounded_rationale"), 500),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "evidence_consistency": self.evidence_consistency,
+            "canonical_consistency": self.canonical_consistency,
+            "dependency_correctness": self.dependency_correctness,
+            "authority_compatibility": self.authority_compatibility,
+            "risk": self.risk,
+            "reversibility": self.reversibility,
+            "implementation_complexity": self.implementation_complexity,
+            "expected_value": self.expected_value,
+            "contradictions": list(self.contradictions),
+            "ranked_preference": self.ranked_preference,
+            "confidence": self.confidence,
+            "short_bounded_rationale": self.short_bounded_rationale,
+        }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -272,9 +380,14 @@ class DeliberationCouncilV1:
                         continue
 
                     self.shadow_sample_count += 1
+                    total_blinded = rec.get("total_blinded_proposal_count", rec.get("anonymous_proposal_count", 0))
+                    valid_reviews = rec.get("valid_peer_review_count", 0)
+                    quorum = rec.get("quorum_obtained", False)
+                    # Quorum requires both proposal count >= min_quorum AND valid peer review count >= min_quorum
                     if (
-                        rec.get("quorum_obtained")
-                        and rec.get("anonymous_proposal_count", 0) >= self.min_quorum
+                        quorum
+                        and total_blinded >= self.min_quorum
+                        and valid_reviews >= self.min_quorum
                         and rec.get("is_real_execution", True)
                     ):
                         self.real_shadow_sample_count += 1
@@ -305,6 +418,7 @@ class DeliberationCouncilV1:
         prompt: str,
         primary_proposal: Mapping[str, Any],
         alternate_proposals: Sequence[Tuple[str, Mapping[str, Any]]] = (),
+        peer_reviews: Optional[Sequence[Any]] = None,
         authority_records: Optional[Mapping[str, Any]] = None,
         canonical_hashes: Optional[Mapping[str, Any]] = None,
         project_id: str = "lari",
@@ -312,16 +426,46 @@ class DeliberationCouncilV1:
         is_spare_capacity_available: bool = True,
         is_real_execution: bool = True,
         seed: Optional[Any] = None,
+        reviewers: Sequence[Tuple[str, Any]] = (),
     ) -> DeliberationResult:
         """Run deliberative multi-agent scoring and synthesis.
 
-        If spare capacity is unavailable (e.g. rate-limited, provider backoff active),
-        the evaluation gracefully defers/skips without blocking or delaying primary execution.
+        FIRST PASS:
+          Member 1 (primary) -> independent proposal
+          Member 2 (alternate) -> independent proposal
+          Member 3 (alternate) -> independent proposal
+          No cross-exposure.
+
+        THEN BLIND:
+          Proposal A, Proposal B, Proposal C...
+          Provider, model, and member identities stripped.
+
+        SECOND PASS (ANONYMOUS PEER REVIEW):
+          Each reviewer receives only the blinded proposals without author/provider/model identity.
+          Reviewers return StructuredPeerReview conforming strictly to schema.
+          Raw chain-of-thought is never persisted; only bounded structured summaries.
+
+        DETERMINISTIC VALIDATION & COMPOSITE SCORING:
+          Model peer review scores are combined with authoritative deterministic safety /
+          authority / evidence policy validation.
+          A proposal failing deterministic checks is permanently INELIGIBLE (composite_score = 0.0)
+          regardless of model votes.
+
+        QUORUM SEMANTICS:
+          Requires total_blinded_proposal_count >= min_quorum AND valid_peer_review_count >= min_quorum.
+          If not reached:
+            COUNCIL_STATUS=INSUFFICIENT_QUORUM
+            winning_proposal_id=None
+            selected_payload=None
+            REAL_SHADOW_SAMPLE_INCREMENT=NO
         """
         start_time = time.perf_counter()
         self.trigger_count += 1
 
         assessment = assess_council_trigger(decision_type, prompt, primary_proposal)
+
+        primary_proposal_count = 1
+        alternate_proposal_count = len(alternate_proposals)
 
         # Invariant: COUNCIL_MAY_CONSUME_SPARE_REASONING_CAPACITY_ONLY=YES
         if not is_spare_capacity_available:
@@ -336,8 +480,13 @@ class DeliberationCouncilV1:
                 "primary_decision_fingerprint": hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16],
                 "primary_confidence": assessment.primary_confidence,
                 "council_trigger_reason": "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS",
-                "anonymous_proposal_count": 0,
+                "primary_proposal_count": primary_proposal_count,
+                "council_alternate_proposal_count": alternate_proposal_count,
+                "total_blinded_proposal_count": 0,
+                "peer_reviewer_count": 0,
+                "valid_peer_review_count": 0,
                 "quorum_obtained": False,
+                "council_status": "INSUFFICIENT_QUORUM",
                 "council_result_fingerprint": None,
                 "council_agreement": True,
                 "council_confidence": 0.0,
@@ -362,8 +511,65 @@ class DeliberationCouncilV1:
                 decision_record=skip_record,
             )
 
+        # FIRST PASS & BLINDING:
         all_candidates = [("primary_planner", primary_proposal)] + list(alternate_proposals)
         blinded = blind_proposals(all_candidates, seed=seed, shuffle=True)
+        total_blinded_count = len(blinded)
+
+        # SECOND PASS: ANONYMOUS PEER REVIEWS
+        collected_reviews: List[StructuredPeerReview] = []
+        peer_reviewer_count = 0
+
+        # Case A: Explicitly supplied peer reviews
+        if peer_reviews:
+            peer_reviewer_count = len(peer_reviews)
+            for item in peer_reviews:
+                if isinstance(item, StructuredPeerReview):
+                    collected_reviews.append(item)
+                elif isinstance(item, dict):
+                    pid = item.get("proposal_id", "")
+                    if pid:
+                        try:
+                            collected_reviews.append(StructuredPeerReview.from_dict(pid, item))
+                        except Exception:
+                            pass
+
+        # Case B: Reviewer provider callables provided
+        elif reviewers and is_spare_capacity_available:
+            peer_reviewer_count = len(reviewers)
+            # Reviewer payload ONLY contains blinded proposals; NEVER author/provider/model identity
+            blinded_summary_for_reviewers = [
+                {"proposal_id": b.proposal_id, "summary": b.normalized_summary, "payload": b.raw_payload}
+                for b in blinded
+            ]
+            review_prompt = (
+                "Review the following anonymous proposals strictly against policy, correctness, and value.\n"
+                f"Proposals:\n{json.dumps(blinded_summary_for_reviewers, ensure_ascii=False, indent=2)}\n"
+            )
+            for r_id, reviewer_obj in reviewers:
+                try:
+                    if hasattr(reviewer_obj, "generate_plan"):
+                        plan_data, _, _ = reviewer_obj.generate_plan(review_prompt, PEER_REVIEW_SCHEMA)
+                        if isinstance(plan_data, dict):
+                            # Can return single review or list of reviews
+                            if "proposal_id" in plan_data:
+                                collected_reviews.append(StructuredPeerReview.from_dict(plan_data["proposal_id"], plan_data))
+                            elif "reviews" in plan_data and isinstance(plan_data["reviews"], list):
+                                for rev in plan_data["reviews"]:
+                                    if isinstance(rev, dict) and rev.get("proposal_id"):
+                                        collected_reviews.append(StructuredPeerReview.from_dict(rev["proposal_id"], rev))
+                except Exception:
+                    pass
+
+        # Validate collected peer reviews
+        valid_peer_reviews = [r for r in collected_reviews if any(r.proposal_id == b.proposal_id for b in blinded)]
+        valid_peer_review_count = len(valid_peer_reviews)
+
+        # Aggregation of peer review metrics per proposal
+        reviews_by_proposal: Dict[str, List[StructuredPeerReview]] = {b.proposal_id: [] for b in blinded}
+        for rev in valid_peer_reviews:
+            if rev.proposal_id in reviews_by_proposal:
+                reviews_by_proposal[rev.proposal_id].append(rev)
 
         scores: Dict[str, ProposalScore] = {}
         contradiction_found = False
@@ -373,7 +579,7 @@ class DeliberationCouncilV1:
         for b in blinded:
             payload = b.raw_payload
 
-            # Authority / policy gates: cannot be overridden by votes
+            # Deterministic Authority / policy gates: CANNOT be overridden by peer votes
             has_authority = True
             contradiction_count = 0
             req_auth = str(payload.get("authority_id", "")).strip()
@@ -385,7 +591,7 @@ class DeliberationCouncilV1:
                     policy_violation_found = True
                     canonical_conflict_found = True
 
-            # Checking red lines / prohibited actions
+            # Checking red lines / prohibited actions deterministically
             policy_compliant = True
             tasks = payload.get("tasks", [])
             for t in tasks:
@@ -395,21 +601,48 @@ class DeliberationCouncilV1:
                     contradiction_count += 1
                     policy_violation_found = True
 
+            p_reviews = reviews_by_proposal.get(b.proposal_id, [])
+            for pr in p_reviews:
+                contradiction_count += len(pr.contradictions)
+                if pr.risk > 0.8:
+                    contradiction_count += 1
+
             if contradiction_count > 0:
                 contradiction_found = True
 
+            # Blend peer review metrics if present, otherwise default to baseline
+            if p_reviews:
+                n = float(len(p_reviews))
+                avg_evidence = sum(r.evidence_consistency for r in p_reviews) / n
+                avg_canonical = sum(r.canonical_consistency for r in p_reviews) / n if has_authority else 0.0
+                avg_dep = sum(r.dependency_correctness for r in p_reviews) / n
+                avg_auth = sum(r.authority_compatibility for r in p_reviews) / n if has_authority else 0.0
+                avg_rev = sum(r.reversibility for r in p_reviews) / n
+                avg_compl = sum(r.implementation_complexity for r in p_reviews) / n
+                avg_val = sum(r.expected_value for r in p_reviews) / n
+                avg_conf = sum(r.confidence for r in p_reviews) / n
+            else:
+                avg_evidence = 0.9 if not contradiction_count else 0.2
+                avg_canonical = 0.9 if has_authority else 0.1
+                avg_dep = 0.85
+                avg_auth = 1.0 if has_authority else 0.0
+                avg_rev = assessment.reversibility
+                avg_compl = 0.8
+                avg_val = 0.85
+                avg_conf = assessment.primary_confidence
+
             score = ProposalScore(
                 proposal_id=b.proposal_id,
-                evidence_consistency=0.9 if not contradiction_count else 0.2,
-                canonical_consistency=0.9 if has_authority else 0.1,
-                dependency_correctness=0.85,
-                authority_compatibility=1.0 if has_authority else 0.0,
-                reversibility_score=assessment.reversibility,
-                implementation_complexity=0.8,
-                expected_value=0.85,
+                evidence_consistency=avg_evidence,
+                canonical_consistency=avg_canonical,
+                dependency_correctness=avg_dep,
+                authority_compatibility=avg_auth,
+                reversibility_score=avg_rev,
+                implementation_complexity=avg_compl,
+                expected_value=avg_val,
                 contradiction_count=contradiction_count,
-                confidence=assessment.primary_confidence,
-                policy_compliant=policy_compliant,
+                confidence=avg_conf,
+                policy_compliant=policy_compliant and has_authority,
             )
             scores[b.proposal_id] = score
 
@@ -421,25 +654,47 @@ class DeliberationCouncilV1:
             correlated_risk = True
             self.correlated_consensus_risk_count += 1
 
-        # Determine winner by highest composite score among policy-compliant proposals
+        # Strict Quorum Semantics:
+        # Full deliberative quorum requires BOTH proposal count >= min_quorum AND valid peer review count >= min_quorum
+        # If no peer reviews were conducted/supplied, quorum is NOT reached.
+        quorum_reached = (
+            total_blinded_count >= self.min_quorum
+            and valid_peer_review_count >= self.min_quorum
+        )
+
         eligible = [(k, v) for k, v in scores.items() if v.policy_compliant and v.composite_score > 0.0]
         eligible.sort(key=lambda item: item[1].composite_score, reverse=True)
 
-        quorum_reached = len(blinded) >= self.min_quorum
-        winning_proposal_id = eligible[0][0] if (eligible and quorum_reached) else (eligible[0][0] if eligible else None)
+        if quorum_reached and eligible:
+            winning_proposal_id = eligible[0][0]
+            council_status = "QUORUM_OBTAINED"
+        else:
+            winning_proposal_id = None
+            council_status = "INSUFFICIENT_QUORUM"
 
         # Check agreement with primary without exposing primary's identity externally
         primary_proposal_id = next((b.proposal_id for b in blinded if b.is_primary), None)
-        agreement_with_primary = (winning_proposal_id == primary_proposal_id)
+        primary_score = scores.get(primary_proposal_id) if primary_proposal_id else None
+        primary_is_valid = primary_score.policy_compliant and primary_score.composite_score > 0.0 if primary_score else False
 
-        if agreement_with_primary:
-            self.agreement_count += 1
+        if winning_proposal_id:
+            agreement_with_primary = (winning_proposal_id == primary_proposal_id)
         else:
-            self.disagreement_count += 1
-            if policy_violation_found or canonical_conflict_found:
-                self.primary_errors_caught += 1
+            # When no council winner due to quorum or policy rejection, agreement is True unless primary itself had policy/canonical violation
+            agreement_with_primary = primary_is_valid
+
+        if winning_proposal_id:
+            if agreement_with_primary:
+                self.agreement_count += 1
             else:
-                self.false_disagreement_count += 1
+                self.disagreement_count += 1
+                if policy_violation_found or canonical_conflict_found:
+                    self.primary_errors_caught += 1
+                else:
+                    self.false_disagreement_count += 1
+        elif not primary_is_valid and (policy_violation_found or canonical_conflict_found):
+            self.disagreement_count += 1
+            self.primary_errors_caught += 1
 
         selected_payload = None
         if winning_proposal_id:
@@ -450,12 +705,12 @@ class DeliberationCouncilV1:
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         self.total_latency_delta_ms += elapsed_ms
-        cost_delta = 0.005 * len(blinded)
+        cost_delta = 0.005 * len(blinded) + 0.002 * valid_peer_review_count
         self.total_cost_delta_estimate += cost_delta
 
         self.shadow_sample_count += 1
-        # Only increment real_shadow_sample_count if quorum was reached with >= 2 independent proposals
-        if is_real_execution and quorum_reached and len(blinded) >= self.min_quorum:
+        # REAL_SHADOW_SAMPLE_INCREMENT requires genuine quorum with valid peer reviews and >= min_quorum proposals
+        if is_real_execution and quorum_reached and total_blinded_count >= self.min_quorum and valid_peer_review_count >= self.min_quorum:
             self.real_shadow_sample_count += 1
 
         primary_fingerprint = hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -463,7 +718,7 @@ class DeliberationCouncilV1:
         decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
 
         # Confidence: if correlated consensus risk is high, reduce confidence
-        base_confidence = eligible[0][1].confidence if eligible else 0.0
+        base_confidence = eligible[0][1].confidence if (eligible and quorum_reached) else 0.0
         if correlated_risk:
             base_confidence = min(base_confidence, 0.45)
 
@@ -476,8 +731,13 @@ class DeliberationCouncilV1:
             "primary_decision_fingerprint": primary_fingerprint,
             "primary_confidence": assessment.primary_confidence,
             "council_trigger_reason": assessment.trigger_reason,
-            "anonymous_proposal_count": len(blinded),
+            "primary_proposal_count": primary_proposal_count,
+            "council_alternate_proposal_count": alternate_proposal_count,
+            "total_blinded_proposal_count": total_blinded_count,
+            "peer_reviewer_count": peer_reviewer_count,
+            "valid_peer_review_count": valid_peer_review_count,
             "quorum_obtained": quorum_reached,
+            "council_status": council_status,
             "council_result_fingerprint": result_fingerprint,
             "council_agreement": agreement_with_primary,
             "council_confidence": base_confidence,

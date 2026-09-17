@@ -1027,7 +1027,8 @@ def _shadow_deliberate(
 
         # Attempt to gather independent alternate proposals if spare capacity exists and alternates not provided
         collected_alternates: List[Tuple[str, Mapping[str, Any]]] = list(alternate_proposals)
-        if spare_capacity and not collected_alternates and routing_policy_path and routing_policy_path.is_file() and schema:
+        active_reviewers: List[Tuple[str, Any]] = []
+        if spare_capacity and routing_policy_path and routing_policy_path.is_file() and schema:
             try:
                 from aos.provider_registry import ProviderRouter, load_routing_policy
                 from aos.autonomous_host import _PROVIDER_FACTORIES
@@ -1035,8 +1036,6 @@ def _shadow_deliberate(
                 available_providers = router.registry.list_providers()
                 # Target up to 2 alternate policy-approved providers to reach 3 members total
                 for entry in available_providers:
-                    if len(collected_alternates) >= (COUNCIL_TARGET_MEMBER_COUNT - 1):
-                        break
                     p_id = entry.provider_id
                     if entry.cloud_local == "CLOUD" and entry.credential_env_var and not os.environ.get(entry.credential_env_var):
                         continue
@@ -1045,9 +1044,11 @@ def _shadow_deliberate(
                         continue
                     try:
                         provider_inst = factory(entry.model_id)
-                        plan_data, _, _ = provider_inst.generate_plan(prompt, schema)
-                        if isinstance(plan_data, dict):
-                            collected_alternates.append((p_id, plan_data))
+                        if not collected_alternates and len(collected_alternates) < (COUNCIL_TARGET_MEMBER_COUNT - 1):
+                            plan_data, _, _ = provider_inst.generate_plan(prompt, schema)
+                            if isinstance(plan_data, dict):
+                                collected_alternates.append((p_id, plan_data))
+                        active_reviewers.append((p_id, provider_inst))
                     except Exception:
                         pass
             except Exception:
@@ -1064,6 +1065,7 @@ def _shadow_deliberate(
             command_id=command_id or situation.identity(),
             is_spare_capacity_available=spare_capacity,
             is_real_execution=True,
+            reviewers=active_reviewers,
         )
     except Exception:
         # Deliberation Council in SHADOW_ONLY mode must never crash primary execution path

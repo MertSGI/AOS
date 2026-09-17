@@ -85,3 +85,27 @@ def test_get_authoritative_git_head(tmp_path):
     sha = get_authoritative_git_head(repo_root)
     assert is_valid_full_sha(sha)
     assert len(sha) == 40
+
+
+def test_provenance_runtime_path_is_strictly_headless():
+    """Verify raw subprocess.run is NOT used in aos.provenance runtime path."""
+    import inspect
+    import aos.provenance as prov_module
+    src = inspect.getsource(prov_module)
+    assert "subprocess.run" not in src
+    assert "run_headless" in src
+
+
+def test_control_panel_does_not_equate_sha_format_with_provenance_proof():
+    """Verify control panel build_status marks UNPROVEN if full provenance chain is absent, even with 40-char SHA."""
+    from aos.control_panel import build_status
+    dummy_config = {
+        "runtime_root": "C:/dummy_nonexistent_root",
+        "default_project": {},
+    }
+    # Unconfigured / standalone runtime
+    status = build_status(dummy_config)
+    assert status["provenance_status"] in ("UNPROVEN", "FAIL")
+    assert status["provenance_status"] != "PROVEN"
+    assert status["production"] == "NO_GO"
+

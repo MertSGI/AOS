@@ -64,6 +64,11 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
   <div class="card"><div class="label">Host</div><div id="host" class="value">Loading…</div></div>
   <div class="card"><div class="label">Active Slot</div><div id="active-slot" class="value">Loading…</div></div>
   <div class="card"><div class="label">Runtime SHA</div><div id="active-sha" class="value">Loading…</div></div>
+  <div class="card"><div class="label">SHA Format</div><div id="sha-format-status" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Candidate Manifest SHA</div><div id="manifest-sha" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Build Source SHA</div><div id="build-sha" class="value">Loading…</div></div>
+  <div class="card"><div class="label">CI Head SHA</div><div id="ci-head-sha" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Provenance Status</div><div id="provenance-status" class="value">Loading…</div></div>
   <div class="card"><div class="label">Production</div><div id="production" class="value">NO_GO</div></div>
 </div>
 
@@ -143,6 +148,19 @@ async function refreshStatus() {
     document.getElementById('host').className = 'value ' + ((s.host_state||'').includes('HOLD') ? 'hold' : 'ok');
     document.getElementById('active-slot').textContent = (s.active_slot || 'NONE').slice(0, 32);
     document.getElementById('active-sha').textContent = (s.active_sha || 'NONE').slice(0, 12);
+    const shaFormat = s.sha_format_status || 'INVALID';
+    const shaFormatEl = document.getElementById('sha-format-status');
+    shaFormatEl.textContent = shaFormat;
+    shaFormatEl.className = 'value ' + (shaFormat === 'VALID' ? 'ok' : 'danger');
+
+    document.getElementById('manifest-sha').textContent = (s.candidate_manifest_sha || 'UNAVAILABLE').slice(0, 12);
+    document.getElementById('build-sha').textContent = (s.build_source_sha || 'UNAVAILABLE').slice(0, 12);
+    document.getElementById('ci-head-sha').textContent = (s.ci_head_sha || 'UNAVAILABLE').slice(0, 12);
+
+    const provStatus = s.provenance_status || 'UNPROVEN';
+    const provEl = document.getElementById('provenance-status');
+    provEl.textContent = provStatus;
+    provEl.className = 'value ' + (provStatus === 'PROVEN' ? 'ok' : (provStatus === 'UNPROVEN' ? 'hold' : 'danger'));
     document.getElementById('production').textContent = s.production || 'NO_GO';
     
     // Render detailed lanes telemetry (state, batch count, attempts, backoff, timestamps)
@@ -344,8 +362,34 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
-        provenance_valid = is_valid_full_sha(active_sha)
-        provenance_status = "PROVEN" if provenance_valid else "UNPROVEN"
+        sha_format_valid = is_valid_full_sha(active_sha)
+        sha_format_status = "VALID" if sha_format_valid else "INVALID"
+
+        # Check candidate manifest and build provenance if slot_root is known
+        candidate_manifest_sha = None
+        build_source_sha = None
+        slot_root_str = runtime_v1.get("runtime_slot_root")
+        if slot_root_str:
+            try:
+                manifest_path = Path(slot_root_str) / "candidate-manifest.json"
+                if manifest_path.is_file():
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        m_data = json.load(f)
+                        candidate_manifest_sha = m_data.get("candidate_source_sha")
+                        build_source_sha = m_data.get("candidate_source_sha")
+            except Exception:
+                pass
+
+        # PROVEN requires actual successful validation across available chain, not merely format
+        if sha_format_valid and candidate_manifest_sha:
+            validation = validate_exact_sha_provenance(
+                candidate_manifest_source_sha=candidate_manifest_sha,
+                runtime_source_sha=active_sha,
+                build_source_sha=build_source_sha,
+            )
+            provenance_status = "PROVEN" if validation.valid else "FAIL"
+        else:
+            provenance_status = "UNPROVEN"
 
         return {
             "schema_version": "1.0.0",
@@ -359,8 +403,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "runtime_v1": runtime_v1,
             "active_slot": active_slot,
             "active_sha": active_sha,
+            "sha_format_status": sha_format_status,
             "provenance_status": provenance_status,
-            "provenance_valid": provenance_valid,
+            "candidate_manifest_sha": candidate_manifest_sha,
+            "build_source_sha": build_source_sha,
+            "ci_head_sha": None,  # Not fabricated when unavailable
+            "provenance_valid": (provenance_status == "PROVEN"),
             "active_commands": active_cmds,
             "waiting_commands": waiting_cmds,
             "latest_command": latest_cmd,
@@ -387,6 +435,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "runtime_v1": {"runtime_state": "NOT_CONFIGURED"},
         "active_slot": "NONE",
         "active_sha": "NONE",
+        "sha_format_status": "INVALID",
+        "provenance_status": "UNPROVEN",
+        "candidate_manifest_sha": None,
+        "build_source_sha": None,
+        "ci_head_sha": None,
+        "provenance_valid": False,
         "active_commands": [],
         "waiting_commands": [],
         "latest_command": {},
