@@ -39,6 +39,27 @@ def project_nemotron_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return projected
 
 
+NEMOTRON_MAX_OUTPUT_TOKENS = 2200
+NEMOTRON_PLAN_MAX_OUTPUT_TOKENS = 3200
+NEMOTRON_OBJECTIVE_MAX_OUTPUT_TOKENS = 1000
+NEMOTRON_COMPLETION_MAX_OUTPUT_TOKENS = 1000
+
+
+def nemotron_max_output_tokens(schema: Dict[str, Any]) -> int:
+    """Reserve output capacity proportionate to the known reasoning contract."""
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    if not isinstance(properties, dict):
+        return NEMOTRON_MAX_OUTPUT_TOKENS
+    keys = set(properties)
+    if {"objective_id", "parallel_candidates", "completion_criteria"}.issubset(keys) and "tasks" not in keys:
+        return NEMOTRON_OBJECTIVE_MAX_OUTPUT_TOKENS
+    if {"disposition", "satisfied_criteria", "unsatisfied_criteria"}.issubset(keys):
+        return NEMOTRON_COMPLETION_MAX_OUTPUT_TOKENS
+    if {"objective_id", "tasks", "parallel_safe_groups"}.issubset(keys):
+        return NEMOTRON_PLAN_MAX_OUTPUT_TOKENS
+    return NEMOTRON_MAX_OUTPUT_TOKENS
+
+
 # Thinking budget policy bounds
 MIN_THINKING_BUDGET = 128
 MAX_THINKING_BUDGET = 32768
@@ -111,7 +132,7 @@ class NemotronPlannerProvider:
                         "schema": provider_schema,
                     },
                 },
-                max_tokens=1000,
+                max_tokens=nemotron_max_output_tokens(schema),
                 temperature=0.0,
                 store=False,
                 extra_body=extra_body,
@@ -134,6 +155,8 @@ class NemotronPlannerProvider:
 
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason == "length":
+            raise PlannerTransientError("Nemotron response reached configured output capacity before completing JSON")
         if finish_reason and finish_reason != "stop":
             raise PlannerContractError(f"Nemotron response finished with unacceptable reason: {finish_reason}")
 
