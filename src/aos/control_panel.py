@@ -61,11 +61,17 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
 <p class="sub">AG-independent local AOS control surface · loopback only · production NO_GO</p>
 <div class="grid">
   <div class="card"><div class="label">Host</div><div id="host" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Active Slot</div><div id="active-slot" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Runtime SHA</div><div id="active-sha" class="value">Loading…</div></div>
   <div class="card"><div class="label">Production</div><div id="production" class="value">NO_GO</div></div>
-  <div class="card"><div class="label">AG backend</div><div id="ag" class="value">Disabled</div></div>
-  <div class="card"><div class="label">Pending jobs</div><div id="pending" class="value">0</div></div>
 </div>
-<div class="card">
+
+<div class="card" style="margin-top:12px">
+  <div class="label">Autonomous Multi-Lane Telemetry</div>
+  <div id="lanes-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.6;">Loading lanes…</div>
+</div>
+
+<div class="card" style="margin-top:12px">
   <div class="label">Reasoning providers</div>
   <div id="providers" class="value"></div>
   <small>AOS Direct does not consume Antigravity model quota. A reasoning provider is still required for autonomous free-text planning.</small>
@@ -134,9 +140,34 @@ async function refreshStatus() {
     const s = await r.json();
     document.getElementById('host').textContent = s.host_state || 'UNKNOWN';
     document.getElementById('host').className = 'value ' + ((s.host_state||'').includes('HOLD') ? 'hold' : 'ok');
+    document.getElementById('active-slot').textContent = (s.active_slot || 'NONE').slice(0, 32);
+    document.getElementById('active-sha').textContent = (s.active_sha || 'NONE').slice(0, 12);
     document.getElementById('production').textContent = s.production || 'NO_GO';
-    document.getElementById('ag').textContent = s.ag_backend_enabled ? 'ENABLED' : 'Disabled';
-    document.getElementById('pending').textContent = String(s.pending_jobs ?? 0);
+    
+    // Render detailed lanes telemetry (state, batch count, attempts, backoff, timestamps)
+    const lanes = s.lanes || {};
+    const laneKeys = Object.keys(lanes);
+    if (laneKeys.length === 0) {
+      document.getElementById('lanes-view').innerHTML = '<em>No active autonomous lanes currently running.</em>';
+    } else {
+      let html = '<table style="width:100%; border-collapse:collapse; text-align:left;">';
+      html += '<tr style="color:#9eabb7; border-bottom:1px solid #2b333c;"><th style="padding:6px;">Lane / Project</th><th>Command ID</th><th>State / Disposition</th><th>Batches</th><th>Attempts</th><th>Updated</th></tr>';
+      for (const k of laneKeys) {
+        const item = lanes[k];
+        const stateColor = (item.state === 'RUNNING' || item.state === 'EXECUTING') ? '#74d99f' : ((item.state||'').includes('WAITING') ? '#f0b66c' : '#e8edf2');
+        html += `<tr style="border-bottom:1px solid #1f252d;">
+          <td style="padding:6px; font-weight:bold;">${k.toUpperCase()}</td>
+          <td><small>${(item.command_id||'').slice(0, 24)}</small></td>
+          <td style="color:${stateColor}">${item.state || 'UNKNOWN'}</td>
+          <td>${item.completed_batches ?? 0}</td>
+          <td>${item.attempts ?? 0}</td>
+          <td><small>${(item.updated_at||'').slice(11, 19)}Z</small></td>
+        </tr>`;
+      }
+      html += '</table>';
+      document.getElementById('lanes-view').innerHTML = html;
+    }
+
     const p = s.providers || {};
     document.getElementById('providers').textContent =
       ['NVIDIA','GEMINI','GROQ','OPENAI','OLLAMA'].map(k => `${k}: ${p[k] ? 'ready' : 'not ready'}`).join(' · ');
@@ -277,6 +308,41 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
     if runtime_configured(config):
         bridge = runtime_status(config)
         providers = _provider_presence()
+        runtime_v1 = bridge.get("runtime_v1", {})
+        
+        # Extract rich live telemetry for lanes, slot, commands, backoff, and work units
+        lanes_detail = {}
+        active_slot = str(runtime_v1.get("runtime_slot_id") or "UNKNOWN")
+        active_sha = str(runtime_v1.get("runtime_source_sha") or "UNKNOWN")
+        active_cmds = list(runtime_v1.get("active_commands") or [])
+        waiting_cmds = list(runtime_v1.get("waiting_commands") or [])
+        latest_cmd = dict(runtime_v1.get("latest_command") or {})
+
+        # Scan active and waiting commands from runtime store if runtime_root is known
+        runtime_root_str = config.get("runtime_root")
+        if runtime_root_str:
+            try:
+                from aos.runtime_store import RuntimeStore
+                base_p = Path(runtime_root_str).expanduser().resolve()
+                store_root = (base_p / "state") if (base_p / "state" / "commands").is_dir() else base_p
+                store = RuntimeStore(store_root)
+                for cid in (active_cmds + waiting_cmds)[-10:]:
+                    cmd_data = store.read_command(cid)
+                    cmd_state = store.read_state(cid)
+                    proj = (cmd_data.get("project") or {}).get("project_id") or "unknown"
+                    lanes_detail[proj] = {
+                        "command_id": cid,
+                        "state": cmd_state.get("state"),
+                        "disposition": cmd_state.get("disposition"),
+                        "completed_batches": int(cmd_state.get("completed_batch_count", 0) or 0),
+                        "attempts": int(cmd_state.get("attempts", 0) or 0),
+                        "retry_after_epoch": cmd_state.get("retry_after_epoch"),
+                        "updated_at": cmd_state.get("updated_at"),
+                        "canonical_source_sha": cmd_state.get("canonical_source_sha"),
+                    }
+            except Exception:
+                pass
+
         return {
             "schema_version": "1.0.0",
             "host_state": bridge.get("host_state", "UNKNOWN"),
@@ -286,7 +352,13 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "ag_backend_enabled": False,
             "providers": providers,
             "default_project": config.get("default_project", {}),
-            "runtime_v1": bridge.get("runtime_v1", {}),
+            "runtime_v1": runtime_v1,
+            "active_slot": active_slot,
+            "active_sha": active_sha,
+            "active_commands": active_cmds,
+            "waiting_commands": waiting_cmds,
+            "latest_command": latest_cmd,
+            "lanes": lanes_detail,
         }
 
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
@@ -307,6 +379,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "providers": providers,
         "default_project": config.get("default_project", {}),
         "runtime_v1": {"runtime_state": "NOT_CONFIGURED"},
+        "active_slot": "NONE",
+        "active_sha": "NONE",
+        "active_commands": [],
+        "waiting_commands": [],
+        "latest_command": {},
+        "lanes": {},
     }
 
 def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
