@@ -612,6 +612,25 @@ def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_pat
     assert backend.calls == 3
     assert executed == []
     assert not (tmp_path / "runtime" / "batches" / "batch-0000" / "generated-run-plan.json").exists()
+    repair_artifact = json.loads(
+        (tmp_path / "runtime" / "plan-dag-repair-0000.json").read_text(encoding="utf-8")
+    )
+    assert repair_artifact["status"] == "EXHAUSTED"
+
+    # Subsequent retry does not lock into repair mode since status is EXHAUSTED
+    retry_backend = QueueBackend([_plan()])
+    retry_result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=retry_backend,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=lambda **kwargs: {"progress": 100.0, "completed_task_ids": ["task-1"], "failed_task_ids": []},
+        max_batches=1,
+    )
+    assert retry_result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert "VALIDATION_REPAIR_REQUIRED" not in retry_backend.requests[0].payload["prompt"]
 
 
 def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_path, monkeypatch):

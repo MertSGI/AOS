@@ -1717,14 +1717,18 @@ def compile_execution_plan(
             break
         except PlanningKernelError as exc:
             validation_error = redact_secrets(str(exc))[:500]
-            _save_waiting_plan_repair(
-                runtime_dir, batch_number, situation, objective, prompt_sha256,
-                proposal, validation_error,
-            )
             if attempt:
+                _save_waiting_plan_repair(
+                    runtime_dir, batch_number, situation, objective, prompt_sha256,
+                    proposal, validation_error, status="EXHAUSTED",
+                )
                 raise PlannerValidationExhausted(
                     f"PLANNER_VALIDATION_REPAIR_EXHAUSTED: {validation_error}"
                 ) from exc
+            _save_waiting_plan_repair(
+                runtime_dir, batch_number, situation, objective, prompt_sha256,
+                proposal, validation_error, status="PENDING",
+            )
 
     if normalized is None:  # pragma: no cover - loop either succeeds or raises
         raise PlanningKernelError("Execution plan validation did not produce a plan")
@@ -1874,12 +1878,13 @@ def _save_waiting_plan_repair(
     prompt_sha256: str,
     proposal: Mapping[str, Any],
     validation_error: str,
+    status: str = "PENDING",
 ) -> None:
     if batch_number is None:
         return
     _atomic_json(_plan_repair_artifact_path(runtime_dir, batch_number), {
         "schema_version": SCHEMA_VERSION,
-        "status": "PENDING",
+        "status": status,
         "batch_number": batch_number,
         "situation_id": situation.identity(),
         "canonical_source_sha": situation.control_sha,
