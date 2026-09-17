@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from aos.process_utils import run_headless
+
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
 from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
@@ -427,19 +429,15 @@ def load_bound_run_plan(
 
 def assert_workspace_execution_lineage(workspace: Path, execution_base_sha: Optional[str]) -> str:
     """Fail closed unless the managed workspace is the canonical base or its descendant."""
-    try:
-        actual_sha = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=workspace, text=True, stderr=subprocess.STDOUT
-        ).strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ValueError(f"Managed workspace HEAD is unavailable: {exc}") from exc
+    res = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace))
+    if res.returncode != 0:
+        raise ValueError(f"Managed workspace HEAD is unavailable: {res.stderr.strip() or res.stdout.strip()}")
+    actual_sha = (res.stdout or "").strip()
     if not execution_base_sha or actual_sha == execution_base_sha:
         return actual_sha
-    ancestry = subprocess.run(
+    ancestry = run_headless(
         ["git", "merge-base", "--is-ancestor", execution_base_sha, actual_sha],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
+        cwd=str(workspace),
         check=False,
     )
     if ancestry.returncode != 0:

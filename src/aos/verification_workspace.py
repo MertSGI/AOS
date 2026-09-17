@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from aos.candidate_store import _scan_tree_for_symlinks, compute_file_sha256
+from aos.process_utils import run_headless
 
 
 class VerificationWorkspaceError(Exception):
@@ -29,10 +30,8 @@ def verify_copy_zero_remotes(copy_ws: Path) -> None:
         return
 
     try:
-        res = subprocess.run(
+        res = run_headless(
             ["git", "-C", str(copy_ws), "remote"],
-            capture_output=True,
-            text=True,
             timeout=30,
         )
         if res.returncode != 0:
@@ -59,7 +58,7 @@ def inspect_workspace_boundary_state(
         if runner:
             res = runner(cmd, str(ws_dir))
         else:
-            res = subprocess.run(cmd, cwd=str(ws_dir), capture_output=True, text=True)
+            res = run_headless(cmd, cwd=str(ws_dir))
         if res.returncode != 0:
             err = res.stderr.strip() or res.stdout.strip()
             raise VerificationWorkspaceError(f"Command failed ({' '.join(cmd)}): {err}")
@@ -70,10 +69,10 @@ def inspect_workspace_boundary_state(
 
     # Query status -z --porcelain -uall and diff -z --name-status
     # We can inspect working tree changed files relative to base commit or status
-    status_res = subprocess.run(
+    status_res = run_headless(
         ["git", "status", "-z", "--porcelain", "-uall"],
         cwd=str(ws_dir),
-        capture_output=True,
+        text=False,
     )
     if status_res.returncode != 0:
         raise VerificationWorkspaceError("Failed to query git status of workspace")

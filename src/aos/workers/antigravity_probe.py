@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from aos.process_utils import run_headless
 from aos.validate import validate_document
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
@@ -112,7 +113,7 @@ def run_antigravity_probe(
     effective_aos_revision = aos_revision
     if not effective_aos_revision:
         try:
-            effective_aos_revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+            effective_aos_revision = run_headless(["git", "rev-parse", "HEAD"], check=True).stdout.strip()
         except Exception:
             effective_aos_revision = "0000000000000000000000000000000000000000"
 
@@ -163,17 +164,17 @@ def run_antigravity_probe(
 
         # 2. Setup baseline git repository inside workspace
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init"], cwd=str(workspace_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "AOS Probe"], cwd=str(workspace_dir), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "probe@mertsgi.org"], cwd=str(workspace_dir), capture_output=True, check=True)
+        run_headless(["git", "init"], cwd=str(workspace_dir), check=True)
+        run_headless(["git", "config", "user.name", "AOS Probe"], cwd=str(workspace_dir), check=True)
+        run_headless(["git", "config", "user.email", "probe@mertsgi.org"], cwd=str(workspace_dir), check=True)
 
         readme_file = workspace_dir / "README.md"
         readme_file.write_text("# Baseline\n", encoding="utf-8")
-        subprocess.run(["git", "add", "README.md"], cwd=str(workspace_dir), capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "baseline"], cwd=str(workspace_dir), capture_output=True, check=True)
+        run_headless(["git", "add", "README.md"], cwd=str(workspace_dir), check=True)
+        run_headless(["git", "commit", "-m", "baseline"], cwd=str(workspace_dir), check=True)
 
-        baseline_head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
-        baseline_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
+        baseline_head_sha = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
+        baseline_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
 
         # Pre-create probe directory by the test harness so capability tests file creation, not shell mkdir
         probe_dir = workspace_dir / "probe"
@@ -225,7 +226,7 @@ def run_antigravity_probe(
             if runner:
                 res = runner(cmd, str(workspace_dir), timeout_seconds, sanitized_env)
             else:
-                res = subprocess.run(cmd, cwd=str(workspace_dir), capture_output=True, text=True, timeout=timeout_seconds, env=sanitized_env)
+                res = run_headless(cmd, cwd=str(workspace_dir), timeout=timeout_seconds, env=sanitized_env)
             exit_code = res.returncode
             raw_stdout = res.stdout or ""
             raw_stderr = res.stderr or ""
@@ -301,19 +302,19 @@ def run_antigravity_probe(
 
         # Verify git integrity
         try:
-            current_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
-            current_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
+            current_head = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
+            current_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
             if current_head != baseline_head_sha:
                 probe_errors.append(f"Git HEAD changed ('{baseline_head_sha}' -> '{current_head}')")
             if current_branch != baseline_branch:
                 probe_errors.append(f"Git branch changed ('{baseline_branch}' -> '{current_branch}')")
 
-            remotes = subprocess.run(["git", "remote"], cwd=str(workspace_dir), capture_output=True, text=True, check=True).stdout.strip()
+            remotes = run_headless(["git", "remote"], cwd=str(workspace_dir), check=True).stdout.strip()
             if remotes:
                 probe_errors.append(f"Unexpected git remotes configured: {remotes}")
 
             # Changed files status
-            status_out = subprocess.run(["git", "status", "-z", "--porcelain", "-uall"], cwd=str(workspace_dir), capture_output=True, check=True).stdout
+            status_out = run_headless(["git", "status", "-z", "--porcelain", "-uall"], cwd=str(workspace_dir), text=False, check=True).stdout
             items = status_out.split(b"\x00")
             for item in items:
                 if len(item) >= 3:

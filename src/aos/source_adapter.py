@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
+from aos.process_utils import run_headless
+
 def resolve_json_pointer(doc: Any, pointer: str) -> Any:
     """Resolve standard JSON Pointer (RFC 6901) against parsed JSON data."""
     if not pointer or pointer == "/":
@@ -84,11 +86,9 @@ class ProjectSourceAdapter:
         expected_ref = f"refs/heads/{control_ref}"
         env = dict(os.environ)
         env["GIT_TERMINAL_PROMPT"] = "0"
-        completed = subprocess.run(
+        completed = run_headless(
             ["git", "ls-remote", f"https://github.com/{repository}.git", expected_ref],
             check=True,
-            capture_output=True,
-            text=True,
             timeout=30,
             env=env,
         )

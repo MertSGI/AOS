@@ -18,6 +18,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from aos.process_utils import run_headless
+
 from aos.coordination import (
     ClaimDisposition,
     ClaimResult,
@@ -130,34 +132,26 @@ def compute_proof_scoped_machine_fingerprint(proof_id: str) -> str:
 
 
 def check_git_readiness(required_sha: str, required_branch: str) -> Dict[str, Any]:
-    try:
-        head_sha = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE
-        ).strip()
-    except Exception as e:
-        raise RuntimeError(f"Git readiness check failed reading HEAD: {e}") from e
+    res_head = run_headless(["git", "rev-parse", "HEAD"])
+    if res_head.returncode != 0:
+        raise RuntimeError(f"Git readiness check failed reading HEAD: {res_head.stderr.strip()}")
+    head_sha = res_head.stdout.strip()
 
-    try:
-        curr_branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True, stderr=subprocess.PIPE
-        ).strip()
-    except Exception as e:
-        raise RuntimeError(f"Git readiness check failed reading branch: {e}") from e
+    res_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if res_branch.returncode != 0:
+        raise RuntimeError(f"Git readiness check failed reading branch: {res_branch.stderr.strip()}")
+    curr_branch = res_branch.stdout.strip()
 
-    try:
-        origin_sha = subprocess.check_output(
-            ["git", "rev-parse", f"origin/{required_branch}"], text=True, stderr=subprocess.PIPE
-        ).strip()
-    except Exception as e:
-        raise RuntimeError(f"Git readiness check failed reading origin/{required_branch}: {e}") from e
+    res_origin = run_headless(["git", "rev-parse", f"origin/{required_branch}"])
+    if res_origin.returncode != 0:
+        raise RuntimeError(f"Git readiness check failed reading origin/{required_branch}: {res_origin.stderr.strip()}")
+    origin_sha = res_origin.stdout.strip()
 
-    try:
-        status_out = subprocess.check_output(
-            ["git", "status", "--porcelain"], text=True, stderr=subprocess.PIPE
-        ).strip()
-        is_clean = (status_out == "")
-    except Exception as e:
-        raise RuntimeError(f"Git readiness check failed checking status: {e}") from e
+    res_status = run_headless(["git", "status", "--porcelain"])
+    if res_status.returncode != 0:
+        raise RuntimeError(f"Git readiness check failed checking status: {res_status.stderr.strip()}")
+    status_out = res_status.stdout.strip()
+    is_clean = (status_out == "")
 
     reasons = []
     if curr_branch != required_branch:

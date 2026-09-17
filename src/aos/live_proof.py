@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from aos.benchmark import run_benchmark
+from aos.process_utils import run_headless
 from aos.provider_registry import load_routing_policy
 from aos.validate import validate_file
 
@@ -33,21 +34,11 @@ EXPECTED_PROOF_SHA = "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
 def get_git_info() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], bool]:
     """Retrieve git branch, HEAD, origin/main, origin/feature, and tracked clean status."""
     try:
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
-        ).strip()
-        head = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
-        ).strip()
-        main = subprocess.check_output(
-            ["git", "rev-parse", "origin/main"], text=True
-        ).strip()
-        origin_feature = subprocess.check_output(
-            ["git", "rev-parse", f"origin/{EXPECTED_BRANCH}"], text=True
-        ).strip()
-        status_out = subprocess.check_output(
-            ["git", "status", "--porcelain"], text=True
-        ).strip()
+        branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+        head = run_headless(["git", "rev-parse", "HEAD"]).stdout.strip()
+        main = run_headless(["git", "rev-parse", "origin/main"]).stdout.strip()
+        origin_feature = run_headless(["git", "rev-parse", f"origin/{EXPECTED_BRANCH}"]).stdout.strip()
+        status_out = run_headless(["git", "status", "--porcelain"]).stdout.strip()
 
         # Check if any tracked files are modified
         tracked_modified = False
@@ -118,7 +109,7 @@ def run_readiness_checks(
             return False, "Tracked git working tree is dirty", None, None, None
     else:
         try:
-            head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+            head = run_headless(["git", "rev-parse", "HEAD"]).stdout.strip()
             aos_revision = head
         except Exception:
             aos_revision = "0000000000000000000000000000000000000000"

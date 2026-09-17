@@ -147,7 +147,7 @@ def resolve_runtime_environment_profile(
             if node_runner:
                 res = node_runner([node_exe, "--version"])
             else:
-                res = subprocess.run([node_exe, "--version"], capture_output=True, text=True, timeout=5)
+                res = run_headless([node_exe, "--version"], timeout=5)
             if res.returncode == 0:
                 node_available = True
                 node_version = (res.stdout or "").strip()
