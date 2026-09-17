@@ -130,6 +130,10 @@ class GeminiPlannerProvider:
             for candidate in response.candidates:
                 finish_reason = getattr(candidate, "finish_reason", None)
                 if finish_reason and str(finish_reason) not in ("STOP", "FinishReason.STOP", "1"):
+                    if str(finish_reason) in ("MAX_TOKENS", "FinishReason.MAX_TOKENS", "2"):
+                        raise PlannerTransientError(
+                            f"Gemini response reached its output-token limit: {finish_reason}"
+                        )
                     raise PlannerContractError(f"Gemini response finished with reason: {finish_reason}")
 
         if not content_str:

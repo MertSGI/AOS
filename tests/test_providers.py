@@ -1027,16 +1027,17 @@ class TestSchemaAndAdapterRegressions:
         call_kwargs = mock_client.models.generate_content.call_args.kwargs
         assert call_kwargs["config"].max_output_tokens == 4096
 
-    def test_gemini_finish_reason_max_tokens_raises_contract_error_without_fallback(self, monkeypatch, tmp_path):
-        """31. FinishReason.MAX_TOKENS raises PlannerContractError and aborts benchmark without fallback or Groq calls."""
-        from aos.planner import PlannerContractError
+    @pytest.mark.parametrize("finish_reason", ["MAX_TOKENS", "FinishReason.MAX_TOKENS", "2"])
+    def test_gemini_finish_reason_max_tokens_is_transient(self, monkeypatch, finish_reason):
+        """31. Output truncation remains retryable so provider failover can continue."""
+        from aos.planner import PlannerTransientError
         from aos.providers.gemini import GeminiPlannerProvider
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
         provider = GeminiPlannerProvider(model="gemini-3.6-flash")
 
         mock_candidate = MagicMock()
-        mock_candidate.finish_reason = "FinishReason.MAX_TOKENS"
+        mock_candidate.finish_reason = finish_reason
 
         mock_response = MagicMock()
         mock_response.text = None
@@ -1046,9 +1047,28 @@ class TestSchemaAndAdapterRegressions:
         mock_client.models.generate_content.return_value = mock_response
 
         with patch("google.genai.Client", return_value=mock_client):
-            with pytest.raises(PlannerContractError) as exc_info:
+            with pytest.raises(PlannerTransientError) as exc_info:
                 provider.generate_plan("test", {})
-            assert "FinishReason.MAX_TOKENS" in str(exc_info.value)
+            assert finish_reason in str(exc_info.value)
+
+    def test_gemini_safety_finish_reason_remains_contract_failure(self, monkeypatch):
+        """Safety/refusal outcomes must not be bypassed through provider failover."""
+        from aos.planner import PlannerContractError
+        from aos.providers.gemini import GeminiPlannerProvider
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        provider = GeminiPlannerProvider(model="gemini-3.6-flash")
+        mock_candidate = MagicMock()
+        mock_candidate.finish_reason = "FinishReason.SAFETY"
+        mock_response = MagicMock()
+        mock_response.text = None
+        mock_response.candidates = [mock_candidate]
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.Client", return_value=mock_client):
+            with pytest.raises(PlannerContractError, match="FinishReason.SAFETY"):
+                provider.generate_plan("test", {})
 
 
 # =========================================================================
