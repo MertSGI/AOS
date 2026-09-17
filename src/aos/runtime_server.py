@@ -65,6 +65,34 @@ def _creationflags() -> int:
     return get_headless_creationflags(detached=True)
 
 
+def _resolve_worker_executable() -> str:
+    py = sys.executable
+    if os.name == "nt" and py.lower().endswith("pythonw.exe"):
+        candidate = Path(py).with_name("python.exe")
+        if candidate.exists():
+            return str(candidate)
+    return py
+
+
+def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:
+    env = dict(os.environ)
+    site_dirs: list[str] = []
+    if slot_root:
+        candidate_site = Path(slot_root) / "site"
+        if candidate_site.is_dir():
+            site_dirs.append(str(candidate_site.resolve()))
+    module_parent = Path(__file__).resolve().parent.parent
+    if module_parent.is_dir():
+        site_dirs.append(str(module_parent))
+    existing = env.get("PYTHONPATH", "")
+    all_parts = [p for p in site_dirs if p]
+    if existing:
+        all_parts.append(existing)
+    if all_parts:
+        env["PYTHONPATH"] = os.pathsep.join(all_parts)
+    return env
+
+
 class RuntimeEngine:
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = validate_runtime_config(config)
@@ -121,7 +149,7 @@ class RuntimeEngine:
         target_state = "RECOVERING" if recovered else "QUEUED"
         self.store.write_state(command_id, state=target_state, worker_pid=None)
         cmd = [
-            sys.executable,
+            _resolve_worker_executable(),
             "-m",
             "aos.runtime_worker",
             "--runtime-root",
@@ -129,6 +157,8 @@ class RuntimeEngine:
             "--command-id",
             command_id,
         ]
+        slot_root = self.config.get("runtime_slot_root")
+        worker_env = _build_worker_env(str(slot_root) if slot_root else None)
         proc = popen_headless(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -136,6 +166,7 @@ class RuntimeEngine:
             stderr=subprocess.DEVNULL,
             close_fds=True,
             detached=True,
+            env=worker_env,
         )
         # The worker can reach RUNNING before Popen returns. Never downgrade a
         # concurrently advanced state back to QUEUED/RECOVERING.

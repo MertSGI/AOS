@@ -44,7 +44,11 @@ def _ensure_repo_extensions_importable() -> None:
     aos_home = os.environ.get("AOS_HOME")
     if aos_home:
         candidates.append(Path(aos_home))
-    candidates.extend([Path(__file__).resolve().parents[2], Path.cwd()])
+    candidates.extend([
+        Path(__file__).resolve().parents[1],
+        Path(__file__).resolve().parents[2],
+        Path.cwd(),
+    ])
     for candidate in candidates:
         if (candidate / "extensions" / "__init__.py").exists():
             resolved = str(candidate.resolve())

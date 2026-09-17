@@ -105,3 +105,59 @@ def test_runtime_http_server_endpoints_and_security(tmp_path, monkeypatch):
         server.shutdown()
         engine.shutdown()
 
+
+def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatch):
+    import subprocess
+    from aos.runtime_server import (
+        _build_worker_env,
+        _resolve_worker_executable,
+        load_config,
+    )
+
+    cfg = _config(tmp_path)
+    slot_site = tmp_path / "candidate" / "site"
+    slot_site.mkdir(parents=True)
+    cfg["runtime_slot_root"] = str(tmp_path / "candidate")
+
+    # Verify _build_worker_env includes candidate site and module parent
+    worker_env = _build_worker_env(str(tmp_path / "candidate"))
+    pythonpath = worker_env.get("PYTHONPATH", "")
+    assert str(slot_site.resolve()) in pythonpath
+
+    # Verify _resolve_worker_executable handles pythonw correctly
+    exe = _resolve_worker_executable()
+    assert not exe.lower().endswith("pythonw.exe")
+
+    # Test _spawn_worker passes env and resolved executable
+    engine = RuntimeEngine(cfg)
+    command_id = "test-cmd-spawn-env"
+    engine.store.create_command({
+        "command_id": command_id,
+        "project": {"project_id": "lari"},
+        "goal": "Test worker spawn environment",
+        "contract_version": "1.0.0",
+        "created_at": "2026-09-17T00:00:00Z",
+    })
+
+    captured = {}
+
+    class DummyProc:
+        pid = 77777
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return DummyProc()
+
+    monkeypatch.setattr("aos.runtime_server.popen_headless", fake_popen)
+    try:
+        pid = engine._spawn_worker(command_id, recovered=False)
+        assert pid == 77777
+        assert captured["cmd"][0] == _resolve_worker_executable()
+        assert captured["kwargs"]["env"]["PYTHONPATH"] == worker_env["PYTHONPATH"]
+        assert captured["kwargs"]["close_fds"] is True
+        assert captured["kwargs"]["detached"] is True
+    finally:
+        engine.shutdown()
+
+
