@@ -237,6 +237,36 @@ def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_p
     assert "must-not-appear" not in json.dumps(context)
 
 
+def test_completed_read_context_keeps_only_two_recent_bounded_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    workspace.mkdir()
+    completed_batches = []
+    for batch_number in range(4):
+        path = f"discovery-{batch_number}.md"
+        (workspace / path).write_text(str(batch_number) * 2000, encoding="utf-8")
+        batch_runtime = runtime / "batches" / f"batch-{batch_number:04d}"
+        batch_runtime.mkdir(parents=True)
+        plan = _plan()
+        plan["tasks"][0].update({
+            "node_id": f"read-{batch_number}",
+            "run_type": "FILE",
+            "payload": {"action": "read_file", "path": path},
+        })
+        (batch_runtime / "generated-run-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        completed_batches.append({
+            "batch_number": batch_number,
+            "receipt": {"completed_task_ids": [f"read-{batch_number}"]},
+        })
+
+    context = _bounded_completed_read_context(runtime, workspace, completed_batches)
+
+    assert context["completed_read_paths"] == ["discovery-3.md", "discovery-2.md"]
+    assert len(context["files"]) == 2
+    assert all(len(item["redacted_excerpt"]) <= 600 for item in context["files"])
+    assert all(len(item["content_sha256"]) == 64 for item in context["files"])
+
+
 def test_plan_compiler_rejects_renamed_repeat_of_completed_read_path(tmp_path):
     roadmap = tmp_path / "ROADMAP.md"
     roadmap.write_text("next work\n", encoding="utf-8")

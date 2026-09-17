@@ -60,6 +60,8 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
 SCHEMA_VERSION = "1.0.0"
 PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 3000
 PLANNER_COMPLETED_SIGNATURES_MAX_CHARS = 1800
+PLANNER_COMPLETED_READ_MAX_FILES = 2
+PLANNER_COMPLETED_READ_MAX_CHARS_PER_FILE = 600
 OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS = 3000
 COMPLETION_CANONICAL_EXCERPT_MAX_CHARS = 2500
 DEFAULT_GOAL = "Continue this project to completion under standing authority."
@@ -716,8 +718,8 @@ def _bounded_completed_read_context(
     workspace: Path,
     completed_batches: Sequence[Mapping[str, Any]],
     *,
-    max_files: int = 4,
-    max_chars_per_file: int = 800,
+    max_files: int = PLANNER_COMPLETED_READ_MAX_FILES,
+    max_chars_per_file: int = PLANNER_COMPLETED_READ_MAX_CHARS_PER_FILE,
 ) -> Dict[str, Any]:
     """Fresh-read bounded outputs of completed FILE reads for the next planner.
 
