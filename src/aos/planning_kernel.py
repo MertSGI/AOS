@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from jsonschema import Draft202012Validator
 
+from aos.process_utils import run_headless
 from aos.provider_registry import ProviderRouter, load_routing_policy
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
@@ -412,8 +413,8 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 def _run_readonly(cmd: Sequence[str], cwd: Path, timeout: int = 30) -> Tuple[int, str, str]:
     try:
-        proc = subprocess.run(
-            list(cmd), cwd=str(cwd), shell=False, text=True, capture_output=True, timeout=timeout
+        proc = run_headless(
+            list(cmd), cwd=str(cwd), timeout=timeout
         )
         return proc.returncode, redact_secrets(proc.stdout or "")[:20000], redact_secrets(proc.stderr or "")[:10000]
     except FileNotFoundError as exc:
@@ -667,12 +668,10 @@ def _bounded_workspace_file_manifest(
     if workspace is None:
         return {"status": "UNAVAILABLE", "reason": "workspace_not_bound"}
     try:
-        completed = subprocess.run(
+        completed = run_headless(
             ["git", "ls-files"],
             cwd=workspace.resolve(),
             check=True,
-            capture_output=True,
-            text=True,
             timeout=15,
             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
         )

@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
+from aos.process_utils import run_headless
 
 ADAPTER_CONTRACT_VERSION = "0.2.9"
 RUNTIME_ENVIRONMENT_PROFILE_VERSION = "0.1.0"
@@ -204,7 +205,7 @@ def get_reported_cli_version(
         if runner:
             res = runner([cli_command, "--version"])
         else:
-            res = subprocess.run([cli_command, "--version"], capture_output=True, text=True, timeout=10)
+            res = run_headless([cli_command, "--version"], timeout=10)
         if res.returncode == 0:
             return (res.stdout or "").strip()
         return None
@@ -700,7 +701,7 @@ class AntigravityWorkerAdapter(WorkerAdapter):
                 self.pinned_identity = dict(resolved_id)
 
     def _default_runner(self, cmd: List[str], cwd: str, timeout: int, env: Dict[str, str]) -> subprocess.CompletedProcess:
-        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+        return run_headless(cmd, cwd=cwd, timeout=timeout, env=env)
 
     def revalidate_runtime_identity(self) -> bool:
         """Re-resolve runtime executable identity and verify match against pinned attestation identity."""

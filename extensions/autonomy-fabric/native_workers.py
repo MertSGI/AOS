@@ -25,6 +25,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from aos.process_utils import run_headless
+
 from extensions.autonomy_fabric.execution_backend import (
     ExecutionBackend,
     ExecutionRequest,
@@ -397,14 +399,11 @@ class NativeProcessWorker(ExecutionBackend):
 
         timeout = request.timeout_seconds or 180
         try:
-            proc = subprocess.run(
+            proc = run_headless(
                 cmd,
                 cwd=workspace,
                 env=safe_env,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
-                shell=False,
             )
             stdout_clean = redact_secrets(proc.stdout)
             stderr_clean = redact_secrets(proc.stderr)
@@ -628,7 +627,7 @@ class GitHubCIWorker(ExecutionBackend):
         if gh_path:
             try:
                 cmd = ["gh", "run", "list", "--repo", repo, "--commit", sha or "HEAD", "--json", "status,conclusion,databaseId,headSha"]
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                proc = run_headless(cmd, timeout=30)
                 if proc.returncode == 0 and proc.stdout.strip():
                     runs = json.loads(proc.stdout)
                     if sha:

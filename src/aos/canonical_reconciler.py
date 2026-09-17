@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
+from aos.process_utils import run_headless
+
 HEX40 = re.compile(r"\b[0-9a-fA-F]{40}\b")
 EVIDENCE_NUM = re.compile(r"\bEV[-_ ]?(\d{1,5})\b", re.I)
 PRODUCT_SHA_LINE = re.compile(
@@ -28,13 +30,10 @@ class CanonicalReconciliationError(RuntimeError):
 
 
 def _run(cmd: Iterable[Any], *, cwd: Path, check: bool = True, timeout: int = 300) -> subprocess.CompletedProcess:
-    proc = subprocess.run(
+    proc = run_headless(
         [str(x) for x in cmd],
         cwd=str(cwd),
-        text=True,
-        capture_output=True,
         timeout=timeout,
-        shell=False,
     )
     if check and proc.returncode != 0:
         raise CanonicalReconciliationError(

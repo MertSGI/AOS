@@ -29,6 +29,7 @@ from aos.runtime_contract import (
     validate_runtime_config,
 )
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
+from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -49,10 +50,8 @@ def pid_alive(pid: Any) -> bool:
         return False
     try:
         if os.name == "nt":
-            proc = subprocess.run(
+            proc = run_headless(
                 ["tasklist", "/FI", f"PID eq {value}", "/FO", "CSV", "/NH"],
-                text=True,
-                capture_output=True,
                 timeout=10,
             )
             return proc.returncode == 0 and str(value) in (proc.stdout or "")
@@ -63,9 +62,7 @@ def pid_alive(pid: Any) -> bool:
 
 
 def _creationflags() -> int:
-    if os.name != "nt":
-        return 0
-    return int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return get_headless_creationflags(detached=True)
 
 
 class RuntimeEngine:
@@ -132,13 +129,13 @@ class RuntimeEngine:
             "--command-id",
             command_id,
         ]
-        proc = subprocess.Popen(
+        proc = popen_headless(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
-            creationflags=_creationflags(),
+            detached=True,
         )
         # The worker can reach RUNNING before Popen returns. Never downgrade a
         # concurrently advanced state back to QUEUED/RECOVERING.

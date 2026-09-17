@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from typing import Callable, List, Optional
 
+from aos.process_utils import run_headless
+
 
 def normalize_github_repository_name(url_or_repo: str) -> str:
     """Normalize supported GitHub repository URLs or 'owner/repo' strings to 'owner/repo'.
@@ -54,7 +56,7 @@ def inspect_github_repository_identity(
         if runner:
             res = runner(cmd, local_repo_path)
         else:
-            res = subprocess.run(cmd, cwd=local_repo_path, capture_output=True, text=True)
+            res = run_headless(cmd, cwd=local_repo_path)
         if res.returncode != 0:
             err = res.stderr.strip() or res.stdout.strip()
             raise RuntimeError(f"Command failed ({' '.join(cmd)}): {err}")
@@ -103,7 +105,7 @@ class GitWorkspace:
         self.initial_head_sha: Optional[str] = None
 
     def _default_runner(self, cmd: List[str], cwd: str) -> subprocess.CompletedProcess:
-        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        return run_headless(cmd, cwd=cwd)
 
     def _run_git(self, args: List[str], cwd: Optional[str] = None) -> str:
         target_cwd = cwd or self.workspace_dir or self.repository_path

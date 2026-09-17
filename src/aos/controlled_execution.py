@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from aos.process_utils import run_headless
+
 from aos.candidate_store import (
     CandidateStoreError,
     persist_quarantine_candidate,
@@ -102,7 +104,7 @@ class ControlledExecutionEngine:
     def _default_verification_runner(
         self, argv: List[str], cwd: str, timeout_seconds: int, env: Dict[str, str]
     ) -> subprocess.CompletedProcess:
-        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout_seconds, env=env)
+        return run_headless(argv, cwd=cwd, timeout=timeout_seconds, env=env)
 
     def execute(self, local_target_repo_path: Optional[str] = None) -> Dict[str, Any]:
         """Execute controlled single-worker workflow under LIVE_GUARD."""

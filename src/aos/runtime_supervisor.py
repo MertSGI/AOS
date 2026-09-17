@@ -16,12 +16,11 @@ from typing import Any, Dict, Optional
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
+from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
 
 
 def _creationflags() -> int:
-    if os.name != "nt":
-        return 0
-    return int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return get_headless_creationflags(detached=True)
 
 
 class SupervisorAlreadyRunning(RuntimeError):
@@ -93,9 +92,9 @@ def pid_alive(pid: Any) -> bool:
         return False
     try:
         if os.name == "nt":
-            proc = subprocess.run(
+            proc = run_headless(
                 ["tasklist", "/FI", f"PID eq {value}", "/FO", "CSV", "/NH"],
-                text=True, capture_output=True, timeout=10,
+                timeout=10,
             )
             return proc.returncode == 0 and str(value) in (proc.stdout or "")
         os.kill(value, 0)
@@ -160,9 +159,9 @@ def _terminate_pid(pid: Any) -> None:
         return
     try:
         if os.name == "nt":
-            subprocess.run(
+            run_headless(
                 ["taskkill", "/PID", str(value), "/F"],
-                text=True, capture_output=True, timeout=15,
+                timeout=15,
             )
         else:
             os.kill(value, 15)
@@ -294,13 +293,13 @@ class RuntimeSupervisor:
             "AOS_RUNTIME_SUPERVISOR_PID": str(os.getpid()),
             "AG_BACKEND_ENABLED": "FALSE",
         })
-        self.child = subprocess.Popen(
+        self.child = popen_headless(
             list(slot.command),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
-            creationflags=_creationflags(),
+            detached=True,
             env=child_env,
         )
         self.child_slot_id = slot.slot_id

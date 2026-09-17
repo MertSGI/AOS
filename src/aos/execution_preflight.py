@@ -18,6 +18,7 @@ from aos.workers.antigravity import (
     get_local_capability_store_path,
     resolve_capability_status,
 )
+from aos.process_utils import run_headless
 
 ALLOWED_ENGINE_DISPOSITIONS = {
     "VERIFIED_CANDIDATE",
@@ -87,20 +88,17 @@ class PreEngineExecutionResult:
 
 def _default_git_runner(cmd: List[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Deterministic read-only subprocess git runner."""
-    return subprocess.run(
+    return run_headless(
         ["git"] + cmd,
         cwd=str(cwd),
-        capture_output=True,
-        text=True,
         timeout=30,
-        shell=False,
     )
 
 
 def _default_cli_version_resolver(cli_path: Path) -> Optional[str]:
     """Default version resolver querying reported CLI version. Do not call without exact hash match."""
     try:
-        res = subprocess.run([str(cli_path), "--version"], capture_output=True, text=True, timeout=10, shell=False)
+        res = run_headless([str(cli_path), "--version"], timeout=10)
         if res.returncode == 0:
             return (res.stdout or "").strip()
         return None

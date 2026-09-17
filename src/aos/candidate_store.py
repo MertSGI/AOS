@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from aos.process_utils import run_headless
+
 CANDIDATE_STORE_CONTRACT_VERSION = "0.1.0"
 QUARANTINE_STORE_CONTRACT_VERSION = "0.1.0"
 WORKER_FAILURE_QUARANTINE_CONTRACT_VERSION = "0.1.0"
@@ -81,10 +83,8 @@ def _verify_candidate_zero_remotes(target_ws: Path) -> None:
         return
 
     try:
-        res = subprocess.run(
+        res = run_headless(
             ["git", "-C", str(target_ws), "remote"],
-            capture_output=True,
-            text=True,
             timeout=30,
         )
         if res.returncode != 0:
@@ -346,13 +346,13 @@ def persist_quarantine_candidate(
         # Defense-in-depth: If target_ws is a Git repository, verify all currently changed paths match worker_changed_paths exactly
         if (target_ws / ".git").exists():
             try:
-                status_res = subprocess.run(
+                status_res = run_headless(
                     ["git", "status", "-z", "--porcelain", "-uall"],
                     cwd=str(target_ws),
-                    capture_output=True,
                     check=True,
                 )
-                raw_items = status_res.stdout.split(b"\x00")
+                raw_items = status_res.stdout.encode("utf-8") if isinstance(status_res.stdout, str) else status_res.stdout
+                raw_items = raw_items.split(b"\x00")
                 current_target_changed = set()
                 idx = 0
                 while idx < len(raw_items):
@@ -508,13 +508,13 @@ def persist_worker_failure_quarantine_candidate(
         # Defense-in-depth: If target_ws is a Git repository, verify all currently changed paths match worker_changed_paths exactly
         if (target_ws / ".git").exists():
             try:
-                status_res = subprocess.run(
+                status_res = run_headless(
                     ["git", "status", "-z", "--porcelain", "-uall"],
                     cwd=str(target_ws),
-                    capture_output=True,
                     check=True,
                 )
-                raw_items = status_res.stdout.split(b"\x00")
+                raw_items = status_res.stdout.encode("utf-8") if isinstance(status_res.stdout, str) else status_res.stdout
+                raw_items = raw_items.split(b"\x00")
                 current_target_changed = set()
                 idx = 0
                 while idx < len(raw_items):
