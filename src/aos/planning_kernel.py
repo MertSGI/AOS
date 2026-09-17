@@ -1425,6 +1425,7 @@ def compile_execution_plan(
     forbidden_read_paths: Sequence[str] = (),
     forbidden_task_signatures: Sequence[str] = (),
     workspace: Optional[Path] = None,
+    batch_number: Optional[int] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
     forbidden_reads = {
@@ -1466,9 +1467,14 @@ def compile_execution_plan(
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
-    proposal: Dict[str, Any] = {}
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    recovered_repair = _recover_waiting_plan_repair(
+        runtime_dir, batch_number, situation, objective, prompt_sha256,
+    )
+    proposal: Dict[str, Any] = recovered_repair[0] if recovered_repair else {}
+    validation_error = recovered_repair[1] if recovered_repair else ""
     normalized: Optional[Dict[str, Any]] = None
-    for attempt in range(2):
+    for attempt in ((1,) if recovered_repair else (0, 1)):
         attempt_prompt = prompt
         if attempt:
             attempt_prompt += (
@@ -1586,12 +1592,15 @@ def compile_execution_plan(
                 )
             break
         except PlanningKernelError as exc:
-            if attempt:
-                message = redact_secrets(str(exc))[:500]
-                raise PlannerValidationExhausted(
-                    f"PLANNER_VALIDATION_REPAIR_EXHAUSTED: {message}"
-                ) from exc
             validation_error = redact_secrets(str(exc))[:500]
+            _save_waiting_plan_repair(
+                runtime_dir, batch_number, situation, objective, prompt_sha256,
+                proposal, validation_error,
+            )
+            if attempt:
+                raise PlannerValidationExhausted(
+                    f"PLANNER_VALIDATION_REPAIR_EXHAUSTED: {validation_error}"
+                ) from exc
 
     if normalized is None:  # pragma: no cover - loop either succeeds or raises
         raise PlanningKernelError("Execution plan validation did not produce a plan")
@@ -1677,6 +1686,67 @@ def _receipt_sha256(receipt: Mapping[str, Any]) -> str:
         dict(receipt), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _plan_repair_artifact_path(runtime_dir: Path, batch_number: int) -> Path:
+    return runtime_dir / f"plan-dag-repair-{batch_number:04d}.json"
+
+
+def _recover_waiting_plan_repair(
+    runtime_dir: Path,
+    batch_number: Optional[int],
+    situation: ProjectSituation,
+    objective: Objective,
+    prompt_sha256: str,
+) -> Optional[Tuple[Dict[str, Any], str]]:
+    if batch_number is None:
+        return None
+    artifact = _read_json(_plan_repair_artifact_path(runtime_dir, batch_number))
+    if set(artifact) != {
+        "schema_version", "status", "batch_number", "situation_id",
+        "canonical_source_sha", "canonical_execution_base_sha", "objective_id",
+        "prompt_sha256", "validation_error", "previous_invalid_plan",
+    }:
+        return None
+    if (
+        artifact.get("schema_version") != SCHEMA_VERSION
+        or artifact.get("status") != "PENDING"
+        or artifact.get("batch_number") != batch_number
+        or artifact.get("situation_id") != situation.identity()
+        or artifact.get("canonical_source_sha") != situation.control_sha
+        or artifact.get("canonical_execution_base_sha") != situation.execution_base_sha
+        or artifact.get("objective_id") != objective.objective_id
+        or artifact.get("prompt_sha256") != prompt_sha256
+        or not isinstance(artifact.get("validation_error"), str)
+        or not isinstance(artifact.get("previous_invalid_plan"), dict)
+    ):
+        return None
+    return dict(artifact["previous_invalid_plan"]), artifact["validation_error"]
+
+
+def _save_waiting_plan_repair(
+    runtime_dir: Path,
+    batch_number: Optional[int],
+    situation: ProjectSituation,
+    objective: Objective,
+    prompt_sha256: str,
+    proposal: Mapping[str, Any],
+    validation_error: str,
+) -> None:
+    if batch_number is None:
+        return
+    _atomic_json(_plan_repair_artifact_path(runtime_dir, batch_number), {
+        "schema_version": SCHEMA_VERSION,
+        "status": "PENDING",
+        "batch_number": batch_number,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "objective_id": objective.objective_id,
+        "prompt_sha256": prompt_sha256,
+        "validation_error": validation_error,
+        "previous_invalid_plan": dict(proposal),
+    })
 
 
 def _recover_waiting_completion(
@@ -1942,6 +2012,7 @@ def run_autonomous_project(
                 forbidden_read_paths=completed_read_context["completed_read_paths"],
                 forbidden_task_signatures=completed_task_signatures,
                 workspace=workspace,
+                batch_number=batch_number,
             )
         except (WaitingForReasoningProvider, PlannerValidationExhausted) as exc:
             result = _final_result(

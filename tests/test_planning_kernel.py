@@ -522,6 +522,70 @@ def test_plan_compiler_gets_one_bounded_repair_for_invalid_worker_payload(tmp_pa
     assert backend.calls == 2
 
 
+def test_plan_compiler_provider_wait_resumes_exact_bound_validation_repair(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {}
+
+    class WaitDuringRepairBackend:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    status="SUCCESS",
+                    evidence_payload={"proposal": invalid, "provider_route": "fake"},
+                )
+            return SimpleNamespace(
+                status="WAITING_FOR_REASONING_PROVIDER",
+                evidence_payload={"failure_class": "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"},
+            )
+
+    first_backend = WaitDuringRepairBackend()
+    with pytest.raises(planning_kernel.WaitingForReasoningProvider):
+        compile_execution_plan(
+            _situation(),
+            Objective.from_dict(_objective()),
+            tmp_path / "policy.json",
+            tmp_path,
+            backend_override=first_backend,
+            batch_number=0,
+        )
+
+    artifact = json.loads(
+        (tmp_path / "plan-dag-repair-0000.json").read_text(encoding="utf-8")
+    )
+    assert artifact["status"] == "PENDING"
+    assert artifact["previous_invalid_plan"] == invalid
+
+    resumed_backend = QueueBackend([_plan()])
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=resumed_backend,
+        batch_number=0,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"][0] == "git"
+    assert resumed_backend.calls == 1
+    assert "VALIDATION_REPAIR_REQUIRED" in resumed_backend.requests[0].payload["prompt"]
+
+    context_changed_backend = QueueBackend([_plan()])
+    compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=context_changed_backend,
+        forbidden_task_ids=["different-completed-task"],
+        batch_number=0,
+    )
+    assert "VALIDATION_REPAIR_REQUIRED" not in context_changed_backend.requests[0].payload["prompt"]
+
+
 def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_path):
     invalid = _plan()
     invalid["tasks"][0]["payload"] = {"cmd": ["python", "-m", "pytest"]}
