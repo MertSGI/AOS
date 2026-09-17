@@ -25,6 +25,7 @@ from jsonschema import Draft202012Validator
 
 from aos.process_utils import run_headless
 from aos.provider_registry import ProviderRouter, load_routing_policy
+from aos.providers.council import DeliberationCouncilV1, assess_council_trigger
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
 
@@ -974,6 +975,58 @@ def _reason(
     return proposal
 
 
+def _shadow_deliberate(
+    runtime_dir: Path,
+    situation: ProjectSituation,
+    decision_type: str,
+    prompt: str,
+    primary_proposal: Mapping[str, Any],
+    *,
+    command_id: Optional[str] = None,
+) -> None:
+    """Non-blocking shadow deliberation integration for real planning decisions.
+
+    INVARIANTS:
+    - Never blocks or delays primary execution
+    - Never mutates the primary decision or execution plan
+    - Only consumes spare capacity (skips/defers if provider constrained)
+    - Records durable sanitized decision ledger in runtime_dir / 'deliberation'
+    """
+    try:
+        ledger_dir = runtime_dir / "deliberation"
+        council = DeliberationCouncilV1(mode="SHADOW_ONLY", min_quorum=1, ledger_dir=ledger_dir)
+        assessment = assess_council_trigger(decision_type, prompt, primary_proposal)
+        if not assessment.council_required:
+            return
+
+        # Spare capacity check: if provider attempts journal shows recent backoff/quota exhaustion, skip shadow work
+        attempts_file = runtime_dir / "provider-attempts.jsonl"
+        spare_capacity = True
+        if attempts_file.exists():
+            try:
+                content = attempts_file.read_text(encoding="utf-8", errors="replace")[-2000:].upper()
+                if "QUOTA_EXHAUSTED" in content or "UNAVAILABLE" in content or "RATE_LIMIT" in content:
+                    spare_capacity = False
+            except Exception:
+                pass
+
+        auth_records = {k: v.to_dict() for k, v in situation.authority_records.items()}
+        council.evaluate_decision(
+            decision_type=decision_type,
+            prompt=prompt,
+            primary_proposal=primary_proposal,
+            alternate_proposals=(),
+            authority_records=auth_records,
+            project_id=situation.project_id,
+            command_id=command_id or situation.identity(),
+            is_spare_capacity_available=spare_capacity,
+            is_real_execution=True,
+        )
+    except Exception:
+        # Deliberation Council in SHADOW_ONLY mode must never crash primary execution path
+        pass
+
+
 def _situation_prompt_payload(
     situation: ProjectSituation,
     *,
@@ -1038,6 +1091,13 @@ def select_objective(
     proposal = _reason(
         situation, routing_policy_path, runtime_dir, "objective-selection", prompt, OBJECTIVE_SCHEMA,
         authority_hint, backend_override=backend_override,
+    )
+    _shadow_deliberate(
+        runtime_dir,
+        situation,
+        "FRONTIER_SELECTION",
+        prompt,
+        proposal,
     )
     objective = Objective.from_dict(proposal)
     if objective.risk_class not in ("R0", "R1"):
@@ -1620,6 +1680,13 @@ def compile_execution_plan(
     resolver = CanonicalAuthorityResolver(situation)
     for task in normalized["tasks"]:
         resolver.validate_task(task)
+    _shadow_deliberate(
+        runtime_dir,
+        situation,
+        "REPLANNING" if repair_context else "ARCHITECTURE",
+        prompt,
+        normalized,
+    )
     return normalized
 
 
@@ -1680,6 +1747,13 @@ def detect_completion(
             proposal = dict(proposal)
             proposal["disposition"] = "REPLAN"
             proposal["rationale"] = "Provider proposed PROJECT_COMPLETE but canonical state does not prove project completion"
+    _shadow_deliberate(
+        runtime_dir,
+        situation,
+        "COMPLETION_ASSESSMENT",
+        prompt,
+        proposal,
+    )
     return dict(proposal)
 
 
