@@ -534,6 +534,14 @@ def _extract_authorities(contents: Mapping[str, Any]) -> Dict[str, AuthorityReco
             production_allowed = any(
                 marker in upper for marker in ("PRODUCTION=GO", "PRODUCTION_ALLOWED=YES", "PRODUCTION_MUTATION=AUTHORIZED")
             )
+            def _source_priority(src: str) -> int:
+                u = src.lower()
+                if "decision" in u:
+                    return 3
+                if "state" in u or "roadmap" in u:
+                    return 2
+                return 1
+
             for authority_id in ids:
                 key = authority_id.upper()
                 current = result.get(key)
@@ -544,8 +552,13 @@ def _extract_authorities(contents: Mapping[str, Any]) -> Dict[str, AuthorityReco
                     superseded=superseded,
                     production_allowed=production_allowed,
                 )
-                if current is None or len(candidate.text) > len(current.text):
+                if current is None:
                     result[key] = candidate
+                else:
+                    cand_prio = _source_priority(candidate.source_path)
+                    curr_prio = _source_priority(current.source_path)
+                    if cand_prio > curr_prio or (cand_prio == curr_prio and len(candidate.text) > len(current.text)):
+                        result[key] = candidate
     return result
 
 
@@ -1104,6 +1117,7 @@ class CanonicalAuthorityResolver:
             self.situation.repository.upper(),
             self.situation.repository.split("/")[-1].upper(),
             self.situation.project_id.upper(),
+            self.situation.project_id.split("-")[0].upper(),
         }
         broad_markers = ("STANDING AUTHORITY", "PROGRAM V2", "ROUTINE NON-PROD", "NON-PRODUCTION", "NON_PRODUCTION")
         if not any(token and token in text for token in repo_tokens) and not any(marker in text for marker in broad_markers):

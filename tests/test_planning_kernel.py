@@ -1132,3 +1132,28 @@ def test_restart_advances_batch_number_before_replanning(tmp_path):
     assert calls[1][1].parent.name == "batch-0002"
     assert result["completed_batches"][0]["batch_number"] == 1
     assert result["completed_batches"][1]["batch_number"] == 2
+
+
+def test_extract_authorities_prioritizes_decisions_over_evidence():
+    from aos.planning_kernel import _extract_authorities
+    contents = {
+        "evidence": '{"canonical_decision": "DECISION-020_PROGRAM_V2_FULL_NAME", "summary": "some evidence summary that is long"}\n',
+        "decisions": "## DECISION-020_PROGRAM_V2_FULL_NAME\n- **Status**: ACCEPTED\n- **Decision**: Standing authority for program.\n",
+    }
+    auths = _extract_authorities(contents)
+    rec = auths["DECISION-020_PROGRAM_V2_FULL_NAME"]
+    assert rec.source_path == "decisions"
+
+
+def test_canonical_authority_resolver_accepts_hyphenated_sub_lane_project_id():
+    sit = _situation()
+    object.__setattr__(sit, "project_id", "lari-ui-v2")
+    resolver = CanonicalAuthorityResolver(sit)
+    task = {
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "write_scope": ["src/app.tsx"],
+    }
+    # Should not raise AuthorityDenied because 'LARI' in repo_tokens matches 'LARI' in authority text
+    resolver.validate_task(task)
+
