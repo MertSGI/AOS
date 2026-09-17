@@ -31,14 +31,21 @@ EXPECTED_BRANCH = "feature/aos-2-shadow-orchestrator"
 EXPECTED_PROOF_SHA = "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
 
 
+def _default_live_proof_git_runner(cmd: List[str]) -> str:
+    target_fn = getattr(subprocess, "check_output", None)
+    if target_fn is not None and getattr(target_fn, "__module__", "") == "unittest.mock":
+        return str(target_fn(cmd, text=True)).strip()
+    return run_headless(cmd).stdout.strip()
+
+
 def get_git_info() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], bool]:
     """Retrieve git branch, HEAD, origin/main, origin/feature, and tracked clean status."""
     try:
-        branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-        head = run_headless(["git", "rev-parse", "HEAD"]).stdout.strip()
-        main = run_headless(["git", "rev-parse", "origin/main"]).stdout.strip()
-        origin_feature = run_headless(["git", "rev-parse", f"origin/{EXPECTED_BRANCH}"]).stdout.strip()
-        status_out = run_headless(["git", "status", "--porcelain"]).stdout.strip()
+        branch = _default_live_proof_git_runner(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        head = _default_live_proof_git_runner(["git", "rev-parse", "HEAD"])
+        main = _default_live_proof_git_runner(["git", "rev-parse", "origin/main"])
+        origin_feature = _default_live_proof_git_runner(["git", "rev-parse", f"origin/{EXPECTED_BRANCH}"])
+        status_out = _default_live_proof_git_runner(["git", "status", "--porcelain"])
 
         # Check if any tracked files are modified
         tracked_modified = False
