@@ -52,6 +52,20 @@ def test_native_file_worker_atomic_write_read_and_rollback():
         file_sha = compute_file_sha256(created_file)
         assert res_write.artifact_hashes["src/hello.py"] == file_sha
 
+        # Rewriting the exact same bytes is not durable progress.
+        req_noop_write = ExecutionRequest(
+            task_id="t-write-noop",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="FILE_WRITE",
+            required_capabilities=[ExecutionCapability.FILE_WRITE],
+            authority_id="auth-1",
+            payload={"action": "write_file", "path": "src/hello.py", "content": "print('hello world')\n"},
+        )
+        res_noop_write = worker.execute(req_noop_write)
+        assert res_noop_write.status == "FAILED"
+        assert any("no content change" in err for err in res_noop_write.sanitized_errors)
+
         # Read back
         req_read = ExecutionRequest(
             task_id="t-read-1",
@@ -191,6 +205,28 @@ def test_native_file_worker_advanced_patch_engine():
         res_bad = worker.execute(req_bad)
         assert res_bad.status == "FAILED"
         assert any("Context mismatch" in e for e in res_bad.sanitized_errors)
+
+        # 2b. A syntactically accepted placeholder patch must not report success
+        # when it leaves the target byte-for-byte unchanged.
+        placeholder_patch = """--- a/module.py
++++ b/module.py
+@@
+-// existing code
++// existing code
++// TODO: pending
+"""
+        req_placeholder = ExecutionRequest(
+            task_id="t-placeholder-noop",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="PATCH",
+            required_capabilities=[ExecutionCapability.PATCH_APPLY],
+            authority_id="auth-1",
+            payload={"action": "apply_patch", "patch": placeholder_patch},
+        )
+        res_placeholder = worker.execute(req_placeholder)
+        assert res_placeholder.status == "FAILED"
+        assert any("no content change" in e for e in res_placeholder.sanitized_errors)
 
         # 3. New file creation via patch
         new_file_patch = """--- /dev/null

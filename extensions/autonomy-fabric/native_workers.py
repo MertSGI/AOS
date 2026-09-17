@@ -141,6 +141,12 @@ class NativeFileWorker(ExecutionBackend):
                 else:
                     backups[full_path] = None
 
+                # Match the bytes produced by the text-mode write below. On
+                # Windows, newline=None translates each ``\n`` to ``\r\n``.
+                encoded_content = content.replace("\n", os.linesep).encode("utf-8")
+                if backups[full_path] == encoded_content:
+                    raise ValueError(f"write_file produced no content change for {rel_path}")
+
                 # Atomic write
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(full_path))
@@ -226,6 +232,10 @@ class NativeFileWorker(ExecutionBackend):
                     # Apply via robust patch engine with context verification and offset tracking
                     patched_lines = apply_patch_to_lines(current_content, file_patch)
                     patched_content = "".join(patched_lines)
+                    if patched_content == "".join(current_content):
+                        raise PatchPreconditionError(
+                            f"Patch produced no content change for {target_rel}"
+                        )
 
                     os.makedirs(os.path.dirname(full_path), exist_ok=True)
                     temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(full_path))

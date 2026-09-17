@@ -488,7 +488,10 @@ def test_mutating_file_plan_requires_and_honors_write_scope():
         _validate_plan_shape(plan, Objective.from_dict(_objective()), _situation())
 
 
-@pytest.mark.parametrize("path", ["notes/next_action.txt", "NEXT_ACTION.md", "notes/status-marker.json"])
+@pytest.mark.parametrize(
+    "path",
+    ["notes/next_action.txt", "NEXT_ACTION.md", "notes/status-marker.json", "PHASE2-7_PROGRESS.md"],
+)
 def test_mutating_file_plan_rejects_synthetic_next_action_artifact(path):
     plan = _plan()
     plan["tasks"][0].update({

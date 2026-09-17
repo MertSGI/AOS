@@ -110,6 +110,9 @@ _SYNTHETIC_BOOKKEEPING_STEMS = (
     "completion-marker",
     "status_marker",
     "status-marker",
+    "progress",
+    "progress_report",
+    "progress-report",
 )
 _PLANNER_READ_CONTEXT_SUFFIXES = {
     ".md", ".markdown", ".txt", ".rst", ".json", ".jsonl", ".yaml", ".yml", ".toml",
@@ -1279,7 +1282,13 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
         if run_type == "FILE" and task["mutating"]:
             target_name = Path(str(task["payload"].get("path", "")).replace("\\", "/")).name.lower()
             target_stem = target_name.split(".", 1)[0]
-            if target_name in _SYNTHETIC_BOOKKEEPING_STEMS or target_stem in _SYNTHETIC_BOOKKEEPING_STEMS:
+            normalized_stem = re.sub(r"[^a-z0-9]+", "_", target_stem).strip("_")
+            synthetic_suffix = any(
+                normalized_stem == marker.replace("-", "_")
+                or normalized_stem.endswith("_" + marker.replace("-", "_"))
+                for marker in _SYNTHETIC_BOOKKEEPING_STEMS
+            )
+            if target_name in _SYNTHETIC_BOOKKEEPING_STEMS or synthetic_suffix:
                 raise PlanningKernelError(
                     f"Task {node_id} attempts to create a synthetic bookkeeping artifact"
                 )
