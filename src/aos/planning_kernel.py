@@ -1601,10 +1601,18 @@ def compile_execution_plan(
     for attempt in ((1,) if recovered_repair else (0, 1)):
         attempt_prompt = prompt
         if attempt:
+            python_guidance = ""
+            if "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
+                python_guidance = (
+                    "\nPYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
+                    "Python commands must specify an existing workspace-relative script path (e.g. `python path/to/script.py`), "
+                    "or if running tools/tests, use direct process binaries listed in AVAILABLE_PROCESS_BINARIES (e.g. `npx playwright test`, `npm test`, `git status`)."
+                )
             attempt_prompt += (
                 "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
                 "Return a corrected full plan; do not repeat the defect.\n"
-                f"VALIDATION_ERROR={validation_error}\n"
+                f"VALIDATION_ERROR={validation_error}"
+                f"{python_guidance}\n"
                 f"PREVIOUS_INVALID_PLAN={json.dumps(proposal, ensure_ascii=False, sort_keys=True)[:2500]}"
             )
         proposal = _reason(

@@ -633,6 +633,31 @@ def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_pat
     assert "VALIDATION_REPAIR_REQUIRED" not in retry_backend.requests[0].payload["prompt"]
 
 
+def test_plan_compiler_repairs_python_inline_execution_with_guidance(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "import sys; print(sys.version)"]}
+    valid = _plan()
+    valid["tasks"][0]["payload"] = {"cmd": ["git", "status"]}
+    backend = QueueBackend([invalid, valid])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        batch_number=0,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"][0] == "git"
+    assert backend.calls == 2
+    repair_prompt = backend.requests[1].payload["prompt"]
+    assert "VALIDATION_REPAIR_REQUIRED" in repair_prompt
+    assert "PYTHON_PAYLOAD_RULE" in repair_prompt
+    assert "Python inline execution (`-c` or `-m`) is prohibited" in repair_prompt
+
+
+
 def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_path, monkeypatch):
     invalid = _plan()
     invalid["tasks"][0]["payload"] = {"cmd": ["npm", "test"]}
