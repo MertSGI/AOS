@@ -157,11 +157,18 @@ class NemotronPlannerProvider:
                 raise PlannerTransientError("Nemotron transient error: TIMEOUT_OR_CONNECTION") from e
             elif isinstance(e, openai.RateLimitError):
                 raise PlannerTransientError("Nemotron transient error: RATE_LIMIT") from e
+            elif isinstance(e, openai.InternalServerError):
+                raise PlannerTransientError("Nemotron transient server error: INTERNAL_SERVER_ERROR") from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                 raise PlannerCredentialError("Nemotron auth/permission failure: AUTH_OR_PERMISSION_DENIED") from e
             elif isinstance(e, openai.BadRequestError):
                 raise PlannerContractError("Nemotron invalid request/schema: BAD_REQUEST") from e
+            elif isinstance(e, openai.APIStatusError) and getattr(e, "status_code", 0) >= 500:
+                raise PlannerTransientError("Nemotron transient server error: SERVER_STATUS_ERROR") from e
             else:
+                err_str = str(e).lower()
+                if any(w in err_str for w in ("timeout", "connection", "rate", "429", "500", "502", "503", "504")):
+                    raise PlannerTransientError("Nemotron transient error: NETWORK_OR_SERVER") from e
                 raise PlannerContractError("Nemotron provider contract failure: PROVIDER_CONTRACT_ERROR") from e
 
         if not response.choices:
