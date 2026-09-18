@@ -17,6 +17,7 @@ from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
 from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
+from aos.controller_relay import ControllerRelayPublisher
 
 
 def _creationflags() -> int:
@@ -198,6 +199,8 @@ class RuntimeSupervisor:
         self.launch_nonce: Optional[str] = None
         self.runtime_api_pid: Optional[int] = None
         self.singleton_name = str(self.config.get("singleton_name") or r"Local\AOS.RuntimeV1.Supervisor")
+        relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
+        self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-supervisor-{os.getpid()}")
 
     def _write_state(self, **updates: Any) -> Dict[str, Any]:
         state = read_json(self.state_path, {})
@@ -375,6 +378,10 @@ class RuntimeSupervisor:
                     launch_nonce=self.launch_nonce,
                     singleton_held=True,
                 )
+                try:
+                    self.publisher.emit_cycle(runtime_health_dict=observed, supervisor_pid=os.getpid())
+                except Exception:
+                    pass
                 time.sleep(max(2, int(self.config.get("poll_seconds", 5))))
                 continue
 

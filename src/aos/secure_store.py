@@ -18,6 +18,7 @@ PROVIDER_ENV_VARS: Dict[str, str] = {
     "GEMINI": "GEMINI_API_KEY",
     "GROQ": "GROQ_API_KEY",
     "OPENAI": "OPENAI_API_KEY",
+    "GITHUB": "GITHUB_TOKEN",
 }
 
 _TARGET_PREFIX = "AOS/Provider/"

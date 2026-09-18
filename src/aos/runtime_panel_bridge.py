@@ -79,3 +79,24 @@ def submit_goal_to_runtime(payload: Dict[str, Any], config: Dict[str, Any]) -> D
     result["mode"] = "RUNTIME_V1_AUTONOMOUS_GOAL"
     result["run_plan_required"] = False
     return result
+
+
+def execute_command_on_runtime(command_name: str, payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    client = _client(config)
+    cmd = command_name.strip().lower()
+    if cmd == "pause-safe":
+        return client.pause_safe()
+    if cmd == "resume":
+        return client.resume()
+    if cmd == "heartbeat-now":
+        return client.heartbeat_now()
+    if cmd == "checkpoint-now":
+        return client.checkpoint_now()
+    if cmd == "publish-relay-now":
+        return client.publish_relay_now()
+    if cmd == "restart-worker":
+        cid = payload.get("command_id")
+        if not cid:
+            raise ValueError("command_id is required for restart-worker")
+        return client.restart_worker(str(cid))
+    raise ValueError(f"Unsupported runtime command: {command_name}")

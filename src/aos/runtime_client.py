@@ -103,3 +103,21 @@ class RuntimeClient:
             return self.command(str(latest["command_id"]))
         return {"health": health, "command": None, "state": None}
 
+    def pause_safe(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/pause-safe", {})
+
+    def resume(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/resume", {})
+
+    def restart_worker(self, command_id: str) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/restart-worker", {"command_id": command_id})
+
+    def heartbeat_now(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/heartbeat-now", {})
+
+    def checkpoint_now(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/checkpoint-now", {})
+
+    def publish_relay_now(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/publish-relay-now", {})
+

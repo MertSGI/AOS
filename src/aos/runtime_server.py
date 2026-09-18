@@ -30,6 +30,7 @@ from aos.runtime_contract import (
 )
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
 from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
+from aos.controller_relay import ControllerRelayPublisher
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -99,6 +100,9 @@ class RuntimeEngine:
         self.runtime_root = Path(self.config["runtime_root"])
         self.store = RuntimeStore(self.runtime_root)
         self.stop_event = threading.Event()
+        self.is_paused = False
+        relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
+        self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-api-{os.getpid()}")
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)
         self.recovery_thread.start()
 
@@ -265,6 +269,63 @@ class RuntimeEngine:
             "ag_backend_enabled": False,
         }
 
+    def pause_safe(self) -> Dict[str, Any]:
+        self.is_paused = True
+        return {
+            "status": "PAUSED_SAFE",
+            "message": "Autonomous command spawning paused safely. In-flight batches complete normally.",
+            "timestamp": utc_now(),
+        }
+
+    def resume(self) -> Dict[str, Any]:
+        self.is_paused = False
+        return {
+            "status": "RESUMED",
+            "message": "Autonomous recovery and execution resumed.",
+            "timestamp": utc_now(),
+        }
+
+    def restart_worker(self, command_id: str) -> Dict[str, Any]:
+        state = self.store.read_state(command_id)
+        if not state:
+            raise ValueError(f"Command not found: {command_id}")
+        old_pid = state.get("worker_pid")
+        if pid_alive(old_pid):
+            if os.name == "nt":
+                run_headless(["taskkill", "/PID", str(old_pid), "/F"], timeout=10)
+            else:
+                try:
+                    os.kill(int(old_pid), 15)
+                except Exception:
+                    pass
+        new_pid = self._spawn_worker(command_id, recovered=True)
+        return {
+            "status": "WORKER_RESTARTED",
+            "command_id": command_id,
+            "old_worker_pid": old_pid,
+            "new_worker_pid": new_pid,
+            "timestamp": utc_now(),
+        }
+
+    def trigger_relay(self, *, is_checkpoint: bool = False, force_remote: bool = False) -> Dict[str, Any]:
+        h = self.health()
+        reason = "OPERATOR_COMMAND_MANUAL_CHECKPOINT" if is_checkpoint else None
+        snap = self.publisher.emit_cycle(
+            runtime_health_dict=h,
+            supervisor_pid=h.get("runtime_supervisor_pid"),
+            major_gate_reason=reason,
+            force_checkpoint=is_checkpoint,
+        )
+        if force_remote and snap.remote_outbox_status != "PUBLISHED":
+            self.publisher.publish_remote(snap, major_gate_reason="OPERATOR_COMMAND_PUBLISH_NOW")
+        return {
+            "status": "RELAY_EMITTED",
+            "sequence_number": snap.sequence_number,
+            "timestamp": snap.timestamp_utc,
+            "is_checkpoint": is_checkpoint,
+            "remote_outbox_status": snap.remote_outbox_status,
+        }
+
     def shutdown(self) -> None:
         self.stop_event.set()
         self.recovery_thread.join(timeout=3.0)
@@ -333,28 +394,73 @@ class RuntimeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/v1/commands/continue":
+        allowed_paths = (
+            "/v1/commands/continue",
+            "/v1/commands/pause-safe",
+            "/v1/commands/resume",
+            "/v1/commands/restart-worker",
+            "/v1/commands/heartbeat-now",
+            "/v1/commands/checkpoint-now",
+            "/v1/commands/publish-relay-now",
+        )
+        if parsed.path not in allowed_paths:
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
         if not self._authorized():
             self._json(HTTPStatus.FORBIDDEN, {"error": "INVALID_RUNTIME_TOKEN"})
             return
-        if self.headers.get_content_type() != "application/json":
+        if self.headers.get_content_type() != "application/json" and parsed.path == "/v1/commands/continue":
             self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "JSON_REQUIRED"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length <= 0 or length > MAX_BODY_BYTES:
+        if length > MAX_BODY_BYTES:
             self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "BODY_SIZE_INVALID"})
             return
+        payload = {}
+        if length > 0:
+            try:
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be an object")
+            except Exception as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "INVALID_JSON", "message": str(exc)[:500]})
+                return
+
         try:
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("Request body must be an object")
-            result = self.engine.submit_continue(payload)
-            self._json(HTTPStatus.ACCEPTED, result)
+            if parsed.path == "/v1/commands/continue":
+                result = self.engine.submit_continue(payload)
+                self._json(HTTPStatus.ACCEPTED, result)
+                return
+            if parsed.path == "/v1/commands/pause-safe":
+                result = self.engine.pause_safe()
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/resume":
+                result = self.engine.resume()
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/restart-worker":
+                cid = payload.get("command_id")
+                if not cid:
+                    raise ValueError("command_id is required")
+                result = self.engine.restart_worker(str(cid))
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/heartbeat-now":
+                result = self.engine.trigger_relay(is_checkpoint=False, force_remote=False)
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/checkpoint-now":
+                result = self.engine.trigger_relay(is_checkpoint=True, force_remote=False)
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/publish-relay-now":
+                result = self.engine.trigger_relay(is_checkpoint=True, force_remote=True)
+                self._json(HTTPStatus.OK, result)
+                return
         except Exception as exc:
             self._json(HTTPStatus.BAD_REQUEST, {
                 "error": exc.__class__.__name__,

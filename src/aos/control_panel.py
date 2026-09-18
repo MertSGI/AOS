@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
-from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime
+from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime, execute_command_on_runtime
 from aos.provenance import is_valid_full_sha, validate_exact_sha_provenance
 
 MAX_BODY_BYTES = 256 * 1024
@@ -135,6 +135,44 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
   <div id="goal-message"></div>
 </div>
 
+<div class="card" style="margin-top:12px">
+  <div class="label">Operations Command Surface · Bounded Control</div>
+  <p><small>Bounded operator actions invoke runtime IPC endpoints directly. No direct mutation of state files.</small></p>
+  <div class="command-bar" style="margin-top:8px;">
+    <button onclick="runOpCommand('continue')">Continue</button>
+    <button class="secondary" onclick="runOpCommand('pause-safe')">Pause-Safe</button>
+    <button class="secondary" onclick="runOpCommand('resume')">Resume</button>
+    <button class="secondary" onclick="runOpCommand('heartbeat-now')">Heartbeat-Now</button>
+    <button class="secondary" onclick="runOpCommand('checkpoint-now')">Checkpoint-Now</button>
+    <button class="secondary" onclick="runOpCommand('publish-relay-now')">Publish-Relay-Now</button>
+    <button class="secondary" onclick="runOpCommand('restart-worker')">Restart-Worker</button>
+    <button class="secondary" onclick="refreshStatus()">Refresh-Status</button>
+  </div>
+  <div id="op-command-msg" style="margin-top:8px; font-family:Consolas,monospace; font-size:12px; color:#9eabb7;"></div>
+</div>
+
+<div class="grid" style="margin-top:12px;">
+  <div class="card">
+    <div class="label">Controller Relay & Remote Outbox</div>
+    <div id="relay-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.5;">Loading relay…</div>
+  </div>
+  <div class="card">
+    <div class="label">Product Mutation & Acceptance Evidence</div>
+    <div id="product-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.5;">Loading product evidence…</div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:12px;">
+  <div class="card">
+    <div class="label">Active Runtime Alerts</div>
+    <div id="alerts-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.5;">Loading alerts…</div>
+  </div>
+  <div class="card">
+    <div class="label">Autonomous Self-Repair Observability (Shadow Only)</div>
+    <div id="self-repair-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.5;">Loading self-repair hooks…</div>
+  </div>
+</div>
+
 <details class="card" style="margin-top:12px">
   <summary>Manual bounded run-plan override · debug/replay only</summary>
   <p><small>This is not required for normal autonomous mode.</small></p>
@@ -209,6 +247,49 @@ async function refreshStatus() {
       document.getElementById('deliberation-view').innerHTML = dHtml;
     }
 
+    // Render Controller Relay & Remote Outbox
+    const relay = s.relay || {};
+    if (!relay.writer) {
+      document.getElementById('relay-view').innerHTML = '<em>No native controller relay data loaded yet.</em>';
+    } else {
+      const outboxColor = (relay.remote_outbox_status === 'PUBLISHED') ? '#74d99f' : ((relay.remote_outbox_status||'').includes('DEGRADED') ? '#f0b66c' : '#e8edf2');
+      let rHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+        <div>Writer: <strong>${relay.writer || 'AOS'}</strong> (Seq: <strong>${relay.sequence_number ?? 0}</strong>)</div>
+        <div>Heartbeat: <strong class="${relay.aos_heartbeat === 'ALIVE' ? 'ok' : 'danger'}">${relay.aos_heartbeat || 'ALIVE'}</strong> · Progress: <strong>${relay.forward_progress || 'YES'}</strong></div>
+        <div>Remote Outbox: <strong style="color:${outboxColor}">${relay.remote_outbox_status || 'DISABLED'}</strong> (Issue: <strong>#${relay.remote_issue_number || 'NONE'}</strong>)</div>
+        <div>Last Remote Publish: <small>${(relay.last_remote_publish_at||'NONE').slice(11, 19)}Z</small></div>
+      </div>`;
+      document.getElementById('relay-view').innerHTML = rHtml;
+    }
+
+    // Render Product Evidence
+    const pe = s.product_evidence || {};
+    let pHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+      <div>First Mutation: <strong>${pe.first_mutation || 'NONE'}</strong></div>
+      <div>Browser Evidence: <strong>${pe.browser_evidence_status || 'NOT_EVIDENCED'}</strong></div>
+      <div>Responsive Evidence: <strong>${pe.responsive_evidence_status || 'NOT_EVIDENCED'}</strong></div>
+    </div>`;
+    document.getElementById('product-view').innerHTML = pHtml;
+
+    // Render Alerts
+    const alerts = s.alerts || [];
+    if (alerts.length === 0) {
+      document.getElementById('alerts-view').innerHTML = '<span class="ok">✓ All health invariants normal. Zero alerts.</span>';
+    } else {
+      document.getElementById('alerts-view').innerHTML = alerts.map(a => `<div style="color:#f0b66c; margin-bottom:4px;">⚠ ${a}</div>`).join('');
+    }
+
+    // Render Self-Repair Observability
+    const sr = s.self_repair || {};
+    let srHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+      <div>Diagnosis Status: <strong>${sr.self_diagnosis_status || 'SHADOW_ONLY'}</strong></div>
+      <div>Shadow Status: <strong>${sr.self_repair_shadow_status || 'PREPARED'}</strong></div>
+      <div>Live Active: <strong>${sr.self_repair_live_active ? 'YES' : 'NO'}</strong></div>
+      <div>Eligibility: <strong>${sr.self_repair_eligibility || 'PENDING_GATE'}</strong></div>
+      <div>Required Evidence: <small>${sr.self_repair_required_evidence || 'NONE'}</small></div>
+    </div>`;
+    document.getElementById('self-repair-view').innerHTML = srHtml;
+
     const p = s.providers || {};
     document.getElementById('providers').textContent =
       ['NVIDIA','GEMINI','GROQ','OPENAI','OLLAMA'].map(k => `${k}: ${p[k] ? 'ready' : 'not ready'}`).join(' · ');
@@ -219,6 +300,29 @@ async function refreshStatus() {
   } catch (e) {
     document.getElementById('host').textContent = 'PANEL_ERROR';
     document.getElementById('host').className = 'value hold';
+  }
+}
+
+async function runOpCommand(cmd) {
+  const out = document.getElementById('op-command-msg');
+  out.textContent = 'Executing command: ' + cmd + '…';
+  let payload = {};
+  if (cmd === 'restart-worker') {
+    const cid = prompt('Enter command_id to restart worker:');
+    if (!cid) { out.textContent = 'restart-worker cancelled.'; return; }
+    payload.command_id = cid.trim();
+  }
+  try {
+    const r = await fetch('/api/commands/' + encodeURIComponent(cmd), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-AOS-Panel-Token': TOKEN},
+      body: JSON.stringify(payload)
+    });
+    const res = await r.json();
+    out.textContent = JSON.stringify(res);
+    await refreshStatus();
+  } catch (e) {
+    out.textContent = 'Command ' + cmd + ' failed: ' + e;
   }
 }
 
@@ -449,6 +553,31 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         else:
             provenance_status = "UNPROVEN"
 
+        # Load native relay snapshot if available
+        relay_info = {}
+        relay_file = Path("C:/Projects/AOS/.aos-runtime/controller-relay/LATEST.json")
+        if relay_file.is_file():
+            try:
+                relay_info = json.loads(relay_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Product mutations and evidence
+        first_product_mutation = relay_info.get("first_user_facing_mutation")
+        browser_evidence = relay_info.get("browser_evidence_status") or "NOT_EVIDENCED"
+        responsive_evidence = relay_info.get("responsive_evidence_status") or "NOT_EVIDENCED"
+
+        # Alerts assessment
+        alerts = []
+        if any(l.get("state") == "HUMAN_REQUIRED" for l in lanes_detail.values()):
+            alerts.append("HUMAN_REQUIRED: One or more lanes require intervention")
+        if any(l.get("state") == "FAILED" for l in lanes_detail.values()):
+            alerts.append("LANE_FAILED: An execution lane entered FAILED state")
+        if provenance_status == "FAIL":
+            alerts.append("PROVENANCE_FAILURE: Exact SHA provenance check failed")
+        if any(l.get("provider_backoff") for l in lanes_detail.values()):
+            alerts.append("PROVIDER_DEGRADATION: Lane currently in provider backoff")
+
         return {
             "schema_version": "1.0.0",
             "host_state": bridge.get("host_state", "UNKNOWN"),
@@ -472,6 +601,21 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "latest_command": latest_cmd,
             "lanes": lanes_detail,
             "deliberation": deliberation_metrics,
+            "relay": relay_info,
+            "product_evidence": {
+                "first_mutation": first_product_mutation,
+                "browser_evidence_status": browser_evidence,
+                "responsive_evidence_status": responsive_evidence,
+            },
+            "alerts": alerts,
+            "self_repair": {
+                "self_diagnosis_status": "SHADOW_ONLY",
+                "self_repair_shadow_status": "PREPARED",
+                "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
+                "self_repair_last_finding": "NONE",
+                "self_repair_required_evidence": "EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED",
+                "self_repair_live_active": False,
+            },
         }
 
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
@@ -509,6 +653,21 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "trigger_reasons": {},
             "quorum_count": 0,
             "agreement_count": 0,
+        },
+        "relay": {},
+        "product_evidence": {
+            "first_mutation": None,
+            "browser_evidence_status": "NOT_EVIDENCED",
+            "responsive_evidence_status": "NOT_EVIDENCED",
+        },
+        "alerts": [],
+        "self_repair": {
+            "self_diagnosis_status": "SHADOW_ONLY",
+            "self_repair_shadow_status": "PREPARED",
+            "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
+            "self_repair_last_finding": "NONE",
+            "self_repair_required_evidence": "EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED",
+            "self_repair_live_active": False,
         },
     }
 
@@ -617,7 +776,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/jobs", "/api/providers", "/api/goals"):
+        if not (parsed.path in ("/api/jobs", "/api/providers", "/api/goals") or parsed.path.startswith("/api/commands/")):
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
         if self.headers.get("X-AOS-Panel-Token") != self.token:
@@ -637,6 +796,11 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("Request body must be a JSON object")
+            if parsed.path.startswith("/api/commands/"):
+                cmd_name = parsed.path[len("/api/commands/"):]
+                result = execute_command_on_runtime(cmd_name, payload, self.config)
+                self._json(HTTPStatus.OK, result)
+                return
             if parsed.path == "/api/providers":
                 result = configure_provider(payload)
                 self._json(HTTPStatus.OK, result)
