@@ -1018,16 +1018,32 @@ def _shadow_deliberate(
         if not assessment.council_required:
             return
 
-        # Spare capacity check: if provider attempts journal shows recent backoff/quota exhaustion, skip shadow work
-        attempts_file = runtime_dir / "provider-attempts.jsonl"
+        # Spare capacity check: if provider attempts journal shows recent backoff/quota exhaustion,
+        # rate limiting, 5xx server errors, timeouts, connection issues, or kernel is WAITING_FOR_REASONING_PROVIDER,
+        # fail-closed: skip shadow work immediately.
         spare_capacity = True
-        if attempts_file.exists():
+        checkpoint_file = _kernel_checkpoint_path(runtime_dir)
+        if checkpoint_file.exists():
             try:
-                content = attempts_file.read_text(encoding="utf-8", errors="replace")[-2000:].upper()
-                if "QUOTA_EXHAUSTED" in content or "UNAVAILABLE" in content or "RATE_LIMIT" in content:
+                cp_data = _read_json(checkpoint_file)
+                if cp_data.get("phase") == "WAITING_FOR_REASONING_PROVIDER":
                     spare_capacity = False
             except Exception:
                 pass
+
+        if spare_capacity:
+            attempts_file = runtime_dir / "provider-attempts.jsonl"
+            if attempts_file.exists():
+                try:
+                    content = attempts_file.read_text(encoding="utf-8", errors="replace")[-2000:].upper()
+                    unhealthy_signals = (
+                        "QUOTA_EXHAUSTED", "UNAVAILABLE", "RATE_LIMIT",
+                        "500", "502", "503", "504", "TIMEOUT", "CONNECTION",
+                    )
+                    if any(signal in content for signal in unhealthy_signals):
+                        spare_capacity = False
+                except Exception:
+                    pass
 
         # Attempt to gather independent alternate proposals if spare capacity exists and alternates not provided
         collected_alternates: List[Tuple[str, Mapping[str, Any]]] = list(alternate_proposals)
@@ -1048,7 +1064,7 @@ def _shadow_deliberate(
                         continue
                     try:
                         provider_inst = factory(entry.model_id)
-                        if not collected_alternates and len(collected_alternates) < (COUNCIL_TARGET_MEMBER_COUNT - 1):
+                        if len(collected_alternates) < (COUNCIL_TARGET_MEMBER_COUNT - 1):
                             plan_data, _, _ = provider_inst.generate_plan(prompt, schema)
                             if isinstance(plan_data, dict):
                                 collected_alternates.append((p_id, plan_data))
@@ -1561,6 +1577,24 @@ def compile_execution_plan(
     }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     available_process_binaries = _available_process_binaries()
+
+    # If the workspace contains no Python scripts, remove python/py from available binaries and inject rule
+    has_python_scripts = False
+    if workspace is not None:
+        try:
+            has_python_scripts = any(workspace.resolve().glob("*.py")) or any(workspace.resolve().glob("*/*.py"))
+        except Exception:
+            has_python_scripts = False
+    if not has_python_scripts:
+        available_process_binaries = [b for b in available_process_binaries if b not in ("python", "py")]
+        python_workspace_rule = (
+            "\nPYTHON_UNAVAILABLE_RULE: There are NO Python scripts in this workspace. "
+            "Python commands (`python` or `py`) are FORBIDDEN and will be rejected. "
+            "Use ONLY available binaries (e.g. git) or FILE actions (write_file, read_file).\n"
+        )
+    else:
+        python_workspace_rule = ""
+
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
@@ -1588,6 +1622,7 @@ def compile_execution_plan(
         "PROCESS_BINARY_RULE=Use PROCESS/TEST/BUILD only when cmd[0] is listed in AVAILABLE_PROCESS_BINARIES; "
         "an allowlisted but unavailable binary is not executable and must not be planned. Never use python -c or "
         "python -m; Python may only receive an existing workspace-relative script path.\n"
+        f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
@@ -2140,9 +2175,13 @@ def run_autonomous_project(
             replan_reason = completion.get("rationale") or replan_reason or "AUTHORIZED_WORK_REMAINS"
 
         try:
-            objective = _recover_waiting_objective(
-                runtime_dir, batch_number, checkpoint, prior_situation, situation,
-            )
+            # If stagnated, do not recover prior waiting objective; select a fresh objective with stagnation context
+            if str(replan_reason or "").startswith("STAGNATION_NO_FORWARD_PROGRESS"):
+                objective = None
+            else:
+                objective = _recover_waiting_objective(
+                    runtime_dir, batch_number, checkpoint, prior_situation, situation,
+                )
             if objective is None:
                 objective = select_objective(
                     situation, routing_policy_path, runtime_dir,
@@ -2236,6 +2275,7 @@ def run_autonomous_project(
             "receipt": recent_receipt,
             "resumed": False,
         })
+        consecutive_failures = int(checkpoint.get("consecutive_failures", 0))
         if recent_receipt.get("failed_task_ids") or float(recent_receipt.get("progress", 0.0)) < 100.0:
             failure_class = classify_batch_failure(recent_receipt, batch_runtime)
             if failure_class in ("AUTHORITY_FAILURE", "SECURITY_FAILURE", "SCHEMA_CONTRACT_FAILURE", "CANONICAL_DRIFT"):
@@ -2245,8 +2285,13 @@ def run_autonomous_project(
                 )
                 _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
                 return result
-            replan_reason = failure_class
+            consecutive_failures += 1
+            if consecutive_failures >= 3:
+                replan_reason = f"STAGNATION_NO_FORWARD_PROGRESS:{failure_class}"
+            else:
+                replan_reason = failure_class
         else:
+            consecutive_failures = 0
             replan_reason = "MEANINGFUL_BATCH_COMPLETE_FRESH_READ_REQUIRED"
         batch_number += 1
         _write_kernel_checkpoint(runtime_dir, {
@@ -2257,6 +2302,7 @@ def run_autonomous_project(
             "completed_batches": completed_batches,
             "last_receipt": recent_receipt,
             "replan_reason": replan_reason,
+            "consecutive_failures": consecutive_failures,
             "ag_invocation_count": 0,
             "production": "NO_GO",
         })

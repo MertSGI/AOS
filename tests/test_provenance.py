@@ -109,3 +109,22 @@ def test_control_panel_does_not_equate_sha_format_with_provenance_proof():
     assert status["provenance_status"] != "PROVEN"
     assert status["production"] == "NO_GO"
 
+
+def test_validate_exact_sha_provenance_rejects_synthetic_head():
+    """Verify that validate_exact_sha_provenance strictly rejects synthetic/invalid SHA."""
+    authoritative_head = "001d509725c28697897932495a9fefbf3d3d5122"
+    synthetic_head = "001d509bc19cf3994c653065a452140bbd7a31b6"
+
+    result = validate_exact_sha_provenance(
+        local_git_head=authoritative_head,
+        build_source_sha=authoritative_head,
+        candidate_manifest_source_sha=authoritative_head,
+        runtime_source_sha=authoritative_head,
+        github_actions_head_sha=synthetic_head,
+        require_ci_sha=True,
+    )
+    assert not result.valid
+    assert result.status == "FAIL"
+    assert any("Provenance mismatch" in err for err in result.errors)
+
+

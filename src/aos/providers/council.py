@@ -209,9 +209,10 @@ class StructuredPeerReview:
     ranked_preference: int
     confidence: float
     short_bounded_rationale: str
+    reviewer_hash: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, proposal_id: str, data: Mapping[str, Any]) -> "StructuredPeerReview":
+    def from_dict(cls, proposal_id: str, data: Mapping[str, Any], reviewer_hash: Optional[str] = None) -> "StructuredPeerReview":
         def _num(val: Any, default: float = 0.5) -> float:
             try:
                 v = float(val)
@@ -236,6 +237,12 @@ class StructuredPeerReview:
         else:
             clean_contras = ()
 
+        rev_hash = reviewer_hash or data.get("reviewer_hash")
+        if not rev_hash and data.get("reviewer_id"):
+            rev_hash = hashlib.sha256(str(data["reviewer_id"]).encode("utf-8")).hexdigest()[:12]
+        if rev_hash:
+            rev_hash = str(rev_hash).strip()[:32]
+
         return cls(
             proposal_id=str(proposal_id),
             evidence_consistency=_num(data.get("evidence_consistency"), 0.8),
@@ -250,10 +257,11 @@ class StructuredPeerReview:
             ranked_preference=_int(data.get("ranked_preference"), 1),
             confidence=_num(data.get("confidence"), 0.85),
             short_bounded_rationale=_str_bounded(data.get("short_bounded_rationale"), 500),
+            reviewer_hash=rev_hash or None,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        res = {
             "proposal_id": self.proposal_id,
             "evidence_consistency": self.evidence_consistency,
             "canonical_consistency": self.canonical_consistency,
@@ -268,6 +276,9 @@ class StructuredPeerReview:
             "confidence": self.confidence,
             "short_bounded_rationale": self.short_bounded_rationale,
         }
+        if self.reviewer_hash:
+            res["reviewer_hash"] = self.reviewer_hash
+        return res
 
 
 @dataclasses.dataclass(frozen=True)
@@ -346,6 +357,7 @@ class DeliberationCouncilV1:
         self.real_shadow_sample_count = 0
         self.trigger_count = 0
         self.skipped_capacity_count = 0
+        self.skipped_redundant_count = 0
         self.agreement_count = 0
         self.disagreement_count = 0
         self.policy_violations_caught = 0
@@ -356,6 +368,7 @@ class DeliberationCouncilV1:
         self.total_latency_delta_ms = 0.0
         self.total_cost_delta_estimate = 0.0
         self.primary_execution_interference_count = 0
+        self._recent_fingerprints: set[str] = set()
 
         if self.ledger_dir:
             self._reconstruct_from_ledger()
@@ -375,21 +388,34 @@ class DeliberationCouncilV1:
                         continue
                     rec = json.loads(line)
                     self.trigger_count += 1
-                    if rec.get("council_trigger_reason") == "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS":
+                    status = rec.get("council_status")
+                    if rec.get("council_trigger_reason") == "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS" or status == "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS":
                         self.skipped_capacity_count += 1
+                        continue
+                    if status == "SKIP_REDUNDANT_SAMPLE":
+                        self.skipped_redundant_count += 1
                         continue
 
                     self.shadow_sample_count += 1
                     total_blinded = rec.get("total_blinded_proposal_count", rec.get("anonymous_proposal_count", 0))
                     valid_reviews = rec.get("valid_peer_review_count", 0)
+                    independent_proposals = rec.get("independent_proposal_count", total_blinded)
+                    distinct_reviewers = rec.get("distinct_reviewer_count", valid_reviews)
+                    coverage = rec.get("reviewed_proposal_coverage", valid_reviews)
                     quorum = rec.get("quorum_obtained", False)
-                    # Quorum requires both proposal count >= min_quorum AND valid peer review count >= min_quorum
-                    if (
+
+                    # Quorum requires proposal count >= min_quorum, valid reviews >= min_quorum,
+                    # independent proposals >= 2, distinct reviewers >= 2, and reviewed coverage >= 2
+                    is_real_quorum = (
                         quorum
                         and total_blinded >= self.min_quorum
                         and valid_reviews >= self.min_quorum
-                        and rec.get("is_real_execution", True)
-                    ):
+                        and independent_proposals >= 2
+                        and distinct_reviewers >= 2
+                        and coverage >= 2
+                    )
+
+                    if is_real_quorum and rec.get("is_real_execution", True):
                         self.real_shadow_sample_count += 1
 
                     if rec.get("council_agreement", True):
@@ -483,10 +509,13 @@ class DeliberationCouncilV1:
                 "primary_proposal_count": primary_proposal_count,
                 "council_alternate_proposal_count": alternate_proposal_count,
                 "total_blinded_proposal_count": 0,
+                "independent_proposal_count": 0,
                 "peer_reviewer_count": 0,
                 "valid_peer_review_count": 0,
+                "distinct_reviewer_count": 0,
+                "reviewed_proposal_coverage": 0,
                 "quorum_obtained": False,
-                "council_status": "INSUFFICIENT_QUORUM",
+                "council_status": "SKIPPED_DUE_TO_SPARE_CAPACITY_CONSTRAINTS",
                 "council_result_fingerprint": None,
                 "council_agreement": True,
                 "council_confidence": 0.0,
@@ -511,10 +540,62 @@ class DeliberationCouncilV1:
                 decision_record=skip_record,
             )
 
+        # Sample Deduplication Optimization:
+        # Detect repeated deliberative calls for the identical decision payload/prompt
+        primary_fingerprint = hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        decision_fingerprint = hashlib.sha256(f"{decision_type}:{prompt[:300]}:{primary_fingerprint}".encode("utf-8")).hexdigest()[:16]
+        if decision_fingerprint in self._recent_fingerprints:
+            self.skipped_redundant_count += 1
+            decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
+            skip_record = {
+                "decision_id": decision_id,
+                "project_id": project_id,
+                "command_id": command_id or "unknown-command",
+                "decision_class": decision_type,
+                "timestamp": time.time(),
+                "primary_decision_fingerprint": primary_fingerprint,
+                "primary_confidence": assessment.primary_confidence,
+                "council_trigger_reason": assessment.trigger_reason,
+                "primary_proposal_count": primary_proposal_count,
+                "council_alternate_proposal_count": alternate_proposal_count,
+                "total_blinded_proposal_count": 0,
+                "independent_proposal_count": 0,
+                "peer_reviewer_count": 0,
+                "valid_peer_review_count": 0,
+                "distinct_reviewer_count": 0,
+                "reviewed_proposal_coverage": 0,
+                "quorum_obtained": False,
+                "council_status": "SKIP_REDUNDANT_SAMPLE",
+                "council_result_fingerprint": None,
+                "council_agreement": True,
+                "council_confidence": 0.0,
+                "contradiction_detected": False,
+                "policy_violation_caught": False,
+                "canonical_conflict_detected": False,
+                "correlated_consensus_risk": False,
+                "estimated_request_cost_delta": 0.0,
+                "latency_delta_ms": 0.0,
+                "is_real_execution": is_real_execution,
+                "execution_affected": False,
+            }
+            self._persist_decision_ledger(skip_record)
+            return DeliberationResult(
+                winning_proposal_id=None,
+                selected_payload=None,
+                scores={},
+                agreement_with_primary=True,
+                quorum_reached=False,
+                confidence=0.0,
+                mode=self.mode,
+                decision_record=skip_record,
+            )
+        self._recent_fingerprints.add(decision_fingerprint)
+
         # FIRST PASS & BLINDING:
         all_candidates = [("primary_planner", primary_proposal)] + list(alternate_proposals)
         blinded = blind_proposals(all_candidates, seed=seed, shuffle=True)
         total_blinded_count = len(blinded)
+        independent_proposal_count = len({b.member_hash for b in blinded})
 
         # SECOND PASS: ANONYMOUS PEER REVIEWS
         collected_reviews: List[StructuredPeerReview] = []
@@ -523,14 +604,19 @@ class DeliberationCouncilV1:
         # Case A: Explicitly supplied peer reviews
         if peer_reviews:
             peer_reviewer_count = len(peer_reviews)
-            for item in peer_reviews:
+            for idx, item in enumerate(peer_reviews):
                 if isinstance(item, StructuredPeerReview):
                     collected_reviews.append(item)
                 elif isinstance(item, dict):
                     pid = item.get("proposal_id", "")
                     if pid:
                         try:
-                            collected_reviews.append(StructuredPeerReview.from_dict(pid, item))
+                            # Generate a distinct reviewer hash if not already provided
+                            rev_hash = item.get("reviewer_hash")
+                            if not rev_hash:
+                                rev_id = item.get("reviewer_id") or f"reviewer_{idx + 1}"
+                                rev_hash = hashlib.sha256(str(rev_id).encode("utf-8")).hexdigest()[:12]
+                            collected_reviews.append(StructuredPeerReview.from_dict(pid, item, reviewer_hash=rev_hash))
                         except Exception:
                             pass
 
@@ -548,22 +634,37 @@ class DeliberationCouncilV1:
             )
             for r_id, reviewer_obj in reviewers:
                 try:
+                    rev_hash = hashlib.sha256(str(r_id).encode("utf-8")).hexdigest()[:12]
                     if hasattr(reviewer_obj, "generate_plan"):
                         plan_data, _, _ = reviewer_obj.generate_plan(review_prompt, PEER_REVIEW_SCHEMA)
                         if isinstance(plan_data, dict):
                             # Can return single review or list of reviews
                             if "proposal_id" in plan_data:
-                                collected_reviews.append(StructuredPeerReview.from_dict(plan_data["proposal_id"], plan_data))
+                                collected_reviews.append(StructuredPeerReview.from_dict(plan_data["proposal_id"], plan_data, reviewer_hash=rev_hash))
                             elif "reviews" in plan_data and isinstance(plan_data["reviews"], list):
                                 for rev in plan_data["reviews"]:
                                     if isinstance(rev, dict) and rev.get("proposal_id"):
-                                        collected_reviews.append(StructuredPeerReview.from_dict(rev["proposal_id"], rev))
+                                        collected_reviews.append(StructuredPeerReview.from_dict(rev["proposal_id"], rev, reviewer_hash=rev_hash))
                 except Exception:
                     pass
 
-        # Validate collected peer reviews
-        valid_peer_reviews = [r for r in collected_reviews if any(r.proposal_id == b.proposal_id for b in blinded)]
+        # Validate collected peer reviews and deduplicate multiple reviews from the same reviewer for the same proposal
+        valid_peer_reviews: List[StructuredPeerReview] = []
+        seen_reviewer_proposals: set[tuple[Optional[str], str]] = set()
+        for r in collected_reviews:
+            if any(r.proposal_id == b.proposal_id for b in blinded):
+                key = (r.reviewer_hash, r.proposal_id)
+                if r.reviewer_hash and key in seen_reviewer_proposals:
+                    continue
+                if r.reviewer_hash:
+                    seen_reviewer_proposals.add(key)
+                valid_peer_reviews.append(r)
+
         valid_peer_review_count = len(valid_peer_reviews)
+        distinct_reviewer_count = len({r.reviewer_hash for r in valid_peer_reviews if r.reviewer_hash})
+        if not distinct_reviewer_count and valid_peer_reviews:
+            distinct_reviewer_count = valid_peer_review_count
+        reviewed_proposal_coverage = len({r.proposal_id for r in valid_peer_reviews})
 
         # Aggregation of peer review metrics per proposal
         reviews_by_proposal: Dict[str, List[StructuredPeerReview]] = {b.proposal_id: [] for b in blinded}
@@ -655,11 +756,18 @@ class DeliberationCouncilV1:
             self.correlated_consensus_risk_count += 1
 
         # Strict Quorum Semantics:
-        # Full deliberative quorum requires BOTH proposal count >= min_quorum AND valid peer review count >= min_quorum
-        # If no peer reviews were conducted/supplied, quorum is NOT reached.
+        # Full deliberative quorum requires:
+        # 1. total_blinded_proposal_count >= min_quorum
+        # 2. independent_proposal_count >= 2
+        # 3. valid_peer_review_count >= min_quorum
+        # 4. distinct_reviewer_count >= 2
+        # 5. reviewed_proposal_coverage >= 2
         quorum_reached = (
             total_blinded_count >= self.min_quorum
+            and independent_proposal_count >= 2
             and valid_peer_review_count >= self.min_quorum
+            and distinct_reviewer_count >= 2
+            and reviewed_proposal_coverage >= 2
         )
 
         eligible = [(k, v) for k, v in scores.items() if v.policy_compliant and v.composite_score > 0.0]
@@ -710,10 +818,17 @@ class DeliberationCouncilV1:
 
         self.shadow_sample_count += 1
         # REAL_SHADOW_SAMPLE_INCREMENT requires genuine quorum with valid peer reviews and >= min_quorum proposals
-        if is_real_execution and quorum_reached and total_blinded_count >= self.min_quorum and valid_peer_review_count >= self.min_quorum:
+        if (
+            is_real_execution
+            and quorum_reached
+            and total_blinded_count >= self.min_quorum
+            and independent_proposal_count >= 2
+            and valid_peer_review_count >= self.min_quorum
+            and distinct_reviewer_count >= 2
+            and reviewed_proposal_coverage >= 2
+        ):
             self.real_shadow_sample_count += 1
 
-        primary_fingerprint = hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         result_fingerprint = hashlib.sha256(json.dumps(selected_payload or {}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
 
@@ -734,8 +849,11 @@ class DeliberationCouncilV1:
             "primary_proposal_count": primary_proposal_count,
             "council_alternate_proposal_count": alternate_proposal_count,
             "total_blinded_proposal_count": total_blinded_count,
+            "independent_proposal_count": independent_proposal_count,
             "peer_reviewer_count": peer_reviewer_count,
             "valid_peer_review_count": valid_peer_review_count,
+            "distinct_reviewer_count": distinct_reviewer_count,
+            "reviewed_proposal_coverage": reviewed_proposal_coverage,
             "quorum_obtained": quorum_reached,
             "council_status": council_status,
             "council_result_fingerprint": result_fingerprint,
@@ -776,6 +894,49 @@ class DeliberationCouncilV1:
         except Exception:
             # Shadow ledger must never crash primary execution path
             pass
+
+    def record_decision_outcome(self, decision_id: str, outcome: str) -> None:
+        """Record retrospective outcome of a council shadow decision."""
+        if not self.ledger_dir:
+            return
+        try:
+            self.ledger_dir.mkdir(parents=True, exist_ok=True)
+            outcomes_file = self.ledger_dir / "deliberation-shadow-outcomes.jsonl"
+            entry = {
+                "decision_id": str(decision_id),
+                "outcome": str(outcome),
+                "timestamp": time.time(),
+            }
+            with open(outcomes_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def get_quality_metrics(self) -> Dict[str, Any]:
+        """Return comprehensive council decision-quality and observability metrics."""
+        total_evals = max(1, self.shadow_sample_count)
+        real_sample_rate = self.real_shadow_sample_count / total_evals
+        agreement_rate = self.agreement_count / total_evals
+        disagreement_rate = self.disagreement_count / total_evals
+        consensus_risk_rate = self.correlated_consensus_risk_count / total_evals
+
+        return {
+            "COUNCIL_TRIGGER_COUNT": self.trigger_count,
+            "COUNCIL_SHADOW_SAMPLE_COUNT": self.shadow_sample_count,
+            "COUNCIL_REAL_SAMPLE_COUNT": self.real_shadow_sample_count,
+            "COUNCIL_REAL_SAMPLE_RATE": round(real_sample_rate, 4),
+            "COUNCIL_SKIPPED_CAPACITY_COUNT": self.skipped_capacity_count,
+            "COUNCIL_SKIPPED_REDUNDANT_COUNT": self.skipped_redundant_count,
+            "COUNCIL_AGREEMENT_RATE": round(agreement_rate, 4),
+            "COUNCIL_DISAGREEMENT_RATE": round(disagreement_rate, 4),
+            "COUNCIL_CORRELATED_CONSENSUS_RATE": round(consensus_risk_rate, 4),
+            "COUNCIL_POLICY_VIOLATIONS_CAUGHT": self.policy_violations_caught,
+            "COUNCIL_CANONICAL_CONTRADICTIONS_CAUGHT": self.canonical_contradictions_caught,
+            "COUNCIL_PRIMARY_ERRORS_CAUGHT": self.primary_errors_caught,
+            "COUNCIL_PRIMARY_EXECUTION_INTERFERENCE_COUNT": self.primary_execution_interference_count,
+            "COUNCIL_TOTAL_LATENCY_DELTA_MS": round(self.total_latency_delta_ms, 2),
+            "COUNCIL_TOTAL_COST_DELTA_ESTIMATE": round(self.total_cost_delta_estimate, 4),
+        }
 
     def check_live_eligibility(self) -> Tuple[bool, str]:
         """Check promotion gate to SELECTIVE_LIVE.

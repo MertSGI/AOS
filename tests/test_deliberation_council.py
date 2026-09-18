@@ -421,3 +421,103 @@ def test_full_three_proposal_two_reviewer_deliberation(tmp_path=None):
     assert rec["council_status"] == "QUORUM_OBTAINED"
     assert council.real_shadow_sample_count == 1
 
+
+def test_council_quorum_semantics_requires_distinct_reviewers_and_coverage(tmp_path=None):
+    """Verify quorum fails if reviews are from a single reviewer or cover only 1 proposal."""
+    if tmp_path is None:
+        import tempfile
+        tmp_path = Path(tempfile.mkdtemp())
+    council = DeliberationCouncilV1(mode="SHADOW_ONLY", min_quorum=2, ledger_dir=tmp_path)
+    p1 = {"title": "P1", "authority_id": "DECISION-020", "tasks": []}
+    alts = [
+        ("member_2", {"title": "P2", "authority_id": "DECISION-020", "tasks": []}),
+    ]
+    # 2 reviews, but both have same reviewer_hash and review only Proposal A
+    single_reviewer_reviews = [
+        {"proposal_id": "Proposal A", "ranked_preference": 1, "reviewer_hash": "same_rev", "short_bounded_rationale": "A"},
+        {"proposal_id": "Proposal A", "ranked_preference": 2, "reviewer_hash": "same_rev", "short_bounded_rationale": "A again"},
+    ]
+    auths = {"DECISION-020": {}}
+    res = council.evaluate_decision(
+        decision_type="ARCHITECTURE_DECISION",
+        prompt="Quorum semantics test",
+        primary_proposal=p1,
+        alternate_proposals=alts,
+        peer_reviews=single_reviewer_reviews,
+        authority_records=auths,
+        is_real_execution=True,
+    )
+    assert not res.quorum_reached
+    assert res.decision_record["council_status"] == "INSUFFICIENT_QUORUM"
+    assert council.real_shadow_sample_count == 0
+
+
+def test_council_sample_deduplication_skips_redundant_call(tmp_path=None):
+    """Verify identical prompt/payload deliberation is deduplicated and marked SKIP_REDUNDANT_SAMPLE."""
+    if tmp_path is None:
+        import tempfile
+        tmp_path = Path(tempfile.mkdtemp())
+    council = DeliberationCouncilV1(mode="SHADOW_ONLY", min_quorum=2, ledger_dir=tmp_path)
+    p1 = {"title": "P1", "authority_id": "DECISION-020", "tasks": []}
+    alts = [
+        ("member_2", {"title": "P2", "authority_id": "DECISION-020", "tasks": []}),
+    ]
+    reviews = [
+        {"proposal_id": "Proposal A", "ranked_preference": 1, "reviewer_hash": "r1", "short_bounded_rationale": "A"},
+        {"proposal_id": "Proposal B", "ranked_preference": 2, "reviewer_hash": "r2", "short_bounded_rationale": "B"},
+    ]
+    auths = {"DECISION-020": {}}
+    res1 = council.evaluate_decision(
+        decision_type="ARCHITECTURE_DECISION",
+        prompt="Deduplication test prompt",
+        primary_proposal=p1,
+        alternate_proposals=alts,
+        peer_reviews=reviews,
+        authority_records=auths,
+        is_real_execution=True,
+    )
+    assert res1.quorum_reached
+    assert council.real_shadow_sample_count == 1
+
+    # Second identical call: should be deduplicated
+    res2 = council.evaluate_decision(
+        decision_type="ARCHITECTURE_DECISION",
+        prompt="Deduplication test prompt",
+        primary_proposal=p1,
+        alternate_proposals=alts,
+        peer_reviews=reviews,
+        authority_records=auths,
+        is_real_execution=True,
+    )
+    assert not res2.quorum_reached
+    assert res2.decision_record["council_status"] == "SKIP_REDUNDANT_SAMPLE"
+    assert council.skipped_redundant_count == 1
+    # Does not double increment real shadow samples
+    assert council.real_shadow_sample_count == 1
+
+
+def test_council_record_outcome_and_quality_metrics(tmp_path=None):
+    """Verify outcome recording and quality metrics reporting."""
+    if tmp_path is None:
+        import tempfile
+        tmp_path = Path(tempfile.mkdtemp())
+    council = DeliberationCouncilV1(mode="SHADOW_ONLY", min_quorum=2, ledger_dir=tmp_path)
+    council.record_decision_outcome("dec-12345", "SUCCESS_ACCEPTED")
+    outcomes_file = tmp_path / "deliberation-shadow-outcomes.jsonl"
+    assert outcomes_file.exists()
+    content = outcomes_file.read_text(encoding="utf-8")
+    assert "dec-12345" in content
+    assert "SUCCESS_ACCEPTED" in content
+
+    metrics = council.get_quality_metrics()
+    assert "COUNCIL_TRIGGER_COUNT" in metrics
+    assert "COUNCIL_REAL_SAMPLE_COUNT" in metrics
+    assert "COUNCIL_REAL_SAMPLE_RATE" in metrics
+    assert "COUNCIL_AGREEMENT_RATE" in metrics
+    assert "COUNCIL_DISAGREEMENT_RATE" in metrics
+    assert "COUNCIL_CORRELATED_CONSENSUS_RATE" in metrics
+    assert "COUNCIL_POLICY_VIOLATIONS_CAUGHT" in metrics
+    assert "COUNCIL_PRIMARY_EXECUTION_INTERFERENCE_COUNT" in metrics
+    assert metrics["COUNCIL_PRIMARY_EXECUTION_INTERFERENCE_COUNT"] == 0
+
+
