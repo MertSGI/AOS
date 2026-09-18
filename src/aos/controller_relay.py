@@ -191,8 +191,18 @@ class ControllerRelayPublisher:
                 except Exception:
                     pass
 
+        if not manifest_sha and is_valid_full_sha(source_sha):
+            candidate_fallback = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "candidate" / source_sha / "candidate-manifest.json"
+            if candidate_fallback.is_file():
+                try:
+                    m_data = json.loads(candidate_fallback.read_text(encoding="utf-8"))
+                    manifest_sha = m_data.get("candidate_source_sha")
+                except Exception:
+                    pass
+
         if is_valid_full_sha(source_sha) and manifest_sha:
             val = validate_exact_sha_provenance(
+                local_git_head=manifest_sha,
                 candidate_manifest_source_sha=manifest_sha,
                 runtime_source_sha=source_sha,
                 build_source_sha=manifest_sha,
