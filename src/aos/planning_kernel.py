@@ -1615,6 +1615,12 @@ def compile_execution_plan(
                     f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
                     "Do not plan tasks for npm, npx, node, or any binary not in that list."
                 )
+            elif "repeats completed FILE read target" in validation_error:
+                python_guidance = (
+                    "\nFILE_READ_RULE: Do not reread files already inspected in completed batches. "
+                    "All previously read files are listed in COMPLETED_READ_PATHS_NOT_TO_REPEAT. "
+                    "Use bounded git commands (e.g. `git status`, `git diff`, `git ls-files`) or PROCESS verification instead of repeating read_file."
+                )
             attempt_prompt += (
                 "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
                 "Return a corrected full plan; do not repeat the defect.\n"
