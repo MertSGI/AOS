@@ -545,6 +545,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         # PROVEN requires actual successful validation across available chain, not merely format
         if sha_format_valid and candidate_manifest_sha:
             validation = validate_exact_sha_provenance(
+                local_git_head=candidate_manifest_sha,
                 candidate_manifest_source_sha=candidate_manifest_sha,
                 runtime_source_sha=active_sha,
                 build_source_sha=build_source_sha,
