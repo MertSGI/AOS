@@ -21,6 +21,7 @@ from aos.local_host import _atomic_json, load_config, validate_job
 from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
 from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime, execute_command_on_runtime
 from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
+from aos.self_diagnosis import SelfDiagnosisEngine
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -285,12 +286,34 @@ async function refreshStatus() {
     // Render Self-Repair Observability
     const sr = s.self_repair || {};
     let srHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
-      <div>Diagnosis Status: <strong>${sr.self_diagnosis_status || 'SHADOW_ONLY'}</strong></div>
-      <div>Shadow Status: <strong>${sr.self_repair_shadow_status || 'PREPARED'}</strong></div>
-      <div>Live Active: <strong>${sr.self_repair_live_active ? 'YES' : 'NO'}</strong></div>
+      <div>Diagnosis Mode: <strong class="ok">SHADOW_ONLY</strong> · Status: <strong>${sr.self_diagnosis_status || 'HEALTHY_NO_ACTION'}</strong></div>
+      <div>Active Findings: <strong>${sr.active_finding_count ?? 0}</strong> (Blocking: <strong style="color:${(sr.blocking_finding_count || 0) > 0 ? '#e06c75' : '#74d99f'}">${sr.blocking_finding_count ?? 0}</strong>)</div>
+      <div>Last Finding: <strong>${sr.self_repair_last_finding || 'NONE'}</strong> (Class: <code>${sr.last_failure_class || 'NONE'}</code>)</div>
+      <div>Severity: <strong>${sr.last_finding_severity || 'NONE'}</strong> · Autonomy Impact: <strong>${sr.last_autonomy_impact || 'NONE'}</strong></div>
+      <div>Proposal Status: <strong>${sr.shadow_repair_proposal_status || 'NONE'}</strong> · Live Active: <strong>NO</strong></div>
       <div>Eligibility: <strong>${sr.self_repair_eligibility || 'PENDING_GATE'}</strong></div>
-      <div>Required Evidence: <small>${sr.self_repair_required_evidence || 'NONE'}</small></div>
     </div>`;
+    const findingsList = sr.findings || [];
+    if (findingsList.length > 0) {
+      srHtml += `<div style="margin-top:8px; border-top:1px solid #2b333c; padding-top:6px;">
+        <div style="font-weight:bold; margin-bottom:4px; color:#9eabb7;">Recent Shadow Findings (Read-Only Inspection):</div>`;
+      for (const f of findingsList.slice(0, 5)) {
+        const sevColor = (f.severity === 'CRITICAL' || f.severity === 'HIGH') ? '#e06c75' : ((f.severity === 'MEDIUM') ? '#f0b66c' : '#74d99f');
+        srHtml += `<details style="margin-bottom:6px; background:#14191f; border-radius:6px; padding:6px;">
+          <summary style="cursor:pointer; font-size:12px;">
+            <strong style="color:${sevColor}">[${f.severity}]</strong> <code>${f.failure_class}</code>: ${f.symptom.slice(0, 60)}…
+          </summary>
+          <div style="margin-top:6px; font-size:11px; font-family:Consolas,monospace; line-height:1.4;">
+            <div>Finding ID: <strong>${f.finding_id}</strong></div>
+            <div>Component: ${f.component} · Recurrence: ${f.recurrence_count}</div>
+            <div>Impact: ${f.autonomy_impact} · Authority: ${f.repair_authority}</div>
+            <div>Root Cause: ${f.suspected_root_cause || 'NONE'}</div>
+            ${f.proposed_repair ? `<div style="margin-top:4px; color:#74d99f;">Proposed Repair (Shadow Only): ${f.proposed_repair.minimal_change || 'NONE'}</div>` : ''}
+          </div>
+        </details>`;
+      }
+      srHtml += `</div>`;
+    }
     document.getElementById('self-repair-view').innerHTML = srHtml;
 
     const p = s.providers || {};
@@ -541,7 +564,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                     with open(manifest_path, "r", encoding="utf-8") as f:
                         m_data = json.load(f)
                         candidate_manifest_sha = m_data.get("candidate_source_sha")
-                        build_source_sha = m_data.get("candidate_source_sha")
+                        build_source_sha = m_data.get("build_source_sha")
+                build_rec = Path(slot_root_str) / "build-record.json"
+                if not build_source_sha and build_rec.is_file():
+                    with open(build_rec, "r", encoding="utf-8") as f:
+                        b_data = json.load(f)
+                        build_source_sha = b_data.get("build_source_sha") or b_data.get("source_sha")
             except Exception:
                 pass
 
@@ -569,7 +597,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 continue
 
         # PROVEN requires actual successful validation across available chain, not merely format
-        if sha_format_valid and candidate_manifest_sha and local_git_head:
+        if sha_format_valid and candidate_manifest_sha and local_git_head and build_source_sha:
             validation = validate_exact_sha_provenance(
                 local_git_head=local_git_head,
                 candidate_manifest_source_sha=candidate_manifest_sha,
@@ -589,6 +617,11 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        # Self-diagnosis summary from durable findings
+        diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+        diag_engine = SelfDiagnosisEngine(diag_root, config)
+        diag_summary = diag_engine.summarize_status()
+
         # Product mutations and evidence
         first_workspace_artifact = relay_info.get("first_workspace_productization_artifact") or relay_info.get("first_product_mutation")
         first_ui_mutation = relay_info.get("first_user_facing_ui_mutation")
@@ -605,6 +638,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             alerts.append("PROVENANCE_FAILURE: Exact SHA provenance check failed")
         if any(l.get("provider_backoff") for l in lanes_detail.values()):
             alerts.append("PROVIDER_DEGRADATION: Lane currently in provider backoff")
+        if diag_summary.get("blocking_finding_count", 0) > 0:
+            alerts.append(f"SELF_DIAGNOSIS_BLOCKING: {diag_summary['blocking_finding_count']} blocking finding(s) detected")
 
         return {
             "schema_version": "1.0.0",
@@ -640,12 +675,19 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             },
             "alerts": alerts,
             "self_repair": {
-                "self_diagnosis_status": "SHADOW_ONLY",
+                "self_diagnosis_status": diag_summary.get("self_diagnosis_status", "SHADOW_ONLY"),
                 "self_repair_shadow_status": "PREPARED",
-                "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
-                "self_repair_last_finding": "NONE",
+                "self_repair_eligibility": diag_summary.get("self_repair_eligibility", "ELIGIBLE_PENDING_GATE"),
+                "self_repair_last_finding": diag_summary.get("last_finding_id", "NONE"),
                 "self_repair_required_evidence": "EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED",
                 "self_repair_live_active": False,
+                "active_finding_count": diag_summary.get("active_finding_count", 0),
+                "blocking_finding_count": diag_summary.get("blocking_finding_count", 0),
+                "last_failure_class": diag_summary.get("last_failure_class", "NONE"),
+                "last_finding_severity": diag_summary.get("last_finding_severity", "NONE"),
+                "last_autonomy_impact": diag_summary.get("last_autonomy_impact", "NONE"),
+                "shadow_repair_proposal_status": diag_summary.get("shadow_repair_proposal_status", "NONE"),
+                "findings": diag_summary.get("findings", []),
             },
         }
 
@@ -801,6 +843,16 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/status":
             self._json(HTTPStatus.OK, build_status(self.config))
+            return
+        if parsed.path.startswith("/api/findings/"):
+            finding_id = parsed.path[len("/api/findings/"):].strip()
+            diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+            diag_engine = SelfDiagnosisEngine(diag_root, self.config)
+            finding = diag_engine.get_finding(finding_id)
+            if finding:
+                self._json(HTTPStatus.OK, finding)
+            else:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "FINDING_NOT_FOUND", "finding_id": finding_id})
             return
         self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
 

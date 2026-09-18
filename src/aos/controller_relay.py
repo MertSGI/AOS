@@ -21,6 +21,7 @@ from aos.process_utils import run_headless
 from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
+from aos.self_diagnosis import SelfDiagnosisEngine
 
 try:
     import truststore
@@ -115,6 +116,12 @@ class RelaySnapshot:
     self_repair_eligibility: str = "ELIGIBLE_PENDING_GATE"
     self_repair_last_finding: str = "NONE"
     self_repair_required_evidence: str = "EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED"
+    active_finding_count: int = 0
+    blocking_finding_count: int = 0
+    last_failure_class: str = "NONE"
+    last_finding_severity: str = "NONE"
+    last_autonomy_impact: str = "NONE"
+    shadow_repair_proposal_status: str = "NONE"
 
 
 class ControllerRelayPublisher:
@@ -138,6 +145,7 @@ class ControllerRelayPublisher:
         self.remote_issue_number: Optional[int] = self._load_remote_issue_number()
         self.remote_outbox_status: str = "INITIALIZING"
         self._prev_completed_batches: Dict[str, int] = {}
+        self.diagnostics = SelfDiagnosisEngine(self.local_relay_dir / "self-diagnosis", self.runtime_config)
 
     def _init_sequence(self) -> int:
         seq_path = self.local_relay_dir / "sequence.json"
@@ -185,12 +193,21 @@ class ControllerRelayPublisher:
         # Determine provenance
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
+        build_source_sha = None
         if slot_root:
             manifest_file = Path(slot_root) / "candidate-manifest.json"
             if manifest_file.is_file():
                 try:
                     m_data = json.loads(manifest_file.read_text(encoding="utf-8"))
                     manifest_sha = m_data.get("candidate_source_sha")
+                    build_source_sha = m_data.get("build_source_sha")
+                except Exception:
+                    pass
+            build_record = Path(slot_root) / "build-record.json"
+            if not build_source_sha and build_record.is_file():
+                try:
+                    b_data = json.loads(build_record.read_text(encoding="utf-8"))
+                    build_source_sha = b_data.get("build_source_sha") or b_data.get("source_sha")
                 except Exception:
                     pass
 
@@ -200,6 +217,8 @@ class ControllerRelayPublisher:
                 try:
                     m_data = json.loads(candidate_fallback.read_text(encoding="utf-8"))
                     manifest_sha = m_data.get("candidate_source_sha")
+                    if not build_source_sha:
+                        build_source_sha = m_data.get("build_source_sha")
                 except Exception:
                     pass
 
@@ -226,14 +245,17 @@ class ControllerRelayPublisher:
             except Exception:
                 continue
 
-        if is_valid_full_sha(source_sha) and manifest_sha and local_git_head:
+        if is_valid_full_sha(source_sha) and manifest_sha and local_git_head and build_source_sha:
             val = validate_exact_sha_provenance(
                 local_git_head=local_git_head,
                 candidate_manifest_source_sha=manifest_sha,
                 runtime_source_sha=source_sha,
-                build_source_sha=manifest_sha,
+                build_source_sha=build_source_sha,
             )
             prov_status = "PROVEN" if val.valid else "FAIL"
+        elif is_valid_full_sha(source_sha) and manifest_sha and local_git_head and not build_source_sha:
+            # Missing authoritative build source record leaves provenance UNPROVEN
+            prov_status = "UNPROVEN"
         else:
             prov_status = "UNPROVEN"
 
@@ -328,17 +350,24 @@ class ControllerRelayPublisher:
                             if not first_workspace_artifact:
                                 first_workspace_artifact = "visual_productization_status.md"
 
-                        # Check for actual user-facing browser code (TSX/JSX/HTML/CSS/JS)
-                        ui_patterns = ("*.tsx", "*.jsx", "*.html", "*.css", "*.vue", "*.svelte")
-                        for pat in ui_patterns:
-                            for ui_file in ws_path.glob(f"**/{pat}"):
-                                if "node_modules" not in ui_file.parts and ".git" not in ui_file.parts:
-                                    mutations += 1
-                                    if not first_ui_mutation:
-                                        first_ui_mutation = ui_file.name
-                                    break
-                            if first_ui_mutation:
-                                break
+                        # Check for actual user-facing browser code mutations relative to baseline (TSX/JSX/HTML/CSS/JS)
+                        # Touchless preexisting workspace files do not count as mutations.
+                        try:
+                            git_proc = run_headless(["git", "-C", str(ws_path), "status", "--porcelain"], check=False)
+                            if git_proc.returncode == 0:
+                                ui_exts = (".tsx", ".jsx", ".html", ".css", ".vue", ".svelte")
+                                for line in git_proc.stdout.splitlines():
+                                    line_clean = line.strip()
+                                    if not line_clean or len(line_clean) < 3:
+                                        continue
+                                    rel_file = line_clean[2:].strip()
+                                    if any(rel_file.endswith(ext) for ext in ui_exts):
+                                        if "node_modules" not in rel_file and ".git" not in rel_file:
+                                            mutations += 1
+                                            if not first_ui_mutation:
+                                                first_ui_mutation = Path(rel_file).name
+                        except Exception:
+                            pass
 
                     lanes.append(asdict(LaneTelemetry(
                         lane_id=lane_name,
@@ -423,6 +452,37 @@ class ControllerRelayPublisher:
         lost_work: Union[int, str] = "UNKNOWN"
         scope_collision: Union[int, str] = "UNKNOWN"
 
+        # Run shadow self-diagnosis across runtime machine evidence
+        try:
+            self.diagnostics.diagnose_runtime(
+                runtime_health=rh,
+                lanes=lanes,
+                relay_snapshot={
+                    "forward_progress": forward_prog,
+                    "no_progress_reason": no_prog_reason,
+                    "running_lane_count": running_lanes,
+                },
+                provenance_status=prov_status,
+                build_source_sha=build_source_sha,
+                candidate_manifest_sha=manifest_sha,
+                runtime_source_sha=source_sha,
+                local_git_head=local_git_head,
+                outbox_status=self.remote_outbox_status,
+            )
+            diag_summary = self.diagnostics.summarize_status()
+        except Exception:
+            diag_summary = {
+                "self_diagnosis_status": "SHADOW_ONLY",
+                "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
+                "last_finding_id": "NONE",
+                "active_finding_count": 0,
+                "blocking_finding_count": 0,
+                "last_failure_class": "NONE",
+                "last_finding_severity": "NONE",
+                "last_autonomy_impact": "NONE",
+                "shadow_repair_proposal_status": "NONE",
+            }
+
         return RelaySnapshot(
             schema_version=RELAY_SCHEMA_VERSION,
             timestamp_utc=utc_now(),
@@ -457,11 +517,17 @@ class ControllerRelayPublisher:
             first_user_facing_mutation=first_ui_mutation,
             browser_evidence_status="AWAITING_BROWSER_SUITE_RUN",
             responsive_evidence_status="AWAITING_BROWSER_SUITE_RUN",
-            self_diagnosis_status="SHADOW_ONLY",
+            self_diagnosis_status=diag_summary.get("self_diagnosis_status", "SHADOW_ONLY"),
             self_repair_shadow_status="PREPARED",
-            self_repair_eligibility="ELIGIBLE_PENDING_GATE",
-            self_repair_last_finding="NONE",
+            self_repair_eligibility=diag_summary.get("self_repair_eligibility", "ELIGIBLE_PENDING_GATE"),
+            self_repair_last_finding=diag_summary.get("last_finding_id", "NONE"),
             self_repair_required_evidence="EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED",
+            active_finding_count=diag_summary.get("active_finding_count", 0),
+            blocking_finding_count=diag_summary.get("blocking_finding_count", 0),
+            last_failure_class=diag_summary.get("last_failure_class", "NONE"),
+            last_finding_severity=diag_summary.get("last_finding_severity", "NONE"),
+            last_autonomy_impact=diag_summary.get("last_autonomy_impact", "NONE"),
+            shadow_repair_proposal_status=diag_summary.get("shadow_repair_proposal_status", "NONE"),
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -491,11 +557,14 @@ class ControllerRelayPublisher:
         else:
             lanes_text = "No active lanes detected."
 
+        lost_desc = f"Lost accepted work: {snapshot.lost_accepted_work}" if snapshot.lost_accepted_work != "UNKNOWN" else "Lost accepted work: UNKNOWN"
+        dup_desc = f"duplicate completed work: {snapshot.duplicate_completed_work}" if snapshot.duplicate_completed_work != "UNKNOWN" else "duplicate completed work: UNKNOWN"
+
         md = f"""# AOS Controller Relay
 
 REPORT_TYPE=AOS_NATIVE_HEARTBEAT_AND_CHECKPOINT
 
-AOS NATIVE RELAY ACTIVE ON PORT 8770: Slot `{snapshot.runtime_slot}` (SHA `{snapshot.runtime_source_sha[:12] if len(snapshot.runtime_source_sha) >= 12 else snapshot.runtime_source_sha}`). Runtime Health: `{snapshot.runtime_health}` (API PID `{snapshot.api_pid or 'NONE'}`, Supervisor PID `{snapshot.supervisor_pid or 'NONE'}`). Provenance: `{snapshot.provenance_status}`. Production Gate: `{snapshot.production}`. Council Mode: `{snapshot.council_mode}`. Zero lost accepted work; zero duplicate completed work; autonomous continuation active.
+AOS NATIVE RELAY ACTIVE ON PORT 8770: Slot `{snapshot.runtime_slot}` (SHA `{snapshot.runtime_source_sha[:12] if len(snapshot.runtime_source_sha) >= 12 else snapshot.runtime_source_sha}`). Runtime Health: `{snapshot.runtime_health}` (API PID `{snapshot.api_pid or 'NONE'}`, Supervisor PID `{snapshot.supervisor_pid or 'NONE'}`). Provenance: `{snapshot.provenance_status}`. Production Gate: `{snapshot.production}`. Council Mode: `{snapshot.council_mode}`. {lost_desc}; {dup_desc}; autonomous continuation active.
 
 === AOS CONTROLLER RELAY ===
 TIMESTAMP_UTC={snapshot.timestamp_utc}
@@ -556,6 +625,12 @@ SELF_REPAIR_SHADOW_STATUS={snapshot.self_repair_shadow_status}
 SELF_REPAIR_ELIGIBILITY={snapshot.self_repair_eligibility}
 SELF_REPAIR_LAST_FINDING={snapshot.self_repair_last_finding}
 SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
+ACTIVE_FINDING_COUNT={snapshot.active_finding_count}
+BLOCKING_FINDING_COUNT={snapshot.blocking_finding_count}
+LAST_FAILURE_CLASS={snapshot.last_failure_class}
+LAST_FINDING_SEVERITY={snapshot.last_finding_severity}
+LAST_AUTONOMY_IMPACT={snapshot.last_autonomy_impact}
+SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
 """
         return sanitize_text(md)
 
@@ -609,6 +684,9 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
             "running_lane_count": snapshot.running_lane_count,
             "human_required": snapshot.human_required,
             "remote_outbox_status": snapshot.remote_outbox_status,
+            "self_diagnosis_status": snapshot.self_diagnosis_status,
+            "active_finding_count": snapshot.active_finding_count,
+            "blocking_finding_count": snapshot.blocking_finding_count,
         }
         with open(events_file, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(event_entry, ensure_ascii=False) + "\n")
