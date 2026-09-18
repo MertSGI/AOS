@@ -78,6 +78,11 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
 </div>
 
 <div class="card" style="margin-top:12px">
+  <div class="label">Council Deliberation Shadow Metrics (Real Production Sampling)</div>
+  <div id="deliberation-view" style="margin-top:8px; font-family:Consolas,monospace; font-size:13px; line-height:1.6;">Loading deliberation metrics…</div>
+</div>
+
+<div class="card" style="margin-top:12px">
   <div class="label">Reasoning providers</div>
   <div id="providers" class="value"></div>
   <small>AOS Direct does not consume Antigravity model quota. A reasoning provider is still required for autonomous free-text planning.</small>
@@ -185,6 +190,23 @@ async function refreshStatus() {
       }
       html += '</table>';
       document.getElementById('lanes-view').innerHTML = html;
+    }
+
+    // Render Council Deliberation Shadow Metrics
+    const delib = s.deliberation || {};
+    const totalSamples = delib.total_samples || 0;
+    if (totalSamples === 0) {
+      document.getElementById('deliberation-view').innerHTML = '<em>No deliberation shadow samples recorded yet.</em>';
+    } else {
+      const reasons = delib.trigger_reasons || {};
+      const reasonEntries = Object.entries(reasons).map(([k, v]) => `<span style="background:#27313b; border-radius:4px; padding:2px 6px; margin-right:6px;">${k}: <strong>${v}</strong></span>`).join(' ');
+      let dHtml = `<div style="display:flex; gap:18px; flex-wrap:wrap; margin-bottom:8px;">
+        <div>Total Real Shadow Samples: <strong class="ok" style="font-size:16px;">${totalSamples}</strong></div>
+        <div>Quorum Obtained: <strong>${delib.quorum_count || 0}</strong></div>
+        <div>Council Agreement: <strong>${delib.agreement_count || 0}</strong></div>
+      </div>
+      <div style="margin-top:6px; color:#9eabb7;">Trigger Reasons: ${reasonEntries || 'None'}</div>`;
+      document.getElementById('deliberation-view').innerHTML = dHtml;
     }
 
     const p = s.providers || {};
@@ -337,30 +359,66 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         waiting_cmds = list(runtime_v1.get("waiting_commands") or [])
         latest_cmd = dict(runtime_v1.get("latest_command") or {})
 
-        # Scan active and waiting commands from runtime store if runtime_root is known
+        # Scan active and waiting commands from runtime store across known store roots
+        store_roots = []
         runtime_root_str = config.get("runtime_root")
         if runtime_root_str:
-            try:
-                from aos.runtime_store import RuntimeStore
-                base_p = Path(runtime_root_str).expanduser().resolve()
-                store_root = (base_p / "state") if (base_p / "state" / "commands").is_dir() else base_p
-                store = RuntimeStore(store_root)
-                for cid in (active_cmds + waiting_cmds)[-10:]:
+            base_p = Path(runtime_root_str).expanduser().resolve()
+            if (base_p / "state" / "commands").is_dir():
+                store_roots.append(base_p / "state")
+            elif (base_p / "commands").is_dir():
+                store_roots.append(base_p)
+            else:
+                store_roots.append(base_p)
+        local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
+        if (local_app_state / "commands").is_dir() and local_app_state not in store_roots:
+            store_roots.append(local_app_state)
+
+        deliberation_metrics = {
+            "total_samples": 0,
+            "trigger_reasons": {},
+            "quorum_count": 0,
+            "agreement_count": 0,
+        }
+
+        try:
+            from aos.runtime_store import RuntimeStore
+            cids_to_scan = list(dict.fromkeys((active_cmds + waiting_cmds)[-10:]))
+            for root in store_roots:
+                if not (root / "commands").is_dir():
+                    continue
+                store = RuntimeStore(root)
+                for cid in cids_to_scan:
                     cmd_data = store.read_command(cid)
                     cmd_state = store.read_state(cid)
-                    proj = (cmd_data.get("project") or {}).get("project_id") or "unknown"
-                    lanes_detail[proj] = {
-                        "command_id": cid,
-                        "state": cmd_state.get("state"),
-                        "disposition": cmd_state.get("disposition"),
-                        "completed_batches": int(cmd_state.get("completed_batch_count", 0) or 0),
-                        "attempts": int(cmd_state.get("attempts", 0) or 0),
-                        "retry_after_epoch": cmd_state.get("retry_after_epoch"),
-                        "updated_at": cmd_state.get("updated_at"),
-                        "canonical_source_sha": cmd_state.get("canonical_source_sha"),
-                    }
-            except Exception:
-                pass
+                    if cmd_state and cmd_state.get("state"):
+                        proj = (cmd_data.get("project") or {}).get("project_id") or "unknown"
+                        lanes_detail[proj] = {
+                            "command_id": cid,
+                            "state": cmd_state.get("state"),
+                            "disposition": cmd_state.get("disposition"),
+                            "completed_batches": int(cmd_state.get("completed_batch_count", 0) or 0),
+                            "attempts": int(cmd_state.get("attempts", 0) or 0),
+                            "retry_after_epoch": cmd_state.get("retry_after_epoch"),
+                            "updated_at": cmd_state.get("updated_at"),
+                            "canonical_source_sha": cmd_state.get("canonical_source_sha"),
+                        }
+                # Aggregate deliberation shadow metrics from store commands
+                for ledger in (root / "commands").glob("*/project-runtime/deliberation/deliberation-shadow-ledger.jsonl"):
+                    try:
+                        lines = [json.loads(line) for line in ledger.read_text("utf-8").strip().splitlines() if line.strip()]
+                        deliberation_metrics["total_samples"] += len(lines)
+                        for entry in lines:
+                            reason = entry.get("council_trigger_reason", "UNKNOWN")
+                            deliberation_metrics["trigger_reasons"][reason] = deliberation_metrics["trigger_reasons"].get(reason, 0) + 1
+                            if entry.get("quorum_obtained") is True:
+                                deliberation_metrics["quorum_count"] += 1
+                            if entry.get("council_agreement") is True:
+                                deliberation_metrics["agreement_count"] += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         sha_format_valid = is_valid_full_sha(active_sha)
         sha_format_status = "VALID" if sha_format_valid else "INVALID"
@@ -413,6 +471,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "waiting_commands": waiting_cmds,
             "latest_command": latest_cmd,
             "lanes": lanes_detail,
+            "deliberation": deliberation_metrics,
         }
 
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
@@ -445,6 +504,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "waiting_commands": [],
         "latest_command": {},
         "lanes": {},
+        "deliberation": {
+            "total_samples": 0,
+            "trigger_reasons": {},
+            "quorum_count": 0,
+            "agreement_count": 0,
+        },
     }
 
 def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:

@@ -103,3 +103,56 @@ def test_configure_provider_delete(monkeypatch):
     assert result["provider"] == "GROQ"
     assert result["deleted"] is True
     assert result["secret_returned"] is False
+
+
+def test_build_status_includes_deliberation_and_lane_telemetry(tmp_path, monkeypatch):
+    cfg = _config(tmp_path)
+    # Unconfigured case contains zeroed deliberation structure
+    status = build_status(cfg)
+    assert "deliberation" in status
+    assert status["deliberation"]["total_samples"] == 0
+    assert status["deliberation"]["trigger_reasons"] == {}
+
+    # Configured runtime case with deliberation ledger in store
+    state_dir = tmp_path / "state"
+    commands_dir = state_dir / "commands"
+    cmd_dir = commands_dir / "cmd-123"
+    delib_dir = cmd_dir / "project-runtime" / "deliberation"
+    delib_dir.mkdir(parents=True)
+    ledger_file = delib_dir / "deliberation-shadow-ledger.jsonl"
+    entry = {
+        "decision_id": "dec-1",
+        "council_trigger_reason": "MATERIAL_AMBIGUITY_OR_HIGH_IMPACT",
+        "quorum_obtained": True,
+        "council_agreement": True,
+    }
+    ledger_file.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    # Mock runtime_configured and runtime_status
+    monkeypatch.setattr(control_panel, "runtime_configured", lambda c: True)
+    monkeypatch.setattr(
+        control_panel,
+        "runtime_status",
+        lambda c: {
+            "host_state": "RUNNING",
+            "runtime_v1": {
+                "runtime_state": "HEALTHY",
+                "active_commands": ["cmd-123"],
+                "waiting_commands": [],
+            },
+        },
+    )
+    # Set LOCALAPPDATA to point to tmp_path so it scans state_dir
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent))
+    fake_aos_state = tmp_path.parent / "AOS" / "runtime-v1" / "state"
+    fake_aos_state.mkdir(parents=True, exist_ok=True)
+    (fake_aos_state / "commands").mkdir(exist_ok=True)
+
+    # Point cfg runtime_root to tmp_path
+    cfg["runtime_root"] = str(tmp_path)
+    status2 = build_status(cfg)
+    assert status2["deliberation"]["total_samples"] == 1
+    assert status2["deliberation"]["quorum_count"] == 1
+    assert status2["deliberation"]["agreement_count"] == 1
+    assert status2["deliberation"]["trigger_reasons"]["MATERIAL_AMBIGUITY_OR_HIGH_IMPACT"] == 1
+
