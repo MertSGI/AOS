@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
 from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime, execute_command_on_runtime
-from aos.provenance import is_valid_full_sha, validate_exact_sha_provenance
+from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -65,6 +65,7 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
   <div class="card"><div class="label">Active Slot</div><div id="active-slot" class="value">Loading…</div></div>
   <div class="card"><div class="label">Runtime SHA</div><div id="active-sha" class="value">Loading…</div></div>
   <div class="card"><div class="label">SHA Format</div><div id="sha-format-status" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Local Git Head</div><div id="local-git-head" class="value">Loading…</div></div>
   <div class="card"><div class="label">Candidate Manifest SHA</div><div id="manifest-sha" class="value">Loading…</div></div>
   <div class="card"><div class="label">Build Source SHA</div><div id="build-sha" class="value">Loading…</div></div>
   <div class="card"><div class="label">CI Head SHA</div><div id="ci-head-sha" class="value">Loading…</div></div>
@@ -196,6 +197,7 @@ async function refreshStatus() {
     shaFormatEl.textContent = shaFormat;
     shaFormatEl.className = 'value ' + (shaFormat === 'VALID' ? 'ok' : 'danger');
 
+    document.getElementById('local-git-head').textContent = (s.local_git_head || 'UNAVAILABLE').slice(0, 12);
     document.getElementById('manifest-sha').textContent = (s.candidate_manifest_sha || 'UNAVAILABLE').slice(0, 12);
     document.getElementById('build-sha').textContent = (s.build_source_sha || 'UNAVAILABLE').slice(0, 12);
     document.getElementById('ci-head-sha').textContent = (s.ci_head_sha || 'UNAVAILABLE').slice(0, 12);
@@ -265,9 +267,10 @@ async function refreshStatus() {
     // Render Product Evidence
     const pe = s.product_evidence || {};
     let pHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
-      <div>First Mutation: <strong>${pe.first_mutation || 'NONE'}</strong></div>
-      <div>Browser Evidence: <strong>${pe.browser_evidence_status || 'NOT_EVIDENCED'}</strong></div>
-      <div>Responsive Evidence: <strong>${pe.responsive_evidence_status || 'NOT_EVIDENCED'}</strong></div>
+      <div>Workspace Productization Artifact: <strong>${pe.first_workspace_productization_artifact || 'NONE'}</strong></div>
+      <div>First User-Facing UI Mutation: <strong>${pe.first_user_facing_ui_mutation || 'NONE'}</strong></div>
+      <div>Browser Evidence: <strong>${pe.browser_evidence_status || 'AWAITING_BROWSER_SUITE_RUN'}</strong></div>
+      <div>Responsive Evidence: <strong>${pe.responsive_evidence_status || 'AWAITING_BROWSER_SUITE_RUN'}</strong></div>
     </div>`;
     document.getElementById('product-view').innerHTML = pHtml;
 
@@ -542,10 +545,33 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        # Discover authoritative git checkout explicitly (never alias manifest_sha or candidate_manifest_sha)
+        local_git_head = None
+        auth_repo_candidates = []
+        if "authoritative_repo_path" in config:
+            if config["authoritative_repo_path"]:
+                auth_repo_candidates.append(Path(config["authoritative_repo_path"]))
+        else:
+            for auth_root in config.get("authorized_roots", []):
+                auth_repo_candidates.append(Path(auth_root))
+            auth_repo_candidates.extend([
+                Path("C:/Projects/AOS-lane-b"),
+                Path("C:/Projects/AOS"),
+            ])
+        for cand in auth_repo_candidates:
+            try:
+                resolved_cand = cand.expanduser().resolve()
+                if (resolved_cand / ".git").exists():
+                    local_git_head = get_authoritative_git_head(resolved_cand)
+                    if local_git_head:
+                        break
+            except Exception:
+                continue
+
         # PROVEN requires actual successful validation across available chain, not merely format
-        if sha_format_valid and candidate_manifest_sha:
+        if sha_format_valid and candidate_manifest_sha and local_git_head:
             validation = validate_exact_sha_provenance(
-                local_git_head=candidate_manifest_sha,
+                local_git_head=local_git_head,
                 candidate_manifest_source_sha=candidate_manifest_sha,
                 runtime_source_sha=active_sha,
                 build_source_sha=build_source_sha,
@@ -564,9 +590,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 pass
 
         # Product mutations and evidence
-        first_product_mutation = relay_info.get("first_user_facing_mutation")
-        browser_evidence = relay_info.get("browser_evidence_status") or "NOT_EVIDENCED"
-        responsive_evidence = relay_info.get("responsive_evidence_status") or "NOT_EVIDENCED"
+        first_workspace_artifact = relay_info.get("first_workspace_productization_artifact") or relay_info.get("first_product_mutation")
+        first_ui_mutation = relay_info.get("first_user_facing_ui_mutation")
+        browser_evidence = relay_info.get("browser_evidence_status") or "AWAITING_BROWSER_SUITE_RUN"
+        responsive_evidence = relay_info.get("responsive_evidence_status") or "AWAITING_BROWSER_SUITE_RUN"
 
         # Alerts assessment
         alerts = []
@@ -595,6 +622,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "provenance_status": provenance_status,
             "candidate_manifest_sha": candidate_manifest_sha,
             "build_source_sha": build_source_sha,
+            "local_git_head": local_git_head,
             "ci_head_sha": None,  # Not fabricated when unavailable
             "provenance_valid": (provenance_status == "PROVEN"),
             "active_commands": active_cmds,
@@ -604,7 +632,9 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "deliberation": deliberation_metrics,
             "relay": relay_info,
             "product_evidence": {
-                "first_mutation": first_product_mutation,
+                "first_mutation": first_ui_mutation or first_workspace_artifact,
+                "first_workspace_productization_artifact": first_workspace_artifact,
+                "first_user_facing_ui_mutation": first_ui_mutation,
                 "browser_evidence_status": browser_evidence,
                 "responsive_evidence_status": responsive_evidence,
             },
@@ -643,6 +673,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "provenance_status": "UNPROVEN",
         "candidate_manifest_sha": None,
         "build_source_sha": None,
+        "local_git_head": None,
         "ci_head_sha": None,
         "provenance_valid": False,
         "active_commands": [],
@@ -658,8 +689,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "relay": {},
         "product_evidence": {
             "first_mutation": None,
-            "browser_evidence_status": "NOT_EVIDENCED",
-            "responsive_evidence_status": "NOT_EVIDENCED",
+            "first_workspace_productization_artifact": None,
+            "first_user_facing_ui_mutation": None,
+            "browser_evidence_status": "AWAITING_BROWSER_SUITE_RUN",
+            "responsive_evidence_status": "AWAITING_BROWSER_SUITE_RUN",
         },
         "alerts": [],
         "self_repair": {

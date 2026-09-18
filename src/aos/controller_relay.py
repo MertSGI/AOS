@@ -15,9 +15,10 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from aos.provenance import is_valid_full_sha, validate_exact_sha_provenance
+from aos.process_utils import run_headless
+from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 
@@ -90,9 +91,9 @@ class RelaySnapshot:
     running_lane_count: int = 0
     waiting_lane_count: int = 0
     completed_batch_delta: int = 0
-    duplicate_completed_work: int = 0
-    lost_accepted_work: int = 0
-    cross_lane_write_scope_collision: int = 0
+    duplicate_completed_work: Union[int, str] = "UNKNOWN"
+    lost_accepted_work: Union[int, str] = "UNKNOWN"
+    cross_lane_write_scope_collision: Union[int, str] = "UNKNOWN"
     council_mode: str = "SHADOW_ONLY"
     council_quality_metrics: Dict[str, Any] = field(default_factory=dict)
     human_required: bool = False
@@ -104,9 +105,11 @@ class RelaySnapshot:
     aos_heartbeat: str = "ALIVE"
     forward_progress: str = "YES"
     no_progress_reason: Optional[str] = None
+    first_workspace_productization_artifact: Optional[str] = None
+    first_user_facing_ui_mutation: Optional[str] = None
     first_user_facing_mutation: Optional[str] = None
-    browser_evidence_status: str = "NOT_EVIDENCED"
-    responsive_evidence_status: str = "NOT_EVIDENCED"
+    browser_evidence_status: str = "AWAITING_BROWSER_SUITE_RUN"
+    responsive_evidence_status: str = "AWAITING_BROWSER_SUITE_RUN"
     self_diagnosis_status: str = "SHADOW_ONLY"
     self_repair_shadow_status: str = "PREPARED"
     self_repair_eligibility: str = "ELIGIBLE_PENDING_GATE"
@@ -180,7 +183,6 @@ class ControllerRelayPublisher:
             api_pid = None
 
         # Determine provenance
-        # Determine provenance
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
         if slot_root:
@@ -201,9 +203,32 @@ class ControllerRelayPublisher:
                 except Exception:
                     pass
 
-        if is_valid_full_sha(source_sha) and manifest_sha:
+        # Discover authoritative git checkout explicitly (never alias manifest_sha or candidate_manifest_sha)
+        local_git_head = None
+        auth_repo_candidates = []
+        if "authoritative_repo_path" in self.runtime_config:
+            if self.runtime_config["authoritative_repo_path"]:
+                auth_repo_candidates.append(Path(self.runtime_config["authoritative_repo_path"]))
+        else:
+            for auth_root in self.runtime_config.get("authorized_roots", []):
+                auth_repo_candidates.append(Path(auth_root))
+            auth_repo_candidates.extend([
+                Path("C:/Projects/AOS-lane-b"),
+                Path("C:/Projects/AOS"),
+            ])
+        for cand in auth_repo_candidates:
+            try:
+                resolved_cand = cand.expanduser().resolve()
+                if (resolved_cand / ".git").exists():
+                    local_git_head = get_authoritative_git_head(resolved_cand)
+                    if local_git_head:
+                        break
+            except Exception:
+                continue
+
+        if is_valid_full_sha(source_sha) and manifest_sha and local_git_head:
             val = validate_exact_sha_provenance(
-                local_git_head=manifest_sha,
+                local_git_head=local_git_head,
                 candidate_manifest_source_sha=manifest_sha,
                 runtime_source_sha=source_sha,
                 build_source_sha=manifest_sha,
@@ -241,7 +266,8 @@ class ControllerRelayPublisher:
             "COUNCIL_PRIMARY_EXECUTION_INTERFERENCE_COUNT": 0,
         }
 
-        first_mutation = None
+        first_workspace_artifact = None
+        first_ui_mutation = None
         seen_commands: set[str] = set()
         total_batches_now = 0
         active_cmd_count = 0
@@ -291,14 +317,28 @@ class ControllerRelayPublisher:
                         waiting_lanes += 1
 
                     # Detect mutations in project workspace
+                    # Markdown status files are workspace productization artifacts, NOT user-facing UI mutations.
                     p_ws = (c_data.get("project") or {}).get("workspace")
                     mutations = 0
                     if p_ws and Path(p_ws).is_dir():
-                        mut_doc = Path(p_ws) / "visual_productization_status.md"
+                        ws_path = Path(p_ws)
+                        mut_doc = ws_path / "visual_productization_status.md"
                         if mut_doc.is_file():
                             mutations += 1
-                            if not first_mutation:
-                                first_mutation = "visual_productization_status.md written under OBJ-LARI-COMMERCIAL-DEMO-PRODUCTIZATION"
+                            if not first_workspace_artifact:
+                                first_workspace_artifact = "visual_productization_status.md"
+
+                        # Check for actual user-facing browser code (TSX/JSX/HTML/CSS/JS)
+                        ui_patterns = ("*.tsx", "*.jsx", "*.html", "*.css", "*.vue", "*.svelte")
+                        for pat in ui_patterns:
+                            for ui_file in ws_path.glob(f"**/{pat}"):
+                                if "node_modules" not in ui_file.parts and ".git" not in ui_file.parts:
+                                    mutations += 1
+                                    if not first_ui_mutation:
+                                        first_ui_mutation = ui_file.name
+                                    break
+                            if first_ui_mutation:
+                                break
 
                     lanes.append(asdict(LaneTelemetry(
                         lane_id=lane_name,
@@ -359,17 +399,29 @@ class ControllerRelayPublisher:
             batch_delta += max(0, l["completed_batches"] - prev_b)
             self._prev_completed_batches[cid] = l["completed_batches"]
 
-        forward_prog = "YES"
-        no_prog_reason = None
-        if batch_delta == 0 and running_lanes == 0:
+        # Forward progress semantics:
+        # RUNNING != meaningful progress. FORWARD_PROGRESS=YES requires an observed delta (e.g. batch_delta > 0).
+        # If workers are alive/running but no meaningful delta occurred: FORWARD_PROGRESS=NO, ACTIVE_WITHOUT_MEANINGFUL_DELTA.
+        if batch_delta > 0:
+            forward_prog = "YES"
+            no_prog_reason = None
+        else:
             forward_prog = "NO"
-            if waiting_lanes > 0:
+            if running_lanes > 0:
+                no_prog_reason = "ACTIVE_WITHOUT_MEANINGFUL_DELTA"
+            elif waiting_lanes > 0:
                 no_prog_reason = "WAITING_FOR_REASONING_PROVIDER_BACKOFF"
             else:
                 no_prog_reason = "NO_ACTIVE_RUNNING_LANES"
 
         # Truthful evaluation of human_required: only active tracked lanes can trigger intervention
         human_req = any(l.get("state") == "HUMAN_REQUIRED" for l in active_tracked_lanes)
+
+        # Integrity telemetry: read from durable ledger if available; emit "UNKNOWN" when no evidence exists.
+        # Constant zeroes are forbidden.
+        duplicate_work: Union[int, str] = "UNKNOWN"
+        lost_work: Union[int, str] = "UNKNOWN"
+        scope_collision: Union[int, str] = "UNKNOWN"
 
         return RelaySnapshot(
             schema_version=RELAY_SCHEMA_VERSION,
@@ -387,9 +439,9 @@ class ControllerRelayPublisher:
             running_lane_count=running_lanes,
             waiting_lane_count=waiting_lanes,
             completed_batch_delta=batch_delta,
-            duplicate_completed_work=0,
-            lost_accepted_work=0,
-            cross_lane_write_scope_collision=0,
+            duplicate_completed_work=duplicate_work,
+            lost_accepted_work=lost_work,
+            cross_lane_write_scope_collision=scope_collision,
             council_mode="SHADOW_ONLY",
             council_quality_metrics=delib_metrics,
             human_required=human_req,
@@ -400,8 +452,10 @@ class ControllerRelayPublisher:
             aos_heartbeat="ALIVE",
             forward_progress=forward_prog,
             no_progress_reason=no_prog_reason,
-            first_user_facing_mutation=first_mutation,
-            browser_evidence_status="INITIAL_PRODUCT_MUTATION_CAPTURED" if first_mutation else "AWAITING_BROWSER_SUITE_RUN",
+            first_workspace_productization_artifact=first_workspace_artifact,
+            first_user_facing_ui_mutation=first_ui_mutation,
+            first_user_facing_mutation=first_ui_mutation,
+            browser_evidence_status="AWAITING_BROWSER_SUITE_RUN",
             responsive_evidence_status="AWAITING_BROWSER_SUITE_RUN",
             self_diagnosis_status="SHADOW_ONLY",
             self_repair_shadow_status="PREPARED",
@@ -470,6 +524,8 @@ COMPLETED_BATCH_DELTA={snapshot.completed_batch_delta}
 {lanes_text}
 
 ### PRODUCT & VERIFICATION EVIDENCE
+FIRST_WORKSPACE_PRODUCTIZATION_ARTIFACT={snapshot.first_workspace_productization_artifact or 'NONE'}
+FIRST_USER_FACING_UI_MUTATION={snapshot.first_user_facing_ui_mutation or 'NONE'}
 FIRST_USER_FACING_MUTATION={snapshot.first_user_facing_mutation or 'NONE'}
 BROWSER_EVIDENCE_STATUS={snapshot.browser_evidence_status}
 RESPONSIVE_EVIDENCE_STATUS={snapshot.responsive_evidence_status}
@@ -586,11 +642,84 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
             return False
 
         token = self._get_github_token()
+        gh_available = False
         if not token:
-            self.remote_outbox_status = "DEGRADED_AUTH_UNAVAILABLE"
+            # Check if GitHub CLI is authenticated
+            try:
+                proc = run_headless(["gh", "auth", "status"], check=False)
+                if proc.returncode == 0:
+                    gh_available = True
+            except Exception:
+                gh_available = False
+
+        if not token and not gh_available:
+            self.remote_outbox_status = "HUMAN_REQUIRED_AUTH_SETUP"
             snapshot.remote_outbox_status = self.remote_outbox_status
             return False
 
+        # Build issue body
+        body_text = self.render_markdown(snapshot)
+        if major_gate_reason:
+            body_text = f"> [!IMPORTANT]\n> **MAJOR-GATE EVENT**: {sanitize_text(major_gate_reason)}\n\n" + body_text
+
+        # 1. Transport using gh CLI if available and no direct token
+        if gh_available and not token:
+            try:
+                if not self.remote_issue_number:
+                    proc_list = run_headless(
+                        ["gh", "issue", "list", "--repo", self.remote_repo, "--state", "open", "--json", "number,title", "--limit", "30"],
+                        check=False,
+                    )
+                    if proc_list.returncode == 0:
+                        try:
+                            items = json.loads(proc_list.stdout)
+                            for it in items:
+                                if it.get("title") == "AOS Controller Relay":
+                                    self._save_remote_issue_number(int(it["number"]))
+                                    break
+                        except Exception:
+                            pass
+
+                if not self.remote_issue_number:
+                    # Create without requiring labels
+                    proc_create = run_headless(
+                        ["gh", "issue", "create", "--repo", self.remote_repo, "--title", "AOS Controller Relay", "--body", body_text],
+                        check=False,
+                    )
+                    if proc_create.returncode == 0:
+                        # Parse URL from output to get issue number
+                        out_str = proc_create.stdout.strip()
+                        # Output format: https://github.com/MertSGI/AOS/issues/123
+                        match = re.search(r"/issues/(\d+)", out_str)
+                        if match:
+                            self._save_remote_issue_number(int(match.group(1)))
+                else:
+                    # Update issue body
+                    # gh issue edit does not accept body on stdin directly in older versions without --body
+                    run_headless(
+                        ["gh", "issue", "edit", str(self.remote_issue_number), "--repo", self.remote_repo, "--body", body_text],
+                        check=False,
+                    )
+
+                if major_gate_reason and self.remote_issue_number:
+                    comment_text = f"### Major Gate Event: {sanitize_text(major_gate_reason)}\n- Timestamp: `{snapshot.timestamp_utc}`\n- Sequence: `{snapshot.sequence_number}`\n- Runtime Slot: `{snapshot.runtime_slot}`"
+                    run_headless(
+                        ["gh", "issue", "comment", str(self.remote_issue_number), "--repo", self.remote_repo, "--body", comment_text],
+                        check=False,
+                    )
+
+                self.remote_outbox_status = "PUBLISHED"
+                snapshot.remote_outbox_status = "PUBLISHED"
+                snapshot.remote_issue_number = self.remote_issue_number
+                snapshot.last_remote_publish_at = snapshot.timestamp_utc
+                self.last_routine_remote_publish = now
+                return True
+            except Exception as exc:
+                self.remote_outbox_status = f"DEGRADED_GH_CLI_ERROR:{exc.__class__.__name__}"
+                snapshot.remote_outbox_status = self.remote_outbox_status
+                return False
+
+        # 2. Transport using GitHub REST API with sanitized token
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "AOS-Controller-Relay/1.0",
@@ -598,11 +727,6 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
             "Content-Type": "application/json",
         }
         tls_ctx = _create_tls_context()
-
-        # Build issue body
-        body_text = self.render_markdown(snapshot)
-        if major_gate_reason:
-            body_text = f"> [!IMPORTANT]\n> **MAJOR-GATE EVENT**: {sanitize_text(major_gate_reason)}\n\n" + body_text
 
         try:
             # 1. Find or create the issue if not known
@@ -621,10 +745,10 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
 
             if not self.remote_issue_number:
                 create_url = f"https://api.github.com/repos/{self.remote_repo}/issues"
+                # Do NOT require labels for initial creation
                 create_payload = {
                     "title": "AOS Controller Relay",
                     "body": body_text,
-                    "labels": ["controller-relay", "autonomous-telemetry"],
                 }
                 req = urllib.request.Request(
                     create_url,

@@ -116,7 +116,7 @@ def test_remote_outbox_auth_unavailable(tmp_path: Path, monkeypatch):
     snap = pub.collect_snapshot()
     published = pub.publish_remote(snap)
     assert not published
-    assert pub.remote_outbox_status == "DEGRADED_AUTH_UNAVAILABLE"
+    assert pub.remote_outbox_status == "HUMAN_REQUIRED_AUTH_SETUP"
 
 
 def test_remote_outbox_throttling_and_major_gate(tmp_path: Path, monkeypatch):
@@ -275,4 +275,137 @@ def test_truthful_human_required_and_lane_filtering(tmp_path: Path):
     rendered = pub.render_markdown(snap)
     assert "continue-active-lane-a" in rendered
     assert "Historical Completed/Stopped Commands" in rendered
+
+
+def test_provenance_requires_authoritative_git_head(tmp_path: Path):
+    """Matching manifest/runtime SHA cannot produce PROVEN if authoritative Git HEAD is absent or different."""
+    from aos.provenance import validate_exact_sha_provenance
+    from aos.control_panel import build_status
+
+    sha = "facd89d80e43d8e5301e212cf2438914526e48c4"
+    diff_sha = "a95f40c8e047f1e26cd4ff296c96f4303c55f382"
+
+    # 1. Authoritative Git HEAD is None -> UNPROVEN
+    res_none = validate_exact_sha_provenance(
+        local_git_head=None,
+        candidate_manifest_source_sha=sha,
+        runtime_source_sha=sha,
+        build_source_sha=sha,
+    )
+    assert res_none.valid is False
+    assert res_none.status != "PROVEN"
+
+    # 2. Authoritative Git HEAD is different -> FAIL
+    res_diff = validate_exact_sha_provenance(
+        local_git_head=diff_sha,
+        candidate_manifest_source_sha=sha,
+        runtime_source_sha=sha,
+        build_source_sha=sha,
+    )
+    assert res_diff.valid is False
+    assert res_diff.status == "FAIL"
+
+    # 3. In controller relay collect_snapshot with no git repo accessible
+    relay_dir = tmp_path / "controller-relay"
+    config = {
+        "runtime_root": str(tmp_path / "nonexistent-root"),
+        "authoritative_repo_path": str(tmp_path / "nonexistent-repo"),
+        "authorized_roots": [],
+        "candidate_source_sha": sha,
+    }
+    pub = ControllerRelayPublisher(relay_dir, config)
+    snap = pub.collect_snapshot(runtime_health_dict={"runtime_source_sha": sha, "runtime_state": "HEALTHY"})
+    # Must NOT produce PROVEN when git checkout cannot be queried
+    assert snap.provenance_status != "PROVEN"
+
+
+def test_integrity_telemetry_missing_evidence_is_unknown(tmp_path: Path):
+    """Missing integrity evidence must emit UNKNOWN, never hardcoded zero."""
+    relay_dir = tmp_path / "controller-relay"
+    config = {"runtime_root": str(tmp_path / "state")}
+    pub = ControllerRelayPublisher(relay_dir, config)
+
+    snap = pub.collect_snapshot()
+    assert snap.duplicate_completed_work == "UNKNOWN"
+    assert snap.lost_accepted_work == "UNKNOWN"
+    assert snap.cross_lane_write_scope_collision == "UNKNOWN"
+
+    md = pub.render_markdown(snap)
+    assert "DUPLICATE_COMPLETED_WORK=UNKNOWN" in md
+    assert "LOST_ACCEPTED_WORK=UNKNOWN" in md
+    assert "CROSS_LANE_WRITE_SCOPE_COLLISION=UNKNOWN" in md
+
+
+def test_product_mutation_semantics_markdown_not_ui_mutation(tmp_path: Path):
+    """visual_productization_status.md is a productization artifact, NOT a user-facing UI mutation."""
+    relay_dir = tmp_path / "controller-relay"
+    state_dir = tmp_path / "state" / "commands" / "continue-lane-a"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    ws_dir = tmp_path / "workspace"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    # Only markdown productization status written
+    (ws_dir / "visual_productization_status.md").write_text("# Visual Productization\n", encoding="utf-8")
+
+    (state_dir / "command.json").write_text(json.dumps({
+        "project": {"project_id": "lari", "workspace": str(ws_dir)}
+    }), encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps({
+        "state": "RUNNING",
+        "completed_batch_count": 1,
+    }), encoding="utf-8")
+
+    config = {"runtime_root": str(tmp_path / "state")}
+    pub = ControllerRelayPublisher(relay_dir, config)
+    snap = pub.collect_snapshot()
+
+    assert snap.first_workspace_productization_artifact == "visual_productization_status.md"
+    assert snap.first_user_facing_ui_mutation is None
+    assert snap.browser_evidence_status == "AWAITING_BROWSER_SUITE_RUN"
+    assert snap.responsive_evidence_status == "AWAITING_BROWSER_SUITE_RUN"
+
+    md = pub.render_markdown(snap)
+    assert "FIRST_WORKSPACE_PRODUCTIZATION_ARTIFACT=visual_productization_status.md" in md
+    assert "FIRST_USER_FACING_UI_MUTATION=NONE" in md
+    assert "BROWSER_EVIDENCE_STATUS=AWAITING_BROWSER_SUITE_RUN" in md
+    assert "RESPONSIVE_EVIDENCE_STATUS=AWAITING_BROWSER_SUITE_RUN" in md
+
+
+def test_forward_progress_active_without_delta(tmp_path: Path):
+    """Running workers without meaningful delta must emit FORWARD_PROGRESS=NO and ACTIVE_WITHOUT_MEANINGFUL_DELTA."""
+    relay_dir = tmp_path / "controller-relay"
+    state_dir = tmp_path / "state" / "commands" / "continue-lane-a"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    (state_dir / "command.json").write_text(json.dumps({"project": {"project_id": "lari"}}), encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps({
+        "state": "RUNNING",
+        "completed_batch_count": 10,
+    }), encoding="utf-8")
+
+    config = {"runtime_root": str(tmp_path / "state")}
+    pub = ControllerRelayPublisher(relay_dir, config)
+
+    # First cycle records completed_batches = 10
+    snap1 = pub.collect_snapshot()
+    assert snap1.forward_progress == "NO"
+    assert snap1.no_progress_reason == "ACTIVE_WITHOUT_MEANINGFUL_DELTA"
+
+    # Second cycle with no change in completed_batches
+    snap2 = pub.collect_snapshot()
+    assert snap2.running_lane_count == 1
+    assert snap2.completed_batch_delta == 0
+    assert snap2.forward_progress == "NO"
+    assert snap2.no_progress_reason == "ACTIVE_WITHOUT_MEANINGFUL_DELTA"
+
+    # Third cycle where completed_batches advances to 11
+    (state_dir / "state.json").write_text(json.dumps({
+        "state": "RUNNING",
+        "completed_batch_count": 11,
+    }), encoding="utf-8")
+    snap3 = pub.collect_snapshot()
+    assert snap3.completed_batch_delta == 1
+    assert snap3.forward_progress == "YES"
+    assert snap3.no_progress_reason is None
+
 
