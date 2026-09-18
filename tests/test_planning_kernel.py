@@ -677,6 +677,8 @@ def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_pa
 
     assert result["tasks"][0]["payload"]["cmd"][0] == "git"
     assert backend.calls == 2
+    assert "PROCESS_BINARY_RULE" in backend.requests[1].payload["prompt"]
+    assert "AVAILABLE_PROCESS_BINARIES" in backend.requests[1].payload["prompt"]
 
 
 def test_plan_compiler_repairs_invented_python_script_path(tmp_path):

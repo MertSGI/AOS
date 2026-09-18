@@ -1605,8 +1605,15 @@ def compile_execution_plan(
             if "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
                 python_guidance = (
                     "\nPYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
-                    "Python commands must specify an existing workspace-relative script path (e.g. `python path/to/script.py`), "
-                    "or if running tools/tests, use direct process binaries listed in AVAILABLE_PROCESS_BINARIES (e.g. `npx playwright test`, `npm test`, `git status`)."
+                    "Python commands may ONLY invoke an existing workspace-relative script path (e.g. `python path/to/script.py`). "
+                    "For all other execution, you MUST use ONLY the exact binaries present in AVAILABLE_PROCESS_BINARIES (e.g. git). "
+                    "Never plan npm, npx, or node if they are not listed in AVAILABLE_PROCESS_BINARIES."
+                )
+            elif "process binary is unavailable in runtime environment" in validation_error:
+                python_guidance = (
+                    f"\nPROCESS_BINARY_RULE: The requested binary is unavailable on this host. "
+                    f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
+                    "Do not plan tasks for npm, npx, node, or any binary not in that list."
                 )
             attempt_prompt += (
                 "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
