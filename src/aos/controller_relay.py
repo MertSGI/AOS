@@ -180,6 +180,7 @@ class ControllerRelayPublisher:
             api_pid = None
 
         # Determine provenance
+        # Determine provenance
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
         if slot_root:
@@ -220,9 +221,12 @@ class ControllerRelayPublisher:
                 store_roots.append(base_p)
             elif (base_p / "state" / "commands").is_dir():
                 store_roots.append(base_p / "state")
-        local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
-        if (local_app_state / "commands").is_dir() and local_app_state not in store_roots:
-            store_roots.append(local_app_state)
+            else:
+                store_roots.append(base_p)
+        if not store_roots:
+            local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
+            if (local_app_state / "commands").is_dir():
+                store_roots.append(local_app_state)
 
         lanes: List[Dict[str, Any]] = []
         deliberation_samples = 0
@@ -330,8 +334,22 @@ class ControllerRelayPublisher:
                     except Exception:
                         pass
 
-        # Sort lanes deterministically
-        lanes.sort(key=lambda x: x["lane_id"])
+        # Sort lanes deterministically: active/running/recovering first, then by lane_id
+        def lane_sort_key(x: Dict[str, Any]) -> tuple:
+            # Active/recovering/waiting lanes come before terminal ones
+            is_active = x["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED")
+            return (0 if is_active else 1, x["lane_id"], x["command_id"])
+
+        lanes.sort(key=lane_sort_key)
+
+        # Active tracked lanes (non-terminal)
+        active_tracked_lanes = [
+            l for l in lanes
+            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED")
+        ]
+        if not active_tracked_lanes and lanes:
+            # Fallback to all lanes if all are terminal
+            active_tracked_lanes = lanes
 
         # Calculate forward progress and delta
         batch_delta = 0
@@ -349,6 +367,9 @@ class ControllerRelayPublisher:
                 no_prog_reason = "WAITING_FOR_REASONING_PROVIDER_BACKOFF"
             else:
                 no_prog_reason = "NO_ACTIVE_RUNNING_LANES"
+
+        # Truthful evaluation of human_required: only active tracked lanes can trigger intervention
+        human_req = any(l.get("state") == "HUMAN_REQUIRED" for l in active_tracked_lanes)
 
         return RelaySnapshot(
             schema_version=RELAY_SCHEMA_VERSION,
@@ -371,7 +392,7 @@ class ControllerRelayPublisher:
             cross_lane_write_scope_collision=0,
             council_mode="SHADOW_ONLY",
             council_quality_metrics=delib_metrics,
-            human_required=any(l.get("state") == "HUMAN_REQUIRED" for l in lanes),
+            human_required=human_req,
             production="NO_GO",
             provenance_status=prov_status,
             remote_outbox_status=self.remote_outbox_status,
@@ -391,14 +412,30 @@ class ControllerRelayPublisher:
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
         """Render operator-readable LATEST.md strictly from durable snapshot."""
-        lane_summaries = []
+        # Highlight active/tracked lanes prominently
+        active_lines = []
+        history_lines = []
         for l in snapshot.lanes:
-            lane_summaries.append(
+            line = (
                 f"- **{l['lane_id']}** (`{l['project_id']}`): State `{l['state']}`, "
                 f"Batches `{l['completed_batches']}`, Attempts `{l['attempts']}`, "
                 f"Worker PID `{l['worker_pid'] or 'NONE'}`, Command `{l['command_id']}`"
             )
-        lanes_text = "\n".join(lane_summaries) if lane_summaries else "No active lanes detected."
+            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED"):
+                active_lines.append(line)
+            else:
+                history_lines.append(line)
+
+        if active_lines:
+            lanes_text = "\n".join(active_lines)
+            if history_lines:
+                lanes_text += f"\n\n<details><summary>Historical Completed/Stopped Commands ({len(history_lines)})</summary>\n\n"
+                lanes_text += "\n".join(history_lines)
+                lanes_text += "\n\n</details>"
+        elif history_lines:
+            lanes_text = "\n".join(history_lines)
+        else:
+            lanes_text = "No active lanes detected."
 
         md = f"""# AOS Controller Relay
 
@@ -468,54 +505,54 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
 
     def publish_local(self, snapshot: RelaySnapshot, is_checkpoint: bool = False) -> None:
         """Atomically replace LATEST.md and LATEST.json, and append to events.jsonl."""
-        self.local_relay_dir.mkdir(parents=True, exist_ok=True)
+        md_content = self.render_markdown(snapshot)
+        json_content = json.dumps(asdict(snapshot), indent=2, ensure_ascii=False)
 
-        # Check for stale relay writer protection
-        json_path = self.local_relay_dir / "LATEST.json"
-        if json_path.is_file():
-            try:
-                curr = read_json(json_path, {})
-                curr_writer = curr.get("writer", "")
-                curr_seq = int(curr.get("sequence_number", 0))
-                # Reject if older sequence from fallback writer attempting to overwrite AOS
-                if snapshot.writer == "AG_FALLBACK" and curr_writer == "AOS" and snapshot.sequence_number <= curr_seq:
-                    return
-            except Exception:
-                pass
+        # Atomic write LATEST.md
+        latest_md = self.local_relay_dir / "LATEST.md"
+        latest_json = self.local_relay_dir / "LATEST.json"
+
+        # Concurrency safety: check sequence in existing json if present
+        existing_json = read_json(latest_json, {})
+        existing_writer = existing_json.get("writer", "")
+        existing_seq = int(existing_json.get("sequence_number", 0) or 0)
+
+        # Reject out-of-order writes from fallback writers if native AOS already wrote newer
+        if existing_writer == "AOS" and snapshot.writer != "AOS" and snapshot.sequence_number <= existing_seq:
+            return
 
         # 1. Atomic LATEST.json
         data_dict = asdict(snapshot)
-        atomic_json(json_path, data_dict)
+        atomic_json(latest_json, data_dict)
 
         # 2. Atomic LATEST.md
-        md_path = self.local_relay_dir / "LATEST.md"
-        tmp_md = md_path.with_suffix(".tmp")
-        rendered_md = self.render_markdown(snapshot)
+        tmp_md = latest_md.with_suffix(".tmp")
         with open(tmp_md, "w", encoding="utf-8", newline="\n") as f:
-            f.write(rendered_md)
+            f.write(md_content)
             f.flush()
             os.fsync(f.fileno())
         for attempt in range(8):
             try:
-                os.replace(tmp_md, md_path)
+                os.replace(tmp_md, latest_md)
                 break
             except PermissionError:
                 if os.name != "nt" or attempt == 7:
                     raise
-                time.sleep(0.05)
+                time.sleep(min(0.05 * (2 ** attempt), 0.5))
 
-        # 3. Append to events.jsonl
+        # Append structured event log
         events_file = self.local_relay_dir / "events.jsonl"
         event_entry = {
+            "timestamp": snapshot.timestamp_utc,
             "sequence_number": snapshot.sequence_number,
-            "timestamp_utc": snapshot.timestamp_utc,
             "event_type": "CHECKPOINT" if is_checkpoint else "HEARTBEAT",
+            "writer": snapshot.writer,
             "runtime_health": snapshot.runtime_health,
-            "runtime_slot": snapshot.runtime_slot,
-            "runtime_source_sha": snapshot.runtime_source_sha,
-            "lanes": [{k: l[k] for k in ("lane_id", "state", "completed_batches", "attempts")} for l in snapshot.lanes],
+            "provenance_status": snapshot.provenance_status,
+            "active_command_count": snapshot.active_command_count,
+            "running_lane_count": snapshot.running_lane_count,
             "human_required": snapshot.human_required,
-            "production": snapshot.production,
+            "remote_outbox_status": snapshot.remote_outbox_status,
         }
         with open(events_file, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(event_entry, ensure_ascii=False) + "\n")
@@ -570,7 +607,7 @@ SELF_REPAIR_REQUIRED_EVIDENCE={snapshot.self_repair_required_evidence}
         try:
             # 1. Find or create the issue if not known
             if not self.remote_issue_number:
-                search_url = f"https://api.github.com/repos/{self.remote_repo}/issues?state=open&creator=@me"
+                search_url = f"https://api.github.com/repos/{self.remote_repo}/issues?state=open"
                 req = urllib.request.Request(search_url, headers=headers, method="GET")
                 try:
                     with urllib.request.urlopen(req, context=tls_ctx, timeout=15) as resp:

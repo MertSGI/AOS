@@ -236,3 +236,43 @@ def test_operations_console_status(tmp_path: Path):
     assert "self_repair" in status
     assert status["self_repair"]["self_diagnosis_status"] == "SHADOW_ONLY"
     assert status["self_repair"]["self_repair_live_active"] is False
+
+
+def test_truthful_human_required_and_lane_filtering(tmp_path: Path):
+    relay_dir = tmp_path / "controller-relay"
+    state_dir = tmp_path / "state" / "commands"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    # Historical terminal command with HUMAN_REQUIRED
+    hist_dir = state_dir / "continue-hist-terminal"
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    (hist_dir / "command.json").write_text(json.dumps({"project": {"project_id": "lari"}}), encoding="utf-8")
+    (hist_dir / "state.json").write_text(json.dumps({
+        "state": "HUMAN_REQUIRED",
+        "completed_batch_count": 5,
+        "attempts": 10,
+    }), encoding="utf-8")
+
+    # Active running command
+    active_dir = state_dir / "continue-active-lane-a"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    (active_dir / "command.json").write_text(json.dumps({"project": {"project_id": "lari"}}), encoding="utf-8")
+    (active_dir / "state.json").write_text(json.dumps({
+        "state": "RUNNING",
+        "completed_batch_count": 12,
+        "attempts": 15,
+    }), encoding="utf-8")
+
+    config = {"runtime_root": str(tmp_path / "state")}
+    pub = ControllerRelayPublisher(relay_dir, config)
+    snap = pub.collect_snapshot()
+
+    # Truthful check: active lane is RUNNING, historical terminal command must NOT cause human_required=True
+    assert snap.human_required is False
+    assert snap.running_lane_count == 1
+    assert snap.active_command_count == 1
+
+    rendered = pub.render_markdown(snap)
+    assert "continue-active-lane-a" in rendered
+    assert "Historical Completed/Stopped Commands" in rendered
+
