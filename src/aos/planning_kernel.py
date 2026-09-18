@@ -1714,6 +1714,9 @@ def compile_execution_plan(
                 raise PlanningKernelError(
                     "Execution plan contains only generic environment readiness checks and does not advance product work"
                 )
+            resolver = CanonicalAuthorityResolver(situation)
+            for task in normalized["tasks"]:
+                resolver.validate_task(task)
             break
         except PlanningKernelError as exc:
             validation_error = redact_secrets(str(exc))[:500]
@@ -1732,9 +1735,6 @@ def compile_execution_plan(
 
     if normalized is None:  # pragma: no cover - loop either succeeds or raises
         raise PlanningKernelError("Execution plan validation did not produce a plan")
-    resolver = CanonicalAuthorityResolver(situation)
-    for task in normalized["tasks"]:
-        resolver.validate_task(task)
     _shadow_deliberate(
         runtime_dir,
         situation,

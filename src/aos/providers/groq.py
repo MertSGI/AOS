@@ -101,6 +101,15 @@ def project_groq_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return projected
 
 
+def _sanitize_planner_output(data: Any) -> Any:
+    """Recursively strip explicit nulls from dictionaries where properties are optional strings/objects."""
+    if isinstance(data, dict):
+        return {k: _sanitize_planner_output(v) for k, v in data.items() if v is not None}
+    if isinstance(data, list):
+        return [_sanitize_planner_output(item) for item in data]
+    return data
+
+
 class GroqPlannerProvider:
     """PlannerProvider adapter for Groq using the OpenAI-compatible API."""
 
@@ -192,6 +201,8 @@ class GroqPlannerProvider:
             parsed_decision = json.loads(content_str)
         except Exception as e:
             raise PlannerContractError(f"Groq output is not valid JSON: {e}") from e
+
+        parsed_decision = _sanitize_planner_output(parsed_decision)
 
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:

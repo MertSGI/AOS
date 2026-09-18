@@ -550,3 +550,47 @@ def test_opt_in_nemotron_policy_router_selection(monkeypatch):
     assert res is not None
     assert res.selected_provider_id == "nemotron"
     assert res.selected_model_id == "nvidia/nemotron-3-ultra-550b-a55b"
+
+
+# 14. Pruning Explicit Nulls in Optional Schema Properties
+def test_nemotron_null_property_pruning(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+
+    schema = {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+            "name": {"type": "string"},
+            "optional_str": {"type": "string"},
+            "optional_obj": {"type": "object", "properties": {"nested": {"type": "string"}}},
+        },
+    }
+
+    # Model returns explicit null for optional properties
+    raw_content = json.dumps({
+        "name": "test_task",
+        "optional_str": None,
+        "optional_obj": None,
+    })
+
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = raw_content
+    mock_choice.message.refusal = None
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.id = "resp-123"
+    mock_response.usage = None
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        result, resp_id, usage = provider.generate_plan("prompt", schema)
+
+    assert result == {"name": "test_task"}
+    assert "optional_str" not in result
+    assert "optional_obj" not in result
+

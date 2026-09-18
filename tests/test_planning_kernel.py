@@ -1176,3 +1176,99 @@ def test_canonical_authority_resolver_accepts_hyphenated_sub_lane_project_id():
     # Should not raise AuthorityDenied because 'LARI' in repo_tokens matches 'LARI' in authority text
     resolver.validate_task(task)
 
+
+def test_compile_execution_plan_authority_rejection_triggers_repair(tmp_path):
+    sit = _situation()
+    obj = Objective(
+        objective_id="OBJ-TEST",
+        title="Test Objective",
+        description="Test description",
+        authority_id="DECISION-020",
+        risk_class="R0",
+        rationale="Test rationale",
+        scope_tags=("phase-2-7",),
+        completion_criteria=("Test criteria",),
+        parallel_candidates=(),
+    )
+
+    attempts = 0
+
+    class MockBackend:
+        def execute(self, request):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                # First proposal emits task with dangerous pattern (e.g. force push in payload)
+                plan = {
+                    "schema_version": "1.0.0",
+                    "objective_id": "OBJ-TEST",
+                    "parallel_safe_groups": [["t1"]],
+                    "rollback_strategy": "revert",
+                    "tasks": [{
+                        "node_id": "t1",
+                        "run_type": "FILE",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": True,
+                        "dependencies": [],
+                        "scope_tags": ["phase-2-7"],
+                        "write_scope": ["SECURITY_TODO.md"],
+                        "payload": {
+                            "action": "apply_patch",
+                            "patch": "--- a/SECURITY_TODO.md\n+++ b/SECURITY_TODO.md\n@@\n-old\n+force-push",
+                        },
+                        "expected_artifacts": ["SECURITY_TODO.md"],
+                        "tests": [],
+                        "evidence_requirements": [],
+                        "completion_criteria": [],
+                    }],
+                }
+            else:
+                # Corrected proposal in repair attempt
+                plan = {
+                    "schema_version": "1.0.0",
+                    "objective_id": "OBJ-TEST",
+                    "parallel_safe_groups": [["t1"]],
+                    "rollback_strategy": "revert",
+                    "tasks": [{
+                        "node_id": "t1",
+                        "run_type": "FILE",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": True,
+                        "dependencies": [],
+                        "scope_tags": ["phase-2-7"],
+                        "write_scope": ["SECURITY_TODO.md"],
+                        "payload": {
+                            "action": "apply_patch",
+                            "patch": "--- a/SECURITY_TODO.md\n+++ b/SECURITY_TODO.md\n@@\n-old\n+safe-update",
+                        },
+                        "expected_artifacts": ["SECURITY_TODO.md"],
+                        "tests": [],
+                        "evidence_requirements": [],
+                        "completion_criteria": [],
+                    }],
+                }
+            res = SimpleNamespace(
+                status="SUCCESS",
+                evidence_payload={"proposal": plan},
+            )
+            return res
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    plan = compile_execution_plan(
+        sit,
+        obj,
+        policy_path,
+        tmp_path,
+        backend_override=MockBackend(),
+        batch_number=1,
+    )
+
+    assert attempts == 2
+    assert plan["tasks"][0]["node_id"] == "t1"
+    assert "safe-update" in plan["tasks"][0]["payload"]["patch"]
+
+

@@ -39,6 +39,20 @@ def project_nemotron_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return projected
 
 
+def _sanitize_planner_output(data: Any) -> Any:
+    """Recursively strip explicit nulls from dictionaries where properties are optional strings/objects.
+    
+    Nemotron structured output can emit explicit `null` for optional schema properties
+    (e.g. `precondition_sha: null` in FILE payloads) where the canonical schema specifies type `string`.
+    Pruning explicit nulls restores canonical schema compatibility without losing semantics.
+    """
+    if isinstance(data, dict):
+        return {k: _sanitize_planner_output(v) for k, v in data.items() if v is not None}
+    if isinstance(data, list):
+        return [_sanitize_planner_output(item) for item in data]
+    return data
+
+
 NEMOTRON_MAX_OUTPUT_TOKENS = 2200
 NEMOTRON_PLAN_MAX_OUTPUT_TOKENS = 3200
 NEMOTRON_OBJECTIVE_MAX_OUTPUT_TOKENS = 1000
@@ -172,6 +186,8 @@ class NemotronPlannerProvider:
             parsed_decision = json.loads(content_str)
         except Exception as e:
             raise PlannerContractError(f"Nemotron output is not valid JSON: {e}") from e
+
+        parsed_decision = _sanitize_planner_output(parsed_decision)
 
         # Local schema validation fail-closed (JSON parse alone is NOT schema validation)
         validator = Draft202012Validator(schema, format_checker=FormatChecker())
