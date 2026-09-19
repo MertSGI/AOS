@@ -67,6 +67,7 @@ class LaneTelemetry:
     completed_batches: int = 0
     current_batch: int = 0
     attempts: int = 0
+    worker_execution_attempt_count: int = 0
     last_meaningful_progress_at: Optional[str] = None
     current_blocker: Optional[str] = None
     provider_backoff: bool = False
@@ -123,12 +124,16 @@ class RelaySnapshot:
     last_autonomy_impact: str = "NONE"
     shadow_repair_proposal_status: str = "NONE"
     healthy_reasoning_provider_count: int = 0
+    probe_eligible_reasoning_provider_count: int = 0
+    unknown_reasoning_provider_count: int = 0
     provider_circuits_open: int = 0
     next_provider_probe_at: Optional[float] = None
     last_provider_success: Optional[str] = None
     all_reasoning_providers_unavailable: str = "NO"
     provider_probe_count: int = 0
     provider_failover_count: int = 0
+    provider_details: List[Dict[str, Any]] = field(default_factory=list)
+    current_selected_reasoning_provider: Optional[str] = None
 
 
 class ControllerRelayPublisher:
@@ -388,6 +393,7 @@ class ControllerRelayPublisher:
                         completed_batches=batches,
                         current_batch=batches + 1,
                         attempts=attempts,
+                        worker_execution_attempt_count=attempts,
                         last_meaningful_progress_at=s_data.get("updated_at"),
                         current_blocker=s_data.get("disposition") if state_str == "WAITING_FOR_REASONING_PROVIDER" else None,
                         provider_backoff=backoff,
@@ -577,12 +583,16 @@ class ControllerRelayPublisher:
             last_autonomy_impact=diag_summary.get("last_autonomy_impact", "NONE"),
             shadow_repair_proposal_status=diag_summary.get("shadow_repair_proposal_status", "NONE"),
             healthy_reasoning_provider_count=int(rh.get("healthy_reasoning_provider_count", 0) or 0),
+            probe_eligible_reasoning_provider_count=int(rh.get("probe_eligible_reasoning_provider_count", 0) or 0),
+            unknown_reasoning_provider_count=int(rh.get("unknown_reasoning_provider_count", 0) or 0),
             provider_circuits_open=int(rh.get("provider_circuits_open", 0) or 0),
             next_provider_probe_at=rh.get("next_provider_probe_at"),
             last_provider_success=rh.get("last_provider_success"),
             all_reasoning_providers_unavailable="YES" if rh.get("all_reasoning_providers_unavailable") else "NO",
             provider_probe_count=int(rh.get("provider_probe_count", 0) or 0),
             provider_failover_count=int(rh.get("provider_failover_count", 0) or 0),
+            provider_details=list(rh.get("provider_details", []) or []),
+            current_selected_reasoning_provider=rh.get("current_selected_reasoning_provider"),
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -676,12 +686,16 @@ LAST_REMOTE_PUBLISH_AT={snapshot.last_remote_publish_at or 'NONE'}
 
 ### REASONING PROVIDERS & CIRCUIT BREAKERS
 HEALTHY_REASONING_PROVIDER_COUNT={snapshot.healthy_reasoning_provider_count}
+PROBE_ELIGIBLE_REASONING_PROVIDER_COUNT={snapshot.probe_eligible_reasoning_provider_count}
+UNKNOWN_REASONING_PROVIDER_COUNT={snapshot.unknown_reasoning_provider_count}
 PROVIDER_CIRCUITS_OPEN={snapshot.provider_circuits_open}
 ALL_REASONING_PROVIDERS_UNAVAILABLE={snapshot.all_reasoning_providers_unavailable}
 NEXT_PROVIDER_PROBE_AT={snapshot.next_provider_probe_at or 'NONE'}
 LAST_PROVIDER_SUCCESS={snapshot.last_provider_success or 'NONE'}
 PROVIDER_PROBE_COUNT={snapshot.provider_probe_count}
 PROVIDER_FAILOVER_COUNT={snapshot.provider_failover_count}
+CURRENT_SELECTED_REASONING_PROVIDER={snapshot.current_selected_reasoning_provider or 'NONE'}
+PROVIDER_DETAILS_JSON={json.dumps(snapshot.provider_details, sort_keys=True)}
 
 ### SELF-REPAIR OBSERVABILITY (SHADOW ONLY)
 SELF_DIAGNOSIS_STATUS={snapshot.self_diagnosis_status}

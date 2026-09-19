@@ -101,20 +101,26 @@ def _model_for(policy: Dict[str, Any], provider_id: str) -> Optional[str]:
 def _classify(exc: Exception) -> str:
     text = str(exc).lower()
     if isinstance(exc, PlannerCredentialError):
-        return "UNAVAILABLE"
+        return "CREDENTIAL_UNAVAILABLE"
     if isinstance(exc, PlannerContractError):
-        return "NON_RETRYABLE_FAILED"
+        return "CONTRACT_FAILURE"
+    if any(token in text for token in ("401", "403", "unauthorized", "invalid api key", "authentication")):
+        return "AUTH_FAILURE"
     if isinstance(exc, PlannerTransientError):
-        if any(token in text for token in ("429", "quota", "rate limit", "resource_exhausted")):
+        if "quota" in text or "resource_exhausted" in text:
             return "QUOTA_EXHAUSTED"
+        if "429" in text or "rate limit" in text:
+            return "RATE_LIMITED"
+        if any(token in text for token in ("capacity", "500", "502", "503", "504", "overloaded")):
+            return "SERVER_CAPACITY"
         if "timeout" in text:
-            return "TIMED_OUT"
-        return "RETRYABLE_FAILED"
+            return "TIMEOUT"
+        return "NETWORK_UNAVAILABLE"
     if isinstance(exc, (ConnectionError, urllib.error.URLError, OSError)):
-        return "UNAVAILABLE"
+        return "NETWORK_UNAVAILABLE"
     if isinstance(exc, TimeoutError):
-        return "TIMED_OUT"
-    return "NON_RETRYABLE_FAILED"
+        return "TIMEOUT"
+    return "UNKNOWN"
 
 
 def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
@@ -131,7 +137,7 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             "structured_contract": "FAIL",
             "response_id": None,
             "latency_ms": None,
-            "failure_class": "UNAVAILABLE" if not credential_present else None,
+            "failure_class": "CREDENTIAL_UNAVAILABLE" if not credential_present else None,
             "evidence_class": "NOT_PROVEN",
         }
         model = _model_for(policy, provider_id)
@@ -148,7 +154,7 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             row["response_id"] = str(response_id)[:160] if response_id else None
             provenance = getattr(provider, "execution_provenance", "UNKNOWN")
             row["evidence_class"] = "LIVE_EXTERNAL_PROOF" if provenance == "LIVE_EXTERNAL" else "LOCAL_RUNTIME_PROOF"
-            row["failure_class"] = None if row["structured_contract"] == "PASS" else "NON_RETRYABLE_FAILED"
+            row["failure_class"] = None if row["structured_contract"] == "PASS" else "CONTRACT_FAILURE"
         except Exception as exc:
             row["latency_ms"] = int((time.monotonic() - started) * 1000)
             row["failure_class"] = _classify(exc)
@@ -276,3 +282,61 @@ def run_sanitized_probe(policy_path: Path) -> Dict[str, Any]:
         }
     finally:
         _restore_provider_env(snapshot)
+
+
+def probe_enabled_providers(policy_path: Path) -> Dict[str, Dict[str, Any]]:
+    """Run one bounded synthetic live cycle for providers enabled by policy.
+
+    The returned mapping contains only sanitized operational fields. Raw model
+    responses, response identifiers, prompts, and credentials are deliberately
+    excluded so callers can safely persist it in command-local circuit state.
+    """
+    policy = _load_policy(policy_path)
+    configured = policy.get("providers", {})
+    enabled = [
+        str(provider_id)
+        for provider_id, cfg in configured.items()
+        if isinstance(cfg, dict) and cfg.get("enabled") is True
+    ] if isinstance(configured, dict) else []
+    raw = run_sanitized_probe(policy_path)
+    matrix = raw.get("provider_runtime_matrix", {})
+    local = raw.get("local_reasoning", {})
+    observed_at = str(raw.get("timestamp") or _dt.datetime.now(_dt.timezone.utc).isoformat())
+    results: Dict[str, Dict[str, Any]] = {}
+    for provider_id in enabled:
+        cfg = configured.get(provider_id, {})
+        is_local = str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL"
+        if is_local:
+            available = bool(local.get("service_available"))
+            passed = bool(local.get("structured_output_compatible"))
+            results[provider_id] = {
+                "provider_id": provider_id,
+                "credential_available": None,
+                "local_service_available": available,
+                "probe_attempted": available,
+                "probe_status": "PASS" if passed else ("FAIL" if available else "NOT_ATTEMPTED"),
+                "failure_class": None if passed else "LOCAL_MODEL_UNAVAILABLE",
+                "last_observed_at": observed_at,
+                "latency_ms": None,
+            }
+            continue
+
+        row = matrix.get(provider_id, {}) if isinstance(matrix, dict) else {}
+        credential_available = row.get("credential_present") == "YES"
+        attempted = credential_available and row.get("connectivity") != "NOT_PROBED"
+        passed = (
+            row.get("connectivity") == "PASS"
+            and row.get("structured_contract") == "PASS"
+            and row.get("evidence_class") == "LIVE_EXTERNAL_PROOF"
+        )
+        results[provider_id] = {
+            "provider_id": provider_id,
+            "credential_available": credential_available,
+            "local_service_available": None,
+            "probe_attempted": attempted,
+            "probe_status": "PASS" if passed else ("FAIL" if attempted else "NOT_ATTEMPTED"),
+            "failure_class": None if passed else (row.get("failure_class") or "UNKNOWN"),
+            "last_observed_at": observed_at,
+            "latency_ms": row.get("latency_ms"),
+        }
+    return results

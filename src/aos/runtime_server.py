@@ -31,7 +31,9 @@ from aos.runtime_contract import (
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
 from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
 from aos.controller_relay import ControllerRelayPublisher
-from aos.provider_circuit import ProviderCircuitBreakerRegistry
+from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
+from aos.provider_probe import probe_enabled_providers
+from aos.secure_store import provider_presence
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -106,6 +108,122 @@ class RuntimeEngine:
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-api-{os.getpid()}")
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)
         self.recovery_thread.start()
+        self.probe_thread = threading.Thread(
+            target=self._run_live_probe_cycle,
+            name="aos-runtime-provider-probe",
+            daemon=True,
+        )
+        self.probe_thread.start()
+
+    @staticmethod
+    def _enabled_from_policy(policy_path: Path) -> list[str]:
+        try:
+            value = json.loads(policy_path.read_text(encoding="utf-8"))
+            providers = value.get("providers", {}) if isinstance(value, dict) else {}
+            return [
+                str(provider_id)
+                for provider_id, provider in providers.items()
+                if isinstance(provider, dict) and provider.get("enabled") is True
+            ]
+        except (OSError, ValueError, json.JSONDecodeError):
+            return []
+
+    def _provider_evidence(self) -> tuple[list[str], list[Path], list[ProviderCircuitBreakerRegistry]]:
+        """Discover the exact command-local registries used by active/waiting workers."""
+        enabled: list[str] = []
+        paths: list[Path] = []
+        registries: list[ProviderCircuitBreakerRegistry] = []
+        for command_id in self.store.list_command_ids()[-200:]:
+            state = self.store.read_state(command_id)
+            if str(state.get("state") or "") not in (
+                "QUEUED", "RUNNING", "RECOVERING", "WAITING_FOR_REASONING_PROVIDER"
+            ):
+                continue
+            command = self.store.read_command(command_id)
+            policy_value = (command.get("project") or {}).get("routing_policy_path")
+            if policy_value:
+                for provider_id in self._enabled_from_policy(Path(str(policy_value))):
+                    if provider_id not in enabled:
+                        enabled.append(provider_id)
+            path = self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+            paths.append(path)
+            registries.append(ProviderCircuitBreakerRegistry(path))
+
+        # Before a command exists, configured project policies still define the
+        # enabled set. They do not create provider health evidence.
+        if not enabled:
+            for project in (self.config.get("projects") or {}).values():
+                policy_value = project.get("routing_policy_path") if isinstance(project, dict) else None
+                if policy_value:
+                    for provider_id in self._enabled_from_policy(Path(str(policy_value))):
+                        if provider_id not in enabled:
+                            enabled.append(provider_id)
+        return enabled, paths, registries
+
+    def _run_live_probe_cycle(self) -> None:
+        """Perform one sanitized activation probe and wake same waiting lineages."""
+        try:
+            targets: Dict[str, Dict[str, Any]] = {}
+            for command_id in self.store.list_command_ids()[-200:]:
+                state = self.store.read_state(command_id)
+                if str(state.get("state") or "") not in (
+                    "QUEUED", "RUNNING", "RECOVERING", "WAITING_FOR_REASONING_PROVIDER"
+                ):
+                    continue
+                command = self.store.read_command(command_id)
+                policy_value = (command.get("project") or {}).get("routing_policy_path")
+                if not policy_value:
+                    continue
+                policy_path = Path(str(policy_value))
+                key = str(policy_path.resolve())
+                targets.setdefault(key, {"path": policy_path, "commands": []})["commands"].append(command_id)
+
+            any_success = False
+            for target in targets.values():
+                results = probe_enabled_providers(target["path"])
+                any_success = any_success or any(
+                    row.get("probe_status") == "PASS" for row in results.values()
+                )
+                for command_id in target["commands"]:
+                    registry = ProviderCircuitBreakerRegistry(
+                        self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+                    )
+                    for provider_id, row in results.items():
+                        if row.get("probe_attempted"):
+                            registry.record_probe(provider_id)
+                        common = {
+                            "observed_at": row.get("last_observed_at"),
+                            "probe_status": str(row.get("probe_status") or "UNKNOWN"),
+                            "latency_ms": row.get("latency_ms"),
+                            "credential_available": row.get("credential_available"),
+                            "local_service_available": row.get("local_service_available"),
+                        }
+                        if row.get("probe_status") == "PASS":
+                            registry.record_success(provider_id, **common)
+                        else:
+                            registry.record_failure(
+                                provider_id,
+                                str(row.get("failure_class") or "UNKNOWN"),
+                                **common,
+                            )
+                    self.store.append_event(command_id, "provider.activation_probe_completed", {
+                        "providers": list(results.values()),
+                        "secrets_exposed": False,
+                    })
+
+            if any_success:
+                for command_id in self.store.list_command_ids()[-200:]:
+                    state = self.store.read_state(command_id)
+                    if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
+                        continue
+                    self.store.write_state(command_id, retry_after_epoch=0)
+                    self.store.append_event(command_id, "provider.healthy_alternate_wake", {
+                        "lineage_preserved": True,
+                        "command_id": command_id,
+                    })
+        except Exception:
+            # Probe telemetry is fail-safe and must never terminate the runtime API.
+            return
 
     def _normalize_project(self, project_id: Optional[str]) -> ProjectProfile:
         profile = resolve_project(self.config, project_id)
@@ -248,16 +366,32 @@ class RuntimeEngine:
                 "failure_class": latest_state.get("failure_class"),
                 "canonical_source_sha": latest_state.get("canonical_source_sha"),
             }
-        # Query circuit breaker registry from durable state
-        circuit_file = self.runtime_root / "provider-circuits.json"
-        if not circuit_file.exists():
-            for pid in (self.config.get("projects") or {}).keys():
-                cand = self.runtime_root / "projects" / pid / "provider-circuits.json"
-                if cand.exists():
-                    circuit_file = cand
-                    break
-        circuit_reg = ProviderCircuitBreakerRegistry(circuit_file)
-        circuit_summary = circuit_reg.summarize()
+        # Aggregate the same command-local registries workers persist. No global
+        # provider registry is created or consulted.
+        enabled_providers, circuit_paths, registries = self._provider_evidence()
+        circuit_reg = ProviderCircuitBreakerRegistry.aggregate_registries(
+            registries,
+            enabled_providers=enabled_providers,
+        )
+        circuit_summary = circuit_reg.summarize(enabled_providers)
+        presence = provider_presence()
+        credential_status = {
+            "nemotron": bool(presence.get("NVIDIA")),
+            "gemini": bool(presence.get("GEMINI")),
+            "groq": bool(presence.get("GROQ")),
+        }
+        provider_details = circuit_reg.per_provider_details(enabled_providers, credential_status)
+        for row in provider_details:
+            row["provider_id"] = row.pop("provider")
+            row["probe_attempted"] = bool(row.get("probe_count"))
+            row["failure_class"] = row.get("last_failure_class")
+        healthy = [row for row in provider_details if row.get("circuit_state") == CircuitState.CLOSED.value]
+        selected_provider = None
+        if healthy:
+            selected_provider = max(
+                healthy,
+                key=lambda row: str(row.get("last_success_at") or ""),
+            ).get("provider_id")
         return {
             "contract_version": CONTRACT_VERSION,
             "runtime_state": "HEALTHY",
@@ -279,12 +413,19 @@ class RuntimeEngine:
             "production": "NO_GO",
             "ag_backend_enabled": False,
             "healthy_reasoning_provider_count": circuit_summary["healthy_reasoning_provider_count"],
+            "probe_eligible_reasoning_provider_count": circuit_summary["probe_eligible_reasoning_provider_count"],
+            "unknown_reasoning_provider_count": circuit_summary["unknown_reasoning_provider_count"],
             "provider_circuits_open": circuit_summary["provider_circuits_open"],
             "all_reasoning_providers_unavailable": circuit_summary["all_reasoning_providers_unavailable"],
             "next_provider_probe_at": circuit_summary["next_provider_probe_at"],
             "last_provider_success": circuit_summary["last_provider_success"],
             "provider_probe_count": circuit_summary["provider_probe_count"],
             "provider_failover_count": circuit_summary["provider_failover_count"],
+            "provider_details": provider_details,
+            "enabled_reasoning_providers": enabled_providers,
+            "healthy_reasoning_providers": [row["provider_id"] for row in healthy],
+            "current_selected_reasoning_provider": selected_provider,
+            "provider_circuit_registry_paths": [str(path) for path in circuit_paths],
         }
 
     def pause_safe(self) -> Dict[str, Any]:
@@ -347,6 +488,7 @@ class RuntimeEngine:
     def shutdown(self) -> None:
         self.stop_event.set()
         self.recovery_thread.join(timeout=3.0)
+        self.probe_thread.join(timeout=3.0)
 
 
 class RuntimeHandler(BaseHTTPRequestHandler):

@@ -586,7 +586,7 @@ def test_plan_compiler_provider_wait_resumes_exact_bound_validation_repair(tmp_p
     assert "VALIDATION_REPAIR_REQUIRED" not in context_changed_backend.requests[0].payload["prompt"]
 
 
-def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_path):
+def test_exhausted_plan_validation_replans_without_claiming_provider_outage(tmp_path):
     invalid = _plan()
     invalid["tasks"][0]["payload"] = {"cmd": ["python", "-m", "pytest"]}
     backend = QueueBackend([_objective(), invalid, invalid])
@@ -606,9 +606,10 @@ def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_pat
     checkpoint = json.loads(
         (tmp_path / "runtime" / "planning-kernel-checkpoint.json").read_text(encoding="utf-8")
     )
-    assert result["disposition"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
     assert result["reason"].startswith("PLANNER_VALIDATION_REPAIR_EXHAUSTED:")
-    assert checkpoint["phase"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert checkpoint["phase"] == "BOUNDED_RUN_EXHAUSTED"
+    assert checkpoint["replan_reason"].startswith("PLANNER_VALIDATION_REPAIR_EXHAUSTED:")
     assert backend.calls == 3
     assert executed == []
     assert not (tmp_path / "runtime" / "batches" / "batch-0000" / "generated-run-plan.json").exists()
@@ -618,7 +619,7 @@ def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_pat
     assert repair_artifact["status"] == "EXHAUSTED"
 
     # Subsequent retry does not lock into repair mode since status is EXHAUSTED
-    retry_backend = QueueBackend([_plan()])
+    retry_backend = QueueBackend([_objective(), _plan()])
     retry_result = run_autonomous_project(
         descriptor_path=tmp_path / "descriptor.json",
         workspace=tmp_path,
@@ -630,7 +631,7 @@ def test_exhausted_plan_validation_waits_without_executing_invalid_tasks(tmp_pat
         max_batches=1,
     )
     assert retry_result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
-    assert "VALIDATION_REPAIR_REQUIRED" not in retry_backend.requests[0].payload["prompt"]
+    assert "VALIDATION_REPAIR_REQUIRED" not in retry_backend.requests[1].payload["prompt"]
 
 
 def test_plan_compiler_repairs_python_inline_execution_with_guidance(tmp_path):
@@ -1297,5 +1298,4 @@ def test_compile_execution_plan_authority_rejection_triggers_repair(tmp_path):
     assert attempts == 2
     assert plan["tasks"][0]["node_id"] == "t1"
     assert "safe-update" in plan["tasks"][0]["payload"]["patch"]
-
 

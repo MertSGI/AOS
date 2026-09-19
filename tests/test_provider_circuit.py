@@ -138,6 +138,30 @@ def test_nemotron_plus_gemini_failures_fall_through_to_groq(tmp_path):
     assert registry.get_circuit("groq").circuit_state == CircuitState.CLOSED.value
 
 
+def test_provider_contract_failure_falls_through_to_healthy_alternate(tmp_path):
+    calls = []
+
+    class ContractFailureProvider(_MockProvider):
+        def generate_plan(self, prompt, schema):
+            raise PlannerContractError("synthetic structured contract failure")
+
+    def factory(provider_id, model_id):
+        calls.append(provider_id)
+        return ContractFailureProvider(provider_id) if provider_id == "nemotron" else _MockProvider(provider_id)
+
+    registry = ProviderCircuitBreakerRegistry(tmp_path / "circuits.json")
+    backend = ProviderFailoverReasoningBackend(
+        ProviderRouter(ProviderRegistry(_policy())),
+        provider_factory=factory,
+        attempt_journal=tmp_path / "attempts.jsonl",
+        circuit_registry=registry,
+    )
+    result = backend.execute(_make_request(tmp_path))
+    assert result.status == "SUCCESS"
+    assert calls == ["nemotron", "gemini"]
+    assert registry.get_circuit("nemotron").last_failure_class == "CONTRACT_FAILURE"
+
+
 def test_cloud_failures_fall_through_to_approved_ollama(tmp_path):
     calls = []
 

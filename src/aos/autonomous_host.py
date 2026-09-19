@@ -151,9 +151,9 @@ def _bounded_error_message(exc: Exception) -> str:
 class ProviderFailoverReasoningBackend(ExecutionBackend):
     """Model reasoning backend with real post-invocation provider failover.
 
-    Failover is allowed only for transient / unavailable / credential / quota /
-    timeout classes. Contract/schema/security failures fail closed and are never
-    routed around.
+    Provider-scoped connectivity, credential, capacity, quota, timeout, and
+    structured-contract failures route to the next policy-approved provider in
+    the same request. Unknown/security failures remain fail-closed.
     """
 
     backend_id = "provider_failover_reasoning_backend"
@@ -265,52 +265,41 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     evidence_class=evidence_class,
                 )
             except PlannerContractError as exc:
-                attempt = ProviderAttempt(
-                    provider_id=provider_id,
-                    model_id=model_id,
-                    status=ProviderAttemptStatus.NON_RETRYABLE_FAILED,
-                    error_class=exc.__class__.__name__,
-                    message=_bounded_error_message(exc),
-                    timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                )
-                attempts.append(attempt)
-                self._record_attempt(attempt)
-                return ExecutionResult(
-                    backend_id=self.backend_id,
-                    worker_id="model_reasoner",
-                    task_id=request.task_id,
-                    request_id=request.request_id,
-                    status="FAILED",
-                    exit_code=1,
-                    workspace=request.workspace,
-                    sanitized_errors=["PROVIDER_CONTRACT_FAILURE"],
-                    evidence_payload={
-                        "failure_class": "PROVIDER_CONTRACT_FAILURE",
-                        "provider_attempts": [item.to_dict() for item in attempts],
-                    },
-                    evidence_class=EvidenceClass.SOURCE_PROOF,
-                )
+                status = ProviderAttemptStatus.NON_RETRYABLE_FAILED
+                error_class = "CONTRACT_FAILURE"
+                message = None
+                failure_class = "CONTRACT_FAILURE"
             except PlannerCredentialError as exc:
                 status = ProviderAttemptStatus.UNAVAILABLE
-                error_class = exc.__class__.__name__
-                message = _bounded_error_message(exc)
+                error_class = "CREDENTIAL_UNAVAILABLE"
+                message = None
+                failure_class = "CREDENTIAL_UNAVAILABLE"
             except PlannerTransientError as exc:
                 raw = str(exc).upper()
-                status = (
-                    ProviderAttemptStatus.QUOTA_EXHAUSTED
-                    if "RATE_LIMIT" in raw or "429" in raw or "QUOTA" in raw
-                    else ProviderAttemptStatus.RETRYABLE_FAILED
-                )
-                error_class = exc.__class__.__name__
-                message = _bounded_error_message(exc)
+                if "QUOTA" in raw or "RESOURCE_EXHAUSTED" in raw:
+                    status = ProviderAttemptStatus.QUOTA_EXHAUSTED
+                    failure_class = "QUOTA_EXHAUSTED"
+                elif "RATE_LIMIT" in raw or "RATE LIMIT" in raw or "429" in raw:
+                    status = ProviderAttemptStatus.RETRYABLE_FAILED
+                    failure_class = "RATE_LIMITED"
+                elif any(code in raw for code in ("CAPACITY", "500", "502", "503", "504", "OVERLOAD")):
+                    status = ProviderAttemptStatus.RETRYABLE_FAILED
+                    failure_class = "SERVER_CAPACITY"
+                else:
+                    status = ProviderAttemptStatus.RETRYABLE_FAILED
+                    failure_class = "NETWORK_UNAVAILABLE"
+                error_class = failure_class
+                message = None
             except TimeoutError as exc:
                 status = ProviderAttemptStatus.TIMED_OUT
-                error_class = exc.__class__.__name__
-                message = _bounded_error_message(exc)
+                error_class = "TIMEOUT"
+                message = None
+                failure_class = "TIMEOUT"
             except (ConnectionError, OSError) as exc:
                 status = ProviderAttemptStatus.UNAVAILABLE
-                error_class = exc.__class__.__name__
-                message = _bounded_error_message(exc)
+                failure_class = "LOCAL_MODEL_UNAVAILABLE" if provider_id == "ollama" else "NETWORK_UNAVAILABLE"
+                error_class = failure_class
+                message = None
             except Exception as exc:
                 # Unknown errors are not safe to route around.
                 attempt = ProviderAttempt(
@@ -350,7 +339,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             attempts.append(attempt)
             self._record_attempt(attempt)
             if self.circuit_registry is not None:
-                self.circuit_registry.record_failure(provider_id, status.value)
+                self.circuit_registry.record_failure(provider_id, failure_class)
                 self.circuit_registry.record_probe(provider_id)
             failed_provider = provider_id
 

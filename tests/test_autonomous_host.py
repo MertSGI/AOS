@@ -113,7 +113,7 @@ def test_exhausted_transient_providers_preserve_waiting_failure_class(tmp_path):
     ]
 
 
-def test_contract_failure_is_not_routed_around(tmp_path):
+def test_provider_contract_failure_routes_through_authorized_chain(tmp_path):
     calls = []
 
     def factory(provider_id, model_id):
@@ -124,9 +124,9 @@ def test_contract_failure_is_not_routed_around(tmp_path):
         ProviderRouter(ProviderRegistry(_policy())), provider_factory=factory
     )
     result = backend.execute(_request(tmp_path))
-    assert result.status == "FAILED"
-    assert calls == ["nemotron"]
-    assert result.evidence_payload["failure_class"] == "PROVIDER_CONTRACT_FAILURE"
+    assert result.status == "DEGRADED"
+    assert calls == ["nemotron", "gemini", "groq", "ollama"]
+    assert result.evidence_payload["failure_class"] == "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"
     assert result.evidence_payload["provider_attempts"][0]["status"] == ProviderAttemptStatus.NON_RETRYABLE_FAILED.value
 
 

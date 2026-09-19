@@ -198,9 +198,110 @@ class RuntimeSupervisor:
         self.last_health: Optional[Dict[str, Any]] = None
         self.launch_nonce: Optional[str] = None
         self.runtime_api_pid: Optional[int] = None
+        self.panel_child: Optional[subprocess.Popen] = None
+        self.panel_api_pid: Optional[int] = None
         self.singleton_name = str(self.config.get("singleton_name") or r"Local\AOS.RuntimeV1.Supervisor")
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-supervisor-{os.getpid()}")
+
+    def _panel_paths(self) -> tuple[Path, Path, Path]:
+        base = self.config_path.parent
+        runtime_config = Path(self.config.get("runtime_config_path") or (base / "runtime-config.json"))
+        host_config = Path(self.config.get("panel_host_config_path") or (base / "control-panel-host-config.json"))
+        panel_config = Path(self.config.get("panel_config_path") or (base / "control-panel-config.json"))
+        return runtime_config, host_config, panel_config
+
+    def _ensure_panel_configs(self) -> tuple[Path, Path]:
+        runtime_config_path, host_config_path, panel_config_path = self._panel_paths()
+        runtime_config = read_json(runtime_config_path, {})
+        projects = runtime_config.get("projects", {}) if isinstance(runtime_config, dict) else {}
+        default_id = runtime_config.get("default_project")
+        default_project = projects.get(default_id, {}) if isinstance(projects, dict) else {}
+        atomic_json(host_config_path, {
+            "schema_version": "1.0.0",
+            "production": "NO_GO",
+            "ag_backend_enabled": False,
+            "authorized_roots": runtime_config.get("authorized_roots") or [str(base)],
+            "runtime_root": runtime_config.get("runtime_root") or str(base / "state"),
+            "runtime_api_url": f"http://127.0.0.1:{int(runtime_config.get('port', 8770))}",
+            "runtime_token_path": runtime_config.get("runtime_token_path") or str(base / "runtime-api.token"),
+            "default_project": default_project,
+            "authoritative_repo_path": runtime_config.get("authoritative_repo_path", "C:/Projects/AOS-lane-b"),
+        })
+        if not panel_config_path.exists():
+            atomic_json(panel_config_path, {
+                "schema_version": "1.0.0",
+                "production": "NO_GO",
+                "ag_backend_enabled": False,
+                "bind_host": "127.0.0.1",
+                "port": 8765,
+            })
+        return host_config_path, panel_config_path
+
+    def _panel_health(self) -> Optional[Dict[str, Any]]:
+        url = str(self.config.get("panel_health_url") or "http://127.0.0.1:8765/health")
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json", "User-Agent": "AOS-Supervisor/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=2.0) as response:
+                value = json.loads(response.read().decode("utf-8"))
+            if (
+                isinstance(value, dict)
+                and value.get("contract_version") == CONTRACT_VERSION
+                and value.get("panel_state") == "HEALTHY"
+                and value.get("bind_host") == "127.0.0.1"
+            ):
+                return value
+        except Exception:
+            pass
+        return None
+
+    def _ensure_panel(self, source_sha: Optional[str]) -> bool:
+        if self.config.get("panel_enabled", True) is not True:
+            return False
+        health = self._panel_health()
+        if isinstance(health, dict):
+            try:
+                owner = int(health.get("supervisor_pid"))
+                panel_pid = int(health.get("pid"))
+            except (TypeError, ValueError):
+                owner = panel_pid = -1
+            if owner == os.getpid() and panel_pid > 0:
+                self.panel_api_pid = panel_pid
+                return True
+            if owner > 0 and not pid_alive(owner) and panel_pid > 0:
+                _terminate_pid(panel_pid)
+
+        if self.panel_child is not None and self.panel_child.poll() is None:
+            return False
+        host_config, panel_config = self._ensure_panel_configs()
+        env = dict(os.environ)
+        env.update({
+            "AOS_PANEL_SUPERVISOR_PID": str(os.getpid()),
+            "AOS_RUNTIME_SOURCE_SHA": source_sha or "",
+            "AG_BACKEND_ENABLED": "FALSE",
+        })
+        self.panel_child = popen_headless(
+            [
+                sys.executable,
+                "-m",
+                "aos.control_panel",
+                "--host-config",
+                str(host_config),
+                "--panel-config",
+                str(panel_config),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            detached=True,
+            env=env,
+        )
+        self.panel_api_pid = None
+        return False
 
     def _write_state(self, **updates: Any) -> Dict[str, Any]:
         state = read_json(self.state_path, {})
@@ -361,6 +462,7 @@ class RuntimeSupervisor:
 
             if self._healthy(slot):
                 self.failures = 0
+                panel_healthy = self._ensure_panel(slot.source_sha)
                 if slot.kind == "runtime_v1" and pointer.get("active") == "candidate":
                     self.slots.mark_candidate_healthy()
                 observed = self.last_health or {}
@@ -377,6 +479,10 @@ class RuntimeSupervisor:
                     observed_launch_nonce=observed.get("runtime_launch_nonce"),
                     launch_nonce=self.launch_nonce,
                     singleton_held=True,
+                    panel_state="HEALTHY" if panel_healthy else "STARTING",
+                    panel_pid=self.panel_api_pid,
+                    panel_url="http://127.0.0.1:8765",
+                    panel_owner="AOS",
                 )
                 try:
                     self.publisher.emit_cycle(runtime_health_dict=observed, supervisor_pid=os.getpid())

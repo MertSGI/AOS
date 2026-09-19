@@ -65,6 +65,8 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
   <div class="card"><div class="label">Host</div><div id="host" class="value">Loading…</div></div>
   <div class="card"><div class="label">Active Slot</div><div id="active-slot" class="value">Loading…</div></div>
   <div class="card"><div class="label">Runtime SHA</div><div id="active-sha" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Supervisor PID</div><div id="supervisor-pid" class="value">Loading…</div></div>
+  <div class="card"><div class="label">Runtime API PID</div><div id="runtime-pid" class="value">Loading…</div></div>
   <div class="card"><div class="label">SHA Format</div><div id="sha-format-status" class="value">Loading…</div></div>
   <div class="card"><div class="label">Local Git Head</div><div id="local-git-head" class="value">Loading…</div></div>
   <div class="card"><div class="label">Candidate Manifest SHA</div><div id="manifest-sha" class="value">Loading…</div></div>
@@ -193,6 +195,8 @@ async function refreshStatus() {
     document.getElementById('host').className = 'value ' + ((s.host_state||'').includes('HOLD') ? 'hold' : 'ok');
     document.getElementById('active-slot').textContent = (s.active_slot || 'NONE').slice(0, 32);
     document.getElementById('active-sha').textContent = (s.active_sha || 'NONE').slice(0, 12);
+    document.getElementById('supervisor-pid').textContent = (s.runtime_v1 || {}).runtime_supervisor_pid || 'NONE';
+    document.getElementById('runtime-pid').textContent = (s.runtime_v1 || {}).pid || 'NONE';
     const shaFormat = s.sha_format_status || 'INVALID';
     const shaFormatEl = document.getElementById('sha-format-status');
     shaFormatEl.textContent = shaFormat;
@@ -216,7 +220,7 @@ async function refreshStatus() {
       document.getElementById('lanes-view').innerHTML = '<em>No active autonomous lanes currently running.</em>';
     } else {
       let html = '<table style="width:100%; border-collapse:collapse; text-align:left;">';
-      html += '<tr style="color:#9eabb7; border-bottom:1px solid #2b333c;"><th style="padding:6px;">Lane / Project</th><th>Command ID</th><th>State / Disposition</th><th>Batches</th><th>Attempts</th><th>Updated</th></tr>';
+      html += '<tr style="color:#9eabb7; border-bottom:1px solid #2b333c;"><th style="padding:6px;">Lane / Project</th><th>Command ID</th><th>State / Disposition</th><th>Batches</th><th>Worker Attempts</th><th>Progress</th></tr>';
       for (const k of laneKeys) {
         const item = lanes[k];
         const stateColor = (item.state === 'RUNNING' || item.state === 'EXECUTING') ? '#74d99f' : ((item.state||'').includes('WAITING') ? '#f0b66c' : '#e8edf2');
@@ -225,9 +229,14 @@ async function refreshStatus() {
           <td><small>${(item.command_id||'').slice(0, 24)}</small></td>
           <td style="color:${stateColor}">${item.state || 'UNKNOWN'}</td>
           <td>${item.completed_batches ?? 0}</td>
-          <td>${item.attempts ?? 0}</td>
-          <td><small>${(item.updated_at||'').slice(11, 19)}Z</small></td>
-        </tr>`;
+          <td>${item.worker_execution_attempt_count ?? item.attempts ?? 0}</td>
+          <td><small>${(item.last_meaningful_progress_at||'NONE').slice(0, 19)}</small></td>
+        </tr>
+        <tr style="border-bottom:1px solid #2b333c;"><td colspan="6" style="padding:4px 8px 10px 8px;color:#9eabb7">
+          Objective: <strong>${item.current_objective || 'UNKNOWN'}</strong> · Phase: <strong>${item.current_planning_phase || 'UNKNOWN'}</strong> · Current batch: <strong>${item.current_batch ?? 0}</strong><br>
+          Current task: <strong>${item.current_task || 'NONE'}</strong> · Last completed: <strong>${item.most_recent_completed_task || 'NONE'}</strong><br>
+          Next action: ${item.canonical_next_action || 'UNKNOWN'}<br>Blocker: <strong>${item.current_blocker || 'NONE'}</strong>
+        </td></tr>`;
       }
       html += '</table>';
       document.getElementById('lanes-view').innerHTML = html;
@@ -268,17 +277,19 @@ async function refreshStatus() {
     // Render Product Evidence
     const pe = s.product_evidence || {};
     let pHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+      <div>Meaningful Batch Delta: <strong class="${(pe.meaningful_batch_delta || 0) > 0 ? 'ok' : 'danger'}">${pe.meaningful_batch_delta ?? 0}</strong></div>
       <div>Workspace Productization Artifact: <strong>${pe.first_workspace_productization_artifact || 'NONE'}</strong></div>
       <div>First User-Facing UI Mutation: <strong>${pe.first_user_facing_ui_mutation || 'NONE'}</strong></div>
       <div>Browser Evidence: <strong>${pe.browser_evidence_status || 'AWAITING_BROWSER_SUITE_RUN'}</strong></div>
       <div>Responsive Evidence: <strong>${pe.responsive_evidence_status || 'AWAITING_BROWSER_SUITE_RUN'}</strong></div>
+      <div>Tests / CI State: <strong>${JSON.stringify(pe.tests_ci_state || {})}</strong></div>
     </div>`;
     document.getElementById('product-view').innerHTML = pHtml;
 
     // Render Alerts
     const alerts = s.alerts || [];
     if (alerts.length === 0) {
-      document.getElementById('alerts-view').innerHTML = '<span class="ok">✓ All health invariants normal. Zero alerts.</span>';
+      document.getElementById('alerts-view').innerHTML = '<span>No active findings; product progress and provider evidence are shown independently.</span>';
     } else {
       document.getElementById('alerts-view').innerHTML = alerts.map(a => `<div style="color:#f0b66c; margin-bottom:4px;">⚠ ${a}</div>`).join('');
     }
@@ -316,9 +327,21 @@ async function refreshStatus() {
     }
     document.getElementById('self-repair-view').innerHTML = srHtml;
 
-    const p = s.providers || {};
-    document.getElementById('providers').textContent =
-      ['NVIDIA','GEMINI','GROQ','OPENAI','OLLAMA'].map(k => `${k}: ${p[k] ? 'ready' : 'not ready'}`).join(' · ');
+    const providerRows = s.provider_details || [];
+    if (providerRows.length === 0) {
+      document.getElementById('providers').textContent = 'No enabled reasoning provider evidence available.';
+    } else {
+      let ph = '<table style="width:100%;border-collapse:collapse;text-align:left"><tr><th>Provider</th><th>Credential / Local</th><th>Probe</th><th>Circuit</th><th>Last success</th><th>Failure</th><th>Next probe</th></tr>';
+      for (const row of providerRows) {
+        const availability = row.credential_available === null || row.credential_available === undefined
+          ? `local=${row.local_service_available === true ? 'YES' : 'NO'}`
+          : `credential=${row.credential_available ? 'YES' : 'NO'}`;
+        const color = row.circuit_state === 'CLOSED' ? '#74d99f' : (row.circuit_state === 'UNKNOWN' ? '#f0b66c' : '#e06c75');
+        ph += `<tr style="border-top:1px solid #2b333c"><td>${row.provider_id}</td><td>${availability}</td><td>${row.probe_status || 'NOT_ATTEMPTED'}</td><td style="color:${color}">${row.circuit_state}</td><td>${row.last_success_at || 'NONE'}</td><td>${row.failure_class || 'NONE'}</td><td>${row.next_probe_at || 'NONE'}</td></tr>`;
+      }
+      ph += '</table>';
+      document.getElementById('providers').innerHTML = ph;
+    }
     const d = s.default_project || {};
     if (!document.getElementById('goal-descriptor').value && d.descriptor_path) document.getElementById('goal-descriptor').value = d.descriptor_path;
     if (!document.getElementById('goal-workspace').value && d.workspace) document.getElementById('goal-workspace').value = d.workspace;
@@ -448,6 +471,44 @@ def _provider_presence() -> Dict[str, bool]:
     return result
 
 
+def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, Any]) -> Dict[str, Any]:
+    runtime = command_root / "project-runtime"
+    checkpoint = _read_json(runtime / "planning-kernel-checkpoint.json", {})
+    batch_number = int(checkpoint.get("batch_number", state.get("completed_batch_count", 0)) or 0)
+    objective = checkpoint.get("objective") if isinstance(checkpoint.get("objective"), dict) else {}
+    objective_files = sorted(runtime.glob("objective-*.json"))
+    if not objective and objective_files:
+        objective = _read_json(objective_files[-1], {})
+    situation_files = sorted(runtime.glob("situation-*.json"))
+    situation = _read_json(situation_files[-1], {}) if situation_files else {}
+    plan = _read_json(runtime / "batches" / f"batch-{batch_number:04d}" / "generated-run-plan.json", {})
+    tasks = plan.get("tasks", []) if isinstance(plan.get("tasks"), list) else []
+    last_receipt = checkpoint.get("last_receipt", {}) if isinstance(checkpoint.get("last_receipt"), dict) else {}
+    completed_ids = [str(item) for item in last_receipt.get("completed_task_ids", [])]
+    current_task = next(
+        (str(task.get("node_id")) for task in tasks if str(task.get("node_id")) not in completed_ids),
+        None,
+    )
+    completed_batches = checkpoint.get("completed_batches", []) if isinstance(checkpoint.get("completed_batches"), list) else []
+    progress_timestamps = [
+        str((item.get("receipt") or {}).get("timestamp"))
+        for item in completed_batches
+        if isinstance(item, dict) and isinstance(item.get("receipt"), dict) and (item.get("receipt") or {}).get("timestamp")
+    ]
+    return {
+        "current_objective": objective.get("title") or objective.get("objective_id") or command.get("goal"),
+        "current_planning_phase": checkpoint.get("phase") or state.get("state"),
+        "current_batch": batch_number,
+        "current_task": current_task,
+        "most_recent_completed_task": completed_ids[-1] if completed_ids else None,
+        "canonical_next_action": situation.get("canonical_next_action"),
+        "last_meaningful_progress_at": max(progress_timestamps) if progress_timestamps else None,
+        "current_blocker": checkpoint.get("reason") if str(state.get("state", "")).startswith("WAITING") else state.get("failure_class"),
+        "last_accepted_milestone": completed_ids[-1] if completed_ids else None,
+        "tests_ci_state": situation.get("ci_state"),
+    }
+
+
 def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
     provider = str(payload.get("provider", "")).strip().upper()
     action = str(payload.get("action", "save")).strip().lower()
@@ -529,9 +590,11 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                             "disposition": cmd_state.get("disposition"),
                             "completed_batches": int(cmd_state.get("completed_batch_count", 0) or 0),
                             "attempts": int(cmd_state.get("attempts", 0) or 0),
+                            "worker_execution_attempt_count": int(cmd_state.get("attempts", 0) or 0),
                             "retry_after_epoch": cmd_state.get("retry_after_epoch"),
                             "updated_at": cmd_state.get("updated_at"),
                             "canonical_source_sha": cmd_state.get("canonical_source_sha"),
+                            **_command_work(store.command_dir(cid), cmd_state, cmd_data),
                         }
                 # Aggregate deliberation shadow metrics from store commands
                 for ledger in (root / "commands").glob("*/project-runtime/deliberation/deliberation-shadow-ledger.jsonl"):
@@ -640,6 +703,26 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             alerts.append("PROVIDER_DEGRADATION: Lane currently in provider backoff")
         if diag_summary.get("blocking_finding_count", 0) > 0:
             alerts.append(f"SELF_DIAGNOSIS_BLOCKING: {diag_summary['blocking_finding_count']} blocking finding(s) detected")
+        baseline_by_command = {
+            "continue-b181ddc574c25c2aa0f2a6b9": 25,
+            "continue-61be4ab1af53cfa646d773ce": 18,
+        }
+        product_delta_by_lane = {
+            lane.get("command_id"): max(
+                0,
+                int(lane.get("completed_batches", 0) or 0) - baseline_by_command.get(lane.get("command_id"), int(lane.get("completed_batches", 0) or 0)),
+            )
+            for lane in lanes_detail.values()
+        }
+        meaningful_batch_delta = sum(product_delta_by_lane.values())
+        if any(command_id in active_cmds + waiting_cmds for command_id in baseline_by_command) and meaningful_batch_delta == 0:
+            alerts.append("NO MEANINGFUL PRODUCT PROGRESS")
+        for row in runtime_v1.get("provider_details", []) or []:
+            if row.get("circuit_state") != "CLOSED":
+                alerts.append(
+                    f"PROVIDER_{str(row.get('provider_id', 'unknown')).upper()}={row.get('circuit_state', 'UNKNOWN')}:"
+                    f"{row.get('failure_class') or 'NO_LIVE_SUCCESS'}"
+                )
 
         return {
             "schema_version": "1.0.0",
@@ -649,6 +732,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "production": "NO_GO",
             "ag_backend_enabled": False,
             "providers": providers,
+            "provider_details": runtime_v1.get("provider_details", []),
             "default_project": config.get("default_project", {}),
             "runtime_v1": runtime_v1,
             "active_slot": active_slot,
@@ -672,6 +756,11 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 "first_user_facing_ui_mutation": first_ui_mutation,
                 "browser_evidence_status": browser_evidence,
                 "responsive_evidence_status": responsive_evidence,
+                "meaningful_batch_delta": meaningful_batch_delta,
+                "meaningful_batch_delta_by_command": product_delta_by_lane,
+                "tests_ci_state": {
+                    key: value.get("tests_ci_state") for key, value in lanes_detail.items()
+                },
             },
             "alerts": alerts,
             "self_repair": {
@@ -837,6 +926,19 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/health":
+            self._json(HTTPStatus.OK, {
+                "contract_version": "1.0.0",
+                "panel_state": "HEALTHY",
+                "pid": os.getpid(),
+                "supervisor_pid": os.environ.get("AOS_PANEL_SUPERVISOR_PID"),
+                "runtime_source_sha": os.environ.get("AOS_RUNTIME_SOURCE_SHA"),
+                "bind_host": "127.0.0.1",
+                "production": "NO_GO",
+                "owner": "AOS",
+                "ag_required": False,
+            })
+            return
         if parsed.path == "/":
             html = _HTML.replace("__AOS_TOKEN_JSON__", json.dumps(self.token))
             self._html(html)

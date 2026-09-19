@@ -151,7 +151,10 @@ SITE=r'{candidate_root}\\site'
 os.environ['PYTHONPATH']=SITE+os.pathsep+os.environ.get('PYTHONPATH','')
 sys.path.insert(0,SITE)
 from aos.control_panel import main
-raise SystemExit(main(['--config','C:\\\\Users\\\\mozcelikbas\\\\AppData\\\\Local\\\\AOS\\\\runtime-v1\\\\control-panel-config.json']))
+raise SystemExit(main([
+    '--host-config','C:\\\\Users\\\\mozcelikbas\\\\AppData\\\\Local\\\\AOS\\\\runtime-v1\\\\control-panel-host-config.json',
+    '--panel-config','C:\\\\Users\\\\mozcelikbas\\\\AppData\\\\Local\\\\AOS\\\\runtime-v1\\\\control-panel-config.json'
+]))
 """
     (candidate_root / "launch_panel.py").write_text(panel_code, encoding="utf-8")
 

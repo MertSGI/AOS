@@ -2221,12 +2221,25 @@ def run_autonomous_project(
                 workspace=workspace,
                 batch_number=batch_number,
             )
-        except (WaitingForReasoningProvider, PlannerValidationExhausted) as exc:
+        except WaitingForReasoningProvider as exc:
             result = _final_result(
                 situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
                 recent_receipt, runtime_dir,
             )
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
+            return result
+        except PlannerValidationExhausted as exc:
+            # A provider successfully returned structured output, but that plan
+            # failed local validation. This is not provider unavailability and
+            # must not open a provider-wait/respawn loop. End the bounded cycle
+            # with explicit replan context; a continuous worker fresh-selects an
+            # objective on its next cycle while preserving command lineage.
+            result = _final_result(
+                situation, batch_number, completed_batches, "BOUNDED_RUN_EXHAUSTED", str(exc),
+                recent_receipt, runtime_dir,
+            )
+            result["replan_reason"] = str(exc)
+            _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
             return result
         except (HumanRequired, AuthorityDenied, CanonicalDrift) as exc:
             result = _final_result(
