@@ -92,7 +92,7 @@ def test_finding_deduplication_and_persistence(tmp_path: Path):
     assert f1.recurrence_count == 1
     initial_id = f1.finding_id
 
-    # 2. Record same symptom again (same component + failure_class + symptom)
+    # 2. Record same symptom again (same component + failure_class + symptom inside unresolved episode)
     f2 = engine1.record_or_update_finding(
         component="test_component",
         failure_class="TEST_FAILURE",
@@ -107,20 +107,22 @@ def test_finding_deduplication_and_persistence(tmp_path: Path):
         repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
     )
     assert f2.finding_id == initial_id
-    assert f2.recurrence_count == 2
+    # Inside the same unresolved episode, recurrence_count does NOT inflate
+    assert f2.recurrence_count == 1
 
     # 3. Simulate process restart: instantiate new engine pointing to same directory
     engine2 = SelfDiagnosisEngine(diag_root)
     summary = engine2.summarize_status()
     assert summary["active_finding_count"] == 1
-    assert summary["recurring_finding_count"] == 1
+    assert summary["new_finding_count"] == 1
+    assert summary["recurring_finding_count"] == 0
     assert summary["last_finding_id"] == initial_id
     assert summary["last_failure_class"] == "TEST_FAILURE"
 
     # Verify get_finding
     finding_dict = engine2.get_finding(initial_id)
     assert finding_dict is not None
-    assert finding_dict["recurrence_count"] == 2
+    assert finding_dict["recurrence_count"] == 1
     assert finding_dict["finding_id"] == initial_id
 
 
@@ -253,3 +255,217 @@ def test_0c_user_facing_ui_mutation_requires_git_diff(tmp_path: Path):
 
         # Touchless App.tsx must NOT be reported as first_user_facing_ui_mutation
         assert snap.first_user_facing_ui_mutation is None
+
+
+def test_diagnosis_does_not_run_on_every_heartbeat_poll(tmp_path: Path):
+    """Section 1: Self-diagnosis must NOT execute on every supervisor/relay poll."""
+    relay_dir = tmp_path / "controller-relay"
+    config = {"runtime_root": str(tmp_path / "state")}
+    pub = ControllerRelayPublisher(relay_dir, config)
+
+    # Mock diagnose_runtime to count calls
+    call_count = 0
+    orig_diagnose = pub.diagnostics.diagnose_runtime
+
+    def mock_diagnose(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return orig_diagnose(*args, **kwargs)
+
+    pub.diagnostics.diagnose_runtime = mock_diagnose
+
+    # First poll: initial diagnosis executes
+    pub.collect_snapshot()
+    assert call_count == 1
+
+    # Second and third heartbeat polls with identical telemetry: diagnosis must NOT re-execute
+    pub.collect_snapshot()
+    pub.collect_snapshot()
+    assert call_count == 1
+
+    # Now simulate a meaningful event: lane state transition
+    state_dir = tmp_path / "state" / "commands" / "continue-lane-a"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "command.json").write_text(json.dumps({
+        "project": {"project_id": "lari", "workspace": str(tmp_path / "ws")}
+    }), encoding="utf-8")
+    (state_dir / "state.json").write_text(json.dumps({
+        "state": "WAITING_FOR_REASONING_PROVIDER",
+        "completed_batch_count": 0,
+    }), encoding="utf-8")
+
+    # State transition triggers diagnosis
+    pub.collect_snapshot()
+    assert call_count == 2
+
+
+def test_recurrence_episode_and_reconciliation(tmp_path: Path):
+    """Sections 2 & 3: Recurrence count represents new episode; reconciliation confirmation resolves defect."""
+    diag_root = tmp_path / "self-diagnosis"
+    engine = SelfDiagnosisEngine(diag_root)
+
+    # 1. Observation 1: new finding created with recurrence_count=1
+    f1 = engine.record_or_update_finding(
+        component="test_worker",
+        failure_class="RUNTIME_PROCESS_FAILURE",
+        symptom="Worker segfault on init",
+        severity="HIGH",
+        autonomy_impact="BLOCKING_SINGLE_LANE",
+        affected_lane_ids=["Lane A"],
+        evidence_refs=["stderr.log"],
+        evidence_class="PROCESS_EXIT_SIGNAL",
+        confidence=1.0,
+        suspected_root_cause="Bad binary",
+        repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
+    )
+    assert f1.recurrence_count == 1
+    assert f1.status == STATUS_CLASSIFIED
+    ep1 = f1.episode_id
+    assert ep1 != ""
+
+    # 2. Repeated observations in same unresolved episode do NOT inflate recurrence_count
+    f2 = engine.record_or_update_finding(
+        component="test_worker",
+        failure_class="RUNTIME_PROCESS_FAILURE",
+        symptom="Worker segfault on init",
+        severity="HIGH",
+        autonomy_impact="BLOCKING_SINGLE_LANE",
+        affected_lane_ids=["Lane A"],
+        evidence_refs=["stderr.log"],
+        evidence_class="PROCESS_EXIT_SIGNAL",
+        confidence=1.0,
+        suspected_root_cause="Bad binary",
+        repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
+    )
+    assert f2.recurrence_count == 1
+    assert f2.episode_id == ep1
+
+    # 3. Finding absent in 1 cycle: clean_cycles becomes 1, remains active
+    resolved = engine.reconcile_active_findings(observed_fingerprints=set())
+    assert len(resolved) == 0
+    f_after_1 = engine.get_finding(f1.finding_id)
+    assert f_after_1["status"] == STATUS_CLASSIFIED
+
+    # 4. Finding absent in 2nd consecutive cycle: status transitions to RESOLVED_WITHOUT_REPAIR
+    resolved = engine.reconcile_active_findings(observed_fingerprints=set())
+    assert len(resolved) == 1
+    assert resolved[0]["finding_id"] == f1.finding_id
+    assert resolved[0]["status"] == "RESOLVED_WITHOUT_REPAIR"
+    assert resolved[0]["resolved_at"] is not None
+    assert "2 consecutive clean diagnostic cycles" in resolved[0]["resolution_evidence"]
+
+    # Historical resolved finding does NOT count as active or blocking
+    summary = engine.summarize_status()
+    assert summary["active_finding_count"] == 0
+    assert summary["blocking_finding_count"] == 0
+    assert summary["self_diagnosis_status"] == "HEALTHY_NO_ACTION"
+
+    # 5. Defect returns later: reopen existing fingerprint as a new episode and increment recurrence_count exactly once
+    f3 = engine.record_or_update_finding(
+        component="test_worker",
+        failure_class="RUNTIME_PROCESS_FAILURE",
+        symptom="Worker segfault on init",
+        severity="HIGH",
+        autonomy_impact="BLOCKING_SINGLE_LANE",
+        affected_lane_ids=["Lane A"],
+        evidence_refs=["stderr.log"],
+        evidence_class="PROCESS_EXIT_SIGNAL",
+        confidence=1.0,
+        suspected_root_cause="Bad binary",
+        repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
+    )
+    assert f3.finding_id == f1.finding_id
+    assert f3.recurrence_count == 2
+    assert f3.episode_id != ep1
+    assert f3.status == STATUS_CLASSIFIED
+    assert f3.last_recurrence_at is not None
+
+    summary2 = engine.summarize_status()
+    assert summary2["active_finding_count"] == 1
+    assert summary2["blocking_finding_count"] == 1
+    assert summary2["recurring_finding_count"] == 1
+    assert summary2["new_finding_count"] == 0
+
+
+def test_remote_outbox_auth_finding_never_blocks_runtime(tmp_path: Path):
+    """Section 4: Remote outbox HUMAN_REQUIRED_AUTH_SETUP with INFO/NONE must never make diagnosis status BLOCKING."""
+    diag_root = tmp_path / "self-diagnosis"
+    engine = SelfDiagnosisEngine(diag_root)
+
+    # Run diagnosis with outbox_status="HUMAN_REQUIRED_AUTH_SETUP" and otherwise healthy runtime
+    findings = engine.diagnose_runtime(
+        runtime_health={"runtime_state": "HEALTHY"},
+        lanes=[],
+        outbox_status="HUMAN_REQUIRED_AUTH_SETUP",
+        provenance_status="PROVEN",
+    )
+    assert len(findings) == 1
+    outbox_f = findings[0]
+    assert outbox_f.severity == "INFO"
+    assert outbox_f.autonomy_impact == "NONE"
+
+    summary = engine.summarize_status()
+    assert summary["active_finding_count"] == 1
+    assert summary["blocking_finding_count"] == 0
+    # Must NOT be DEFECTS_DETECTED_BLOCKING!
+    assert summary["self_diagnosis_status"] != "DEFECTS_DETECTED_BLOCKING"
+    assert summary["self_diagnosis_status"] == "DEFECTS_DETECTED_DEGRADED"
+
+
+def test_last_finding_selected_by_last_seen_at(tmp_path: Path):
+    """Section 5: Last finding must be selected by last_seen_at descending, not immutable detected_at."""
+    diag_root = tmp_path / "self-diagnosis"
+    engine = SelfDiagnosisEngine(diag_root)
+
+    # Finding A created first at 10:00
+    fa = engine.record_or_update_finding(
+        component="comp_a",
+        failure_class="TEST_FAILURE",
+        symptom="failure A",
+        severity="LOW",
+        autonomy_impact="DEGRADED",
+        affected_lane_ids=[],
+        evidence_refs=[],
+        evidence_class="TEST",
+        confidence=1.0,
+        suspected_root_cause="cause A",
+        repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
+    )
+    # Mock detected_at to be earlier
+    engine._index[fa.fingerprint]["last_seen_at"] = "2026-09-19T10:00:00Z"
+    path_a = diag_root / "findings" / f"{fa.finding_id}.json"
+    data_a = json.loads(path_a.read_text("utf-8"))
+    data_a["detected_at"] = "2026-09-19T10:00:00Z"
+    data_a["last_seen_at"] = "2026-09-19T10:00:00Z"
+    path_a.write_text(json.dumps(data_a), encoding="utf-8")
+
+    # Finding B created second at 11:00
+    fb = engine.record_or_update_finding(
+        component="comp_b",
+        failure_class="TEST_FAILURE",
+        symptom="failure B",
+        severity="LOW",
+        autonomy_impact="DEGRADED",
+        affected_lane_ids=[],
+        evidence_refs=[],
+        evidence_class="TEST",
+        confidence=1.0,
+        suspected_root_cause="cause B",
+        repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
+    )
+    path_b = diag_root / "findings" / f"{fb.finding_id}.json"
+    data_b = json.loads(path_b.read_text("utf-8"))
+    data_b["detected_at"] = "2026-09-19T11:00:00Z"
+    data_b["last_seen_at"] = "2026-09-19T11:00:00Z"
+    path_b.write_text(json.dumps(data_b), encoding="utf-8")
+
+    # Now update Finding A again at 12:00 (its detected_at stays 10:00, but last_seen_at becomes 12:00)
+    data_a["last_seen_at"] = "2026-09-19T12:00:00Z"
+    path_a.write_text(json.dumps(data_a), encoding="utf-8")
+    engine._index[fa.fingerprint]["last_seen_at"] = "2026-09-19T12:00:00Z"
+    engine._save_index()
+
+    # summarize_status should select Finding A as last finding because last_seen_at is 12:00
+    summary = engine.summarize_status()
+    assert summary["last_finding_id"] == fa.finding_id
+

@@ -145,6 +145,8 @@ class ControllerRelayPublisher:
         self.remote_issue_number: Optional[int] = self._load_remote_issue_number()
         self.remote_outbox_status: str = "INITIALIZING"
         self._prev_completed_batches: Dict[str, int] = {}
+        self._last_diagnosis_epoch: float = 0.0
+        self._last_diagnosis_signature: Dict[str, Any] = {}
         self.diagnostics = SelfDiagnosisEngine(self.local_relay_dir / "self-diagnosis", self.runtime_config)
 
     def _init_sequence(self) -> int:
@@ -175,6 +177,7 @@ class ControllerRelayPublisher:
         self,
         runtime_health_dict: Optional[Dict[str, Any]] = None,
         supervisor_pid: Optional[int] = None,
+        force_diagnosis: bool = False,
     ) -> RelaySnapshot:
         """Gather fresh telemetry directly from durable runtime stores."""
         self.sequence_number += 1
@@ -452,36 +455,74 @@ class ControllerRelayPublisher:
         lost_work: Union[int, str] = "UNKNOWN"
         scope_collision: Union[int, str] = "UNKNOWN"
 
-        # Run shadow self-diagnosis across runtime machine evidence
-        try:
-            self.diagnostics.diagnose_runtime(
-                runtime_health=rh,
-                lanes=lanes,
-                relay_snapshot={
-                    "forward_progress": forward_prog,
-                    "no_progress_reason": no_prog_reason,
-                    "running_lane_count": running_lanes,
-                },
-                provenance_status=prov_status,
-                build_source_sha=build_source_sha,
-                candidate_manifest_sha=manifest_sha,
-                runtime_source_sha=source_sha,
-                local_git_head=local_git_head,
-                outbox_status=self.remote_outbox_status,
-            )
-            diag_summary = self.diagnostics.summarize_status()
-        except Exception:
-            diag_summary = {
-                "self_diagnosis_status": "SHADOW_ONLY",
-                "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
-                "last_finding_id": "NONE",
-                "active_finding_count": 0,
-                "blocking_finding_count": 0,
-                "last_failure_class": "NONE",
-                "last_finding_severity": "NONE",
-                "last_autonomy_impact": "NONE",
-                "shadow_repair_proposal_status": "NONE",
-            }
+        # Diagnostic lifecycle scheduling: event-driven plus bounded periodic fallback (<= every 300s)
+        current_diag_sig = {
+            "runtime_health": runtime_health,
+            "provenance_status": prov_status,
+            "lane_states": {l.get("lane_id"): l.get("state") for l in active_tracked_lanes},
+            "lane_backoffs": {l.get("lane_id"): bool(l.get("provider_backoff")) for l in active_tracked_lanes},
+            "completed_batches": total_batches_now,
+            "batch_delta": batch_delta,
+            "outbox_status": self.remote_outbox_status,
+        }
+
+        now_epoch = time.time()
+        time_since_diag = now_epoch - self._last_diagnosis_epoch
+        is_periodic_fallback = (time_since_diag >= 300.0) or (self._last_diagnosis_epoch == 0.0)
+        has_meaningful_event = force_diagnosis or (current_diag_sig != self._last_diagnosis_signature)
+
+        if has_meaningful_event or is_periodic_fallback:
+            try:
+                # Active tracked lanes only for lane-specific diagnostics to prevent historical stopped command false-positives
+                diag_findings = self.diagnostics.diagnose_runtime(
+                    runtime_health=rh,
+                    lanes=active_tracked_lanes,
+                    relay_snapshot={
+                        "forward_progress": forward_prog,
+                        "no_progress_reason": no_prog_reason,
+                        "running_lane_count": running_lanes,
+                    },
+                    provenance_status=prov_status,
+                    build_source_sha=build_source_sha,
+                    candidate_manifest_sha=manifest_sha,
+                    runtime_source_sha=source_sha,
+                    local_git_head=local_git_head,
+                    outbox_status=self.remote_outbox_status,
+                )
+                # Reconcile active findings against currently observed fingerprints
+                observed_fps = {f.fingerprint for f in diag_findings}
+                self.diagnostics.reconcile_active_findings(observed_fps)
+                self._last_diagnosis_epoch = now_epoch
+                self._last_diagnosis_signature = current_diag_sig
+                diag_summary = self.diagnostics.summarize_status()
+            except Exception:
+                diag_summary = {
+                    "self_diagnosis_status": "SHADOW_ONLY",
+                    "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
+                    "last_finding_id": "NONE",
+                    "active_finding_count": 0,
+                    "blocking_finding_count": 0,
+                    "last_failure_class": "NONE",
+                    "last_finding_severity": "NONE",
+                    "last_autonomy_impact": "NONE",
+                    "shadow_repair_proposal_status": "NONE",
+                }
+        else:
+            # Heartbeat tick between events: decoupled, do not run diagnosis, retrieve cached durable summary
+            try:
+                diag_summary = self.diagnostics.summarize_status()
+            except Exception:
+                diag_summary = {
+                    "self_diagnosis_status": "SHADOW_ONLY",
+                    "self_repair_eligibility": "ELIGIBLE_PENDING_GATE",
+                    "last_finding_id": "NONE",
+                    "active_finding_count": 0,
+                    "blocking_finding_count": 0,
+                    "last_failure_class": "NONE",
+                    "last_finding_severity": "NONE",
+                    "last_autonomy_impact": "NONE",
+                    "shadow_repair_proposal_status": "NONE",
+                }
 
         return RelaySnapshot(
             schema_version=RELAY_SCHEMA_VERSION,
@@ -886,6 +927,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
         supervisor_pid: Optional[int] = None,
         major_gate_reason: Optional[str] = None,
         force_checkpoint: bool = False,
+        force_diagnosis: bool = False,
     ) -> RelaySnapshot:
         """Single controller relay loop execution."""
         now = time.time()
@@ -893,7 +935,11 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
         if is_checkpoint:
             self.last_checkpoint_epoch = now
 
-        snapshot = self.collect_snapshot(runtime_health_dict, supervisor_pid)
+        snapshot = self.collect_snapshot(
+            runtime_health_dict,
+            supervisor_pid,
+            force_diagnosis=force_diagnosis or bool(major_gate_reason),
+        )
         self.publish_remote(snapshot, major_gate_reason=major_gate_reason)
         self.publish_local(snapshot, is_checkpoint=is_checkpoint)
         return snapshot

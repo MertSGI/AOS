@@ -127,6 +127,11 @@ class SelfDiagnosisFinding:
     requires_candidate: bool
     requires_human: bool
     status: str
+    episode_id: str = ""
+    last_observed_at: str = ""
+    last_recurrence_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    resolution_evidence: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -176,7 +181,14 @@ class SelfDiagnosisEngine:
         requires_human: bool = False,
         status: str = STATUS_CLASSIFIED,
     ) -> SelfDiagnosisFinding:
-        """Create or update a deduplicated finding based on stable fingerprint."""
+        """Create or update a deduplicated finding based on stable fingerprint.
+        
+        Recurrence semantics:
+        - Repeated observations in the same unresolved episode update timestamps/evidence
+          without incrementing recurrence_count.
+        - If finding was previously RESOLVED_WITHOUT_REPAIR, observation starts a new episode
+          and increments recurrence_count exactly once.
+        """
         now_utc = utc_now()
         fp = self.compute_fingerprint(component, failure_class, symptom)
 
@@ -195,23 +207,55 @@ class SelfDiagnosisEngine:
             finding_id = existing["finding_id"]
             finding_path = self.findings_dir / f"{finding_id}.json"
             finding_data = read_json(finding_path, {})
-            recurrence = int(finding_data.get("recurrence_count", 1)) + 1
-            first_seen = finding_data.get("first_seen_at", now_utc)
+            current_status = finding_data.get("status", existing.get("status", status))
+            recurrence = int(finding_data.get("recurrence_count", existing.get("recurrence_count", 1)))
+            first_seen = finding_data.get("first_seen_at", existing.get("first_seen_at", now_utc))
+            episode_id = finding_data.get("episode_id") or existing.get("episode_id") or f"ep-{int(time.time())}-{fp[:6]}"
+            last_recurrence_at = finding_data.get("last_recurrence_at")
+
+            # Check if defect is returning from resolved state
+            is_reopened = False
+            if current_status == STATUS_RESOLVED_WITHOUT_REPAIR:
+                # Return of a resolved defect: new recurrence episode
+                recurrence += 1
+                episode_id = f"ep-{int(time.time())}-r{recurrence}-{fp[:6]}"
+                last_recurrence_at = now_utc
+                current_status = STATUS_SHADOW_REPAIR_PROPOSED if proposed_repair else (
+                    STATUS_HUMAN_REQUIRED if requires_human else status
+                )
+                is_reopened = True
+            else:
+                # Same unresolved episode: do NOT increment recurrence_count
+                if proposed_repair:
+                    current_status = STATUS_SHADOW_REPAIR_PROPOSED
+                elif requires_human:
+                    current_status = STATUS_HUMAN_REQUIRED
+
+            # Reset clean cycles since defect is currently observed
+            existing["clean_cycles"] = 0
 
             # Update mutable fields
             finding_data["recurrence_count"] = recurrence
             finding_data["last_seen_at"] = now_utc
+            finding_data["last_observed_at"] = now_utc
+            finding_data["last_recurrence_at"] = last_recurrence_at
+            finding_data["episode_id"] = episode_id
+            finding_data["status"] = current_status
+            finding_data["resolved_at"] = None if is_reopened else finding_data.get("resolved_at")
+            finding_data["resolution_evidence"] = None if is_reopened else finding_data.get("resolution_evidence")
             finding_data["evidence_refs"] = list(set(finding_data.get("evidence_refs", []) + evidence_refs))
             finding_data["affected_lane_ids"] = list(set(finding_data.get("affected_lane_ids", []) + affected_lane_ids))
             if proposed_repair:
                 finding_data["proposed_repair"] = proposed_repair.to_dict()
-                finding_data["status"] = STATUS_SHADOW_REPAIR_PROPOSED
-            elif requires_human:
-                finding_data["status"] = STATUS_HUMAN_REQUIRED
 
             atomic_json(finding_path, finding_data)
             self._index[fp]["recurrence_count"] = recurrence
             self._index[fp]["last_seen_at"] = now_utc
+            self._index[fp]["last_observed_at"] = now_utc
+            self._index[fp]["last_recurrence_at"] = last_recurrence_at
+            self._index[fp]["episode_id"] = episode_id
+            self._index[fp]["status"] = current_status
+            self._index[fp]["clean_cycles"] = 0
             self._save_index()
 
             return SelfDiagnosisFinding(
@@ -238,7 +282,12 @@ class SelfDiagnosisEngine:
                 required_runtime_proof=required_runtime_proof,
                 requires_candidate=requires_candidate,
                 requires_human=requires_human,
-                status=finding_data.get("status", status),
+                status=current_status,
+                episode_id=episode_id,
+                last_observed_at=now_utc,
+                last_recurrence_at=last_recurrence_at,
+                resolved_at=finding_data.get("resolved_at"),
+                resolution_evidence=finding_data.get("resolution_evidence"),
             )
 
         # New finding
@@ -246,6 +295,7 @@ class SelfDiagnosisEngine:
         initial_status = STATUS_SHADOW_REPAIR_PROPOSED if proposed_repair else (
             STATUS_HUMAN_REQUIRED if requires_human else status
         )
+        episode_id = f"ep-{int(time.time())}-{fp[:6]}"
 
         finding = SelfDiagnosisFinding(
             finding_id=finding_id,
@@ -272,6 +322,11 @@ class SelfDiagnosisEngine:
             requires_candidate=requires_candidate,
             requires_human=requires_human,
             status=initial_status,
+            episode_id=episode_id,
+            last_observed_at=now_utc,
+            last_recurrence_at=now_utc,
+            resolved_at=None,
+            resolution_evidence=None,
         )
 
         finding_path = self.findings_dir / f"{finding_id}.json"
@@ -285,10 +340,58 @@ class SelfDiagnosisEngine:
             "recurrence_count": 1,
             "first_seen_at": now_utc,
             "last_seen_at": now_utc,
+            "last_observed_at": now_utc,
+            "last_recurrence_at": now_utc,
+            "episode_id": episode_id,
             "status": initial_status,
+            "clean_cycles": 0,
         }
         self._save_index()
         return finding
+
+    def reconcile_active_findings(
+        self,
+        observed_fingerprints: Set[str],
+        clean_evidence: str = "2 consecutive clean diagnostic cycles without defect observation",
+    ) -> List[Dict[str, Any]]:
+        """Reconcile active findings against currently observed fingerprints.
+        
+        Previously active findings absent from current evidence enter a bounded confirmation
+        process. After 2 consecutive clean cycles, status transitions to RESOLVED_WITHOUT_REPAIR.
+        """
+        now_utc = utc_now()
+        resolved_findings: List[Dict[str, Any]] = []
+
+        for fp, meta in self._index.items():
+            status = meta.get("status", "")
+            if status in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_SUPPRESSED_DUPLICATE):
+                continue
+
+            if fp in observed_fingerprints:
+                # Still observed: reset clean counter
+                meta["clean_cycles"] = 0
+            else:
+                # Absent from evidence in this cycle: increment clean counter
+                clean_count = int(meta.get("clean_cycles", 0)) + 1
+                meta["clean_cycles"] = clean_count
+
+                if clean_count >= 2:
+                    # Mark resolved without repair
+                    meta["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+                    meta["resolved_at"] = now_utc
+
+                    finding_id = meta["finding_id"]
+                    finding_path = self.findings_dir / f"{finding_id}.json"
+                    finding_data = read_json(finding_path, {})
+                    if finding_data:
+                        finding_data["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+                        finding_data["resolved_at"] = now_utc
+                        finding_data["resolution_evidence"] = clean_evidence
+                        atomic_json(finding_path, finding_data)
+                        resolved_findings.append(finding_data)
+
+        self._save_index()
+        return resolved_findings
 
     def get_finding(self, finding_id: str) -> Optional[Dict[str, Any]]:
         path = self.findings_dir / f"{finding_id}.json"
@@ -302,7 +405,11 @@ class SelfDiagnosisEngine:
             data = read_json(p, {})
             if data:
                 findings.append(data)
-        findings.sort(key=lambda x: str(x.get("detected_at", "")), reverse=True)
+        # Order findings by last_seen_at / last_observed_at descending, fallback to detected_at
+        findings.sort(
+            key=lambda x: str(x.get("last_seen_at") or x.get("last_observed_at") or x.get("detected_at", "")),
+            reverse=True,
+        )
         return findings
 
     def diagnose_runtime(
