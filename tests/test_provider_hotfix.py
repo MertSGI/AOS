@@ -181,7 +181,7 @@ def test_newer_success_in_active_lineage_wakes_waiting_lineage(tmp_path):
     try:
         waiting = "continue-waiting-lineage"
         active = "continue-active-lineage"
-        _command(engine, waiting, policy)
+        waiting_circuits = _command(engine, waiting, policy)
         active_circuits = _command(engine, active, policy, state="RUNNING")
         engine.store.write_state(waiting, retry_after_epoch=time.time() + 900)
         registry = ProviderCircuitBreakerRegistry(active_circuits)
@@ -197,6 +197,9 @@ def test_newer_success_in_active_lineage_wakes_waiting_lineage(tmp_path):
         wake = [event for event in events if event["event_type"] == "provider.healthy_alternate_wake"][-1]
         assert wake["payload"]["healthy_providers"] == ["nemotron"]
         assert wake["payload"]["evidence_source"] == "NEWEST_COMMAND_LOCAL_OBSERVATION"
+        propagated = ProviderCircuitBreakerRegistry(waiting_circuits).get_circuit("nemotron")
+        assert propagated.circuit_state == CircuitState.CLOSED.value
+        assert propagated.last_success_at == "2026-09-19T10:01:00+00:00"
     finally:
         engine.shutdown()
 

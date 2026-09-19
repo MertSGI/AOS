@@ -345,11 +345,11 @@ class RuntimeEngine:
             enabled_providers=enabled,
         )
         details = aggregate.per_provider_details(enabled)
-        healthy = sorted(
-            row["provider"]
-            for row in details
+        healthy_details = [
+            row for row in details
             if row.get("circuit_state") == CircuitState.CLOSED.value
-        )
+        ]
+        healthy = sorted(row["provider"] for row in healthy_details)
         if not healthy:
             return
         for command_id in self.store.list_command_ids()[-200:]:
@@ -358,6 +358,21 @@ class RuntimeEngine:
                 continue
             if float(state.get("retry_after_epoch", 0) or 0) <= 0:
                 continue
+            # Copy the authoritative newest success into the waiting command's
+            # own registry before waking it.  Otherwise the worker immediately
+            # sees its stale all-open view, waits again, and recovery can churn.
+            registry = ProviderCircuitBreakerRegistry(
+                self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+            )
+            for row in healthy_details:
+                registry.record_success(
+                    row["provider"],
+                    observed_at=row.get("last_success_at") or row.get("last_observed_at"),
+                    probe_status=str(row.get("probe_status") or "PASS"),
+                    latency_ms=row.get("latency_ms"),
+                    credential_available=row.get("credential_available"),
+                    local_service_available=row.get("local_service_available"),
+                )
             self.store.write_state(command_id, retry_after_epoch=0)
             self.store.append_event(command_id, "provider.healthy_alternate_wake", {
                 "lineage_preserved": True,
