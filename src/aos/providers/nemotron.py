@@ -104,6 +104,7 @@ class NemotronPlannerProvider:
 
     NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
     DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+    execution_provenance = "LIVE_EXTERNAL"
 
     def __init__(self, model: str = DEFAULT_MODEL):
         self.model = model

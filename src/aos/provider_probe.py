@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from jsonschema import Draft202012Validator
+
 from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from extensions.autonomy_fabric.native_workers import redact_secrets
@@ -63,7 +65,7 @@ project_id=synthetic-public-probe
 source_sha=0000000000000000000000000000000000000000
 selected_milestone=Connectivity Probe
 selected_next_action=No action; synthetic probe only.
-target_base_sha=null
+target_base_sha=0000000000000000000000000000000000000000
 risk_class=R0
 mutation_intent=NONE
 ambiguity_detected=false
@@ -150,7 +152,11 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             proposal, response_id, _usage = provider.generate_plan(PROBE_PROMPT, PROBE_SCHEMA)
             row["latency_ms"] = int((time.monotonic() - started) * 1000)
             row["connectivity"] = "PASS"
-            row["structured_contract"] = "PASS" if isinstance(proposal, dict) and proposal.get("project_id") == "synthetic-public-probe" else "FAIL"
+            row["structured_contract"] = "PASS" if (
+                isinstance(proposal, dict)
+                and proposal.get("project_id") == "synthetic-public-probe"
+                and Draft202012Validator(PROBE_SCHEMA).is_valid(proposal)
+            ) else "FAIL"
             row["response_id"] = str(response_id)[:160] if response_id else None
             provenance = getattr(provider, "execution_provenance", "UNKNOWN")
             row["evidence_class"] = "LIVE_EXTERNAL_PROOF" if provenance == "LIVE_EXTERNAL" else "LOCAL_RUNTIME_PROOF"

@@ -9,6 +9,8 @@ import aos.runtime_server as runtime_server
 from aos.control_panel import _HTML, _Handler, _command_work
 from aos.controller_relay import ControllerRelayPublisher
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
+from aos.provider_probe import PROBE_PROMPT
+from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider
 from aos.runtime_server import RuntimeEngine
 from aos.runtime_supervisor import RuntimeSupervisor
 
@@ -84,6 +86,13 @@ def test_runtime_health_reads_exact_command_local_registry(tmp_path, monkeypatch
         assert health["healthy_reasoning_provider_count"] == 1
     finally:
         engine.shutdown()
+
+
+def test_cloud_probe_is_live_external_and_preserves_required_nullable_field():
+    assert "target_base_sha=0000000000000000000000000000000000000000" in PROBE_PROMPT
+    assert NemotronPlannerProvider.execution_provenance == "LIVE_EXTERNAL"
+    assert GeminiPlannerProvider.execution_provenance == "LIVE_EXTERNAL"
+    assert GroqPlannerProvider.execution_provenance == "LIVE_EXTERNAL"
 
 
 def test_new_enabled_provider_is_unknown_and_credential_is_not_health(tmp_path, monkeypatch):

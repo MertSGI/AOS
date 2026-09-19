@@ -67,6 +67,8 @@ def _sanitize_planner_output(data: Any) -> Any:
 class GeminiPlannerProvider:
     """PlannerProvider adapter for Google Gemini via the google-genai SDK."""
 
+    execution_provenance = "LIVE_EXTERNAL"
+
     def __init__(self, model: str = "gemini-3.6-flash"):
         self.model = model
 

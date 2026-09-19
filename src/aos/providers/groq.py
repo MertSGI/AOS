@@ -114,6 +114,7 @@ class GroqPlannerProvider:
     """PlannerProvider adapter for Groq using the OpenAI-compatible API."""
 
     GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+    execution_provenance = "LIVE_EXTERNAL"
 
     def __init__(self, model: str = "openai/gpt-oss-120b"):
         self.model = model
