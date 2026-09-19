@@ -1674,7 +1674,126 @@ def compile_execution_plan(
             backend_override=backend_override,
         )
         try:
-            normalized = _normalize_plan_schema_envelope(proposal, objective, situation, runtime_dir)
+            repair_pruned: Dict[str, str] = {}
+            pre_salvage_applied = False
+            proposal_for_validation = proposal
+            if attempt and isinstance(proposal.get("tasks"), list):
+                raw_tasks = proposal["tasks"]
+                for task in raw_tasks:
+                    if not isinstance(task, Mapping) or task.get("run_type") not in ("PROCESS", "TEST", "BUILD"):
+                        continue
+                    payload = task.get("payload")
+                    cmd = payload.get("cmd") if isinstance(payload, Mapping) else None
+                    if not isinstance(cmd, list) or len(cmd) < 2:
+                        continue
+                    executable = Path(str(cmd[0])).name.lower().removesuffix(".exe")
+                    if executable in ("python", "py") and str(cmd[1]).startswith("-"):
+                        repair_pruned[str(task.get("node_id", ""))] = "PYTHON_INLINE_OR_MODULE"
+                changed = True
+                while changed:
+                    changed = False
+                    for task in raw_tasks:
+                        node_id = str(task.get("node_id", "")) if isinstance(task, Mapping) else ""
+                        if node_id in repair_pruned or not isinstance(task, Mapping):
+                            continue
+                        if any(str(dependency) in repair_pruned for dependency in task.get("dependencies", [])):
+                            repair_pruned[node_id] = "DEPENDS_ON_REJECTED_TASK"
+                            changed = True
+                if repair_pruned and len(repair_pruned) < len(raw_tasks):
+                    pre_salvage_applied = True
+                    retained_ids = {
+                        str(task.get("node_id", "")) for task in raw_tasks
+                        if isinstance(task, Mapping) and str(task.get("node_id", "")) not in repair_pruned
+                    }
+                    proposal_for_validation = {
+                        **proposal,
+                        "tasks": [
+                            task for task in raw_tasks
+                            if isinstance(task, Mapping) and str(task.get("node_id", "")) in retained_ids
+                        ],
+                        "parallel_safe_groups": [
+                            retained
+                            for group in proposal.get("parallel_safe_groups", [])
+                            if (retained := [str(node_id) for node_id in group if str(node_id) in retained_ids])
+                        ],
+                    }
+            normalized = _normalize_plan_schema_envelope(
+                proposal_for_validation, objective, situation, runtime_dir,
+            )
+            if attempt:
+                # A repair response can correct most of a plan while stubbornly
+                # retaining one independently-invalid task.  Preserve the safe,
+                # useful portion instead of discarding the entire bounded batch.
+                # Tasks that depend on a rejected task are rejected transitively;
+                # an all-invalid plan still fails closed below.
+                rejected: Dict[str, str] = dict(repair_pruned)
+                tasks_by_id = {task["node_id"]: task for task in normalized["tasks"]}
+                workspace_root = workspace.resolve() if workspace is not None else None
+                for task in normalized["tasks"]:
+                    node_id = task["node_id"]
+                    signature = _task_signature(task)
+                    if node_id in forbidden_ids:
+                        rejected[node_id] = "COMPLETED_TASK_ID"
+                        continue
+                    if signature in forbidden_signatures:
+                        rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
+                        continue
+                    if task["run_type"] in ("PROCESS", "TEST", "BUILD"):
+                        cmd = task["payload"]["cmd"]
+                        binary = str(cmd[0])
+                        if shutil.which(binary) is None:
+                            rejected[node_id] = "PROCESS_BINARY_UNAVAILABLE"
+                            continue
+                        executable = Path(binary).name.lower().removesuffix(".exe")
+                        if executable in ("python", "py") and workspace_root is not None:
+                            if len(cmd) < 2 or str(cmd[1]).startswith("-"):
+                                rejected[node_id] = "PYTHON_INLINE_OR_MODULE"
+                                continue
+                            script = (workspace_root / str(cmd[1])).resolve()
+                            if (
+                                (script != workspace_root and workspace_root not in script.parents)
+                                or not script.is_file()
+                            ):
+                                rejected[node_id] = "PYTHON_SCRIPT_UNAVAILABLE"
+                                continue
+                    if task["run_type"] == "FILE" and task["payload"].get("action") == "read_file":
+                        read_path = str(task["payload"].get("path", "")).strip().replace("\\", "/").casefold()
+                        if read_path in forbidden_reads:
+                            rejected[node_id] = "COMPLETED_READ_PATH"
+
+                changed = True
+                while changed:
+                    changed = False
+                    for task in normalized["tasks"]:
+                        node_id = task["node_id"]
+                        if node_id in rejected:
+                            continue
+                        if any(dependency in rejected for dependency in task.get("dependencies", [])):
+                            rejected[node_id] = "DEPENDS_ON_REJECTED_TASK"
+                            changed = True
+
+                normalized_rejected = set(rejected) & set(tasks_by_id)
+                post_salvage_applied = False
+                if normalized_rejected and len(normalized_rejected) < len(normalized["tasks"]):
+                    post_salvage_applied = True
+                    retained_ids = set(tasks_by_id) - normalized_rejected
+                    normalized = {
+                        **normalized,
+                        "tasks": [task for task in normalized["tasks"] if task["node_id"] in retained_ids],
+                        "parallel_safe_groups": [
+                            retained
+                            for group in normalized.get("parallel_safe_groups", [])
+                            if (retained := [node_id for node_id in group if node_id in retained_ids])
+                        ],
+                    }
+                if pre_salvage_applied or post_salvage_applied:
+                    _atomic_json(runtime_dir / f"plan-dag-pruning-{int(batch_number or 0):04d}.json", {
+                        "schema_version": "1.0.0",
+                        "status": "APPLIED",
+                        "reason": "REPAIR_RESPONSE_PARTIAL_SALVAGE",
+                        "rejected_tasks": rejected,
+                        "retained_task_ids": sorted(task["node_id"] for task in normalized["tasks"]),
+                    })
             for task in normalized["tasks"]:
                 if task["run_type"] not in ("PROCESS", "TEST", "BUILD"):
                     continue

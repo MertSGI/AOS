@@ -658,6 +658,33 @@ def test_plan_compiler_repairs_python_inline_execution_with_guidance(tmp_path):
     assert "Python inline execution (`-c` or `-m`) is prohibited" in repair_prompt
 
 
+def test_plan_compiler_salvages_safe_independent_tasks_from_partially_invalid_repair(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+    repaired = json.loads(json.dumps(invalid))
+    valid_task = json.loads(json.dumps(_plan()["tasks"][0]))
+    valid_task["node_id"] = "verify-product-diff"
+    valid_task["payload"] = {"cmd": ["git", "diff", "--check"]}
+    repaired["tasks"].append(valid_task)
+    repaired["parallel_safe_groups"] = [["bounded-test", "verify-product-diff"]]
+    backend = QueueBackend([invalid, repaired])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=3,
+    )
+
+    assert [task["node_id"] for task in result["tasks"]] == ["verify-product-diff"]
+    artifact = json.loads((tmp_path / "plan-dag-pruning-0003.json").read_text(encoding="utf-8"))
+    assert artifact["rejected_tasks"] == {"bounded-test": "PYTHON_INLINE_OR_MODULE"}
+    assert artifact["retained_task_ids"] == ["verify-product-diff"]
+
+
 
 def test_plan_compiler_repairs_allowlisted_but_unavailable_process_binary(tmp_path, monkeypatch):
     invalid = _plan()
@@ -1298,4 +1325,3 @@ def test_compile_execution_plan_authority_rejection_triggers_repair(tmp_path):
     assert attempts == 2
     assert plan["tasks"][0]["node_id"] == "t1"
     assert "safe-update" in plan["tasks"][0]["payload"]["patch"]
-
