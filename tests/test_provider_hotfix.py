@@ -175,6 +175,32 @@ def test_healthy_alternate_wakes_same_command_lineage(tmp_path, monkeypatch):
         engine.shutdown()
 
 
+def test_newer_success_in_active_lineage_wakes_waiting_lineage(tmp_path):
+    policy = _policy(tmp_path / "policy.json")
+    engine = RuntimeEngine(_config(tmp_path, policy))
+    try:
+        waiting = "continue-waiting-lineage"
+        active = "continue-active-lineage"
+        _command(engine, waiting, policy)
+        active_circuits = _command(engine, active, policy, state="RUNNING")
+        engine.store.write_state(waiting, retry_after_epoch=time.time() + 900)
+        registry = ProviderCircuitBreakerRegistry(active_circuits)
+        registry.record_success("nemotron", observed_at="2026-09-19T10:01:00+00:00")
+
+        engine._wake_waiting_from_observed_provider_health()
+
+        state = engine.store.read_state(waiting)
+        assert state["retry_after_epoch"] == 0
+        assert state["command_id"] == waiting
+        events_path = engine.store.command_dir(waiting) / "events.jsonl"
+        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+        wake = [event for event in events if event["event_type"] == "provider.healthy_alternate_wake"][-1]
+        assert wake["payload"]["healthy_providers"] == ["nemotron"]
+        assert wake["payload"]["evidence_source"] == "NEWEST_COMMAND_LOCAL_OBSERVATION"
+    finally:
+        engine.shutdown()
+
+
 def test_relay_provider_telemetry_equals_runtime_evidence(tmp_path):
     health = {
         "runtime_state": "HEALTHY",

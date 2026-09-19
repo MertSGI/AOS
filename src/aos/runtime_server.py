@@ -331,8 +331,44 @@ class RuntimeEngine:
                 except Exception:
                     pass
 
+    def _wake_waiting_from_observed_provider_health(self) -> None:
+        """Wake preserved lineages when newer command-local evidence is healthy.
+
+        A successful inference or probe in one active lineage is authoritative
+        provider evidence for the runtime.  The newest-event aggregation keeps a
+        stale success from overriding a newer failure while avoiding a long
+        backoff after another lineage has already proved the provider recovered.
+        """
+        enabled, _paths, registries = self._provider_evidence()
+        aggregate = ProviderCircuitBreakerRegistry.aggregate_registries(
+            registries,
+            enabled_providers=enabled,
+        )
+        details = aggregate.per_provider_details(enabled)
+        healthy = sorted(
+            row["provider"]
+            for row in details
+            if row.get("circuit_state") == CircuitState.CLOSED.value
+        )
+        if not healthy:
+            return
+        for command_id in self.store.list_command_ids()[-200:]:
+            state = self.store.read_state(command_id)
+            if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
+                continue
+            if float(state.get("retry_after_epoch", 0) or 0) <= 0:
+                continue
+            self.store.write_state(command_id, retry_after_epoch=0)
+            self.store.append_event(command_id, "provider.healthy_alternate_wake", {
+                "lineage_preserved": True,
+                "command_id": command_id,
+                "healthy_providers": healthy,
+                "evidence_source": "NEWEST_COMMAND_LOCAL_OBSERVATION",
+            })
+
     def _recovery_loop(self) -> None:
         while not self.stop_event.is_set():
+            self._wake_waiting_from_observed_provider_health()
             self.recover_unfinished()
             self.stop_event.wait(3.0)
 
