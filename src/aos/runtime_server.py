@@ -426,11 +426,22 @@ class RuntimeEngine:
         )
         circuit_summary = circuit_reg.summarize(enabled_providers)
         presence = provider_presence()
-        credential_status = {
-            "nemotron": bool(presence.get("NVIDIA")),
-            "gemini": bool(presence.get("GEMINI")),
-            "groq": bool(presence.get("GROQ")),
+        provider_to_presence_key = {
+            "nemotron": "NVIDIA",
+            "gemini": "GEMINI",
+            "groq": "GROQ",
+            "cloudflare": "CLOUDFLARE",
+            "openrouter_free": "OPENROUTER",
+            "cerebras": "CEREBRAS",
+            "huggingface_router": "HUGGINGFACE",
+            "openai": "OPENAI",
+            "openai_paid_safety": "OPENAI",
         }
+        credential_status = {
+            pid: bool(presence.get(provider_to_presence_key.get(pid, pid.upper())))
+            for pid in enabled_providers
+        }
+
         provider_details = circuit_reg.per_provider_details(enabled_providers, credential_status)
         for row in provider_details:
             row["provider_id"] = row.pop("provider")

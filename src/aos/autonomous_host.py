@@ -30,9 +30,16 @@ from aos.process_utils import run_headless
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
-from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
+from aos.providers import (
+    GeminiPlannerProvider,
+    GroqPlannerProvider,
+    NemotronPlannerProvider,
+    OllamaPlannerProvider,
+    GenericOpenAICompatiblePlannerProvider,
+)
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
+
 
 
 def _ensure_repo_extensions_importable() -> None:
@@ -177,12 +184,28 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             )
         self.circuit_registry = circuit_registry
 
-    @staticmethod
-    def _default_provider_factory(provider_id: str, model_id: str) -> Any:
+    def _default_provider_factory(self, provider_id: str, model_id: str) -> Any:
         factory = _PROVIDER_FACTORIES.get(provider_id)
-        if factory is None:
-            raise PlannerContractError(f"No executable provider adapter registered for '{provider_id}'")
-        return factory(model_id)
+        if factory is not None:
+            return factory(model_id)
+
+        # Check provider entry from provider_router.registry for generic adapter configuration
+        if hasattr(self, "provider_router") and self.provider_router:
+            entry = self.provider_router.registry.get_provider(provider_id)
+            if entry and (entry.base_url or entry.adapter_type == "GENERIC_OPENAI_COMPATIBLE"):
+                return GenericOpenAICompatiblePlannerProvider(
+                    provider_id=entry.provider_id,
+                    model=entry.model_id,
+                    base_url=entry.base_url or "https://api.openai.com/v1",
+                    credential_env_var=entry.credential_env_var,
+                    api_protocol=entry.api_protocol or "OPENAI_CHAT_COMPLETIONS",
+                    max_output_tokens=entry.max_output_tokens or 2200,
+                    cloud_local=entry.cloud_local,
+                    billing_class=entry.billing_class,
+                )
+
+        raise PlannerContractError(f"No executable provider adapter registered for '{provider_id}'")
+
 
     def get_health(self) -> ExecutionHealth:
         return ExecutionHealth.HEALTHY

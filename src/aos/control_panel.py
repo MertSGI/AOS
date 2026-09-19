@@ -95,30 +95,12 @@ textarea.goal { min-height:110px; font-family:Inter,Segoe UI,sans-serif; }
 <div class="card" style="margin-top:12px">
   <div class="label">Provider settings · Windows Credential Manager</div>
   <p><small>Secrets are stored only in your Windows user credential vault. They are never returned by this page, written to Git, or placed in AOS job JSON.</small></p>
-  <div class="providers-grid">
-    <div class="provider-box">
-      <strong>NVIDIA / Nemotron</strong> · <a href="https://ngc.nvidia.com/" target="_blank" rel="noreferrer">provider console</a>
-      <input id="key-NVIDIA" type="password" autocomplete="off" placeholder="Paste NVIDIA API key">
-      <button onclick="saveProvider('NVIDIA')">Save securely</button><button class="danger" onclick="clearProvider('NVIDIA')">Clear</button>
-    </div>
-    <div class="provider-box">
-      <strong>Gemini</strong> · <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">API keys</a>
-      <input id="key-GEMINI" type="password" autocomplete="off" placeholder="Paste Gemini API key">
-      <button onclick="saveProvider('GEMINI')">Save securely</button><button class="danger" onclick="clearProvider('GEMINI')">Clear</button>
-    </div>
-    <div class="provider-box">
-      <strong>Groq</strong> · <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">API keys</a>
-      <input id="key-GROQ" type="password" autocomplete="off" placeholder="Paste Groq API key">
-      <button onclick="saveProvider('GROQ')">Save securely</button><button class="danger" onclick="clearProvider('GROQ')">Clear</button>
-    </div>
-    <div class="provider-box">
-      <strong>OpenAI (optional)</strong> · <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">API keys</a>
-      <input id="key-OPENAI" type="password" autocomplete="off" placeholder="Paste OpenAI API key">
-      <button onclick="saveProvider('OPENAI')">Save securely</button><button class="danger" onclick="clearProvider('OPENAI')">Clear</button>
-    </div>
+  <div id="providers-dynamic-grid" class="providers-grid">
+    <!-- Dynamic provider credential boxes rendered from API status -->
   </div>
-  <div id="provider-message"></div>
+  <div id="provider-message" style="margin-top:8px;"></div>
 </div>
+
 
 <div class="card" style="margin-top:12px">
   <div class="label">Autonomous Goal Mode</div>
@@ -331,17 +313,49 @@ async function refreshStatus() {
     if (providerRows.length === 0) {
       document.getElementById('providers').textContent = 'No enabled reasoning provider evidence available.';
     } else {
-      let ph = '<table style="width:100%;border-collapse:collapse;text-align:left"><tr><th>Provider</th><th>Credential / Local</th><th>Probe</th><th>Circuit</th><th>Last success</th><th>Failure</th><th>Next probe</th></tr>';
+      let ph = '<table style="width:100%;border-collapse:collapse;text-align:left"><tr><th>Provider</th><th>Model</th><th>Billing</th><th>Paid Enabled</th><th>Credential / Local</th><th>Probe</th><th>Circuit</th><th>Last Success</th><th>Failure Class</th><th>Next Probe</th><th>Probes / Fails</th></tr>';
       for (const row of providerRows) {
         const availability = row.credential_available === null || row.credential_available === undefined
           ? `local=${row.local_service_available === true ? 'YES' : 'NO'}`
           : `credential=${row.credential_available ? 'YES' : 'NO'}`;
         const color = row.circuit_state === 'CLOSED' ? '#74d99f' : (row.circuit_state === 'UNKNOWN' ? '#f0b66c' : '#e06c75');
-        ph += `<tr style="border-top:1px solid #2b333c"><td>${row.provider_id}</td><td>${availability}</td><td>${row.probe_status || 'NOT_ATTEMPTED'}</td><td style="color:${color}">${row.circuit_state}</td><td>${row.last_success_at || 'NONE'}</td><td>${row.failure_class || 'NONE'}</td><td>${row.next_probe_at || 'NONE'}</td></tr>`;
+        const billing = row.billing_class || 'FREE';
+        const paidEnabled = (billing === 'PAID') ? (s.allow_paid_fallback ? 'YES' : 'NO') : 'N/A';
+        const model = row.model_id || 'default';
+        const probes = `${row.probe_count ?? 0} / ${row.failover_count ?? 0}`;
+        ph += `<tr style="border-top:1px solid #2b333c"><td><strong>${row.provider_id}</strong></td><td><small>${model}</small></td><td>${billing}</td><td>${paidEnabled}</td><td>${availability}</td><td>${row.probe_status || 'NOT_ATTEMPTED'}</td><td style="color:${color}">${row.circuit_state}</td><td><small>${(row.last_success_at || 'NONE').slice(0, 19)}</small></td><td>${row.failure_class || 'NONE'}</td><td><small>${row.next_probe_at ? String(row.next_probe_at).slice(0, 10) : 'NONE'}</small></td><td>${probes}</td></tr>`;
       }
       ph += '</table>';
       document.getElementById('providers').innerHTML = ph;
+
+      // Render dynamic provider settings grid
+      const gridEl = document.getElementById('providers-dynamic-grid');
+      if (gridEl) {
+        const credProviders = [
+          {id: 'NVIDIA', name: 'NVIDIA / Nemotron', env: 'NVIDIA_API_KEY', link: 'https://ngc.nvidia.com/'},
+          {id: 'GEMINI', name: 'Google Gemini', env: 'GEMINI_API_KEY', link: 'https://aistudio.google.com/app/apikey'},
+          {id: 'GROQ', name: 'Groq', env: 'GROQ_API_KEY', link: 'https://console.groq.com/keys'},
+          {id: 'CLOUDFLARE', name: 'Cloudflare Workers AI', env: 'CLOUDFLARE_API_TOKEN', link: 'https://dash.cloudflare.com/'},
+          {id: 'OPENROUTER', name: 'OpenRouter Free', env: 'OPENROUTER_API_KEY', link: 'https://openrouter.ai/keys'},
+          {id: 'CEREBRAS', name: 'Cerebras Free Trial', env: 'CEREBRAS_API_KEY', link: 'https://cloud.cerebras.ai/'},
+          {id: 'HUGGINGFACE', name: 'Hugging Face Inference Router', env: 'HF_TOKEN', link: 'https://huggingface.co/settings/tokens'},
+          {id: 'OPENAI', name: 'OpenAI Paid Safety Net (Disabled)', env: 'OPENAI_API_KEY', link: 'https://platform.openai.com/api-keys'},
+        ];
+        let gHtml = '';
+        for (const cp of credProviders) {
+          const isConfigured = s.providers ? (s.providers[cp.id] === true) : false;
+          const statusBadge = isConfigured ? '<span class="ok">Configured: YES</span>' : '<span style="color:#9eabb7;">Configured: NO</span>';
+          gHtml += `<div class="provider-box">
+            <strong>${cp.name}</strong> · <a href="${cp.link}" target="_blank" rel="noreferrer">keys</a><br>
+            <small>${statusBadge} · Env: ${cp.env}</small>
+            <input id="key-${cp.id}" type="password" autocomplete="off" placeholder="Paste ${cp.id} API key">
+            <button onclick="saveProvider('${cp.id}')">Save securely</button><button class="danger" onclick="clearProvider('${cp.id}')">Clear</button>
+          </div>`;
+        }
+        gridEl.innerHTML = gHtml;
+      }
     }
+
     const d = s.default_project || {};
     if (!document.getElementById('goal-descriptor').value && d.descriptor_path) document.getElementById('goal-descriptor').value = d.descriptor_path;
     if (!document.getElementById('goal-workspace').value && d.workspace) document.getElementById('goal-workspace').value = d.workspace;
@@ -728,9 +742,11 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "schema_version": "1.0.0",
             "host_state": bridge.get("host_state", "UNKNOWN"),
             "pending_jobs": int(bridge.get("pending_jobs", 0)),
-            "last_job": None,
-            "production": "NO_GO",
-            "ag_backend_enabled": False,
+            "allow_paid_fallback": False,
+            "paid_fallback_enabled": False,
+            "paid_daily_budget_usd": 0,
+            "paid_monthly_budget_usd": 0,
+            "paid_call_count": 0,
             "providers": providers,
             "provider_details": runtime_v1.get("provider_details", []),
             "default_project": config.get("default_project", {}),

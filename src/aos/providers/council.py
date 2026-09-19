@@ -368,6 +368,8 @@ class DeliberationCouncilV1:
         self.total_latency_delta_ms = 0.0
         self.total_cost_delta_estimate = 0.0
         self.primary_execution_interference_count = 0
+        self.council_provider_call_count = 0
+        self.council_provider_token_estimate = 0
         self._recent_fingerprints: set[str] = set()
 
         if self.ledger_dir:
@@ -433,10 +435,13 @@ class DeliberationCouncilV1:
                         self.canonical_contradictions_caught += 1
                     if rec.get("correlated_consensus_risk"):
                         self.correlated_consensus_risk_count += 1
+                    self.council_provider_call_count += int(rec.get("council_provider_call_count", 0) or 0)
+                    self.council_provider_token_estimate += int(rec.get("council_provider_token_estimate", 0) or 0)
                     self.total_latency_delta_ms += float(rec.get("latency_delta_ms", 0.0))
                     self.total_cost_delta_estimate += float(rec.get("estimated_request_cost_delta", 0.0))
         except Exception:
             pass
+
 
     def evaluate_decision(
         self,
@@ -920,6 +925,7 @@ class DeliberationCouncilV1:
         disagreement_rate = self.disagreement_count / total_evals
         consensus_risk_rate = self.correlated_consensus_risk_count / total_evals
 
+        share_est = round(self.council_provider_call_count / max(1, self.council_provider_call_count + 100), 4)
         return {
             "COUNCIL_TRIGGER_COUNT": self.trigger_count,
             "COUNCIL_SHADOW_SAMPLE_COUNT": self.shadow_sample_count,
@@ -927,6 +933,9 @@ class DeliberationCouncilV1:
             "COUNCIL_REAL_SAMPLE_RATE": round(real_sample_rate, 4),
             "COUNCIL_SKIPPED_CAPACITY_COUNT": self.skipped_capacity_count,
             "COUNCIL_SKIPPED_REDUNDANT_COUNT": self.skipped_redundant_count,
+            "COUNCIL_PROVIDER_CALL_COUNT": self.council_provider_call_count,
+            "COUNCIL_PROVIDER_TOKEN_ESTIMATE": self.council_provider_token_estimate,
+            "COUNCIL_REASONING_SHARE_ESTIMATE": share_est,
             "COUNCIL_AGREEMENT_RATE": round(agreement_rate, 4),
             "COUNCIL_DISAGREEMENT_RATE": round(disagreement_rate, 4),
             "COUNCIL_CORRELATED_CONSENSUS_RATE": round(consensus_risk_rate, 4),
@@ -937,6 +946,7 @@ class DeliberationCouncilV1:
             "COUNCIL_TOTAL_LATENCY_DELTA_MS": round(self.total_latency_delta_ms, 2),
             "COUNCIL_TOTAL_COST_DELTA_ESTIMATE": round(self.total_cost_delta_estimate, 4),
         }
+
 
     def check_live_eligibility(self) -> Tuple[bool, str]:
         """Check promotion gate to SELECTIVE_LIVE.

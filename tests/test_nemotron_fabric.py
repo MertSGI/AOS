@@ -390,7 +390,8 @@ def test_nemotron_structured_output_and_reasoning_redaction(monkeypatch):
 
 
 # 7. Untrusted Caller Classification Trust Fail-Closed
-def test_nemotron_fabric_untrusted_caller_classification_boundaries():
+def test_nemotron_fabric_untrusted_caller_classification_boundaries(monkeypatch):
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     fabric = NemotronSpecialistFabric()
 
     # Untrusted caller claiming INTERNAL_NON_SENSITIVE is denied fail-closed

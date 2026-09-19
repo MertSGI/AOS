@@ -14,7 +14,13 @@ from typing import Any, Dict, Optional
 
 from jsonschema import Draft202012Validator
 
-from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
+from aos.providers import (
+    GeminiPlannerProvider,
+    GroqPlannerProvider,
+    NemotronPlannerProvider,
+    OllamaPlannerProvider,
+    GenericOpenAICompatiblePlannerProvider,
+)
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from extensions.autonomy_fabric.native_workers import redact_secrets
 
@@ -29,9 +35,15 @@ _ENV = {
     "nemotron": "NVIDIA_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
+    "cloudflare": "CLOUDFLARE_API_TOKEN",
+    "openrouter_free": "OPENROUTER_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
+    "huggingface_router": "HF_TOKEN",
     "openai": "OPENAI_API_KEY",
+    "openai_paid_safety": "OPENAI_API_KEY",
     "ollama": None,
 }
+
 
 PROBE_SCHEMA = {
     "type": "object",
@@ -128,10 +140,38 @@ def _classify(exc: Exception) -> str:
 def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
     _hydrate()
     policy = _load_policy(policy_path)
+    allow_paid = bool(policy.get("allow_paid_fallback", False))
+    providers_cfg = policy.get("providers", {}) if isinstance(policy.get("providers"), dict) else {}
     result: Dict[str, Any] = {}
-    for provider_id in ("nemotron", "gemini", "groq"):
-        env_name = _ENV[provider_id]
+
+    for provider_id, cfg in providers_cfg.items():
+        if not isinstance(cfg, dict):
+            continue
+        if str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL":
+            continue
+
+        billing_class = str(cfg.get("billing_class", "FREE")).upper()
+        if billing_class == "PAID" and not allow_paid:
+            # Paid safety net disabled: NOT_PROBED without error
+            result[provider_id] = {
+                "provider_id": provider_id,
+                "credential_present": "YES" if (cfg.get("credential_env_var") and os.environ.get(cfg["credential_env_var"])) else "NO",
+                "connectivity": "NOT_PROBED",
+                "structured_contract": "NOT_PROBED",
+                "response_id": None,
+                "latency_ms": None,
+                "failure_class": None,
+                "evidence_class": "NOT_PROVEN",
+            }
+            continue
+
+        env_name = cfg.get("credential_env_var") or _ENV.get(provider_id)
         credential_present = bool(env_name and os.environ.get(env_name))
+        
+        # Check nonsecret required env vars if specified
+        nonsecret_vars = cfg.get("additional_nonsecret_env_vars") or []
+        nonsecret_missing = [v for v in nonsecret_vars if not os.environ.get(v)]
+
         row: Dict[str, Any] = {
             "provider_id": provider_id,
             "credential_present": "YES" if credential_present else "NO",
@@ -139,16 +179,31 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             "structured_contract": "FAIL",
             "response_id": None,
             "latency_ms": None,
-            "failure_class": "CREDENTIAL_UNAVAILABLE" if not credential_present else None,
+            "failure_class": "CREDENTIAL_UNAVAILABLE" if not credential_present else ("CONFIGURATION_UNAVAILABLE" if nonsecret_missing else None),
             "evidence_class": "NOT_PROVEN",
         }
-        model = _model_for(policy, provider_id)
-        if not credential_present or not model:
+
+        model = cfg.get("model_id")
+        if not credential_present or nonsecret_missing or not model:
             result[provider_id] = row
             continue
+
         started = time.monotonic()
         try:
-            provider = _PROVIDERS[provider_id](model=model)
+            if provider_id in _PROVIDERS:
+                provider = _PROVIDERS[provider_id](model=model)
+            else:
+                provider = GenericOpenAICompatiblePlannerProvider(
+                    provider_id=provider_id,
+                    model=model,
+                    base_url=cfg.get("base_url") or "https://api.openai.com/v1",
+                    credential_env_var=env_name,
+                    api_protocol=cfg.get("api_protocol") or "OPENAI_CHAT_COMPLETIONS",
+                    max_output_tokens=cfg.get("max_output_tokens") or 2200,
+                    cloud_local=cfg.get("cloud_local") or "CLOUD",
+                    billing_class=billing_class,
+                )
+
             proposal, response_id, _usage = provider.generate_plan(PROBE_PROMPT, PROBE_SCHEMA)
             row["latency_ms"] = int((time.monotonic() - started) * 1000)
             row["connectivity"] = "PASS"
@@ -167,17 +222,20 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             row["error_class"] = exc.__class__.__name__
             row["message"] = redact_secrets(str(exc))[:300]
         result[provider_id] = row
-    result["openai"] = {
-        "provider_id": "openai",
-        "credential_present": "YES" if os.environ.get("OPENAI_API_KEY") else "NO",
-        "connectivity": "NOT_PROBED",
-        "structured_contract": "NOT_PROBED",
-        "response_id": None,
-        "latency_ms": None,
-        "failure_class": None,
-        "evidence_class": "NOT_PROVEN",
-    }
+
+    if "openai" not in result and "OPENAI_API_KEY" in os.environ:
+        result["openai"] = {
+            "provider_id": "openai",
+            "credential_present": "YES",
+            "connectivity": "NOT_PROBED",
+            "structured_contract": "NOT_PROBED",
+            "response_id": None,
+            "latency_ms": None,
+            "failure_class": None,
+            "evidence_class": "NOT_PROVEN",
+        }
     return result
+
 
 
 def _memory_bytes() -> Optional[int]:

@@ -80,7 +80,42 @@
             },
             "billing_class": {
               "type": "string",
-              "enum": ["FREE_TIER", "PAID", "LOCAL", "UNKNOWN"]
+              "enum": [
+                "FREE",
+                "FREE_TIER",
+                "FREE_DAILY_QUOTA",
+                "FREE_TRIAL",
+                "LOCAL",
+                "PAID",
+                "UNKNOWN"
+              ]
+            },
+            "adapter_type": {
+              "type": "string"
+            },
+            "api_protocol": {
+              "type": "string",
+              "enum": ["OPENAI_CHAT_COMPLETIONS", "OPENAI_RESPONSES"]
+            },
+            "base_url": {
+              "type": "string"
+            },
+            "display_name": {
+              "type": "string"
+            },
+            "additional_nonsecret_env_vars": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "priority": {
+              "type": "integer"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "max_output_tokens": {
+              "type": "integer"
             },
             "structured_output": {
               "type": "boolean"

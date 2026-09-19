@@ -23,6 +23,14 @@ class ProviderEntry:
     cloud_local: str
     enabled: bool
     allowed_data_classifications: List[str]
+    display_name: Optional[str] = None
+    adapter_type: Optional[str] = None
+    api_protocol: Optional[str] = None
+    base_url: Optional[str] = None
+    additional_nonsecret_env_vars: Optional[List[str]] = None
+    priority: Optional[int] = None
+    capabilities: Optional[List[str]] = None
+    max_output_tokens: Optional[int] = None
 
 
 @dataclass
@@ -53,8 +61,8 @@ class ProviderRegistry:
 
     def __init__(self, policy_data: Dict[str, Any]):
         self.routing_mode = policy_data["routing_mode"]
-        self.allow_paid_fallback = policy_data["allow_paid_fallback"]
-        self.allow_provider_fallback = policy_data["allow_provider_fallback"]
+        self.allow_paid_fallback = policy_data.get("allow_paid_fallback", False)
+        self.allow_provider_fallback = policy_data.get("allow_provider_fallback", True)
         self.data_classification = policy_data["data_classification"]
         self.risk_routes = policy_data["risk_routes"]
         self._providers: Dict[str, ProviderEntry] = {}
@@ -68,7 +76,16 @@ class ProviderRegistry:
                 cloud_local=pdata["cloud_local"],
                 enabled=pdata["enabled"],
                 allowed_data_classifications=pdata["allowed_data_classifications"],
+                display_name=pdata.get("display_name"),
+                adapter_type=pdata.get("adapter_type"),
+                api_protocol=pdata.get("api_protocol"),
+                base_url=pdata.get("base_url"),
+                additional_nonsecret_env_vars=pdata.get("additional_nonsecret_env_vars"),
+                priority=pdata.get("priority"),
+                capabilities=pdata.get("capabilities"),
+                max_output_tokens=pdata.get("max_output_tokens"),
             )
+
 
     def get_provider(self, provider_id: str) -> Optional[ProviderEntry]:
         return self._providers.get(provider_id)

@@ -1018,15 +1018,27 @@ def _shadow_deliberate(
         if not assessment.council_required:
             return
 
-        # Spare capacity check: if provider attempts journal shows recent backoff/quota exhaustion,
-        # rate limiting, 5xx server errors, timeouts, connection issues, or kernel is WAITING_FOR_REASONING_PROVIDER,
-        # fail-closed: skip shadow work immediately.
+        # Section 11 Admission Rules:
+        # If HEALTHY_REASONING_PROVIDER_COUNT <= 1: Council model calls = 0
+        # If any primary product lane is WAITING_FOR_REASONING_PROVIDER: Council model calls = 0
+        # If provider quota/capacity is degraded materially: Council model calls = 0
         spare_capacity = True
+        circuits_file = runtime_dir / "provider-circuits.json"
+        if circuits_file.exists():
+            try:
+                from aos.provider_circuit import ProviderCircuitBreakerRegistry
+                cr = ProviderCircuitBreakerRegistry(circuits_file)
+                sm = cr.summarize()
+                if sm.get("healthy_reasoning_provider_count", 0) <= 1:
+                    spare_capacity = False
+            except Exception:
+                pass
+
         checkpoint_file = _kernel_checkpoint_path(runtime_dir)
         if checkpoint_file.exists():
             try:
                 cp_data = _read_json(checkpoint_file)
-                if cp_data.get("phase") == "WAITING_FOR_REASONING_PROVIDER":
+                if "WAITING" in str(cp_data.get("phase", "")).upper():
                     spare_capacity = False
             except Exception:
                 pass
@@ -1046,6 +1058,7 @@ def _shadow_deliberate(
                     pass
 
         # Attempt to gather independent alternate proposals if spare capacity exists and alternates not provided
+
         collected_alternates: List[Tuple[str, Mapping[str, Any]]] = list(alternate_proposals)
         active_reviewers: List[Tuple[str, Any]] = []
         if spare_capacity and routing_policy_path and routing_policy_path.is_file() and schema:
