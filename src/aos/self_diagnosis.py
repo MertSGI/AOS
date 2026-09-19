@@ -541,29 +541,51 @@ class SelfDiagnosisEngine:
                 findings.append(f)
 
             if backoff or l_state == "WAITING_FOR_REASONING_PROVIDER":
+                all_down = bool(runtime_health.get("all_reasoning_providers_unavailable", False))
+                circuits_open = int(runtime_health.get("provider_circuits_open", 0) or 0)
+                next_probe = runtime_health.get("next_provider_probe_at")
+                last_success = runtime_health.get("last_provider_success")
+                healthy_count = int(runtime_health.get("healthy_reasoning_provider_count", 0) or 0)
+
+                failure_class = "PROVIDER_ALL_UNAVAILABLE" if all_down else ("PROVIDER_TRANSIENT_FAILURE" if attempts < 5 else "PROVIDER_PERSISTENT_FAILURE")
+                severity = "HIGH" if all_down else ("LOW" if attempts < 3 else "MEDIUM")
+                symptom = (
+                    "All authorized reasoning providers unavailable; circuits open with adaptive backoff"
+                    if all_down
+                    else f"{lane_name} ({proj_id}) waiting for reasoning provider availability"
+                )
+
                 prop = ShadowRepairProposal(
-                    problem=f"{lane_name} in provider backoff / waiting for provider",
-                    evidence=[f"command_id={cmd_id}", f"backoff={backoff}", f"state={l_state}"],
-                    root_cause_hypothesis="Provider API quota exhausted, rate limited, or credentials missing",
-                    minimal_change="Check provider health probes, rotate provider, or wait for rate limit cooldown",
-                    files_likely_affected=["src/aos/providers"],
-                    tests_required=["tests/test_providers.py"],
+                    problem=symptom,
+                    evidence=[
+                        f"command_id={cmd_id}",
+                        f"backoff={backoff}",
+                        f"state={l_state}",
+                        f"circuits_open={circuits_open}",
+                        f"healthy_count={healthy_count}",
+                        f"next_probe_at={next_probe}",
+                        f"last_success={last_success}",
+                    ],
+                    root_cause_hypothesis="Provider API quota exhausted, rate limited, or model endpoint offline",
+                    minimal_change="Durable circuit breaker will probe on schedule; healthy fallback provider executes automatically",
+                    files_likely_affected=["src/aos/provider_circuit.py", "src/aos/autonomous_host.py"],
+                    tests_required=["tests/test_provider_circuit.py"],
                     ci_required=False,
                     runtime_proof_required="PROVIDER_PROBE_SUCCESS",
-                    rollback_plan="Automatic backoff retry schedule",
+                    rollback_plan="Automatic adaptive backoff schedule",
                     authority_class="ROUTINE_SELF_REPAIR_ELIGIBLE",
                 )
                 f = self.record_or_update_finding(
                     component="reasoning_provider",
-                    failure_class="PROVIDER_TRANSIENT_FAILURE" if attempts < 5 else "PROVIDER_PERSISTENT_FAILURE",
-                    symptom=f"{lane_name} ({proj_id}) stalled on provider availability/backoff",
-                    severity="LOW" if attempts < 3 else "MEDIUM",
-                    autonomy_impact="DEGRADED",
+                    failure_class=failure_class,
+                    symptom=symptom,
+                    severity=severity,
+                    autonomy_impact="BLOCKING_MULTI_LANE" if all_down else "DEGRADED",
                     affected_lane_ids=[lane_name],
-                    evidence_refs=[f"commands/{cmd_id}/state.json"],
-                    evidence_class="PROVIDER_BACKOFF_TELEMETRY",
-                    confidence=0.9,
-                    suspected_root_cause="Transient rate limit or unavailable reasoning model endpoint",
+                    evidence_refs=[f"commands/{cmd_id}/state.json", "provider-circuits.json"],
+                    evidence_class="PROVIDER_CIRCUIT_TELEMETRY",
+                    confidence=0.95,
+                    suspected_root_cause="Reasoning provider circuit open with adaptive backoff schedule",
                     repair_authority="ROUTINE_SELF_REPAIR_ELIGIBLE",
                     proposed_repair=prop,
                     requires_candidate=False,

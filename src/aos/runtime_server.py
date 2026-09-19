@@ -31,6 +31,7 @@ from aos.runtime_contract import (
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
 from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
 from aos.controller_relay import ControllerRelayPublisher
+from aos.provider_circuit import ProviderCircuitBreakerRegistry
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -247,6 +248,16 @@ class RuntimeEngine:
                 "failure_class": latest_state.get("failure_class"),
                 "canonical_source_sha": latest_state.get("canonical_source_sha"),
             }
+        # Query circuit breaker registry from durable state
+        circuit_file = self.runtime_root / "provider-circuits.json"
+        if not circuit_file.exists():
+            for pid in (self.config.get("projects") or {}).keys():
+                cand = self.runtime_root / "projects" / pid / "provider-circuits.json"
+                if cand.exists():
+                    circuit_file = cand
+                    break
+        circuit_reg = ProviderCircuitBreakerRegistry(circuit_file)
+        circuit_summary = circuit_reg.summarize()
         return {
             "contract_version": CONTRACT_VERSION,
             "runtime_state": "HEALTHY",
@@ -267,6 +278,13 @@ class RuntimeEngine:
             "runtime_supervisor_pid": os.environ.get("AOS_RUNTIME_SUPERVISOR_PID"),
             "production": "NO_GO",
             "ag_backend_enabled": False,
+            "healthy_reasoning_provider_count": circuit_summary["healthy_reasoning_provider_count"],
+            "provider_circuits_open": circuit_summary["provider_circuits_open"],
+            "all_reasoning_providers_unavailable": circuit_summary["all_reasoning_providers_unavailable"],
+            "next_provider_probe_at": circuit_summary["next_provider_probe_at"],
+            "last_provider_success": circuit_summary["last_provider_success"],
+            "provider_probe_count": circuit_summary["provider_probe_count"],
+            "provider_failover_count": circuit_summary["provider_failover_count"],
         }
 
     def pause_safe(self) -> Dict[str, Any]:

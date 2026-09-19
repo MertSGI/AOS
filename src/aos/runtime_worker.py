@@ -27,6 +27,7 @@ from aos.runtime_contract import ContinueProjectCommand, RuntimeResult, utc_now
 from aos.runtime_store import RuntimeStore, exclusive_file_lock, read_json
 from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
+from aos.provider_circuit import ProviderCircuitBreakerRegistry
 
 
 class PlanningArtifactWatcher(threading.Thread):
@@ -197,7 +198,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
 
         try:
             previous = store.read_state(command_id)
-            attempts = int(previous.get("attempts", 0)) + 1
+            initial_attempts = int(previous.get("attempts", 0))
+            attempts = initial_attempts + 1
             recovered = str(previous.get("state")) in ("RUNNING", "RECOVERING") or attempts > 1
             store.write_state(
                 command_id,
@@ -311,15 +313,21 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     continue
 
                 if disposition == "WAITING_FOR_REASONING_PROVIDER":
-                    retry_at = time.time() + 300
+                    circuit_reg = ProviderCircuitBreakerRegistry(project_runtime / "provider-circuits.json")
+                    retry_at = circuit_reg.earliest_next_probe()
+                    # Command attempts count real worker execution attempts; do not inflate during provider outage probe loops
+                    final_attempts = initial_attempts
                     store.write_state(
                         command_id,
                         state="WAITING_FOR_REASONING_PROVIDER",
                         worker_pid=None,
+                        attempts=final_attempts,
                         retry_after_epoch=retry_at,
                     )
                     store.append_event(command_id, "run.waiting_for_reasoning_provider", {
                         "retry_after_epoch": retry_at,
+                        "attempt": final_attempts,
+                        "circuit_summary": circuit_reg.summarize(),
                     })
                     result = RuntimeResult(
                         command_id=command_id,

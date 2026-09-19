@@ -122,6 +122,13 @@ class RelaySnapshot:
     last_finding_severity: str = "NONE"
     last_autonomy_impact: str = "NONE"
     shadow_repair_proposal_status: str = "NONE"
+    healthy_reasoning_provider_count: int = 0
+    provider_circuits_open: int = 0
+    next_provider_probe_at: Optional[float] = None
+    last_provider_success: Optional[str] = None
+    all_reasoning_providers_unavailable: str = "NO"
+    provider_probe_count: int = 0
+    provider_failover_count: int = 0
 
 
 class ControllerRelayPublisher:
@@ -569,6 +576,13 @@ class ControllerRelayPublisher:
             last_finding_severity=diag_summary.get("last_finding_severity", "NONE"),
             last_autonomy_impact=diag_summary.get("last_autonomy_impact", "NONE"),
             shadow_repair_proposal_status=diag_summary.get("shadow_repair_proposal_status", "NONE"),
+            healthy_reasoning_provider_count=int(rh.get("healthy_reasoning_provider_count", 0) or 0),
+            provider_circuits_open=int(rh.get("provider_circuits_open", 0) or 0),
+            next_provider_probe_at=rh.get("next_provider_probe_at"),
+            last_provider_success=rh.get("last_provider_success"),
+            all_reasoning_providers_unavailable="YES" if rh.get("all_reasoning_providers_unavailable") else "NO",
+            provider_probe_count=int(rh.get("provider_probe_count", 0) or 0),
+            provider_failover_count=int(rh.get("provider_failover_count", 0) or 0),
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -659,6 +673,15 @@ REMOTE_OUTBOX_TRANSPORT=GITHUB_ISSUE
 REMOTE_OUTBOX_STATUS={snapshot.remote_outbox_status}
 REMOTE_ISSUE_NUMBER={snapshot.remote_issue_number or 'NONE'}
 LAST_REMOTE_PUBLISH_AT={snapshot.last_remote_publish_at or 'NONE'}
+
+### REASONING PROVIDERS & CIRCUIT BREAKERS
+HEALTHY_REASONING_PROVIDER_COUNT={snapshot.healthy_reasoning_provider_count}
+PROVIDER_CIRCUITS_OPEN={snapshot.provider_circuits_open}
+ALL_REASONING_PROVIDERS_UNAVAILABLE={snapshot.all_reasoning_providers_unavailable}
+NEXT_PROVIDER_PROBE_AT={snapshot.next_provider_probe_at or 'NONE'}
+LAST_PROVIDER_SUCCESS={snapshot.last_provider_success or 'NONE'}
+PROVIDER_PROBE_COUNT={snapshot.provider_probe_count}
+PROVIDER_FAILOVER_COUNT={snapshot.provider_failover_count}
 
 ### SELF-REPAIR OBSERVABILITY (SHADOW ONLY)
 SELF_DIAGNOSIS_STATUS={snapshot.self_diagnosis_status}

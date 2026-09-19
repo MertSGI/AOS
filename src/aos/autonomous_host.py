@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from aos.process_utils import run_headless
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
 from aos.providers import GeminiPlannerProvider, GroqPlannerProvider, NemotronPlannerProvider, OllamaPlannerProvider
 from aos.source_adapter import ProjectSourceAdapter
@@ -164,10 +166,16 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         provider_router: ProviderRouter,
         provider_factory: Optional[Callable[[str, str], Any]] = None,
         attempt_journal: Optional[Path] = None,
+        circuit_registry: Optional[ProviderCircuitBreakerRegistry] = None,
     ) -> None:
         self.provider_router = provider_router
         self.provider_factory = provider_factory or self._default_provider_factory
         self.attempt_journal = attempt_journal
+        if circuit_registry is None and attempt_journal is not None:
+            circuit_registry = ProviderCircuitBreakerRegistry(
+                attempt_journal.parent / "provider-circuits.json"
+            )
+        self.circuit_registry = circuit_registry
 
     @staticmethod
     def _default_provider_factory(provider_id: str, model_id: str) -> Any:
@@ -206,6 +214,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             model_id = route.selected_model_id
             tried.append(provider_id)
 
+            if self.circuit_registry is not None and not self.circuit_registry.is_provider_available(provider_id):
+                # Provider circuit is OPEN and probe interval has not elapsed; bypass to next provider
+                continue
+
             try:
                 provider = self.provider_factory(provider_id, model_id)
                 plan_data, response_id, usage = provider.generate_plan(prompt, schema)
@@ -226,6 +238,11 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 )
                 attempts.append(attempt)
                 self._record_attempt(attempt)
+                if self.circuit_registry is not None:
+                    self.circuit_registry.record_success(provider_id)
+                    self.circuit_registry.record_probe(provider_id)
+                    if len(attempts) > 1:
+                        self.circuit_registry.record_failover(provider_id)
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="model_reasoner",
@@ -243,6 +260,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                         "usage": usage,
                         "provider_attempts": [item.to_dict() for item in attempts],
                         "fallback_used": len(attempts) > 1,
+                        "circuit_summary": self.circuit_registry.summarize() if self.circuit_registry else {},
                     },
                     evidence_class=evidence_class,
                 )
@@ -331,8 +349,17 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             )
             attempts.append(attempt)
             self._record_attempt(attempt)
+            if self.circuit_registry is not None:
+                self.circuit_registry.record_failure(provider_id, status.value)
+                self.circuit_registry.record_probe(provider_id)
             failed_provider = provider_id
 
+        circuit_summary = self.circuit_registry.summarize() if self.circuit_registry else {}
+        next_probe_epoch = (
+            self.circuit_registry.earliest_next_probe()
+            if self.circuit_registry
+            else (time.time() + 60.0)
+        )
         return ExecutionResult(
             backend_id=self.backend_id,
             worker_id="model_reasoner",
@@ -345,6 +372,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             evidence_payload={
                 "failure_class": "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE",
                 "provider_attempts": [item.to_dict() for item in attempts],
+                "circuit_summary": circuit_summary,
+                "next_probe_at": next_probe_epoch,
                 "local_reasoning_result": (
                     "LOCAL_REASONING_UNAVAILABLE"
                     if any(a.provider_id == "ollama" for a in attempts)
