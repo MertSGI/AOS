@@ -2,6 +2,9 @@
   "schema_version": "0.1.0",
   "routing_mode": "DETERMINISTIC",
   "allow_paid_fallback": false,
+  "paid_fallback_enabled": false,
+  "paid_daily_budget_usd": 0,
+  "paid_monthly_budget_usd": 0,
   "allow_provider_fallback": true,
   "data_classification": "PUBLIC",
   "risk_routes": {
@@ -22,6 +25,8 @@
   "providers": {
     "nemotron": {
       "provider_id": "nemotron",
+      "display_name": "NVIDIA / Nemotron",
+      "provider_console_url": "https://ngc.nvidia.com/",
       "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
       "credential_env_var": "NVIDIA_API_KEY",
       "billing_class": "FREE_TIER",
@@ -32,6 +37,8 @@
     },
     "gemini": {
       "provider_id": "gemini",
+      "display_name": "Google Gemini",
+      "provider_console_url": "https://aistudio.google.com/app/apikey",
       "model_id": "gemini-3.6-flash",
       "credential_env_var": "GEMINI_API_KEY",
       "billing_class": "FREE_TIER",
@@ -42,6 +49,8 @@
     },
     "groq": {
       "provider_id": "groq",
+      "display_name": "Groq",
+      "provider_console_url": "https://console.groq.com/keys",
       "model_id": "openai/gpt-oss-120b",
       "credential_env_var": "GROQ_API_KEY",
       "billing_class": "FREE_TIER",
@@ -53,6 +62,7 @@
     "cloudflare": {
       "provider_id": "cloudflare",
       "display_name": "Cloudflare Workers AI",
+      "provider_console_url": "https://dash.cloudflare.com/",
       "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
       "api_protocol": "OPENAI_CHAT_COMPLETIONS",
       "base_url": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
@@ -68,6 +78,7 @@
     "openrouter_free": {
       "provider_id": "openrouter_free",
       "display_name": "OpenRouter Free",
+      "provider_console_url": "https://openrouter.ai/keys",
       "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
       "api_protocol": "OPENAI_CHAT_COMPLETIONS",
       "base_url": "https://openrouter.ai/api/v1",
@@ -82,6 +93,7 @@
     "cerebras": {
       "provider_id": "cerebras",
       "display_name": "Cerebras Free Trial",
+      "provider_console_url": "https://cloud.cerebras.ai/",
       "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
       "api_protocol": "OPENAI_CHAT_COMPLETIONS",
       "base_url": "https://api.cerebras.ai/v1",
@@ -96,6 +108,7 @@
     "huggingface_router": {
       "provider_id": "huggingface_router",
       "display_name": "Hugging Face Inference Router",
+      "provider_console_url": "https://huggingface.co/settings/tokens",
       "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
       "api_protocol": "OPENAI_CHAT_COMPLETIONS",
       "base_url": "https://router.huggingface.co/v1",
@@ -109,6 +122,7 @@
     },
     "ollama": {
       "provider_id": "ollama",
+      "display_name": "Ollama (Local)",
       "model_id": "llama3.3:70b",
       "credential_env_var": null,
       "billing_class": "LOCAL",
@@ -120,6 +134,7 @@
     "openai_paid_safety": {
       "provider_id": "openai_paid_safety",
       "display_name": "OpenAI Paid Safety Net (Disabled)",
+      "provider_console_url": "https://platform.openai.com/api-keys",
       "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
       "api_protocol": "OPENAI_RESPONSES",
       "base_url": "https://api.openai.com/v1",

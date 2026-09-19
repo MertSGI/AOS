@@ -1023,22 +1023,71 @@ def _shadow_deliberate(
         # If any primary product lane is WAITING_FOR_REASONING_PROVIDER: Council model calls = 0
         # If provider quota/capacity is degraded materially: Council model calls = 0
         spare_capacity = True
-        circuits_file = runtime_dir / "provider-circuits.json"
-        if circuits_file.exists():
+
+        # Global aggregate primary-lane capacity view across known store roots
+        store_roots = []
+        commands_root = runtime_dir.parent.parent
+        if (commands_root / "commands").is_dir():
+            store_roots.append(commands_root / "commands")
+        elif commands_root.name == "commands" and commands_root.is_dir():
+            store_roots.append(commands_root)
+        local_app_cmds = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state" / "commands"
+        if local_app_cmds.is_dir() and local_app_cmds not in store_roots:
+            store_roots.append(local_app_cmds)
+
+        # 1. Global check: If ANY active primary product lane is WAITING_FOR_REASONING_PROVIDER
+        for cmd_root in store_roots:
             try:
-                from aos.provider_circuit import ProviderCircuitBreakerRegistry
-                cr = ProviderCircuitBreakerRegistry(circuits_file)
-                sm = cr.summarize()
-                if sm.get("healthy_reasoning_provider_count", 0) <= 1:
-                    spare_capacity = False
+                for state_file in cmd_root.glob("*/state.json"):
+                    s_data = _read_json(state_file)
+                    st = str(s_data.get("state", "")).upper()
+                    disp = str(s_data.get("disposition", "")).upper()
+                    fail_cls = str(s_data.get("failure_class", "")).upper()
+                    if (
+                        st == "WAITING_FOR_REASONING_PROVIDER"
+                        or disp == "WAITING_FOR_REASONING_PROVIDER"
+                        or fail_cls == "WAITING_FOR_REASONING_PROVIDER"
+                    ):
+                        spare_capacity = False
+                        break
+                if not spare_capacity:
+                    break
+                for chk_file in cmd_root.glob("*/project-runtime/planning-kernel-checkpoint.json"):
+                    c_data = _read_json(chk_file)
+                    ph = str(c_data.get("phase", "")).upper()
+                    if "WAITING_FOR_REASONING_PROVIDER" in ph or ph == "WAITING_FOR_REASONING_PROVIDER":
+                        spare_capacity = False
+                        break
             except Exception:
                 pass
+            if not spare_capacity:
+                break
 
-        checkpoint_file = _kernel_checkpoint_path(runtime_dir)
-        if checkpoint_file.exists():
+        # Check local runtime_dir checkpoint as well
+        if spare_capacity:
+            checkpoint_file = _kernel_checkpoint_path(runtime_dir)
+            if checkpoint_file.exists():
+                try:
+                    cp_data = _read_json(checkpoint_file)
+                    if "WAITING" in str(cp_data.get("phase", "")).upper():
+                        spare_capacity = False
+                except Exception:
+                    pass
+
+        # 2. Global check: Total healthy reasoning providers <= 1
+        circuit_files = []
+        cf = runtime_dir / "provider-circuits.json"
+        if cf.exists():
+            circuit_files.append(cf)
+        for cmd_root in store_roots:
+            circuit_files.extend(list(cmd_root.glob("*/project-runtime/provider-circuits.json")))
+
+        if circuit_files:
             try:
-                cp_data = _read_json(checkpoint_file)
-                if "WAITING" in str(cp_data.get("phase", "")).upper():
+                from aos.provider_circuit import ProviderCircuitBreakerRegistry
+                agg_reg = ProviderCircuitBreakerRegistry.aggregate_registries(circuit_files)
+                sm = agg_reg.summarize()
+                if sm.get("healthy_reasoning_provider_count", 0) <= 1:
                     spare_capacity = False
             except Exception:
                 pass

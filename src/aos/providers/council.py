@@ -370,6 +370,9 @@ class DeliberationCouncilV1:
         self.primary_execution_interference_count = 0
         self.council_provider_call_count = 0
         self.council_provider_token_estimate = 0
+        self.primary_provider_call_count = 0
+        self.primary_provider_token_estimate = 0
+        self.council_reasoning_share_estimate = 0.0
         self._recent_fingerprints: set[str] = set()
 
         if self.ledger_dir:
@@ -439,6 +442,23 @@ class DeliberationCouncilV1:
                     self.council_provider_token_estimate += int(rec.get("council_provider_token_estimate", 0) or 0)
                     self.total_latency_delta_ms += float(rec.get("latency_delta_ms", 0.0))
                     self.total_cost_delta_estimate += float(rec.get("estimated_request_cost_delta", 0.0))
+
+            # Also reconstruct durable primary reasoning calls/tokens from attempts journals
+            if self.ledger_dir:
+                runtime_root = self.ledger_dir.parent
+                attempts_file = runtime_root / "provider-attempts.jsonl"
+                if attempts_file.is_file():
+                    try:
+                        for pline in attempts_file.read_text("utf-8").strip().splitlines():
+                            if pline.strip():
+                                patt = json.loads(pline)
+                                if patt.get("status") == "SUCCESS":
+                                    self.primary_provider_call_count += 1
+                                    self.primary_provider_token_estimate += int(patt.get("tokens", 800) or 800)
+                    except Exception:
+                        pass
+            total_calls = max(1, self.primary_provider_call_count + self.council_provider_call_count)
+            self.council_reasoning_share_estimate = round(self.council_provider_call_count / total_calls, 4)
         except Exception:
             pass
 
@@ -596,6 +616,57 @@ class DeliberationCouncilV1:
             )
         self._recent_fingerprints.add(decision_fingerprint)
 
+        # Budget Share Guard: Enforce COUNCIL_REASONING_SHARE_ESTIMATE <= 0.10
+        # If executing another Council call would exceed the bounded Council budget: skip with explicit reason.
+        anticipated_council_calls = len(reviewers) if reviewers else 0
+        current_total = self.primary_provider_call_count + self.council_provider_call_count
+        anticipated_share = (self.council_provider_call_count + anticipated_council_calls) / max(1, current_total + anticipated_council_calls)
+        if self.primary_provider_call_count > 0 and anticipated_share > 0.10:
+            self.skipped_capacity_count += 1
+            decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
+            budget_skip_record = {
+                "decision_id": decision_id,
+                "project_id": project_id,
+                "command_id": command_id or "unknown-command",
+                "decision_class": decision_type,
+                "timestamp": time.time(),
+                "primary_decision_fingerprint": primary_fingerprint,
+                "primary_confidence": assessment.primary_confidence,
+                "council_trigger_reason": "SKIPPED_DUE_TO_BUDGET_SHARE_LIMIT",
+                "primary_proposal_count": primary_proposal_count,
+                "council_alternate_proposal_count": alternate_proposal_count,
+                "total_blinded_proposal_count": 0,
+                "independent_proposal_count": 0,
+                "peer_reviewer_count": 0,
+                "valid_peer_review_count": 0,
+                "distinct_reviewer_count": 0,
+                "reviewed_proposal_coverage": 0,
+                "quorum_obtained": False,
+                "council_status": "SKIPPED_DUE_TO_BUDGET_SHARE_LIMIT",
+                "council_result_fingerprint": None,
+                "council_agreement": True,
+                "council_confidence": 0.0,
+                "contradiction_detected": False,
+                "policy_violation_caught": False,
+                "canonical_conflict_detected": False,
+                "correlated_consensus_risk": False,
+                "estimated_request_cost_delta": 0.0,
+                "latency_delta_ms": 0.0,
+                "is_real_execution": is_real_execution,
+                "execution_affected": False,
+            }
+            self._persist_decision_ledger(budget_skip_record)
+            return DeliberationResult(
+                winning_proposal_id=None,
+                selected_payload=None,
+                scores={},
+                agreement_with_primary=True,
+                quorum_reached=False,
+                confidence=0.0,
+                mode=self.mode,
+                decision_record=budget_skip_record,
+            )
+
         # FIRST PASS & BLINDING:
         all_candidates = [("primary_planner", primary_proposal)] + list(alternate_proposals)
         blinded = blind_proposals(all_candidates, seed=seed, shuffle=True)
@@ -641,6 +712,8 @@ class DeliberationCouncilV1:
                 try:
                     rev_hash = hashlib.sha256(str(r_id).encode("utf-8")).hexdigest()[:12]
                     if hasattr(reviewer_obj, "generate_plan"):
+                        self.council_provider_call_count += 1
+                        self.council_provider_token_estimate += 600
                         plan_data, _, _ = reviewer_obj.generate_plan(review_prompt, PEER_REVIEW_SCHEMA)
                         if isinstance(plan_data, dict):
                             # Can return single review or list of reviews
@@ -925,17 +998,20 @@ class DeliberationCouncilV1:
         disagreement_rate = self.disagreement_count / total_evals
         consensus_risk_rate = self.correlated_consensus_risk_count / total_evals
 
-        share_est = round(self.council_provider_call_count / max(1, self.council_provider_call_count + 100), 4)
+        total_reasoning_calls = max(1, self.primary_provider_call_count + self.council_provider_call_count)
+        share_est = round(self.council_provider_call_count / total_reasoning_calls, 4)
         return {
+            "PRIMARY_PROVIDER_CALL_COUNT": self.primary_provider_call_count,
+            "PRIMARY_PROVIDER_TOKEN_ESTIMATE": self.primary_provider_token_estimate,
+            "COUNCIL_PROVIDER_CALL_COUNT": self.council_provider_call_count,
+            "COUNCIL_PROVIDER_TOKEN_ESTIMATE": self.council_provider_token_estimate,
+            "COUNCIL_REASONING_SHARE_ESTIMATE": share_est,
             "COUNCIL_TRIGGER_COUNT": self.trigger_count,
             "COUNCIL_SHADOW_SAMPLE_COUNT": self.shadow_sample_count,
             "COUNCIL_REAL_SAMPLE_COUNT": self.real_shadow_sample_count,
             "COUNCIL_REAL_SAMPLE_RATE": round(real_sample_rate, 4),
             "COUNCIL_SKIPPED_CAPACITY_COUNT": self.skipped_capacity_count,
             "COUNCIL_SKIPPED_REDUNDANT_COUNT": self.skipped_redundant_count,
-            "COUNCIL_PROVIDER_CALL_COUNT": self.council_provider_call_count,
-            "COUNCIL_PROVIDER_TOKEN_ESTIMATE": self.council_provider_token_estimate,
-            "COUNCIL_REASONING_SHARE_ESTIMATE": share_est,
             "COUNCIL_AGREEMENT_RATE": round(agreement_rate, 4),
             "COUNCIL_DISAGREEMENT_RATE": round(disagreement_rate, 4),
             "COUNCIL_CORRELATED_CONSENSUS_RATE": round(consensus_risk_rate, 4),

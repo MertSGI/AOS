@@ -236,6 +236,9 @@ async function refreshStatus() {
         <div>Total Real Shadow Samples: <strong class="ok" style="font-size:16px;">${totalSamples}</strong></div>
         <div>Quorum Obtained: <strong>${delib.quorum_count || 0}</strong></div>
         <div>Council Agreement: <strong>${delib.agreement_count || 0}</strong></div>
+        <div>Primary Calls: <strong>${delib.PRIMARY_PROVIDER_CALL_COUNT ?? 0}</strong> (Tokens: <strong>${delib.PRIMARY_PROVIDER_TOKEN_ESTIMATE ?? 0}</strong>)</div>
+        <div>Council Calls: <strong>${delib.COUNCIL_PROVIDER_CALL_COUNT ?? 0}</strong> (Tokens: <strong>${delib.COUNCIL_PROVIDER_TOKEN_ESTIMATE ?? 0}</strong>)</div>
+        <div>Reasoning Share: <strong class="${(delib.COUNCIL_REASONING_SHARE_ESTIMATE || 0) <= 0.10 ? 'ok' : 'danger'}">${((delib.COUNCIL_REASONING_SHARE_ESTIMATE ?? 0) * 100).toFixed(1)}%</strong></div>
       </div>
       <div style="margin-top:6px; color:#9eabb7;">Trigger Reasons: ${reasonEntries || 'None'}</div>`;
       document.getElementById('deliberation-view').innerHTML = dHtml;
@@ -328,28 +331,22 @@ async function refreshStatus() {
       ph += '</table>';
       document.getElementById('providers').innerHTML = ph;
 
-      // Render dynamic provider settings grid
+      // Render dynamic provider settings grid from sanitized registry metadata
       const gridEl = document.getElementById('providers-dynamic-grid');
       if (gridEl) {
-        const credProviders = [
-          {id: 'NVIDIA', name: 'NVIDIA / Nemotron', env: 'NVIDIA_API_KEY', link: 'https://ngc.nvidia.com/'},
-          {id: 'GEMINI', name: 'Google Gemini', env: 'GEMINI_API_KEY', link: 'https://aistudio.google.com/app/apikey'},
-          {id: 'GROQ', name: 'Groq', env: 'GROQ_API_KEY', link: 'https://console.groq.com/keys'},
-          {id: 'CLOUDFLARE', name: 'Cloudflare Workers AI', env: 'CLOUDFLARE_API_TOKEN', link: 'https://dash.cloudflare.com/'},
-          {id: 'OPENROUTER', name: 'OpenRouter Free', env: 'OPENROUTER_API_KEY', link: 'https://openrouter.ai/keys'},
-          {id: 'CEREBRAS', name: 'Cerebras Free Trial', env: 'CEREBRAS_API_KEY', link: 'https://cloud.cerebras.ai/'},
-          {id: 'HUGGINGFACE', name: 'Hugging Face Inference Router', env: 'HF_TOKEN', link: 'https://huggingface.co/settings/tokens'},
-          {id: 'OPENAI', name: 'OpenAI Paid Safety Net (Disabled)', env: 'OPENAI_API_KEY', link: 'https://platform.openai.com/api-keys'},
-        ];
+        const regProviders = s.sanitized_providers || [];
         let gHtml = '';
-        for (const cp of credProviders) {
-          const isConfigured = s.providers ? (s.providers[cp.id] === true) : false;
+        for (const cp of regProviders) {
+          if (!cp.credential_configurable) continue;
+          const pid = cp.provider_id;
+          const isConfigured = Boolean(cp.configured);
           const statusBadge = isConfigured ? '<span class="ok">Configured: YES</span>' : '<span style="color:#9eabb7;">Configured: NO</span>';
+          const linkHtml = cp.provider_console_url ? ` · <a href="${cp.provider_console_url}" target="_blank" rel="noreferrer">keys</a>` : '';
           gHtml += `<div class="provider-box">
-            <strong>${cp.name}</strong> · <a href="${cp.link}" target="_blank" rel="noreferrer">keys</a><br>
-            <small>${statusBadge} · Env: ${cp.env}</small>
-            <input id="key-${cp.id}" type="password" autocomplete="off" placeholder="Paste ${cp.id} API key">
-            <button onclick="saveProvider('${cp.id}')">Save securely</button><button class="danger" onclick="clearProvider('${cp.id}')">Clear</button>
+            <strong>${cp.display_name || pid}</strong>${linkHtml}<br>
+            <small>${statusBadge} · Env: ${cp.credential_env_var} · Class: ${cp.billing_class}</small>
+            <input id="key-${pid}" type="password" autocomplete="off" placeholder="Paste ${pid} API key">
+            <button onclick="saveProvider('${pid}', '${cp.credential_env_var || ''}')">Save securely</button><button class="danger" onclick="clearProvider('${pid}', '${cp.credential_env_var || ''}')">Clear</button>
           </div>`;
         }
         gridEl.innerHTML = gHtml;
@@ -389,7 +386,7 @@ async function runOpCommand(cmd) {
   }
 }
 
-async function saveProvider(provider) {
+async function saveProvider(provider, envVar) {
   const input = document.getElementById('key-' + provider);
   const out = document.getElementById('provider-message');
   const secret = input.value.trim();
@@ -398,7 +395,7 @@ async function saveProvider(provider) {
     const r = await fetch('/api/providers', {
       method:'POST',
       headers:{'Content-Type':'application/json','X-AOS-Panel-Token':TOKEN},
-      body:JSON.stringify({provider, secret, action:'save'})
+      body:JSON.stringify({provider, secret, action:'save', credential_env_var: envVar})
     });
     const data = await r.json();
     input.value = '';
@@ -406,13 +403,13 @@ async function saveProvider(provider) {
     await refreshStatus();
   } catch (e) { out.textContent = 'Provider save failed: ' + e; }
 }
-async function clearProvider(provider) {
+async function clearProvider(provider, envVar) {
   const out = document.getElementById('provider-message');
   try {
     const r = await fetch('/api/providers', {
       method:'POST',
       headers:{'Content-Type':'application/json','X-AOS-Panel-Token':TOKEN},
-      body:JSON.stringify({provider, action:'delete'})
+      body:JSON.stringify({provider, action:'delete', credential_env_var: envVar})
     });
     const data = await r.json();
     out.textContent = provider + (data.deleted ? ' removed.' : ' had no stored credential.');
@@ -485,6 +482,50 @@ def _provider_presence() -> Dict[str, bool]:
     return result
 
 
+def _get_sanitized_providers(config: Optional[Dict[str, Any]], providers: Dict[str, Any]) -> list[Dict[str, Any]]:
+    policy_path = None
+    if isinstance(config, dict):
+        def_proj = config.get("default_project", {})
+        if isinstance(def_proj, dict) and def_proj.get("routing_policy_path"):
+            p = Path(def_proj["routing_policy_path"])
+            if p.is_file():
+                policy_path = p
+    if not policy_path:
+        for candidate in [
+            Path("descriptors/nemotron.planner-policy.json"),
+            Path("C:/Projects/AOS/descriptors/nemotron.planner-policy.json"),
+            Path("C:/Projects/AOS-lane-b/descriptors/nemotron.planner-policy.json"),
+        ]:
+            if candidate.is_file():
+                policy_path = candidate
+                break
+
+    sanitized = []
+    if policy_path and policy_path.is_file():
+        try:
+            from aos.provider_registry import load_routing_policy
+            reg = load_routing_policy(str(policy_path))
+            for entry in reg.list_providers():
+                is_configured = bool(
+                    providers.get(entry.provider_id.upper())
+                    or (entry.credential_env_var and os.environ.get(entry.credential_env_var))
+                )
+                sanitized.append({
+                    "provider_id": entry.provider_id,
+                    "display_name": entry.display_name or entry.provider_id,
+                    "credential_env_var": entry.credential_env_var,
+                    "billing_class": entry.billing_class,
+                    "cloud_local": entry.cloud_local,
+                    "enabled": entry.enabled,
+                    "credential_configurable": bool(entry.credential_env_var and entry.cloud_local == "CLOUD"),
+                    "provider_console_url": entry.provider_console_url,
+                    "configured": is_configured,
+                })
+        except Exception:
+            pass
+    return sanitized
+
+
 def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, Any]) -> Dict[str, Any]:
     runtime = command_root / "project-runtime"
     checkpoint = _read_json(runtime / "planning-kernel-checkpoint.json", {})
@@ -525,12 +566,18 @@ def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, 
 
 def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
     provider = str(payload.get("provider", "")).strip().upper()
+    env_var = payload.get("credential_env_var") or payload.get("env_var")
+    if env_var:
+        env_var = str(env_var).strip()
     action = str(payload.get("action", "save")).strip().lower()
     if action == "save":
         secret = payload.get("secret")
         if not isinstance(secret, str):
             raise ValueError("Provider secret is required")
-        write_provider_secret(provider, secret)
+        if env_var:
+            write_provider_secret(provider, secret, env_var=env_var)
+        else:
+            write_provider_secret(provider, secret)
         return {
             "schema_version": "1.0.0",
             "provider": provider,
@@ -539,7 +586,10 @@ def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
             "secret_returned": False,
         }
     if action == "delete":
-        deleted = delete_provider_secret(provider)
+        if env_var:
+            deleted = delete_provider_secret(provider, env_var=env_var)
+        else:
+            deleted = delete_provider_secret(provider)
         return {
             "schema_version": "1.0.0",
             "provider": provider,
@@ -622,8 +672,27 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                                 deliberation_metrics["quorum_count"] += 1
                             if entry.get("council_agreement") is True:
                                 deliberation_metrics["agreement_count"] += 1
+                            deliberation_metrics["COUNCIL_PROVIDER_CALL_COUNT"] = deliberation_metrics.get("COUNCIL_PROVIDER_CALL_COUNT", 0) + int(entry.get("council_provider_call_count", 0) or 0)
+                            deliberation_metrics["COUNCIL_PROVIDER_TOKEN_ESTIMATE"] = deliberation_metrics.get("COUNCIL_PROVIDER_TOKEN_ESTIMATE", 0) + int(entry.get("council_provider_token_estimate", 0) or 0)
                     except Exception:
                         pass
+                # Aggregate primary provider calls/tokens from attempts journals
+                deliberation_metrics["PRIMARY_PROVIDER_CALL_COUNT"] = 0
+                deliberation_metrics["PRIMARY_PROVIDER_TOKEN_ESTIMATE"] = 0
+                for attempts_file in (root / "commands").glob("*/project-runtime/provider-attempts.jsonl"):
+                    try:
+                        for line in attempts_file.read_text("utf-8").strip().splitlines():
+                            if line.strip():
+                                att = json.loads(line)
+                                if att.get("status") == "SUCCESS":
+                                    deliberation_metrics["PRIMARY_PROVIDER_CALL_COUNT"] += 1
+                                    deliberation_metrics["PRIMARY_PROVIDER_TOKEN_ESTIMATE"] += int(att.get("tokens", 800) or 800)
+                    except Exception:
+                        pass
+                c_calls = deliberation_metrics.get("COUNCIL_PROVIDER_CALL_COUNT", 0)
+                p_calls = deliberation_metrics.get("PRIMARY_PROVIDER_CALL_COUNT", 0)
+                tot_calls = max(1, p_calls + c_calls)
+                deliberation_metrics["COUNCIL_REASONING_SHARE_ESTIMATE"] = round(c_calls / tot_calls, 4)
         except Exception:
             pass
 
@@ -748,6 +817,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "paid_monthly_budget_usd": 0,
             "paid_call_count": 0,
             "providers": providers,
+            "sanitized_providers": _get_sanitized_providers(config, providers),
             "provider_details": runtime_v1.get("provider_details", []),
             "default_project": config.get("default_project", {}),
             "runtime_v1": runtime_v1,
@@ -811,7 +881,13 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "last_job": last_job,
         "production": "NO_GO",
         "ag_backend_enabled": False,
+        "allow_paid_fallback": False,
+        "paid_fallback_enabled": False,
+        "paid_daily_budget_usd": 0,
+        "paid_monthly_budget_usd": 0,
+        "paid_call_count": 0,
         "providers": providers,
+        "sanitized_providers": _get_sanitized_providers(config, providers),
         "default_project": config.get("default_project", {}),
         "runtime_v1": {"runtime_state": "NOT_CONFIGURED"},
         "active_slot": "NONE",

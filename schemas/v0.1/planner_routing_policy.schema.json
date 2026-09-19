@@ -25,6 +25,17 @@
     "allow_paid_fallback": {
       "type": "boolean"
     },
+    "paid_fallback_enabled": {
+      "type": "boolean"
+    },
+    "paid_daily_budget_usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "paid_monthly_budget_usd": {
+      "type": "number",
+      "minimum": 0
+    },
     "allow_provider_fallback": {
       "type": "boolean"
     },
@@ -101,6 +112,9 @@
               "type": "string"
             },
             "display_name": {
+              "type": "string"
+            },
+            "provider_console_url": {
               "type": "string"
             },
             "additional_nonsecret_env_vars": {

@@ -34,16 +34,19 @@ _ERROR_NOT_FOUND = 1168
 _MAX_SECRET_BYTES = 2048
 
 
-def _normalize_provider(provider: str) -> str:
+def _normalize_provider(provider: str, allow_custom: bool = False) -> str:
     value = str(provider).strip().upper()
-    if value not in PROVIDER_ENV_VARS:
+    if value not in PROVIDER_ENV_VARS and not allow_custom:
         raise ValueError(f"Unsupported provider: {provider}")
+    if not value or not all(c.isalnum() or c in ("_", "-") for c in value):
+        raise ValueError(f"Invalid provider name: {provider}")
     return value
 
 
-def _target(provider: str) -> str:
-    normalized = _normalize_provider(provider)
-    return f"{_TARGET_PREFIX}{PROVIDER_ENV_VARS[normalized]}"
+def _target(provider: str, env_var: Optional[str] = None) -> str:
+    normalized = _normalize_provider(provider, allow_custom=bool(env_var))
+    target_key = env_var or PROVIDER_ENV_VARS[normalized]
+    return f"{_TARGET_PREFIX}{target_key}"
 
 
 class _FILETIME(ctypes.Structure):
@@ -87,8 +90,8 @@ def _advapi32():
     return dll
 
 
-def write_provider_secret(provider: str, secret: str) -> None:
-    normalized = _normalize_provider(provider)
+def write_provider_secret(provider: str, secret: str, env_var: Optional[str] = None) -> None:
+    normalized = _normalize_provider(provider, allow_custom=bool(env_var))
     if not isinstance(secret, str):
         raise ValueError("Provider secret must be text")
     secret = secret.strip()
@@ -103,7 +106,7 @@ def write_provider_secret(provider: str, secret: str) -> None:
     credential = _CREDENTIALW()
     credential.Flags = 0
     credential.Type = _CRED_TYPE_GENERIC
-    credential.TargetName = _target(normalized)
+    credential.TargetName = _target(normalized, env_var=env_var)
     credential.Comment = "AOS local reasoning provider credential"
     credential.CredentialBlobSize = len(raw)
     credential.CredentialBlob = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
@@ -118,13 +121,13 @@ def write_provider_secret(provider: str, secret: str) -> None:
         raise OSError(err, "CredWriteW failed")
 
 
-def read_provider_secret(provider: str) -> Optional[str]:
-    normalized = _normalize_provider(provider)
+def read_provider_secret(provider: str, env_var: Optional[str] = None) -> Optional[str]:
+    normalized = _normalize_provider(provider, allow_custom=bool(env_var))
     if os.name != "nt":
         return None
     dll = _advapi32()
     ptr = ctypes.POINTER(_CREDENTIALW)()
-    if not dll.CredReadW(_target(normalized), _CRED_TYPE_GENERIC, 0, ctypes.byref(ptr)):
+    if not dll.CredReadW(_target(normalized, env_var=env_var), _CRED_TYPE_GENERIC, 0, ctypes.byref(ptr)):
         err = ctypes.get_last_error()
         if err == _ERROR_NOT_FOUND:
             return None
@@ -137,12 +140,12 @@ def read_provider_secret(provider: str) -> Optional[str]:
         dll.CredFree(ptr)
 
 
-def delete_provider_secret(provider: str) -> bool:
-    normalized = _normalize_provider(provider)
+def delete_provider_secret(provider: str, env_var: Optional[str] = None) -> bool:
+    normalized = _normalize_provider(provider, allow_custom=bool(env_var))
     if os.name != "nt":
         return False
     dll = _advapi32()
-    if dll.CredDeleteW(_target(normalized), _CRED_TYPE_GENERIC, 0):
+    if dll.CredDeleteW(_target(normalized, env_var=env_var), _CRED_TYPE_GENERIC, 0):
         return True
     err = ctypes.get_last_error()
     if err == _ERROR_NOT_FOUND:

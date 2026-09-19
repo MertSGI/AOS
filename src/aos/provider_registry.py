@@ -24,6 +24,7 @@ class ProviderEntry:
     enabled: bool
     allowed_data_classifications: List[str]
     display_name: Optional[str] = None
+    provider_console_url: Optional[str] = None
     adapter_type: Optional[str] = None
     api_protocol: Optional[str] = None
     base_url: Optional[str] = None
@@ -61,8 +62,11 @@ class ProviderRegistry:
 
     def __init__(self, policy_data: Dict[str, Any]):
         self.routing_mode = policy_data["routing_mode"]
-        self.allow_paid_fallback = policy_data.get("allow_paid_fallback", False)
-        self.allow_provider_fallback = policy_data.get("allow_provider_fallback", True)
+        self.allow_paid_fallback = bool(policy_data.get("allow_paid_fallback", False))
+        self.paid_fallback_enabled = bool(policy_data.get("paid_fallback_enabled", False))
+        self.paid_daily_budget_usd = float(policy_data.get("paid_daily_budget_usd", 0.0) or 0.0)
+        self.paid_monthly_budget_usd = float(policy_data.get("paid_monthly_budget_usd", 0.0) or 0.0)
+        self.allow_provider_fallback = bool(policy_data.get("allow_provider_fallback", True))
         self.data_classification = policy_data["data_classification"]
         self.risk_routes = policy_data["risk_routes"]
         self._providers: Dict[str, ProviderEntry] = {}
@@ -77,6 +81,7 @@ class ProviderRegistry:
                 enabled=pdata["enabled"],
                 allowed_data_classifications=pdata["allowed_data_classifications"],
                 display_name=pdata.get("display_name"),
+                provider_console_url=pdata.get("provider_console_url"),
                 adapter_type=pdata.get("adapter_type"),
                 api_protocol=pdata.get("api_protocol"),
                 base_url=pdata.get("base_url"),
@@ -142,8 +147,15 @@ class ProviderRouter:
             if data_class not in entry.allowed_data_classifications:
                 continue
 
-            if entry.billing_class == "PAID" and not self.registry.allow_paid_fallback:
-                continue
+            if entry.billing_class == "PAID":
+                paid_eligible = (
+                    self.registry.allow_paid_fallback
+                    and self.registry.paid_fallback_enabled
+                    and self.registry.paid_daily_budget_usd > 0
+                    and self.registry.paid_monthly_budget_usd > 0
+                )
+                if not paid_eligible:
+                    continue
 
             if not ignore_credentials and entry.cloud_local == "CLOUD" and entry.credential_env_var:
                 if not os.environ.get(entry.credential_env_var):
