@@ -202,20 +202,25 @@ async function refreshStatus() {
       document.getElementById('lanes-view').innerHTML = '<em>No active autonomous lanes currently running.</em>';
     } else {
       let html = '<table style="width:100%; border-collapse:collapse; text-align:left;">';
-      html += '<tr style="color:#9eabb7; border-bottom:1px solid #2b333c;"><th style="padding:6px;">Lane / Project</th><th>Command ID</th><th>State / Disposition</th><th>Batches</th><th>Worker Attempts</th><th>Progress</th></tr>';
+      html += '<tr style="color:#9eabb7; border-bottom:1px solid #2b333c;"><th style="padding:6px;">Lane / Project</th><th>Command ID</th><th>State / Disposition</th><th>Executed (Total / Succ / Fail)</th><th>Window</th><th>Worker Attempts</th><th>Progress</th></tr>';
       for (const k of laneKeys) {
         const item = lanes[k];
         const stateColor = (item.state === 'RUNNING' || item.state === 'EXECUTING') ? '#74d99f' : ((item.state||'').includes('WAITING') ? '#f0b66c' : '#e8edf2');
+        const totalEx = item.total_executed_batches ?? item.completed_batches ?? 0;
+        const succEx = item.successful_batches ?? totalEx;
+        const failEx = item.failed_batches ?? 0;
+        const winSize = item.recent_window_size ?? Math.min(totalEx, 30);
         html += `<tr style="border-bottom:1px solid #1f252d;">
           <td style="padding:6px; font-weight:bold;">${k.toUpperCase()}</td>
           <td><small>${(item.command_id||'').slice(0, 24)}</small></td>
           <td style="color:${stateColor}">${item.state || 'UNKNOWN'}</td>
-          <td>${item.completed_batches ?? 0}</td>
+          <td><strong>${totalEx}</strong> (${succEx}s / ${failEx}f)</td>
+          <td>${winSize}</td>
           <td>${item.worker_execution_attempt_count ?? item.attempts ?? 0}</td>
           <td><small>${(item.last_meaningful_progress_at||'NONE').slice(0, 19)}</small></td>
         </tr>
-        <tr style="border-bottom:1px solid #2b333c;"><td colspan="6" style="padding:4px 8px 10px 8px;color:#9eabb7">
-          Objective: <strong>${item.current_objective || 'UNKNOWN'}</strong> · Phase: <strong>${item.current_planning_phase || 'UNKNOWN'}</strong> · Current batch: <strong>${item.current_batch ?? 0}</strong><br>
+        <tr style="border-bottom:1px solid #2b333c;"><td colspan="7" style="padding:4px 8px 10px 8px;color:#9eabb7">
+          Objective: <strong>${item.current_objective || 'UNKNOWN'}</strong> · Phase: <strong>${item.current_planning_phase || 'UNKNOWN'}</strong> · Planning batch: <strong>${item.planning_batch_number ?? item.current_batch ?? 0}</strong><br>
           Current task: <strong>${item.current_task || 'NONE'}</strong> · Last completed: <strong>${item.most_recent_completed_task || 'NONE'}</strong><br>
           Next action: ${item.canonical_next_action || 'UNKNOWN'}<br>Blocker: <strong>${item.current_blocker || 'NONE'}</strong>
         </td></tr>`;
@@ -550,10 +555,29 @@ def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, 
         for item in completed_batches
         if isinstance(item, dict) and isinstance(item.get("receipt"), dict) and (item.get("receipt") or {}).get("timestamp")
     ]
+
+    total_executed = checkpoint.get("total_completed_batch_count")
+    if total_executed is None:
+        total_executed = state.get("completed_batch_count", checkpoint.get("completed_batch_count", len(completed_batches)))
+    total_executed_int = int(total_executed or 0)
+
+    successful_batches = checkpoint.get("successful_batch_count")
+    successful_batches_int = int(successful_batches) if successful_batches is not None else total_executed_int
+
+    failed_batches = checkpoint.get("failed_batch_count")
+    failed_batches_int = int(failed_batches) if failed_batches is not None else 0
+
+    recent_window_size = len(checkpoint.get("recent_completed_batches", completed_batches) or [])
+
     return {
         "current_objective": objective.get("title") or objective.get("objective_id") or command.get("goal"),
         "current_planning_phase": checkpoint.get("phase") or state.get("state"),
         "current_batch": batch_number,
+        "planning_batch_number": batch_number,
+        "total_executed_batches": total_executed_int,
+        "successful_batches": successful_batches_int,
+        "failed_batches": failed_batches_int,
+        "recent_window_size": recent_window_size,
         "current_task": current_task,
         "most_recent_completed_task": completed_ids[-1] if completed_ids else None,
         "canonical_next_action": situation.get("canonical_next_action"),

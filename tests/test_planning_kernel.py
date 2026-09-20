@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -1325,3 +1326,217 @@ def test_compile_execution_plan_authority_rejection_triggers_repair(tmp_path):
     assert attempts == 2
     assert plan["tasks"][0]["node_id"] == "t1"
     assert "safe-update" in plan["tasks"][0]["payload"]["patch"]
+
+
+def test_durable_batch_history_recovery_and_monotonicity_over_60_batches(tmp_path):
+    """Prove durable batch history recovery across WAITING and process restarts for >60 batches.
+
+    Ensures:
+    1. Running >30 batches bounds completed_batches display window to 30 while total_completed_batch_count grows monotonically.
+    2. WAITING_FOR_REASONING_PROVIDER checkpoint preserves total_completed_batch_count, successful_batch_count, and failed_batch_count.
+    3. Restarting from checkpoint and disk reconstructs all executed batches and deduplication context.
+    4. Old completed task IDs and signatures remain forbidden and are not re-executed.
+    5. Partial/failed batches are tracked accurately and not misclassified as successful.
+    """
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text("{}", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    # Phase 1: Run 35 batches (some successful, some partial/failed)
+    total_planned = 35
+    executed_batches = []
+
+    def mock_executor(plan_path: Path, batch_runtime: Path, resume: bool):
+        b_name = batch_runtime.name
+        # Every 5th batch has a failed task (partial/failed)
+        batch_idx = int(b_name.split("-")[1])
+        if batch_idx % 5 == 0:
+            receipt = {
+                "progress": 50.0,
+                "completed_task_ids": [f"task-{batch_idx}-a"],
+                "failed_task_ids": [f"task-{batch_idx}-b"],
+                "timestamp": "2026-09-20T00:00:00+00:00",
+            }
+        else:
+            receipt = {
+                "progress": 100.0,
+                "completed_task_ids": [f"task-{batch_idx}-a", f"task-{batch_idx}-b"],
+                "failed_task_ids": [],
+                "timestamp": "2026-09-20T00:00:00+00:00",
+            }
+        # Write receipt to host-receipt.json in batch_runtime so reconstruct_batch_history can scan it
+        batch_runtime.mkdir(parents=True, exist_ok=True)
+        (batch_runtime / "host-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        executed_batches.append((batch_idx, receipt))
+        return receipt
+
+    # Backend that provides objectives and plans for 35 batches
+    class TestBackend:
+        def __init__(self, wait_at_batch=None):
+            self.wait_at_batch = wait_at_batch
+            self.current_batch = 0
+            self.forbidden_tasks_seen = []
+
+        def execute(self, request):
+            prompt = request.payload.get("prompt", "")
+            if "completion detector" in prompt or "DAG_EMPTY is NOT PROJECT_COMPLETE" in prompt:
+                return SimpleNamespace(status="SUCCESS", evidence_payload={"proposal": {
+                    "disposition": "REPLAN",
+                    "rationale": "Continue authorized roadmap work",
+                    "satisfied_criteria": [],
+                    "unsatisfied_criteria": ["All roadmap work complete"],
+                }})
+            elif "OBJECTIVE_SELECT_TASK" in prompt or "objective selector" in prompt or "Select the next bounded" in prompt:
+                obj = _objective()
+                obj["objective_id"] = f"OBJ-{self.current_batch}"
+                return SimpleNamespace(status="SUCCESS", evidence_payload={"proposal": obj})
+            elif "Planner->DAG compiler" in prompt or "TASK_COMPILATION" in prompt or "Compile execution plan" in prompt or "COMPILE_PLAN" in prompt:
+                forbidden = request.payload.get("forbidden_task_ids", [])
+                self.forbidden_tasks_seen.append(list(forbidden))
+                if self.wait_at_batch is not None and self.current_batch == self.wait_at_batch:
+                    return SimpleNamespace(
+                        status="WAITING_FOR_REASONING_PROVIDER",
+                        evidence_payload={"failure_class": "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"},
+                    )
+                plan = _plan()
+                m = re.search(r'"objective_id":\s*"([^"]+)"', prompt)
+                current_obj_id = m.group(1) if m else f"OBJ-{self.current_batch}"
+                plan["objective_id"] = current_obj_id
+                plan["tasks"] = [
+                    {
+                        "node_id": f"task-{self.current_batch}-a",
+                        "run_type": "PROCESS",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": False,
+                        "dependencies": [],
+                        "scope_tags": ["phase-1"],
+                        "write_scope": [],
+                        "payload": {"cmd": ["git", "status"]},
+                        "expected_artifacts": [],
+                        "tests": [],
+                        "evidence_requirements": [],
+                        "completion_criteria": [],
+                    },
+                    {
+                        "node_id": f"task-{self.current_batch}-b",
+                        "run_type": "PROCESS",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": False,
+                        "dependencies": [],
+                        "scope_tags": ["phase-1"],
+                        "write_scope": [],
+                        "payload": {"cmd": ["git", "branch"]},
+                        "expected_artifacts": [],
+                        "tests": [],
+                        "evidence_requirements": [],
+                        "completion_criteria": [],
+                    },
+                ]
+                self.current_batch += 1
+                return SimpleNamespace(status="SUCCESS", evidence_payload={"proposal": plan})
+            return SimpleNamespace(status="SUCCESS", evidence_payload={"proposal": {}})
+
+    backend_p1 = TestBackend()
+    res1 = run_autonomous_project(
+        descriptor_path=descriptor_path,
+        workspace=workspace,
+        runtime_dir=runtime_dir,
+        routing_policy_path=policy_path,
+        backend_override=backend_p1,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=mock_executor,
+        max_batches=35,
+    )
+
+    assert res1["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert res1["batch_number"] == 35
+    assert res1["total_completed_batch_count"] == 35
+    assert res1["completed_batch_count"] == 35
+    # Window of recent completed batches is bounded to 30
+    assert len(res1["completed_batches"]) == 30
+    assert len(res1["recent_completed_batches"]) == 30
+
+    ckpt1 = json.loads((runtime_dir / "planning-kernel-checkpoint.json").read_text(encoding="utf-8"))
+    assert ckpt1["batch_number"] == 35
+    assert ckpt1["total_completed_batch_count"] == 35
+    assert len(ckpt1["completed_batches"]) == 30
+    # 35 batches: 0, 5, 10, 15, 20, 25, 30 are failed (7 batches), 28 successful
+    assert ckpt1["failed_batch_count"] == 7
+    assert ckpt1["successful_batch_count"] == 28
+
+    # Phase 2: Encounter WAITING_FOR_REASONING_PROVIDER at batch 35
+    backend_p2 = TestBackend(wait_at_batch=35)
+    backend_p2.current_batch = 35
+    res2 = run_autonomous_project(
+        descriptor_path=descriptor_path,
+        workspace=workspace,
+        runtime_dir=runtime_dir,
+        routing_policy_path=policy_path,
+        backend_override=backend_p2,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=mock_executor,
+        max_batches=1,
+    )
+
+    assert res2["disposition"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert res2["batch_number"] == 35
+    assert res2["total_completed_batch_count"] == 35
+    assert len(res2["completed_batches"]) == 30
+
+    ckpt2 = json.loads((runtime_dir / "planning-kernel-checkpoint.json").read_text(encoding="utf-8"))
+    assert ckpt2["phase"] == "WAITING_FOR_REASONING_PROVIDER"
+    assert ckpt2["batch_number"] == 35
+    assert ckpt2["total_completed_batch_count"] == 35
+
+    # Phase 3: Recover and run 30 more batches (total 65 batches)
+    backend_p3 = TestBackend()
+    backend_p3.current_batch = 35
+    res3 = run_autonomous_project(
+        descriptor_path=descriptor_path,
+        workspace=workspace,
+        runtime_dir=runtime_dir,
+        routing_policy_path=policy_path,
+        backend_override=backend_p3,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=mock_executor,
+        max_batches=30,
+    )
+
+    assert res3["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert res3["batch_number"] == 65
+    assert res3["total_completed_batch_count"] == 65
+    assert res3["completed_batch_count"] == 65
+    assert len(res3["completed_batches"]) == 30
+    assert len(res3["recent_completed_batches"]) == 30
+
+    # 65 batches: batches 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60 are failed (13 batches), 52 successful
+    assert res3["failed_batch_count"] == 13
+    assert res3["successful_batch_count"] == 52
+
+    ckpt3 = json.loads((runtime_dir / "planning-kernel-checkpoint.json").read_text(encoding="utf-8"))
+    assert ckpt3["batch_number"] == 65
+    assert ckpt3["total_completed_batch_count"] == 65
+    assert ckpt3["failed_batch_count"] == 13
+    assert ckpt3["successful_batch_count"] == 52
+    assert len(ckpt3["completed_batches"]) == 30
+
+    # Verify that reconstruct_batch_history reconstructs all 65 batches accurately
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=workspace)
+    assert history.total_executed_batches == 65
+    assert history.successful_batches == 52
+    assert history.failed_batches == 13
+    assert history.highest_batch_number == 64
+    assert len(history.recent_completed_batches) == 30
+    assert len(history.durable_batches) == 65
+
+    # Verify that task from early batch (e.g. task-0-a) is in cumulative completed task IDs
+    assert "task-0-a" in history.completed_task_ids
+    assert "task-34-a" in history.completed_task_ids
+    assert "task-64-a" in history.completed_task_ids

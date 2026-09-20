@@ -108,6 +108,7 @@ def test_stale_fallback_writer_rejection(tmp_path: Path):
 def test_remote_outbox_auth_unavailable(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr("aos.secure_store.read_provider_secret", lambda provider: None)
 
     relay_dir = tmp_path / "controller-relay"
     config = {"runtime_root": str(tmp_path / "state")}

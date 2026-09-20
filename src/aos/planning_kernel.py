@@ -252,6 +252,32 @@ class Objective:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class DurableBatchHistory:
+    total_executed_batches: int
+    successful_batches: int
+    failed_batches: int
+    highest_batch_number: int
+    completed_task_ids: Tuple[str, ...]
+    completed_task_signatures: Tuple[str, ...]
+    completed_read_paths: Tuple[str, ...]
+    recent_completed_batches: Tuple[Dict[str, Any], ...]
+    durable_batches: Tuple[Dict[str, Any], ...]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "total_executed_batches": self.total_executed_batches,
+            "successful_batches": self.successful_batches,
+            "failed_batches": self.failed_batches,
+            "highest_batch_number": self.highest_batch_number,
+            "completed_task_ids": list(self.completed_task_ids),
+            "completed_task_signatures": list(self.completed_task_signatures),
+            "completed_read_paths": list(self.completed_read_paths),
+            "recent_completed_batches": list(self.recent_completed_batches),
+            "durable_batches": list(self.durable_batches),
+        }
+
+
 OBJECTIVE_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -862,6 +888,127 @@ def _completed_task_signatures(
             if isinstance(task, Mapping) and str(task.get("node_id")) in completed_ids:
                 signatures.add(_task_signature(task))
     return sorted(signatures)
+
+
+def reconstruct_batch_history(
+    runtime_dir: Path,
+    workspace: Optional[Path] = None,
+) -> DurableBatchHistory:
+    """Deterministically reconstruct durable batch execution history from disk artifacts.
+
+    Scans runtime_dir / 'batches' / 'batch-*' for host-receipt.json and generated-run-plan.json.
+    Computes executed, successful, and failed batches, highest executed batch index,
+    and cumulative completed task IDs, task signatures, and file read paths.
+    """
+    batches_dir = runtime_dir / "batches"
+    executed_batches: List[Dict[str, Any]] = []
+    completed_task_ids: set[str] = set()
+    completed_signatures: set[str] = set()
+    completed_read_paths: set[str] = set()
+    successful_count = 0
+    failed_count = 0
+    highest_batch_number = -1
+
+    if batches_dir.is_dir():
+        batch_dirs = []
+        for p in batches_dir.iterdir():
+            if p.is_dir():
+                m = re.match(r"^batch-(\d+)$", p.name)
+                if m:
+                    batch_dirs.append((int(m.group(1)), p))
+        batch_dirs.sort(key=lambda x: x[0])
+
+        workspace_root = workspace.resolve() if workspace is not None else None
+
+        for batch_num, b_dir in batch_dirs:
+            receipt_path = b_dir / "host-receipt.json"
+            if not receipt_path.is_file():
+                continue
+            receipt = _read_json(receipt_path)
+            if not isinstance(receipt, dict):
+                continue
+            # Must be a valid receipt with progress or completed_task_ids or failed_task_ids
+            if "progress" not in receipt and "completed_task_ids" not in receipt and "failed_task_ids" not in receipt:
+                continue
+
+            highest_batch_number = max(highest_batch_number, batch_num)
+            raw_prog = receipt.get("progress", 0.0)
+            try:
+                prog = float(raw_prog) if raw_prog is not None else 0.0
+            except (ValueError, TypeError):
+                prog = 0.0
+            failed_ids = receipt.get("failed_task_ids", [])
+            is_success = bool(not failed_ids and prog >= 100.0)
+            if is_success:
+                successful_count += 1
+            else:
+                failed_count += 1
+
+            batch_completed_ids = {
+                str(t_id).strip()
+                for t_id in receipt.get("completed_task_ids", [])
+                if str(t_id).strip()
+            }
+            completed_task_ids.update(batch_completed_ids)
+
+            plan_path = b_dir / "generated-run-plan.json"
+            objective_id = receipt.get("objective_id") or ""
+            plan = _read_json(plan_path) if plan_path.is_file() else {}
+            if isinstance(plan, dict):
+                if not objective_id:
+                    objective_id = str(plan.get("objective_id") or "")
+                tasks = plan.get("tasks", [])
+                if isinstance(tasks, list):
+                    for task in tasks:
+                        if not isinstance(task, Mapping):
+                            continue
+                        node_id = str(task.get("node_id") or "").strip()
+                        if node_id in batch_completed_ids:
+                            completed_signatures.add(_task_signature(task))
+                            payload = task.get("payload", {})
+                            if (
+                                task.get("run_type") == "FILE"
+                                and isinstance(payload, Mapping)
+                                and payload.get("action") == "read_file"
+                            ):
+                                raw_path = str(payload.get("path", "")).strip()
+                                normalized_path = raw_path.replace("\\", "/")
+                                path_key = normalized_path.casefold()
+                                parts = {part.casefold() for part in Path(normalized_path).parts}
+                                if raw_path and not (parts & _SENSITIVE_READ_CONTEXT_PARTS):
+                                    if workspace_root is not None:
+                                        target = (workspace_root / raw_path).resolve()
+                                        if (
+                                            (target == workspace_root or workspace_root in target.parents)
+                                            and target.suffix.casefold() in _PLANNER_READ_CONTEXT_SUFFIXES
+                                            and target.is_file()
+                                        ):
+                                            completed_read_paths.add(normalized_path)
+                                    else:
+                                        completed_read_paths.add(normalized_path)
+
+            executed_batches.append({
+                "batch_number": batch_num,
+                "objective_id": objective_id,
+                "canonical_source_sha": receipt.get("canonical_source_sha", ""),
+                "receipt": dict(receipt),
+                "resumed": False,
+            })
+
+    total_executed = len(executed_batches)
+    recent_batches = executed_batches[-30:]
+
+    return DurableBatchHistory(
+        total_executed_batches=total_executed,
+        successful_batches=successful_count,
+        failed_batches=failed_count,
+        highest_batch_number=highest_batch_number,
+        completed_task_ids=tuple(sorted(completed_task_ids)),
+        completed_task_signatures=tuple(sorted(completed_signatures)),
+        completed_read_paths=tuple(sorted(completed_read_paths)),
+        recent_completed_batches=tuple(recent_batches),
+        durable_batches=tuple(executed_batches),
+    )
 
 
 def _bounded_task_signatures_for_prompt(
@@ -2261,9 +2408,38 @@ def run_autonomous_project(
     runtime_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = _read_json(_kernel_checkpoint_path(runtime_dir))
     synth = situation_factory or synthesize_project_situation
-    completed_batches = list(checkpoint.get("completed_batches", [])) if isinstance(checkpoint.get("completed_batches"), list) else []
-    batch_number = int(checkpoint.get("batch_number", len(completed_batches)))
+
+    # Reconstruct durable batch execution history from disk
+    durable_history = reconstruct_batch_history(runtime_dir, workspace=workspace)
+
+    # Reconstruct completed_batches window
+    raw_completed_batches = checkpoint.get("completed_batches", [])
+    if isinstance(raw_completed_batches, list) and raw_completed_batches:
+        completed_batches = list(raw_completed_batches)
+    else:
+        completed_batches = list(durable_history.recent_completed_batches)
+
+    # Calculate authoritative monotonic counts
+    ckpt_completed_count = int(checkpoint.get("total_completed_batch_count", checkpoint.get("completed_batch_count", 0)) or 0)
+    total_completed_batch_count = max(durable_history.total_executed_batches, ckpt_completed_count, len(completed_batches))
+
+    ckpt_successful_count = int(checkpoint.get("successful_batch_count", 0) or 0)
+    successful_batch_count = max(durable_history.successful_batches, ckpt_successful_count)
+
+    ckpt_failed_count = int(checkpoint.get("failed_batch_count", 0) or 0)
+    failed_batch_count = max(durable_history.failed_batches, ckpt_failed_count)
+
+    # Authoritative batch_number monotonic progression
+    raw_batch_num = checkpoint.get("batch_number")
+    ckpt_batch_number = int(raw_batch_num) if raw_batch_num is not None else 0
+    batch_number = max(durable_history.highest_batch_number + 1, ckpt_batch_number, len(completed_batches))
+
     replan_reason = checkpoint.get("replan_reason")
+
+    # Maintain cumulative sets from durable history
+    cumulative_completed_task_ids = set(durable_history.completed_task_ids)
+    cumulative_completed_signatures = set(durable_history.completed_task_signatures)
+    cumulative_completed_read_paths = set(durable_history.completed_read_paths)
 
     resumed_receipt: Optional[Dict[str, Any]] = None
 
@@ -2286,12 +2462,26 @@ def run_autonomous_project(
                 receipt = dict(batch_executor(plan_path=plan_path, batch_runtime=batch_runtime, resume=True))
             resumed_receipt = dict(receipt)
             completed_batches.append({"batch_number": batch_number, "receipt": resumed_receipt, "resumed": True})
+            total_completed_batch_count += 1
+            if resumed_receipt.get("failed_task_ids") or float(resumed_receipt.get("progress", 0.0)) < 100.0:
+                failed_batch_count += 1
+            else:
+                successful_batch_count += 1
+
+            for t_id in resumed_receipt.get("completed_task_ids", []):
+                cumulative_completed_task_ids.add(str(t_id).strip())
+
             batch_number += 1
             _write_kernel_checkpoint(runtime_dir, {
                 **checkpoint,
                 "phase": "BATCH_COMPLETE",
                 "batch_number": batch_number,
-                "completed_batches": completed_batches,
+                "completed_batch_count": total_completed_batch_count,
+                "total_completed_batch_count": total_completed_batch_count,
+                "successful_batch_count": successful_batch_count,
+                "failed_batch_count": failed_batch_count,
+                "recent_completed_batches": list(completed_batches)[-30:],
+                "completed_batches": list(completed_batches)[-30:],
                 "last_receipt": dict(receipt),
                 "active_plan_path": None,
                 "active_batch_runtime": None,
@@ -2315,6 +2505,9 @@ def run_autonomous_project(
             result = _final_result(
                 situation, batch_number, completed_batches, "HUMAN_REQUIRED", "CANONICAL_CONTRADICTION",
                 recent_receipt, runtime_dir,
+                total_completed_batch_count=total_completed_batch_count,
+                successful_batch_count=successful_batch_count,
+                failed_batch_count=failed_batch_count,
             )
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
             return result
@@ -2333,6 +2526,9 @@ def run_autonomous_project(
                     result = _final_result(
                         situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
                         recent_receipt, runtime_dir,
+                        total_completed_batch_count=total_completed_batch_count,
+                        successful_batch_count=successful_batch_count,
+                        failed_batch_count=failed_batch_count,
                     )
                     _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
                     return result
@@ -2343,6 +2539,9 @@ def run_autonomous_project(
                 result = _final_result(
                     situation, batch_number, completed_batches, "PROJECT_COMPLETE", completion.get("rationale", ""),
                     recent_receipt, runtime_dir,
+                    total_completed_batch_count=total_completed_batch_count,
+                    successful_batch_count=successful_batch_count,
+                    failed_batch_count=failed_batch_count,
                 )
                 _write_kernel_checkpoint(runtime_dir, {**result, "phase": "PROJECT_COMPLETE"})
                 return result
@@ -2350,6 +2549,9 @@ def run_autonomous_project(
                 result = _final_result(
                     situation, batch_number, completed_batches, "HUMAN_REQUIRED", completion.get("rationale", ""),
                     recent_receipt, runtime_dir,
+                    total_completed_batch_count=total_completed_batch_count,
+                    successful_batch_count=successful_batch_count,
+                    failed_batch_count=failed_batch_count,
                 )
                 _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
                 return result
@@ -2369,20 +2571,29 @@ def run_autonomous_project(
                     backend_override=backend_override, replan_reason=replan_reason,
                 )
             _atomic_json(runtime_dir / f"objective-{batch_number:04d}.json", dataclasses.asdict(objective))
-            completed_task_ids = sorted({
+
+            session_completed_task_ids = {
                 str(task_id)
                 for completed in completed_batches
                 if isinstance(completed, Mapping)
                 for receipt in [completed.get("receipt", {})]
                 if isinstance(receipt, Mapping)
                 for task_id in receipt.get("completed_task_ids", [])
-            })
+            }
+            all_completed_task_ids = sorted(cumulative_completed_task_ids | session_completed_task_ids)
+
             completed_read_context = _bounded_completed_read_context(
                 runtime_dir, workspace, completed_batches,
             )
-            completed_task_signatures = _completed_task_signatures(
+            all_completed_read_paths = sorted(
+                set(completed_read_context["completed_read_paths"]) | cumulative_completed_read_paths
+            )
+
+            session_signatures = _completed_task_signatures(
                 runtime_dir, completed_batches,
             )
+            all_completed_signatures = sorted(cumulative_completed_signatures | set(session_signatures))
+
             repair_context = {
                 "replan_reason": replan_reason,
                 "recent_receipt": {
@@ -2396,9 +2607,9 @@ def run_autonomous_project(
                 situation, objective, routing_policy_path, runtime_dir,
                 backend_override=backend_override,
                 repair_context=repair_context,
-                forbidden_task_ids=completed_task_ids,
-                forbidden_read_paths=completed_read_context["completed_read_paths"],
-                forbidden_task_signatures=completed_task_signatures,
+                forbidden_task_ids=all_completed_task_ids,
+                forbidden_read_paths=all_completed_read_paths,
+                forbidden_task_signatures=all_completed_signatures,
                 workspace=workspace,
                 batch_number=batch_number,
             )
@@ -2406,6 +2617,9 @@ def run_autonomous_project(
             result = _final_result(
                 situation, batch_number, completed_batches, "WAITING_FOR_REASONING_PROVIDER", str(exc),
                 recent_receipt, runtime_dir,
+                total_completed_batch_count=total_completed_batch_count,
+                successful_batch_count=successful_batch_count,
+                failed_batch_count=failed_batch_count,
             )
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
             return result
@@ -2418,6 +2632,9 @@ def run_autonomous_project(
             result = _final_result(
                 situation, batch_number, completed_batches, "BOUNDED_RUN_EXHAUSTED", str(exc),
                 recent_receipt, runtime_dir,
+                total_completed_batch_count=total_completed_batch_count,
+                successful_batch_count=successful_batch_count,
+                failed_batch_count=failed_batch_count,
             )
             result["replan_reason"] = str(exc)
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
@@ -2426,6 +2643,9 @@ def run_autonomous_project(
             result = _final_result(
                 situation, batch_number, completed_batches, "HUMAN_REQUIRED", str(exc),
                 recent_receipt, runtime_dir,
+                total_completed_batch_count=total_completed_batch_count,
+                successful_batch_count=successful_batch_count,
+                failed_batch_count=failed_batch_count,
             )
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
             return result
@@ -2444,7 +2664,12 @@ def run_autonomous_project(
             "objective": dataclasses.asdict(objective),
             "active_plan_path": str(plan_path),
             "active_batch_runtime": str(batch_runtime),
-            "completed_batches": completed_batches,
+            "completed_batch_count": total_completed_batch_count,
+            "total_completed_batch_count": total_completed_batch_count,
+            "successful_batch_count": successful_batch_count,
+            "failed_batch_count": failed_batch_count,
+            "recent_completed_batches": list(completed_batches)[-30:],
+            "completed_batches": list(completed_batches)[-30:],
             "replan_reason": replan_reason,
             "ag_invocation_count": 0,
             "production": "NO_GO",
@@ -2469,13 +2694,21 @@ def run_autonomous_project(
             "receipt": recent_receipt,
             "resumed": False,
         })
+        total_completed_batch_count += 1
+        for t_id in recent_receipt.get("completed_task_ids", []):
+            cumulative_completed_task_ids.add(str(t_id).strip())
+
         consecutive_failures = int(checkpoint.get("consecutive_failures", 0))
         if recent_receipt.get("failed_task_ids") or float(recent_receipt.get("progress", 0.0)) < 100.0:
+            failed_batch_count += 1
             failure_class = classify_batch_failure(recent_receipt, batch_runtime)
             if failure_class in ("AUTHORITY_FAILURE", "SECURITY_FAILURE", "SCHEMA_CONTRACT_FAILURE", "CANONICAL_DRIFT"):
                 result = _final_result(
                     situation, batch_number, completed_batches, "HUMAN_REQUIRED", failure_class,
                     recent_receipt, runtime_dir,
+                    total_completed_batch_count=total_completed_batch_count,
+                    successful_batch_count=successful_batch_count,
+                    failed_batch_count=failed_batch_count,
                 )
                 _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
                 return result
@@ -2485,6 +2718,7 @@ def run_autonomous_project(
             else:
                 replan_reason = failure_class
         else:
+            successful_batch_count += 1
             consecutive_failures = 0
             replan_reason = "MEANINGFUL_BATCH_COMPLETE_FRESH_READ_REQUIRED"
         batch_number += 1
@@ -2493,7 +2727,12 @@ def run_autonomous_project(
             "goal": goal,
             "phase": "BATCH_COMPLETE",
             "batch_number": batch_number,
-            "completed_batches": completed_batches,
+            "completed_batch_count": total_completed_batch_count,
+            "total_completed_batch_count": total_completed_batch_count,
+            "successful_batch_count": successful_batch_count,
+            "failed_batch_count": failed_batch_count,
+            "recent_completed_batches": list(completed_batches)[-30:],
+            "completed_batches": list(completed_batches)[-30:],
             "last_receipt": recent_receipt,
             "replan_reason": replan_reason,
             "consecutive_failures": consecutive_failures,
@@ -2512,6 +2751,9 @@ def run_autonomous_project(
         situation, batch_number, completed_batches, "BOUNDED_RUN_EXHAUSTED",
         "Batch bound reached; resume from durable planning checkpoint without user task injection.",
         recent_receipt, runtime_dir,
+        total_completed_batch_count=total_completed_batch_count,
+        successful_batch_count=successful_batch_count,
+        failed_batch_count=failed_batch_count,
     )
     _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
     return result
@@ -2525,7 +2767,13 @@ def _final_result(
     reason: str,
     recent_receipt: Mapping[str, Any],
     runtime_dir: Path,
+    *,
+    total_completed_batch_count: Optional[int] = None,
+    successful_batch_count: Optional[int] = None,
+    failed_batch_count: Optional[int] = None,
 ) -> Dict[str, Any]:
+    total_count = total_completed_batch_count if total_completed_batch_count is not None else len(completed_batches)
+    recent = list(completed_batches)[-30:]
     result = {
         "schema_version": SCHEMA_VERSION,
         "timestamp": _utc_now(),
@@ -2534,8 +2782,12 @@ def _final_result(
         "canonical_source_sha": situation.control_sha,
         "canonical_execution_base_sha": situation.execution_base_sha,
         "batch_number": batch_number,
-        "completed_batch_count": len(completed_batches),
-        "completed_batches": list(completed_batches)[-30:],
+        "completed_batch_count": total_count,
+        "total_completed_batch_count": total_count,
+        "successful_batch_count": successful_batch_count if successful_batch_count is not None else total_count,
+        "failed_batch_count": failed_batch_count if failed_batch_count is not None else 0,
+        "recent_completed_batches": recent,
+        "completed_batches": recent,
         "last_receipt": dict(recent_receipt),
         "disposition": disposition,
         "reason": redact_secrets(reason)[:2000],

@@ -54,10 +54,15 @@ class PlanningArtifactWatcher(threading.Thread):
 
     @staticmethod
     def _checkpoint_signature(data: Dict[str, Any]) -> str:
+        count = data.get("total_completed_batch_count")
+        if count is None:
+            count = data.get("completed_batch_count")
+        if count is None:
+            count = len(data.get("completed_batches", []) or [])
         return json.dumps({
             "phase": data.get("phase"),
             "batch_number": data.get("batch_number"),
-            "completed_batch_count": len(data.get("completed_batches", []) or []),
+            "completed_batch_count": int(count or 0),
             "replan_reason": data.get("replan_reason"),
             "canonical_source_sha": data.get("canonical_source_sha"),
         }, sort_keys=True)
@@ -114,10 +119,15 @@ class PlanningArtifactWatcher(threading.Thread):
             "WAITING_FOR_REASONING_PROVIDER": "run.waiting_for_reasoning_provider",
             "BOUNDED_RUN_EXHAUSTED": "run.replan_boundary",
         }.get(phase, "checkpoint.updated")
+        count = data.get("total_completed_batch_count")
+        if count is None:
+            count = data.get("completed_batch_count")
+        if count is None:
+            count = len(data.get("completed_batches", []) or [])
         self.store.append_event(self.command_id, event_type, {
             "phase": phase,
             "batch_number": data.get("batch_number"),
-            "completed_batch_count": len(data.get("completed_batches", []) or []),
+            "completed_batch_count": int(count or 0),
             "replan_reason": data.get("replan_reason"),
             "canonical_source_sha": data.get("canonical_source_sha"),
             "canonical_execution_base_sha": data.get("canonical_execution_base_sha"),
@@ -214,11 +224,16 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 "recovered": recovered,
             })
             if recovered:
-                checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
+                checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json") or {}
+                count = checkpoint.get("total_completed_batch_count")
+                if count is None:
+                    count = checkpoint.get("completed_batch_count")
+                if count is None:
+                    count = len(checkpoint.get("completed_batches", []) or [])
                 store.append_event(command_id, "runtime.worker_recovered", {
                     "checkpoint_phase": checkpoint.get("phase"),
                     "batch_number": checkpoint.get("batch_number"),
-                    "completed_batch_count": len(checkpoint.get("completed_batches", []) or []),
+                    "completed_batch_count": int(count or 0),
                 })
 
             stop = threading.Event()
