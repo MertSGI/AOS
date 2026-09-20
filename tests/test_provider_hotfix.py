@@ -247,7 +247,7 @@ def test_panel_renders_truthful_provider_and_current_work_fields(tmp_path):
     assert work["current_task"] == "task-browser"
     assert work["canonical_next_action"] == "Run browser acceptance"
     assert "Provider</th>" in _HTML
-    assert "Current task:" in _HTML
+    assert "Current Task:" in _HTML
     assert "All health invariants normal" not in _HTML
 
 
