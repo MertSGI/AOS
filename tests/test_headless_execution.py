@@ -18,6 +18,7 @@ from aos.process_utils import (
     process_alive,
     process_tree_snapshot,
     run_headless,
+    visible_window_snapshot,
 )
 
 
@@ -55,66 +56,27 @@ def test_background_python_uses_pythonw_for_long_lived_daemons():
     assert actual.name.lower() == "pythonw.exe"
 
 
-def test_run_headless_forces_console_detach_on_windows(monkeypatch):
-    """Bounded Windows CLIs must use the detached process contract."""
-    import aos.process_utils as process_utils
-
-    captured = {}
-
-    class FakeProcess:
-        returncode = 0
-
-        def communicate(self, *args, **kwargs):
-            return ("AOS_OK", "")
-
-        def _close_job(self):
-            return None
-
-    def fake_popen(cmd, **kwargs):
-        captured.update(kwargs)
-        return FakeProcess()
-
-    monkeypatch.setattr(
-        process_utils,
-        "popen_headless",
-        fake_popen,
-    )
-
-    result = process_utils.run_headless(
-        ["git", "--version"],
-        timeout=1,
-    )
-
-    assert result.returncode == 0
-
-    if os.name == "nt":
-        assert captured.get("detached") is True
-    else:
-        assert captured.get("detached") is False
-
-
 @pytest.mark.skipif(
     os.name != "nt",
-    reason="Windows real Git console-detach acceptance",
+    reason="Windows real Git visible-window acceptance",
 )
-def test_real_git_cli_detached_tree_has_no_conhost():
-    """A live real git.exe tree must never acquire conhost.exe."""
-    command = [
-        "git",
-        "-c",
-        'alias.aos-hang=!python -c "import time; time.sleep(10)"',
-        "aos-hang",
-    ]
-
+def test_real_git_cli_tree_has_no_visible_windows():
+    """Real git may own headless conhost, but must own zero visible HWNDs."""
     proc = popen_headless(
-        command,
-        detached=True,
+        [
+            "git",
+            "cat-file",
+            "--batch",
+        ],
+        detached=False,
     )
 
     observed_live = False
+    observed_conhost = False
+    visible = []
 
     try:
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + 1.5
 
         while time.monotonic() < deadline:
             if process_alive(proc.pid):
@@ -122,17 +84,22 @@ def test_real_git_cli_detached_tree_has_no_conhost():
 
             tree = process_tree_snapshot([proc.pid])
 
-            conhosts = [
-                row
+            if any(
+                str(row.get("name") or "").lower() == "conhost.exe"
                 for row in tree
-                if str(row.get("name") or "").lower() == "conhost.exe"
-            ]
+            ):
+                observed_conhost = True
 
-            assert conhosts == []
+            visible.extend(
+                visible_window_snapshot([proc.pid])
+            )
 
-            time.sleep(0.05)
+            time.sleep(0.01)
 
         assert observed_live is True
+        # conhost presence is permitted; visible window ownership is not.
+        assert visible == []
+        assert isinstance(observed_conhost, bool)
     finally:
         proc.close()
 

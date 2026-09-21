@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from aos.process_utils import background_python_executable, launch_background_python_script, launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless
+from aos.process_utils import background_python_executable, launch_background_python_script, launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless, visible_window_snapshot
 from aos.runtime_contract import CONTRACT_VERSION, utc_now, validate_configured_project_profiles
 from aos.runtime_maintenance import persist_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
@@ -407,9 +407,21 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
             if str(row.get("name") or "").lower() == "conhost.exe"
         ]
 
-        if conhosts:
+        visible_during = visible_window_snapshot(tree_roots)
+
+        atomic_json(
+            evidence_dir / "visible-windows-during.json",
+            {
+                "root_pids": tree_roots,
+                "visible_windows": visible_during,
+                "conhosts": conhosts,
+            },
+        )
+
+        if visible_during:
             raise DeploymentError(
-                f"Synthetic AOS tree owns conhost descendants: {conhosts}"
+                "Synthetic AOS tree owns visible Windows UI: "
+                f"{visible_during}"
             )
 
         # Resume only the synthetic history long enough to prove the supervisor's
@@ -417,10 +429,42 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
         post("/v1/commands/resume")
         relay_latest = smoke_root / "relay" / "LATEST.json"
         relay_deadline = time.monotonic() + 25
+
+        resume_visible_by_hwnd: Dict[int, Dict[str, Any]] = {}
+        resume_conhosts_by_pid: Dict[int, Dict[str, Any]] = {}
+
         while not relay_latest.is_file() and time.monotonic() < relay_deadline:
-            time.sleep(0.1)
+            sample_tree = process_tree_snapshot(tree_roots)
+
+            for row in sample_tree:
+                if str(row.get("name") or "").lower() == "conhost.exe":
+                    resume_conhosts_by_pid[int(row["pid"])] = row
+
+            for row in visible_window_snapshot(tree_roots):
+                resume_visible_by_hwnd[int(row["hwnd"])] = row
+
+            time.sleep(0.02)
+
+        # Continue observing briefly so short post-relay child activity is also
+        # included in the Windows visibility proof.
+        observation_deadline = time.monotonic() + 1.0
+
+        while time.monotonic() < observation_deadline:
+            sample_tree = process_tree_snapshot(tree_roots)
+
+            for row in sample_tree:
+                if str(row.get("name") or "").lower() == "conhost.exe":
+                    resume_conhosts_by_pid[int(row["pid"])] = row
+
+            for row in visible_window_snapshot(tree_roots):
+                resume_visible_by_hwnd[int(row["hwnd"])] = row
+
+            time.sleep(0.02)
+
         if not relay_latest.is_file():
-            raise DeploymentError("Synthetic supervisor relay cycle did not complete")
+            raise DeploymentError(
+                "Synthetic supervisor relay cycle did not complete"
+            )
 
         after_resume = process_tree_snapshot(tree_roots)
         atomic_json(
@@ -433,9 +477,29 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
             if str(row.get("name") or "").lower() == "conhost.exe"
         ]
 
-        if resume_conhosts:
+        for row in resume_conhosts:
+            resume_conhosts_by_pid[int(row["pid"])] = row
+
+        for row in visible_window_snapshot(tree_roots):
+            resume_visible_by_hwnd[int(row["hwnd"])] = row
+
+        atomic_json(
+            evidence_dir / "visible-windows-after-resume.json",
+            {
+                "root_pids": tree_roots,
+                "visible_windows": list(
+                    resume_visible_by_hwnd.values()
+                ),
+                "conhosts": list(
+                    resume_conhosts_by_pid.values()
+                ),
+            },
+        )
+
+        if resume_visible_by_hwnd:
             raise DeploymentError(
-                f"Synthetic resumed AOS tree owns conhost descendants: {resume_conhosts}"
+                "Synthetic resumed AOS tree owns visible Windows UI: "
+                f"{list(resume_visible_by_hwnd.values())}"
             )
 
         post("/v1/commands/pause-safe")
@@ -483,7 +547,12 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
         "process_tree_during": str(evidence_dir / "process-tree-during.json"),
         "process_tree_after": str(evidence_dir / "process-tree-after.json"),
         "shutdown": shutdown_result,
-        "conhost_descendant_count": 0,
+        "conhost_descendant_count": len({
+            int(row["pid"])
+            for row in (conhosts + list(resume_conhosts_by_pid.values()))
+        }),
+        "visible_window_count": 0,
+        "process_tree_visible_window_count": 0,
         "orphan_count": 0,
         "production": "NO_GO",
     }

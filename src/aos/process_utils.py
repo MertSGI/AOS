@@ -207,6 +207,92 @@ def process_tree_snapshot(root_pids: Sequence[int]) -> list[Dict[str, Any]]:
     return [row for row in rows if row["pid"] in selected]
 
 
+def visible_window_snapshot(
+    root_pids: Sequence[int],
+) -> list[Dict[str, Any]]:
+    """Return visible top-level windows owned by the supplied process trees.
+
+    conhost.exe existence alone is not evidence of a visible console. Windows
+    may create a headless conhost for a CREATE_NO_WINDOW child. Acceptance must
+    therefore bind to actual visible HWND ownership.
+    """
+    if os.name != "nt":
+        return []
+
+    import ctypes
+    from ctypes import wintypes
+
+    tree = process_tree_snapshot(root_pids)
+    owned_pids = {
+        int(row["pid"])
+        for row in tree
+        if int(row.get("pid") or 0) > 0
+    }
+
+    if not owned_pids:
+        return []
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    enum_windows = user32.EnumWindows
+    is_window_visible = user32.IsWindowVisible
+    get_window_pid = user32.GetWindowThreadProcessId
+    get_window_text_length = user32.GetWindowTextLengthW
+    get_window_text = user32.GetWindowTextW
+    get_class_name = user32.GetClassNameW
+
+    callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    rows: list[Dict[str, Any]] = []
+
+    @callback_type
+    def callback(hwnd: Any, _lparam: Any) -> bool:
+        if not is_window_visible(hwnd):
+            return True
+
+        pid = wintypes.DWORD()
+        get_window_pid(hwnd, ctypes.byref(pid))
+
+        owner_pid = int(pid.value)
+
+        if owner_pid not in owned_pids:
+            return True
+
+        title_length = int(get_window_text_length(hwnd))
+        title_buffer = ctypes.create_unicode_buffer(
+            max(title_length + 1, 1)
+        )
+        get_window_text(
+            hwnd,
+            title_buffer,
+            len(title_buffer),
+        )
+
+        class_buffer = ctypes.create_unicode_buffer(256)
+        get_class_name(
+            hwnd,
+            class_buffer,
+            len(class_buffer),
+        )
+
+        rows.append({
+            "hwnd": int(hwnd),
+            "pid": owner_pid,
+            "title": str(title_buffer.value),
+            "class_name": str(class_buffer.value),
+        })
+
+        return True
+
+    enum_windows(callback, 0)
+
+    return rows
+
+
 class _WindowsJob:
     """Minimal kill-on-close Job Object wrapper."""
 
@@ -428,11 +514,7 @@ def run_headless(
     shell: bool = False,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[Any]:
-    """Run a bounded command; timeout always tears down its descendant tree.
-
-    Windows bounded CLIs are console-detached as well as Job-owned so tools
-    such as git.exe cannot allocate transient conhost.exe descendants.
-    """
+    """Run a bounded command; timeout always tears down its descendant tree."""
     if timeout is None or float(timeout) <= 0:
         raise ValueError("A positive explicit timeout is required")
     input_value = kwargs.pop("input", None)
@@ -440,14 +522,6 @@ def run_headless(
         kwargs["stdin"] = subprocess.PIPE
     stdout = subprocess.PIPE if capture_output else kwargs.pop("stdout", None)
     stderr = subprocess.PIPE if capture_output else kwargs.pop("stderr", None)
-    # A bounded Windows console executable (notably git.exe) can still
-    # acquire a conhost when CREATE_NO_WINDOW alone is used from a pythonw
-    # parent. Detach bounded CLI processes from the console while retaining
-    # Job Object ownership, captured stdio, and descendant-tree teardown.
-    detached = bool(kwargs.pop("detached", False))
-    if os.name == "nt":
-        detached = True
-
     proc = popen_headless(
         cmd,
         cwd=cwd,
@@ -457,7 +531,6 @@ def run_headless(
         stderr=stderr,
         shell=shell,
         text=text,
-        detached=detached,
         **kwargs,
     )
     try:
