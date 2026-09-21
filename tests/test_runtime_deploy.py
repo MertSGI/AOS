@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 from pathlib import Path
 
@@ -19,6 +19,7 @@ def test_transactional_activation_defaults_paused_and_rolls_back(tmp_path: Path,
     runtime_home = tmp_path / "runtime-home"
     monkeypatch.setattr(materialize_slot, "verify_ci_run", lambda *args, **kwargs: {"conclusion": "success"})
     monkeypatch.setattr(materialize_slot, "assert_clean_source", lambda *args, **kwargs: None)
+    monkeypatch.setattr(materialize_slot, "get_authoritative_git_head", lambda _: BASE_SHA)
     candidate = materialize_slot.materialize(
         BASE_SHA,
         35578238176,
@@ -95,3 +96,4 @@ def test_startup_validation_rejects_duplicate_authorities(tmp_path: Path):
     (startup / "AOS-Runtime-V1-Supervisor.pyw").write_text("pass", encoding="utf-8")
     with pytest.raises(DeploymentError, match="Duplicate enabled AOS startup authorities"):
         validate_startup_ownership(startup, startup / "AOS-Runtime-V1-Supervisor.pyw")
+
