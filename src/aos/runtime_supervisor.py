@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
-from aos.process_utils import OwnedProcess, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
+from aos.process_utils import OwnedProcess, background_python_executable, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
 from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
 
 
@@ -270,7 +270,7 @@ class RuntimeSupervisor:
         })
         self.panel_child = popen_headless(
             [
-                sys.executable,
+                background_python_executable(sys.executable),
                 "-m",
                 "aos.control_panel",
                 "--host-config",

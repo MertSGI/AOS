@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from aos.process_utils import launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless
+from aos.process_utils import background_python_executable, launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless
 from aos.runtime_contract import CONTRACT_VERSION, utc_now, validate_configured_project_profiles
 from aos.runtime_maintenance import persist_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
@@ -312,7 +312,7 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
     slot = SlotRecord(
         slot_id=manifest["candidate_slot_id"],
         kind="runtime_v1",
-        command=(sys.executable, str(candidate / "launch_runtime_server.py")),
+        command=(background_python_executable(sys.executable), str(candidate / "launch_runtime_server.py")),
         source_sha=source_sha,
         health_url=f"http://127.0.0.1:{runtime_port}/v1/health",
         config_path=str(runtime_home / "runtime-config.json"),
@@ -353,7 +353,7 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
     try:
-        supervisor_proc = popen_headless([sys.executable, str(candidate / "launch_supervisor.py")], detached=True)
+        supervisor_proc = popen_headless([background_python_executable(sys.executable), str(candidate / "launch_supervisor.py")], detached=True)
         deadline = time.monotonic() + 30
         runtime_health = panel_health = None
         startup_samples: list[float] = []
@@ -381,11 +381,36 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
             if not _health(runtime_url):
                 raise DeploymentError("Synthetic health request failed")
             ready_samples.append(time.perf_counter() - started)
-        during = process_tree_snapshot([supervisor_proc.pid])
-        atomic_json(evidence_dir / "process-tree-during.json", {"processes": during})
-        conhosts = [row for row in during if str(row.get("name") or "").lower() == "conhost.exe"]
+        supervisor_state = read_json(supervisor_root / "supervisor-state.json", {})
+        tree_roots = [supervisor_proc.pid]
+
+        for raw_pid in (
+            supervisor_state.get("supervisor_pid"),
+            runtime_health.get("pid"),
+            panel_health.get("pid"),
+        ):
+            try:
+                pid = int(raw_pid)
+            except (TypeError, ValueError):
+                continue
+            if pid > 0 and pid not in tree_roots:
+                tree_roots.append(pid)
+
+        during = process_tree_snapshot(tree_roots)
+        atomic_json(
+            evidence_dir / "process-tree-during.json",
+            {"root_pids": tree_roots, "processes": during},
+        )
+
+        conhosts = [
+            row for row in during
+            if str(row.get("name") or "").lower() == "conhost.exe"
+        ]
+
         if conhosts:
-            raise DeploymentError(f"Synthetic AOS tree owns conhost descendants: {conhosts}")
+            raise DeploymentError(
+                f"Synthetic AOS tree owns conhost descendants: {conhosts}"
+            )
 
         # Resume only the synthetic history long enough to prove the supervisor's
         # slow relay enrichment runs off the lifecycle thread, then pause again.
@@ -396,6 +421,23 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
             time.sleep(0.1)
         if not relay_latest.is_file():
             raise DeploymentError("Synthetic supervisor relay cycle did not complete")
+
+        after_resume = process_tree_snapshot(tree_roots)
+        atomic_json(
+            evidence_dir / "process-tree-after-resume.json",
+            {"root_pids": tree_roots, "processes": after_resume},
+        )
+
+        resume_conhosts = [
+            row for row in after_resume
+            if str(row.get("name") or "").lower() == "conhost.exe"
+        ]
+
+        if resume_conhosts:
+            raise DeploymentError(
+                f"Synthetic resumed AOS tree owns conhost descendants: {resume_conhosts}"
+            )
+
         post("/v1/commands/pause-safe")
 
         # Shut down the complete owned tree, restart the supervisor, and prove
@@ -406,7 +448,7 @@ def smoke(runtime_home: Path, source_sha: str) -> Dict[str, Any]:
             time.sleep(0.1)
         supervisor_proc.close()
         atomic_json(supervisor_root / "control-request.json", {"action": "START", "requested_at": utc_now()})
-        supervisor_proc = popen_headless([sys.executable, str(candidate / "launch_supervisor.py")], detached=True)
+        supervisor_proc = popen_headless([background_python_executable(sys.executable), str(candidate / "launch_supervisor.py")], detached=True)
         deadline = time.monotonic() + 20
         restarted = None
         while time.monotonic() < deadline:
@@ -506,7 +548,7 @@ def activate(
         slot = SlotRecord(
             slot_id=manifest["candidate_slot_id"],
             kind="runtime_v1",
-            command=(sys.executable, str(candidate / "launch_runtime_server.py")),
+            command=(background_python_executable(sys.executable), str(candidate / "launch_runtime_server.py")),
             source_sha=source_sha,
             health_url=f"http://127.0.0.1:{int(config['port'])}/v1/health",
             config_path=str(config_path),

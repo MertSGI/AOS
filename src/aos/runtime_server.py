@@ -31,7 +31,7 @@ from aos.runtime_contract import (
     validate_runtime_config,
 )
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
-from aos.process_utils import OwnedProcess, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
+from aos.process_utils import OwnedProcess, background_python_executable, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
 from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
 from aos.runtime_maintenance import PAUSED_SAFE, is_paused, persist_maintenance
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
@@ -57,12 +57,7 @@ def _creationflags() -> int:
 
 
 def _resolve_worker_executable() -> str:
-    py = sys.executable
-    if os.name == "nt" and py.lower().endswith("pythonw.exe"):
-        candidate = Path(py).with_name("python.exe")
-        if candidate.exists():
-            return str(candidate)
-    return py
+    return background_python_executable(sys.executable)
 
 
 def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:

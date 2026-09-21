@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from aos.process_utils import (
+    background_python_executable,
     get_headless_creationflags,
     get_headless_startupinfo,
     popen_headless,
@@ -36,6 +37,19 @@ def test_headless_process_flags_on_windows():
         assert get_headless_creationflags(detached=False) == 0
         assert get_headless_creationflags(detached=True) == 0
         assert get_headless_startupinfo() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows daemon interpreter contract")
+def test_background_python_uses_pythonw_for_long_lived_daemons():
+    expected = Path(sys.executable).with_name("pythonw.exe")
+
+    if not expected.is_file():
+        pytest.skip("pythonw.exe is not available beside the active interpreter")
+
+    actual = Path(background_python_executable(sys.executable))
+
+    assert actual.resolve() == expected.resolve()
+    assert actual.name.lower() == "pythonw.exe"
 
 
 def test_run_headless_executes_silently_and_captures_output():

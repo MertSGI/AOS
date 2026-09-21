@@ -9,8 +9,31 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
+
+
+def background_python_executable(executable: Optional[str] = None) -> str:
+    """Return the console-less interpreter for long-lived Windows daemons.
+
+    Bounded commands that need captured stdout/stderr continue to use
+    python.exe through run_headless(). Runtime, supervisor, panel and worker
+    processes use pythonw.exe when the sibling executable exists.
+    """
+    value = Path(executable or sys.executable)
+
+    if os.name == "nt":
+        if value.name.lower() == "pythonw.exe":
+            return str(value)
+
+        if value.name.lower() == "python.exe":
+            candidate = value.with_name("pythonw.exe")
+            if candidate.is_file():
+                return str(candidate)
+
+    return str(value)
 
 
 def get_headless_creationflags(*, detached: bool = False) -> int:
