@@ -180,7 +180,10 @@ print(json.dumps(result,sort_keys=True))
 
 
 def _startup_path(startup_dir: Path) -> Path:
-    return startup_dir / "AOS-Runtime-V1-Supervisor.pyw"
+    # Windows Startup must not depend on the optional .pyw file
+    # association.  Use the native Windows Script Host association
+    # and have the authority explicitly invoke pythonw.exe.
+    return startup_dir / "AOS-Runtime-V1-Supervisor.vbs"
 
 
 def validate_startup_ownership(startup_dir: Path, expected: Optional[Path] = None) -> Dict[str, Any]:
@@ -196,15 +199,67 @@ def validate_startup_ownership(startup_dir: Path, expected: Optional[Path] = Non
 
 def _install_startup(startup_dir: Path, candidate: Path) -> Path:
     path = _startup_path(startup_dir)
-    validate_startup_ownership(startup_dir, path if path.exists() else None)
-    code = (
-        "import runpy\n"
-        f"runpy.run_path({str(candidate / 'launch_supervisor.py')!r}, run_name='__main__')\n"
+    validate_startup_ownership(
+        startup_dir,
+        path if path.exists() else None,
     )
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(code, encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
-    validate_startup_ownership(startup_dir, path)
+
+    pythonw = Path(
+        background_python_executable(
+            sys.executable
+        )
+    ).expanduser().resolve()
+
+    launcher = (
+        candidate
+        / "launch_supervisor.py"
+    ).expanduser().resolve()
+
+    if os.name == "nt" and not pythonw.is_file():
+        raise DeploymentError(
+            f"Startup pythonw executable missing: {pythonw}"
+        )
+
+    if not launcher.is_file():
+        raise DeploymentError(
+            f"Startup supervisor launcher missing: {launcher}"
+        )
+
+    def vbs_string(value: Path) -> str:
+        return str(value).replace('"', '""')
+
+    code = (
+        "' AOS Runtime V1 persistent Startup authority\n"
+        f"' candidate={candidate.name}\n"
+        'Set shell = CreateObject("WScript.Shell")\n'
+        'shell.Run Chr(34) & "'
+        + vbs_string(pythonw)
+        + '" & Chr(34) & " " & Chr(34) & "'
+        + vbs_string(launcher)
+        + '" & Chr(34), 0, False\n'
+        'Set shell = Nothing\n'
+    )
+
+    tmp = path.with_suffix(
+        path.suffix + ".tmp"
+    )
+
+    tmp.write_text(
+        code,
+        encoding="utf-8",
+        newline="\r\n",
+    )
+
+    os.replace(
+        tmp,
+        path,
+    )
+
+    validate_startup_ownership(
+        startup_dir,
+        path,
+    )
+
     return path
 
 
@@ -634,7 +689,10 @@ def activate(
     startup_existed = startup_path.is_file()
 
     if install_startup and startup_existed:
-        shutil.copy2(startup_path, backup / "startup-authority.pyw")
+        shutil.copy2(
+            startup_path,
+            backup / "startup-authority.backup",
+        )
 
     atomic_json(backup / "transaction.json", {
         "transaction_id": txid,
@@ -749,13 +807,53 @@ def _restore_transaction(runtime_home: Path, backup: Path, startup_dir: Path) ->
         if source.is_file():
             atomic_json(target, read_json(source, {}))
     if bool(tx.get("startup_managed", True)):
-        startup = _startup_path(startup_dir.expanduser().resolve())
-        startup_backup = backup / "startup-authority.pyw"
+        startup_raw = str(
+            tx.get("startup_path")
+            or _startup_path(
+                startup_dir.expanduser().resolve()
+            )
+        )
 
-        if bool(tx.get("startup_existed")) and startup_backup.is_file():
-            tmp = startup.with_suffix(startup.suffix + ".rollback.tmp")
-            shutil.copy2(startup_backup, tmp)
-            os.replace(tmp, startup)
+        startup = Path(
+            startup_raw
+        ).expanduser().resolve()
+
+        startup_backup = (
+            backup
+            / "startup-authority.backup"
+        )
+
+        # Compatibility with transactions produced before the
+        # association-independent Startup authority migration.
+        if not startup_backup.is_file():
+            legacy_backup = (
+                backup
+                / "startup-authority.pyw"
+            )
+
+            if legacy_backup.is_file():
+                startup_backup = legacy_backup
+
+        if (
+            bool(tx.get("startup_existed"))
+            and
+            startup_backup.is_file()
+        ):
+            tmp = startup.with_suffix(
+                startup.suffix
+                + ".rollback.tmp"
+            )
+
+            shutil.copy2(
+                startup_backup,
+                tmp,
+            )
+
+            os.replace(
+                tmp,
+                startup,
+            )
+
         elif startup.is_file():
             startup.unlink()
     return str(tx.get("previous_slot_id") or "")

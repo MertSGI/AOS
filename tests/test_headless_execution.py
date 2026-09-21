@@ -13,6 +13,7 @@ import pytest
 from aos.process_utils import (
     background_python_executable,
     get_headless_creationflags,
+    launch_startup_authority,
     get_headless_startupinfo,
     popen_headless,
     process_alive,
@@ -102,6 +103,53 @@ def test_real_git_cli_tree_has_no_visible_windows():
         assert isinstance(observed_conhost, bool)
     finally:
         proc.close()
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows Startup shell association acceptance",
+)
+def test_windows_vbs_startup_authority_executes_via_shell(tmp_path: Path):
+    """The persistent authority must use a Windows-native shell type.
+
+    This catches hosts where .pyw is unassociated and ShellExecute would show
+    an "open with" picker instead of starting AOS.
+    """
+    marker = tmp_path / "startup-marker.txt"
+    script = tmp_path / "AOS-Runtime-V1-Supervisor.vbs"
+
+    marker_text = str(marker).replace('"', '""')
+
+    script.write_text(
+        'Set fso = CreateObject("Scripting.FileSystemObject")\r\n'
+        'Set out = fso.CreateTextFile("'
+        + marker_text
+        + '", True)\r\n'
+        'out.Write "AOS_VBS_STARTUP_OK"\r\n'
+        'out.Close\r\n'
+        'Set out = Nothing\r\n'
+        'Set fso = Nothing\r\n',
+        encoding="utf-8",
+        newline="\r\n",
+    )
+
+    launch_startup_authority(script)
+
+    deadline = time.monotonic() + 5.0
+
+    while (
+        not marker.is_file()
+        and
+        time.monotonic() < deadline
+    ):
+        time.sleep(0.05)
+
+    assert marker.is_file()
+    assert (
+        marker.read_text(encoding="utf-8")
+        == "AOS_VBS_STARTUP_OK"
+    )
+
 
 
 def test_run_headless_executes_silently_and_captures_output():

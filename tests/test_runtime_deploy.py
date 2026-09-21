@@ -79,9 +79,11 @@ def test_transactional_activation_defaults_paused_and_rolls_back(tmp_path: Path,
     pointer = slots.read_pointer()
     assert pointer["active"] == "candidate"
     assert pointer["stable_slot_id"] == stable.slot_id
-    startup_file = startup / "AOS-Runtime-V1-Supervisor.pyw"
+    startup_file = startup / "AOS-Runtime-V1-Supervisor.vbs"
     startup_text = startup_file.read_text(encoding="utf-8")
     assert BASE_SHA in startup_text
+    assert "WScript.Shell" in startup_text
+    assert "shell.Run" in startup_text
     assert "launch_supervisor.py" in startup_text
 
     restored = rollback(runtime_home, result["transaction_id"], startup)
@@ -244,7 +246,7 @@ def test_activation_rejects_nested_trial_candidate(tmp_path: Path, monkeypatch):
     assert pointer["candidate_slot_id"] == trial.slot_id
     assert pointer["stable_slot_id"] == stable.slot_id
     assert not (
-        startup / "AOS-Runtime-V1-Supervisor.pyw"
+        startup / "AOS-Runtime-V1-Supervisor.vbs"
     ).exists()
 
 
@@ -252,7 +254,10 @@ def test_startup_validation_rejects_duplicate_authorities(tmp_path: Path):
     startup = tmp_path / "Startup"
     startup.mkdir()
     (startup / "AOS-Runtime-V1-Supervisor.cmd").write_text("exit /b 0", encoding="utf-8")
-    (startup / "AOS-Runtime-V1-Supervisor.pyw").write_text("pass", encoding="utf-8")
+    (startup / "AOS-Runtime-V1-Supervisor.vbs").write_text(
+        'WScript.Quit 0',
+        encoding="utf-8",
+    )
     with pytest.raises(DeploymentError, match="Duplicate enabled AOS startup authorities"):
         validate_startup_ownership(startup, startup / "AOS-Runtime-V1-Supervisor.pyw")
 
