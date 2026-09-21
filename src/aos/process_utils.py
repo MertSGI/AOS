@@ -428,7 +428,11 @@ def run_headless(
     shell: bool = False,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[Any]:
-    """Run a bounded command; timeout always tears down its descendant tree."""
+    """Run a bounded command; timeout always tears down its descendant tree.
+
+    Windows bounded CLIs are console-detached as well as Job-owned so tools
+    such as git.exe cannot allocate transient conhost.exe descendants.
+    """
     if timeout is None or float(timeout) <= 0:
         raise ValueError("A positive explicit timeout is required")
     input_value = kwargs.pop("input", None)
@@ -436,9 +440,25 @@ def run_headless(
         kwargs["stdin"] = subprocess.PIPE
     stdout = subprocess.PIPE if capture_output else kwargs.pop("stdout", None)
     stderr = subprocess.PIPE if capture_output else kwargs.pop("stderr", None)
+    # A bounded Windows console executable (notably git.exe) can still
+    # acquire a conhost when CREATE_NO_WINDOW alone is used from a pythonw
+    # parent. Detach bounded CLI processes from the console while retaining
+    # Job Object ownership, captured stdio, and descendant-tree teardown.
+    detached = bool(kwargs.pop("detached", False))
+    if os.name == "nt":
+        detached = True
+
     proc = popen_headless(
-        cmd, cwd=cwd, env=env, stdin=kwargs.pop("stdin", subprocess.DEVNULL),
-        stdout=stdout, stderr=stderr, shell=shell, text=text, **kwargs,
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdin=kwargs.pop("stdin", subprocess.DEVNULL),
+        stdout=stdout,
+        stderr=stderr,
+        shell=shell,
+        text=text,
+        detached=detached,
+        **kwargs,
     )
     try:
         out, err = proc.communicate(input=input_value, timeout=float(timeout))

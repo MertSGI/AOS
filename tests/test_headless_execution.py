@@ -5,6 +5,7 @@ import ast
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ from aos.process_utils import (
     get_headless_creationflags,
     get_headless_startupinfo,
     popen_headless,
+    process_alive,
+    process_tree_snapshot,
     run_headless,
 )
 
@@ -50,6 +53,88 @@ def test_background_python_uses_pythonw_for_long_lived_daemons():
 
     assert actual.resolve() == expected.resolve()
     assert actual.name.lower() == "pythonw.exe"
+
+
+def test_run_headless_forces_console_detach_on_windows(monkeypatch):
+    """Bounded Windows CLIs must use the detached process contract."""
+    import aos.process_utils as process_utils
+
+    captured = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, *args, **kwargs):
+            return ("AOS_OK", "")
+
+        def _close_job(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        process_utils,
+        "popen_headless",
+        fake_popen,
+    )
+
+    result = process_utils.run_headless(
+        ["git", "--version"],
+        timeout=1,
+    )
+
+    assert result.returncode == 0
+
+    if os.name == "nt":
+        assert captured.get("detached") is True
+    else:
+        assert captured.get("detached") is False
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows real Git console-detach acceptance",
+)
+def test_real_git_cli_detached_tree_has_no_conhost():
+    """A live real git.exe tree must never acquire conhost.exe."""
+    command = [
+        "git",
+        "-c",
+        'alias.aos-hang=!python -c "import time; time.sleep(10)"',
+        "aos-hang",
+    ]
+
+    proc = popen_headless(
+        command,
+        detached=True,
+    )
+
+    observed_live = False
+
+    try:
+        deadline = time.monotonic() + 2.0
+
+        while time.monotonic() < deadline:
+            if process_alive(proc.pid):
+                observed_live = True
+
+            tree = process_tree_snapshot([proc.pid])
+
+            conhosts = [
+                row
+                for row in tree
+                if str(row.get("name") or "").lower() == "conhost.exe"
+            ]
+
+            assert conhosts == []
+
+            time.sleep(0.05)
+
+        assert observed_live is True
+    finally:
+        proc.close()
 
 
 def test_run_headless_executes_silently_and_captures_output():
