@@ -87,6 +87,41 @@ def test_transactional_activation_defaults_paused_and_rolls_back(tmp_path: Path,
     restored = rollback(runtime_home, result["transaction_id"], startup)
     assert restored["rollback"] == "PASS"
     assert slots.read_pointer()["active"] == "stable"
+    assert not startup_file.exists()
+
+    # Maintenance-only deployment must be able to stage the exact candidate
+    # while leaving Startup completely untouched.
+    no_startup = activate(
+        runtime_home,
+        BASE_SHA,
+        startup,
+        launch=False,
+        install_startup=False,
+    )
+    assert no_startup["activation"] == "STAGED_MAINTENANCE_NO_STARTUP"
+    assert no_startup["startup"] is None
+    assert no_startup["startup_installed"] is False
+    assert not startup_file.exists()
+    assert read_maintenance(runtime_root)["state"] == PAUSED_SAFE
+
+    tx = json.loads(
+        (
+            runtime_home
+            / "deployment-backups"
+            / no_startup["transaction_id"]
+            / "transaction.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert tx["startup_managed"] is False
+
+    restored = rollback(
+        runtime_home,
+        no_startup["transaction_id"],
+        startup,
+    )
+    assert restored["rollback"] == "PASS"
+    assert slots.read_pointer()["active"] == "stable"
+    assert not startup_file.exists()
 
 
 def test_startup_validation_rejects_duplicate_authorities(tmp_path: Path):

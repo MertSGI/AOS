@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from aos.process_utils import background_python_executable, launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless
+from aos.process_utils import background_python_executable, launch_background_python_script, launch_startup_authority, popen_headless, process_alive, process_tree_snapshot, run_headless
 from aos.runtime_contract import CONTRACT_VERSION, utc_now, validate_configured_project_profiles
 from aos.runtime_maintenance import persist_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
@@ -495,6 +495,7 @@ def activate(
     startup_dir: Path,
     *,
     launch: bool = True,
+    install_startup: bool = True,
     proof_timeout: float = 45.0,
 ) -> Dict[str, Any]:
     runtime_home = runtime_home.expanduser().resolve()
@@ -528,10 +529,22 @@ def activate(
             shutil.copy2(path, backup / path.name)
     startup_dir = startup_dir.expanduser().resolve()
     startup_path = _startup_path(startup_dir)
-    validate_startup_ownership(startup_dir, startup_path if startup_path.exists() else None)
+
+    if install_startup:
+        validate_startup_ownership(
+            startup_dir,
+            startup_path if startup_path.exists() else None,
+        )
+    else:
+        # Maintenance-only activation requires Startup to remain completely
+        # disabled. Any enabled AOS authority fails closed.
+        validate_startup_ownership(startup_dir, None)
+
     startup_existed = startup_path.is_file()
-    if startup_existed:
+
+    if install_startup and startup_existed:
         shutil.copy2(startup_path, backup / "startup-authority.pyw")
+
     atomic_json(backup / "transaction.json", {
         "transaction_id": txid,
         "source_sha": source_sha,
@@ -539,6 +552,7 @@ def activate(
         "supervisor_root": str(supervisor_root),
         "startup_path": str(startup_path),
         "startup_existed": startup_existed,
+        "startup_managed": install_startup,
         "created_at": utc_now(),
     })
 
@@ -563,11 +577,35 @@ def activate(
             "promotion_state": "TRIAL_MAINTENANCE",
             "updated_at": utc_now(),
         })
-        atomic_json(supervisor_root / "control-request.json", {"action": "START", "requested_at": utc_now()})
-        startup = _install_startup(startup_dir, candidate)
+        atomic_json(
+            supervisor_root / "control-request.json",
+            {"action": "START", "requested_at": utc_now()},
+        )
+
+        startup = None
+
+        if install_startup:
+            startup = _install_startup(startup_dir, candidate)
+
         if not launch:
-            return {**validation, "activation": "STAGED_MAINTENANCE", "transaction_id": txid, "startup": str(startup)}
-        launch_startup_authority(startup)
+            return {
+                **validation,
+                "activation": (
+                    "STAGED_MAINTENANCE"
+                    if install_startup
+                    else "STAGED_MAINTENANCE_NO_STARTUP"
+                ),
+                "transaction_id": txid,
+                "startup": str(startup) if startup else None,
+                "startup_installed": bool(startup),
+            }
+
+        if startup is not None:
+            launch_startup_authority(startup)
+        else:
+            launch_background_python_script(
+                candidate / "launch_supervisor.py"
+            )
         deadline = time.monotonic() + max(5.0, proof_timeout)
         health_url = slot.health_url or ""
         panel_port = int(read_json(runtime_home / "control-panel-config.json", {}).get("port", 8765))
@@ -592,7 +630,8 @@ def activate(
             "transaction_id": txid,
             "runtime_health": health,
             "panel_health": panel,
-            "startup": str(startup),
+            "startup": str(startup) if startup else None,
+            "startup_installed": bool(startup),
         }
     except Exception as exc:
         try:
@@ -618,14 +657,16 @@ def _restore_transaction(runtime_home: Path, backup: Path, startup_dir: Path) ->
         source = backup / name
         if source.is_file():
             atomic_json(target, read_json(source, {}))
-    startup = _startup_path(startup_dir.expanduser().resolve())
-    startup_backup = backup / "startup-authority.pyw"
-    if bool(tx.get("startup_existed")) and startup_backup.is_file():
-        tmp = startup.with_suffix(startup.suffix + ".rollback.tmp")
-        shutil.copy2(startup_backup, tmp)
-        os.replace(tmp, startup)
-    elif startup.is_file():
-        startup.unlink()
+    if bool(tx.get("startup_managed", True)):
+        startup = _startup_path(startup_dir.expanduser().resolve())
+        startup_backup = backup / "startup-authority.pyw"
+
+        if bool(tx.get("startup_existed")) and startup_backup.is_file():
+            tmp = startup.with_suffix(startup.suffix + ".rollback.tmp")
+            shutil.copy2(startup_backup, tmp)
+            os.replace(tmp, startup)
+        elif startup.is_file():
+            startup.unlink()
     return str(tx.get("previous_slot_id") or "")
 
 
@@ -656,6 +697,11 @@ def build_parser() -> argparse.ArgumentParser:
     activate_p = sub.add_parser("activate")
     activate_p.add_argument("--source-sha", required=True)
     activate_p.add_argument("--no-start", action="store_true")
+    activate_p.add_argument(
+        "--without-startup",
+        action="store_true",
+        help="Activate/start candidate without installing a persistent Startup authority",
+    )
     rollback_p = sub.add_parser("rollback")
     rollback_p.add_argument("--transaction-id", required=True)
     sub.add_parser("startup-status")
@@ -674,7 +720,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "smoke":
             result = smoke(runtime_home, args.source_sha)
         elif args.command == "activate":
-            result = activate(runtime_home, args.source_sha, startup_dir, launch=not args.no_start)
+            result = activate(
+                runtime_home,
+                args.source_sha,
+                startup_dir,
+                launch=not args.no_start,
+                install_startup=not args.without_startup,
+            )
         elif args.command == "rollback":
             result = rollback(runtime_home, args.transaction_id, startup_dir)
         else:

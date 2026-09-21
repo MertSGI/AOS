@@ -455,6 +455,39 @@ def run_headless(
     return result
 
 
+def launch_background_python_script(
+    script: os.PathLike[str] | str,
+    *args: str,
+) -> int:
+    """Launch a long-lived background Python authority without a console.
+
+    Unlike popen_headless(), this top-level authority is deliberately not
+    attached to the caller's Job Object. The supervisor becomes the owner of
+    runtime/panel/worker process trees after launch.
+    """
+    command = [
+        background_python_executable(sys.executable),
+        os.fspath(script),
+        *[str(arg) for arg in args],
+    ]
+
+    kwargs: Dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+
+    if os.name == "nt":
+        kwargs["creationflags"] = get_headless_creationflags(detached=True)
+        kwargs["startupinfo"] = get_headless_startupinfo()
+    else:
+        kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(command, **kwargs)
+    return int(process.pid)
+
+
 def launch_startup_authority(startup_script: os.PathLike[str] | str) -> None:
     """Launch the one top-level user startup authority without a console.
 
