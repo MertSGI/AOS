@@ -124,6 +124,130 @@ def test_transactional_activation_defaults_paused_and_rolls_back(tmp_path: Path,
     assert not startup_file.exists()
 
 
+def test_activation_rejects_nested_trial_candidate(tmp_path: Path, monkeypatch):
+    runtime_home = tmp_path / "runtime-home"
+
+    monkeypatch.setattr(
+        materialize_slot,
+        "verify_ci_run",
+        lambda *args, **kwargs: {"conclusion": "success"},
+    )
+    monkeypatch.setattr(
+        materialize_slot,
+        "assert_clean_source",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        materialize_slot,
+        "get_authoritative_git_head",
+        lambda _: BASE_SHA,
+    )
+
+    candidate = materialize_slot.materialize(
+        BASE_SHA,
+        35578238176,
+        repo_root=ROOT,
+        candidate_base=runtime_home / "candidate",
+    )
+
+    runtime_root = runtime_home / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    atomic_json(runtime_home / "runtime-config.json", {
+        "contract_version": "1.0.0",
+        "runtime_root": str(runtime_root),
+        "runtime_token_path": str(runtime_home / "runtime-api.token"),
+        "authorized_roots": [str(tmp_path)],
+        "projects": {
+            "lari": {
+                "project_id": "lari",
+                "descriptor_path": str(
+                    candidate
+                    / "descriptors"
+                    / "lari.autonomous-host.descriptor.json"
+                ),
+                "routing_policy_path": str(
+                    candidate
+                    / "descriptors"
+                    / "nemotron.planner-policy.json"
+                ),
+                "workspace": str(workspace),
+                "standing_authority": True,
+            }
+        },
+        "default_project": "lari",
+        "port": 18770,
+        "production": "NO_GO",
+        "ag_backend_enabled": False,
+    })
+
+    supervisor_root = runtime_home / "supervisor"
+
+    atomic_json(runtime_home / "supervisor-config.json", {
+        "contract_version": "1.0.0",
+        "supervisor_root": str(supervisor_root),
+        "production": "NO_GO",
+        "panel_enabled": False,
+    })
+
+    slots = SlotManager(supervisor_root)
+
+    stable = SlotRecord(
+        slot_id="stable-accepted",
+        kind="runtime_v1",
+        command=(sys.executable, str(candidate / "launch_runtime_server.py")),
+        source_sha=BASE_SHA,
+        health_url="http://127.0.0.1:18770/v1/health",
+        config_path=str(runtime_home / "runtime-config.json"),
+        created_at="2026-09-21T00:00:00Z",
+    )
+
+    trial = SlotRecord(
+        slot_id="failed-trial",
+        kind="runtime_v1",
+        command=(sys.executable, str(candidate / "launch_runtime_server.py")),
+        source_sha="f" * 40,
+        health_url="http://127.0.0.1:18770/v1/health",
+        config_path=str(runtime_home / "runtime-config.json"),
+        created_at="2026-09-21T00:01:00Z",
+    )
+
+    slots.write_slot(stable)
+    slots.write_slot(trial)
+
+    atomic_json(slots.pointer, {
+        "contract_version": "1.0.0",
+        "stable_slot_id": stable.slot_id,
+        "candidate_slot_id": trial.slot_id,
+        "active": "candidate",
+        "promotion_state": "TRIAL",
+    })
+
+    startup = tmp_path / "Startup"
+
+    with pytest.raises(
+        DeploymentError,
+        match="Activation requires active=stable",
+    ):
+        activate(
+            runtime_home,
+            BASE_SHA,
+            startup,
+            launch=False,
+            install_startup=False,
+        )
+
+    pointer = slots.read_pointer()
+
+    assert pointer["active"] == "candidate"
+    assert pointer["candidate_slot_id"] == trial.slot_id
+    assert pointer["stable_slot_id"] == stable.slot_id
+    assert not (
+        startup / "AOS-Runtime-V1-Supervisor.pyw"
+    ).exists()
+
+
 def test_startup_validation_rejects_duplicate_authorities(tmp_path: Path):
     startup = tmp_path / "Startup"
     startup.mkdir()

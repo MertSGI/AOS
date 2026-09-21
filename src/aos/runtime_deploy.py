@@ -515,11 +515,33 @@ def activate(
     slots = SlotManager(supervisor_root)
     previous = read_json(slots.pointer, {})
     if not previous:
-        raise DeploymentError("Activation requires an existing accepted slot for deterministic rollback")
-    old_key = "candidate_slot_id" if previous.get("active") == "candidate" else "stable_slot_id"
-    previous_slot = str(previous.get(old_key) or "")
+        raise DeploymentError(
+            "Activation requires an existing accepted slot for deterministic rollback"
+        )
+
+    # Never stack a new trial candidate on top of another trial candidate.
+    # Transaction rollback is only deterministic when activation begins from
+    # the accepted stable baseline.
+    if previous.get("active") != "stable":
+        raise DeploymentError(
+            "Activation requires active=stable; rollback or normalize the "
+            "existing trial candidate before activating another candidate"
+        )
+
+    previous_slot = str(previous.get("stable_slot_id") or "")
     if not previous_slot:
-        raise DeploymentError("Existing active slot is invalid")
+        raise DeploymentError("Existing stable rollback slot is invalid")
+
+    # Fail closed if the stable record itself is missing/corrupt.
+    try:
+        stable_record = slots.read_slot(previous_slot)
+    except Exception as exc:
+        raise DeploymentError(
+            f"Stable rollback slot cannot be loaded: {previous_slot}"
+        ) from exc
+
+    if stable_record.slot_id != previous_slot:
+        raise DeploymentError("Stable rollback slot identity mismatch")
 
     txid = f"activate-{int(time.time())}-{secrets.token_hex(4)}"
     backup = runtime_home / "deployment-backups" / txid
