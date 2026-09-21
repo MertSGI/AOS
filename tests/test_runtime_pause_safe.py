@@ -89,7 +89,7 @@ def test_pause_preserves_existing_worker_and_blocks_restart(tmp_path, monkeypatc
         killed = []
         spawned = []
         monkeypatch.setattr(runtime_server, "pid_alive", lambda pid: True)
-        monkeypatch.setattr(runtime_server, "run_headless", lambda *args, **kwargs: killed.append(args))
+        monkeypatch.setattr(runtime_server, "terminate_process_tree", lambda *args, **kwargs: killed.append(args))
         monkeypatch.setattr(engine, "_spawn_worker", lambda *args, **kwargs: spawned.append(args))
 
         engine.pause_safe()

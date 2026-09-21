@@ -80,7 +80,7 @@ def test_runtime_health_reads_exact_command_local_registry(tmp_path, monkeypatch
         registry = ProviderCircuitBreakerRegistry(circuit_path)
         registry.record_success("gemini", observed_at="2026-09-19T10:00:00+00:00")
         monkeypatch.setattr(runtime_server, "provider_presence", lambda: {"GEMINI": True})
-        health = engine.health()
+        health = engine._collect_detailed_status()
         assert health["provider_circuit_registry_paths"] == [str(circuit_path)]
         assert health["healthy_reasoning_providers"] == ["gemini"]
         assert health["healthy_reasoning_provider_count"] == 1
@@ -103,7 +103,7 @@ def test_new_enabled_provider_is_unknown_and_credential_is_not_health(tmp_path, 
         monkeypatch.setattr(runtime_server, "provider_presence", lambda: {
             "NVIDIA": True, "GEMINI": True, "GROQ": True,
         })
-        health = engine.health()
+        health = engine._collect_detailed_status()
         assert health["healthy_reasoning_provider_count"] == 0
         assert health["unknown_reasoning_provider_count"] == 4
         assert {row["circuit_state"] for row in health["provider_details"]} == {"UNKNOWN"}
@@ -144,7 +144,7 @@ def test_waiting_command_exposes_next_probe_and_probe_does_not_increment_worker_
             }
         })
         engine._run_live_probe_cycle()
-        health = engine.health()
+        health = engine._collect_detailed_status()
         assert engine.store.read_state(command_id)["attempts"] == before
         assert health["next_provider_probe_at"] is not None
         assert ProviderCircuitBreakerRegistry(circuit_path).get_circuit("gemini").probe_count == 1

@@ -9,7 +9,6 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 import os
 import sys
-import subprocess
 import datetime
 import hashlib
 import uuid
@@ -18,6 +17,7 @@ import asyncio
 import shutil
 import tempfile
 
+from aos.process_utils import run_headless
 from extensions.design_intelligence.contracts import ProductDemoVideoSpec
 
 
@@ -143,7 +143,7 @@ class ProgrammaticVideoRendererAdapter:
                 output_mp4,
             ]
 
-            res = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=60)
+            res = run_headless(ffmpeg_cmd, timeout=60)
             if res.returncode != 0 or not os.path.exists(output_mp4) or os.path.getsize(output_mp4) == 0:
                 raise RuntimeError(f"FFmpeg MP4 rendering failed (exit {res.returncode}): {res.stderr}")
 
@@ -159,7 +159,7 @@ class ProgrammaticVideoRendererAdapter:
                 "-of", "json",
                 output_mp4,
             ]
-            probe_res = subprocess.run(ffprobe_cmd, capture_output=True, text=True, timeout=30)
+            probe_res = run_headless(ffprobe_cmd, timeout=30)
             if probe_res.returncode != 0:
                 raise RuntimeError(f"ffprobe stream inspection failed on '{output_mp4}': {probe_res.stderr}")
 

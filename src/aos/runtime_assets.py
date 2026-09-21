@@ -15,6 +15,10 @@ REQUIRED_FILES = (
     "descriptors/nemotron.planner-policy.json",
 )
 ASSET_DIRS = ("schemas", "descriptors")
+SOURCE_TREES = (
+    ("src/aos", "site/aos"),
+    ("extensions", "site/extensions"),
+)
 
 
 class RuntimeAssetError(RuntimeError):
@@ -47,6 +51,19 @@ def materialize_runtime_assets(source_root: Path, slot_root: Path) -> Dict[str, 
         raise RuntimeAssetError("source_root and slot_root must differ")
 
     copied = []
+    for source_name, target_name in SOURCE_TREES:
+        source = source_root / Path(source_name)
+        target = slot_root / Path(target_name)
+        if not source.is_dir():
+            raise RuntimeAssetError(f"Required runtime source directory missing: {source}")
+        for node in source.rglob("*"):
+            if node.is_symlink():
+                raise RuntimeAssetError(f"Runtime source symlink is not allowed: {node}")
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        copied.append(target_name)
+
     for dirname in ASSET_DIRS:
         source = source_root / dirname
         target = slot_root / dirname
@@ -65,8 +82,9 @@ def materialize_runtime_assets(source_root: Path, slot_root: Path) -> Dict[str, 
         raise RuntimeAssetError(f"Required runtime assets missing after materialization: {missing}")
 
     files: Dict[str, str] = {}
-    for dirname in ASSET_DIRS:
-        for path in sorted((slot_root / dirname).rglob("*")):
+    inventory_roots = [target for _source, target in SOURCE_TREES] + list(ASSET_DIRS)
+    for dirname in inventory_roots:
+        for path in sorted((slot_root / Path(dirname)).rglob("*")):
             if path.is_file():
                 rel = path.relative_to(slot_root).as_posix()
                 files[rel] = _sha256(path)
@@ -81,7 +99,9 @@ def materialize_runtime_assets(source_root: Path, slot_root: Path) -> Dict[str, 
 
     manifest = {
         "schema_version": "1.0.0",
-        "asset_directories": copied,
+        "asset_directories": list(ASSET_DIRS),
+        "source_directories": [target for _source, target in SOURCE_TREES],
+        "materialized_directories": copied,
         "required_files": list(REQUIRED_FILES),
         "file_count": len(files),
         "files": files,

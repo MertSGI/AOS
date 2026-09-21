@@ -7,9 +7,12 @@ emits operator-readable (LATEST.md), machine-readable (LATEST.json), and durable
 from __future__ import annotations
 
 import json
+import itertools
 import os
 import re
 import ssl
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -192,6 +195,7 @@ class ControllerRelayPublisher:
         force_diagnosis: bool = False,
     ) -> RelaySnapshot:
         """Gather fresh telemetry directly from durable runtime stores."""
+        enrichment_deadline = time.monotonic() + 20.0
         self.sequence_number += 1
         self._save_sequence()
 
@@ -305,6 +309,7 @@ class ControllerRelayPublisher:
 
         first_workspace_artifact = None
         first_ui_mutation = None
+        inspected_workspaces: set[str] = set()
         seen_commands: set[str] = set()
         total_batches_now = 0
         active_cmd_count = 0
@@ -315,7 +320,9 @@ class ControllerRelayPublisher:
             commands_dir = s_root / "commands"
             if not commands_dir.is_dir():
                 continue
-            for c_dir in sorted(commands_dir.iterdir()):
+            for c_dir in itertools.islice(commands_dir.iterdir(), 200):
+                if time.monotonic() >= enrichment_deadline:
+                    break
                 if not c_dir.is_dir():
                     continue
                 cid = c_dir.name
@@ -357,6 +364,12 @@ class ControllerRelayPublisher:
                     # Markdown status files are workspace productization artifacts, NOT user-facing UI mutations.
                     p_ws = (c_data.get("project") or {}).get("workspace")
                     mutations = 0
+                    if p_ws:
+                        workspace_key = str(Path(p_ws).expanduser().resolve())
+                        if workspace_key in inspected_workspaces:
+                            p_ws = None
+                        else:
+                            inspected_workspaces.add(workspace_key)
                     if p_ws and Path(p_ws).is_dir():
                         ws_path = Path(p_ws)
                         mut_doc = ws_path / "visual_productization_status.md"
@@ -368,7 +381,13 @@ class ControllerRelayPublisher:
                         # Check for actual user-facing browser code mutations relative to baseline (TSX/JSX/HTML/CSS/JS)
                         # Touchless preexisting workspace files do not count as mutations.
                         try:
-                            git_proc = run_headless(["git", "-C", str(ws_path), "status", "--porcelain"], check=False)
+                            if time.monotonic() + 5.0 >= enrichment_deadline:
+                                raise TimeoutError("relay enrichment budget exhausted")
+                            git_proc = run_headless(
+                                ["git", "-C", str(ws_path), "status", "--porcelain"],
+                                timeout=5,
+                                check=False,
+                            )
                             if git_proc.returncode == 0:
                                 ui_exts = (".tsx", ".jsx", ".html", ".css", ".vue", ".svelte")
                                 for line in git_proc.stdout.splitlines():
@@ -802,7 +821,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
         if not token:
             # Check if GitHub CLI is authenticated
             try:
-                proc = run_headless(["gh", "auth", "status"], check=False)
+                proc = run_headless(["gh", "auth", "status"], timeout=5, check=False)
                 if proc.returncode == 0:
                     gh_available = True
             except Exception:
@@ -824,6 +843,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
                 if not self.remote_issue_number:
                     proc_list = run_headless(
                         ["gh", "issue", "list", "--repo", self.remote_repo, "--state", "open", "--json", "number,title", "--limit", "30"],
+                        timeout=10,
                         check=False,
                     )
                     if proc_list.returncode == 0:
@@ -840,6 +860,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
                     # Create without requiring labels
                     proc_create = run_headless(
                         ["gh", "issue", "create", "--repo", self.remote_repo, "--title", "AOS Controller Relay", "--body", body_text],
+                        timeout=10,
                         check=False,
                     )
                     if proc_create.returncode == 0:
@@ -854,6 +875,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
                     # gh issue edit does not accept body on stdin directly in older versions without --body
                     run_headless(
                         ["gh", "issue", "edit", str(self.remote_issue_number), "--repo", self.remote_repo, "--body", body_text],
+                        timeout=10,
                         check=False,
                     )
 
@@ -861,6 +883,7 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
                     comment_text = f"### Major Gate Event: {sanitize_text(major_gate_reason)}\n- Timestamp: `{snapshot.timestamp_utc}`\n- Sequence: `{snapshot.sequence_number}`\n- Runtime Slot: `{snapshot.runtime_slot}`"
                     run_headless(
                         ["gh", "issue", "comment", str(self.remote_issue_number), "--repo", self.remote_repo, "--body", comment_text],
+                        timeout=10,
                         check=False,
                     )
 
@@ -980,3 +1003,73 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
         self.publish_remote(snapshot, major_gate_reason=major_gate_reason)
         self.publish_local(snapshot, is_checkpoint=is_checkpoint)
         return snapshot
+
+
+class AsyncControllerRelay:
+    """Non-blocking bridge between lifecycle loops and slow relay enrichment."""
+
+    def __init__(self, publisher: ControllerRelayPublisher, *, cycle_budget_seconds: float = 45.0) -> None:
+        self.publisher = publisher
+        self.cycle_budget_seconds = float(cycle_budget_seconds)
+        self._queue: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=1)
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._latest: Optional[RelaySnapshot] = None
+        self._last_error: Optional[str] = None
+
+    def _ensure_started(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="aos-relay-enrichment", daemon=True)
+        self._thread.start()
+
+    def submit(self, *, maintenance: bool = False, **kwargs: Any) -> bool:
+        """Queue one cycle without waiting; maintenance mode disables enrichment."""
+        if maintenance or self._stop.is_set():
+            return False
+        self._ensure_started()
+        try:
+            self._queue.put_nowait(dict(kwargs))
+            return True
+        except queue.Full:
+            return False
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                item = self._queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            started = time.monotonic()
+            try:
+                snapshot = self.publisher.emit_cycle(**item)
+                elapsed = time.monotonic() - started
+                with self._lock:
+                    self._latest = snapshot
+                    self._last_error = (
+                        f"CYCLE_BUDGET_EXCEEDED:{elapsed:.3f}s"
+                        if elapsed > self.cycle_budget_seconds else None
+                    )
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = f"{exc.__class__.__name__}:{str(exc)[:300]}"
+
+    def state(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "queued": not self._queue.empty(),
+                "latest_sequence_number": self._latest.sequence_number if self._latest else None,
+                "last_error": self._last_error,
+            }
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)

@@ -40,7 +40,7 @@ def test_headless_process_flags_on_windows():
 
 def test_run_headless_executes_silently_and_captures_output():
     """Verify run_headless executes commands synchronously without window display and preserves output."""
-    proc = run_headless([sys.executable, "-c", "import sys; print('AOS_HEADLESS_OK'); sys.stderr.write('AOS_DIAG_OK\\n')"])
+    proc = run_headless([sys.executable, "-c", "import sys; print('AOS_HEADLESS_OK'); sys.stderr.write('AOS_DIAG_OK\\n')"], timeout=10)
     assert proc.returncode == 0
     assert "AOS_HEADLESS_OK" in proc.stdout
     assert "AOS_DIAG_OK" in proc.stderr

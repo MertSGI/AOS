@@ -361,6 +361,7 @@ def persist_quarantine_candidate(
                 status_res = run_headless(
                     ["git", "status", "-z", "--porcelain", "-uall"],
                     cwd=str(target_ws),
+                    timeout=30,
                     check=True,
                 )
                 raw_items = status_res.stdout.encode("utf-8") if isinstance(status_res.stdout, str) else status_res.stdout
@@ -523,6 +524,7 @@ def persist_worker_failure_quarantine_candidate(
                 status_res = run_headless(
                     ["git", "status", "-z", "--porcelain", "-uall"],
                     cwd=str(target_ws),
+                    timeout=30,
                     check=True,
                 )
                 raw_items = status_res.stdout.encode("utf-8") if isinstance(status_res.stdout, str) else status_res.stdout

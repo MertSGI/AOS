@@ -474,7 +474,7 @@ def load_bound_run_plan(
 
 def assert_workspace_execution_lineage(workspace: Path, execution_base_sha: Optional[str]) -> str:
     """Fail closed unless the managed workspace is the canonical base or its descendant."""
-    res = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace))
+    res = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace), timeout=30)
     if res.returncode != 0:
         raise ValueError(f"Managed workspace HEAD is unavailable: {res.stderr.strip() or res.stdout.strip()}")
     actual_sha = (res.stdout or "").strip()
@@ -483,6 +483,7 @@ def assert_workspace_execution_lineage(workspace: Path, execution_base_sha: Opti
     ancestry = run_headless(
         ["git", "merge-base", "--is-ancestor", execution_base_sha, actual_sha],
         cwd=str(workspace),
+        timeout=30,
         check=False,
     )
     if ancestry.returncode != 0:

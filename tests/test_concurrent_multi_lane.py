@@ -171,7 +171,7 @@ def test_concurrent_multi_lane_submission_and_health_tracking(tmp_path, monkeypa
         assert res_c["project_id"] == "lari-ui-v2"
 
         # Verify health tracking differentiates active commands per project
-        h = engine.health()
+        h = engine._collect_detailed_status()
         assert res_a["command_id"] in h["active_commands"]
         assert res_c["command_id"] in h["active_commands"]
         assert h["active_commands_by_project"]["lari"] == [res_a["command_id"]]

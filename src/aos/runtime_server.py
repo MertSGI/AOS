@@ -31,8 +31,9 @@ from aos.runtime_contract import (
     validate_runtime_config,
 )
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
-from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
-from aos.controller_relay import ControllerRelayPublisher
+from aos.process_utils import OwnedProcess, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
+from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
+from aos.runtime_maintenance import PAUSED_SAFE, is_paused, persist_maintenance
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
 from aos.secure_store import credential_is_configured, provider_presence
@@ -48,23 +49,7 @@ def load_config(path: Path) -> Dict[str, Any]:
 
 
 def pid_alive(pid: Any) -> bool:
-    try:
-        value = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if value <= 0:
-        return False
-    try:
-        if os.name == "nt":
-            proc = run_headless(
-                ["tasklist", "/FI", f"PID eq {value}", "/FO", "CSV", "/NH"],
-                timeout=10,
-            )
-            return proc.returncode == 0 and str(value) in (proc.stdout or "")
-        os.kill(value, 0)
-        return True
-    except Exception:
-        return False
+    return process_alive(pid)
 
 
 def _creationflags() -> int:
@@ -88,14 +73,14 @@ def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:
         if candidate_site.is_dir():
             site_dirs.append(str(candidate_site.resolve()))
     module_parent = Path(__file__).resolve().parent.parent
-    if module_parent.is_dir():
+    if not slot_root and module_parent.is_dir():
         site_dirs.append(str(module_parent))
-    existing = env.get("PYTHONPATH", "")
     all_parts = [p for p in site_dirs if p]
-    if existing:
-        all_parts.append(existing)
     if all_parts:
         env["PYTHONPATH"] = os.pathsep.join(all_parts)
+    else:
+        env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
     return env
 
 
@@ -106,11 +91,30 @@ class RuntimeEngine:
         self.store = RuntimeStore(self.runtime_root)
         self.stop_event = threading.Event()
         self._pause_lock = threading.RLock()
-        self.is_paused = False
+        # This read occurs before any recovery/probe/telemetry thread exists.
+        self.is_paused = is_paused(self.runtime_root)
+        self._worker_processes: Dict[str, OwnedProcess] = {}
+        self._status_lock = threading.Lock()
+        self._status_cache: Dict[str, Any] = {
+            "contract_version": CONTRACT_VERSION,
+            "status_state": "PAUSED" if self.is_paused else "INITIALIZING",
+            "timestamp": utc_now(),
+            "production": "NO_GO",
+        }
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-api-{os.getpid()}")
+        self.relay_worker = AsyncControllerRelay(self.publisher)
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)
         self.recovery_thread.start()
+        self.probe_thread: Optional[threading.Thread] = None
+        self.telemetry_thread = threading.Thread(target=self._status_loop, name="aos-runtime-status-cache", daemon=True)
+        self.telemetry_thread.start()
+        if not self.is_paused:
+            self._start_probe_thread()
+
+    def _start_probe_thread(self) -> None:
+        if self.is_paused or (self.probe_thread is not None and self.probe_thread.is_alive()):
+            return
         self.probe_thread = threading.Thread(
             target=self._run_live_probe_cycle,
             name="aos-runtime-provider-probe",
@@ -305,6 +309,7 @@ class RuntimeEngine:
                 detached=True,
                 env=worker_env,
             )
+            self._worker_processes[command_id] = proc
             # The worker can reach RUNNING before Popen returns. Never downgrade a
             # concurrently advanced state back to QUEUED/RECOVERING.
             current = self.store.read_state(command_id)
@@ -401,11 +406,57 @@ class RuntimeEngine:
 
     def _recovery_loop(self) -> None:
         while not self.stop_event.is_set():
-            self._wake_waiting_from_observed_provider_health()
-            self.recover_unfinished()
+            if not self.is_paused:
+                self._wake_waiting_from_observed_provider_health()
+                self.recover_unfinished()
             self.stop_event.wait(3.0)
 
     def health(self) -> Dict[str, Any]:
+        """Constant-time liveness/readiness identity; never traverses runtime data."""
+        return {
+            "contract_version": CONTRACT_VERSION,
+            "runtime_state": "HEALTHY",
+            "maintenance_state": PAUSED_SAFE if self.is_paused else "RUNNING",
+            "paused": bool(self.is_paused),
+            "autonomous_spawning_enabled": not self.is_paused,
+            "pid": os.getpid(),
+            "timestamp": utc_now(),
+            "runtime_source_sha": self.config.get("candidate_source_sha"),
+            "runtime_asset_tree_sha256": self.config.get("runtime_asset_tree_sha256"),
+            "runtime_slot_root": self.config.get("runtime_slot_root"),
+            "runtime_slot_id": self.config.get("runtime_slot_id"),
+            "runtime_launch_nonce": os.environ.get("AOS_RUNTIME_LAUNCH_NONCE"),
+            "runtime_supervisor_pid": os.environ.get("AOS_RUNTIME_SUPERVISOR_PID"),
+            "production": "NO_GO",
+            "ag_backend_enabled": False,
+        }
+
+    def status(self) -> Dict[str, Any]:
+        """Return only the last background-generated detailed telemetry snapshot."""
+        with self._status_lock:
+            return dict(self._status_cache)
+
+    def _status_loop(self) -> None:
+        while not self.stop_event.is_set():
+            if not self.is_paused:
+                try:
+                    value = self._collect_detailed_status()
+                    value["status_state"] = "READY"
+                    with self._status_lock:
+                        self._status_cache = value
+                except Exception as exc:
+                    with self._status_lock:
+                        self._status_cache = {
+                            "contract_version": CONTRACT_VERSION,
+                            "status_state": "DEGRADED",
+                            "error_class": exc.__class__.__name__,
+                            "timestamp": utc_now(),
+                            "production": "NO_GO",
+                        }
+            self.stop_event.wait(5.0)
+
+    def _collect_detailed_status(self) -> Dict[str, Any]:
+        """Slow bounded-history enrichment. Never executes in an HTTP request thread."""
         active = []
         waiting = []
         terminal = []
@@ -501,22 +552,61 @@ class RuntimeEngine:
 
     def pause_safe(self) -> Dict[str, Any]:
         with self._pause_lock:
+            persisted = persist_maintenance(self.runtime_root, paused=True, reason="operator_pause_safe")
             self.is_paused = True
         return {
             "status": "PAUSED_SAFE",
             "message": "Autonomous command spawning paused safely. In-flight batches complete normally.",
             "timestamp": utc_now(),
+            "maintenance_path": str(self.runtime_root / "maintenance-state.json"),
+            "persisted_at": persisted["updated_at"],
         }
 
     def resume(self) -> Dict[str, Any]:
         with self._pause_lock:
+            persist_maintenance(self.runtime_root, paused=False, reason="explicit_operator_resume")
             self.is_paused = False
+        self._start_probe_thread()
         self.recover_unfinished()
         return {
             "status": "RESUMED",
             "message": "Autonomous recovery and execution resumed.",
             "timestamp": utc_now(),
         }
+
+    def quiesce(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        """Persist maintenance, reject new work, and bounded-wait for owned workers."""
+        self.pause_safe()
+        def active(proc: Any) -> bool:
+            tree_active = getattr(proc, "tree_active", None)
+            return bool(tree_active()) if callable(tree_active) else proc.poll() is None
+        deadline = time.monotonic() + max(0.0, min(float(timeout_seconds), 60.0))
+        while time.monotonic() < deadline:
+            live = [p for p in self._worker_processes.values() if active(p)]
+            if not live:
+                break
+            time.sleep(0.05)
+        live_pids = [p.pid for p in self._worker_processes.values() if active(p)]
+        return {
+            "status": "QUIESCED" if not live_pids else "QUIESCE_TIMEOUT",
+            "maintenance_state": PAUSED_SAFE,
+            "in_flight_policy": "BOUNDED_WAIT_NO_NEW_CHILDREN",
+            "in_flight_worker_pids": live_pids,
+            "timestamp": utc_now(),
+        }
+
+    def request_shutdown(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        result = self.quiesce(timeout_seconds)
+        control_path = self.runtime_root.parent / "supervisor" / "control-request.json"
+        atomic_json(control_path, {
+            "contract_version": CONTRACT_VERSION,
+            "action": "SHUTDOWN",
+            "requested_by": "runtime_authenticated_api",
+            "requested_at": utc_now(),
+        })
+        result["shutdown_requested"] = True
+        result["control_path"] = str(control_path)
+        return result
 
     def restart_worker(self, command_id: str) -> Dict[str, Any]:
         with self._pause_lock:
@@ -534,13 +624,7 @@ class RuntimeEngine:
                     "timestamp": utc_now(),
                 }
             if pid_alive(old_pid):
-                if os.name == "nt":
-                    run_headless(["taskkill", "/PID", str(old_pid), "/F"], timeout=10)
-                else:
-                    try:
-                        os.kill(int(old_pid), 15)
-                    except Exception:
-                        pass
+                terminate_process_tree(old_pid)
             new_pid = self._spawn_worker(command_id, recovered=True)
         return {
             "status": "WORKER_RESTARTED",
@@ -553,26 +637,33 @@ class RuntimeEngine:
     def trigger_relay(self, *, is_checkpoint: bool = False, force_remote: bool = False) -> Dict[str, Any]:
         h = self.health()
         reason = "OPERATOR_COMMAND_MANUAL_CHECKPOINT" if is_checkpoint else None
-        snap = self.publisher.emit_cycle(
+        queued = self.relay_worker.submit(
+            maintenance=self.is_paused,
             runtime_health_dict=h,
             supervisor_pid=h.get("runtime_supervisor_pid"),
             major_gate_reason=reason,
             force_checkpoint=is_checkpoint,
         )
-        if force_remote and snap.remote_outbox_status != "PUBLISHED":
-            self.publisher.publish_remote(snap, major_gate_reason="OPERATOR_COMMAND_PUBLISH_NOW")
         return {
-            "status": "RELAY_EMITTED",
-            "sequence_number": snap.sequence_number,
-            "timestamp": snap.timestamp_utc,
+            "status": "RELAY_QUEUED" if queued else ("PAUSED_SAFE" if self.is_paused else "RELAY_BUSY"),
+            "queued": queued,
+            "relay_state": self.relay_worker.state(),
+            "timestamp": utc_now(),
             "is_checkpoint": is_checkpoint,
-            "remote_outbox_status": snap.remote_outbox_status,
+            "force_remote_requested": force_remote,
         }
 
     def shutdown(self) -> None:
         self.stop_event.set()
         self.recovery_thread.join(timeout=3.0)
-        self.probe_thread.join(timeout=3.0)
+        if self.probe_thread is not None:
+            self.probe_thread.join(timeout=3.0)
+        self.telemetry_thread.join(timeout=3.0)
+        self.relay_worker.close()
+        for proc in list(self._worker_processes.values()):
+            close = getattr(proc, "close", None)
+            if callable(close):
+                close()
 
 
 class RuntimeHandler(BaseHTTPRequestHandler):
@@ -611,6 +702,9 @@ class RuntimeHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._json(HTTPStatus.FORBIDDEN, {"error": "INVALID_RUNTIME_TOKEN"})
             return
+        if parsed.path == "/v1/status":
+            self._json(HTTPStatus.OK, self.engine.status())
+            return
         parts = [p for p in parsed.path.split("/") if p]
         if len(parts) == 3 and parts[:2] == ["v1", "commands"]:
             command_id = parts[2]
@@ -646,6 +740,8 @@ class RuntimeHandler(BaseHTTPRequestHandler):
             "/v1/commands/heartbeat-now",
             "/v1/commands/checkpoint-now",
             "/v1/commands/publish-relay-now",
+            "/v1/commands/quiesce",
+            "/v1/commands/shutdown",
         )
         if parsed.path not in allowed_paths:
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
@@ -685,6 +781,15 @@ class RuntimeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/v1/commands/resume":
                 result = self.engine.resume()
                 self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/quiesce":
+                result = self.engine.quiesce(float(payload.get("timeout_seconds", 10.0)))
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/shutdown":
+                result = self.engine.request_shutdown(float(payload.get("timeout_seconds", 10.0)))
+                self._json(HTTPStatus.OK, result)
+                threading.Thread(target=self.server.shutdown, name="aos-runtime-shutdown", daemon=True).start()
                 return
             if parsed.path == "/v1/commands/restart-worker":
                 cid = payload.get("command_id")

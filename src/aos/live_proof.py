@@ -35,7 +35,7 @@ def _default_live_proof_git_runner(cmd: List[str]) -> str:
     target_fn = getattr(subprocess, "check_output", None)
     if target_fn is not None and getattr(target_fn, "__module__", "") == "unittest.mock":
         return str(target_fn(cmd, text=True)).strip()
-    return run_headless(cmd).stdout.strip()
+    return run_headless(cmd, timeout=30).stdout.strip()
 
 
 def get_git_info() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], bool]:
@@ -116,7 +116,7 @@ def run_readiness_checks(
             return False, "Tracked git working tree is dirty", None, None, None
     else:
         try:
-            head = run_headless(["git", "rev-parse", "HEAD"]).stdout.strip()
+            head = run_headless(["git", "rev-parse", "HEAD"], timeout=30).stdout.strip()
             aos_revision = head
         except Exception:
             aos_revision = "0000000000000000000000000000000000000000"

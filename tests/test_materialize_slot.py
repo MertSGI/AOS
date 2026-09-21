@@ -107,6 +107,20 @@ def test_materialize_success_when_all_match(tmp_path: Path, monkeypatch):
     src_aos = tmp_path / "src" / "aos"
     src_aos.mkdir(parents=True, exist_ok=True)
     (src_aos / "__init__.py").write_text("# init", encoding="utf-8")
+    extensions = tmp_path / "extensions"
+    extensions.mkdir()
+    (extensions / "__init__.py").write_text("# extensions", encoding="utf-8")
+    schemas = tmp_path / "schemas" / "v0.1"
+    schemas.mkdir(parents=True)
+    (schemas / "project_descriptor.schema.json").write_text("{}", encoding="utf-8")
+    descriptors = tmp_path / "descriptors"
+    descriptors.mkdir()
+    for name in (
+        "lari.autonomous-host.descriptor.json",
+        "lari-ui-v2.autonomous-host.descriptor.json",
+        "nemotron.planner-policy.json",
+    ):
+        (descriptors / name).write_text("{}", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='aos'", encoding="utf-8")
 
     monkeypatch.setattr("materialize_slot.get_authoritative_git_head", lambda _: sha)
@@ -132,3 +146,7 @@ def test_materialize_success_when_all_match(tmp_path: Path, monkeypatch):
     assert slot_root.is_dir()
     manifest_path = slot_root / "candidate-manifest.json"
     assert manifest_path.is_file()
+    assert (slot_root / "site" / "extensions" / "__init__.py").is_file()
+    manifest = __import__("json").loads(manifest_path.read_text(encoding="utf-8"))
+    assert "site/aos/__init__.py" in manifest["files"]
+    assert "site/extensions/__init__.py" in manifest["files"]

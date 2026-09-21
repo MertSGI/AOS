@@ -56,7 +56,7 @@ def inspect_github_repository_identity(
         if runner:
             res = runner(cmd, local_repo_path)
         else:
-            res = run_headless(cmd, cwd=local_repo_path)
+            res = run_headless(cmd, cwd=local_repo_path, timeout=120)
         if res.returncode != 0:
             err = res.stderr.strip() or res.stdout.strip()
             raise RuntimeError(f"Command failed ({' '.join(cmd)}): {err}")
@@ -105,7 +105,7 @@ class GitWorkspace:
         self.initial_head_sha: Optional[str] = None
 
     def _default_runner(self, cmd: List[str], cwd: str) -> subprocess.CompletedProcess:
-        return run_headless(cmd, cwd=cwd)
+        return run_headless(cmd, cwd=cwd, timeout=120)
 
     def _run_git(self, args: List[str], cwd: Optional[str] = None) -> str:
         target_cwd = cwd or self.workspace_dir or self.repository_path

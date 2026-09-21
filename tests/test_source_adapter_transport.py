@@ -81,7 +81,7 @@ def test_fetch_file_at_sha_passes_explicit_context(mock_urlopen):
     assert kwargs.get("context") is dummy_ctx
 
 
-@patch("aos.source_adapter.subprocess.run")
+@patch("aos.source_adapter.run_headless")
 @patch("urllib.request.urlopen")
 def test_resolve_ref_uses_read_only_git_transport_on_api_rate_limit(mock_urlopen, mock_run):
     api_error = urllib.error.HTTPError("https://api.github.com/example", 403, "rate limit", {}, None)

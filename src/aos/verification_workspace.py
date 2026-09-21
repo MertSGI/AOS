@@ -58,7 +58,7 @@ def inspect_workspace_boundary_state(
         if runner:
             res = runner(cmd, str(ws_dir))
         else:
-            res = run_headless(cmd, cwd=str(ws_dir))
+            res = run_headless(cmd, cwd=str(ws_dir), timeout=120)
         if res.returncode != 0:
             err = res.stderr.strip() or res.stdout.strip()
             raise VerificationWorkspaceError(f"Command failed ({' '.join(cmd)}): {err}")
@@ -72,6 +72,7 @@ def inspect_workspace_boundary_state(
     status_res = run_headless(
         ["git", "status", "-z", "--porcelain", "-uall"],
         cwd=str(ws_dir),
+        timeout=30,
         text=False,
     )
     if status_res.returncode != 0:
@@ -215,4 +216,3 @@ class VerificationWorkspaceCopy:
             if self.copy_dir.exists():
                 shutil.rmtree(self.copy_dir, ignore_errors=True)
             self.copy_dir = None
-

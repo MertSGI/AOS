@@ -113,7 +113,7 @@ def run_antigravity_probe(
     effective_aos_revision = aos_revision
     if not effective_aos_revision:
         try:
-            effective_aos_revision = run_headless(["git", "rev-parse", "HEAD"], check=True).stdout.strip()
+            effective_aos_revision = run_headless(["git", "rev-parse", "HEAD"], timeout=30, check=True).stdout.strip()
         except Exception:
             effective_aos_revision = "0000000000000000000000000000000000000000"
 
@@ -164,17 +164,17 @@ def run_antigravity_probe(
 
         # 2. Setup baseline git repository inside workspace
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        run_headless(["git", "init"], cwd=str(workspace_dir), check=True)
-        run_headless(["git", "config", "user.name", "AOS Probe"], cwd=str(workspace_dir), check=True)
-        run_headless(["git", "config", "user.email", "probe@mertsgi.org"], cwd=str(workspace_dir), check=True)
+        run_headless(["git", "init"], cwd=str(workspace_dir), timeout=30, check=True)
+        run_headless(["git", "config", "user.name", "AOS Probe"], cwd=str(workspace_dir), timeout=30, check=True)
+        run_headless(["git", "config", "user.email", "probe@mertsgi.org"], cwd=str(workspace_dir), timeout=30, check=True)
 
         readme_file = workspace_dir / "README.md"
         readme_file.write_text("# Baseline\n", encoding="utf-8")
-        run_headless(["git", "add", "README.md"], cwd=str(workspace_dir), check=True)
-        run_headless(["git", "commit", "-m", "baseline"], cwd=str(workspace_dir), check=True)
+        run_headless(["git", "add", "README.md"], cwd=str(workspace_dir), timeout=30, check=True)
+        run_headless(["git", "commit", "-m", "baseline"], cwd=str(workspace_dir), timeout=30, check=True)
 
-        baseline_head_sha = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
-        baseline_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
+        baseline_head_sha = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), timeout=30, check=True).stdout.strip()
+        baseline_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), timeout=30, check=True).stdout.strip()
 
         # Pre-create probe directory by the test harness so capability tests file creation, not shell mkdir
         probe_dir = workspace_dir / "probe"
@@ -302,19 +302,19 @@ def run_antigravity_probe(
 
         # Verify git integrity
         try:
-            current_head = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
-            current_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), check=True).stdout.strip()
+            current_head = run_headless(["git", "rev-parse", "HEAD"], cwd=str(workspace_dir), timeout=30, check=True).stdout.strip()
+            current_branch = run_headless(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(workspace_dir), timeout=30, check=True).stdout.strip()
             if current_head != baseline_head_sha:
                 probe_errors.append(f"Git HEAD changed ('{baseline_head_sha}' -> '{current_head}')")
             if current_branch != baseline_branch:
                 probe_errors.append(f"Git branch changed ('{baseline_branch}' -> '{current_branch}')")
 
-            remotes = run_headless(["git", "remote"], cwd=str(workspace_dir), check=True).stdout.strip()
+            remotes = run_headless(["git", "remote"], cwd=str(workspace_dir), timeout=30, check=True).stdout.strip()
             if remotes:
                 probe_errors.append(f"Unexpected git remotes configured: {remotes}")
 
             # Changed files status
-            status_out = run_headless(["git", "status", "-z", "--porcelain", "-uall"], cwd=str(workspace_dir), text=False, check=True).stdout
+            status_out = run_headless(["git", "status", "-z", "--porcelain", "-uall"], cwd=str(workspace_dir), timeout=30, text=False, check=True).stdout
             items = status_out.split(b"\x00")
             for item in items:
                 if len(item) >= 3:

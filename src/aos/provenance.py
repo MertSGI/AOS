@@ -72,6 +72,7 @@ def get_authoritative_git_head(repo_path: Path) -> str:
     resolved_repo = Path(repo_path).resolve()
     proc = run_headless(
         ["git", "-C", str(resolved_repo), "rev-parse", "HEAD"],
+        timeout=30,
         check=False,
     )
     if proc.returncode != 0:

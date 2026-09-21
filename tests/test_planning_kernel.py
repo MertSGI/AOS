@@ -192,7 +192,7 @@ def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, m
         *[f"docs/dependency-safe/item-{index:03d}.md" for index in range(100)],
     ]) + "\n"
     monkeypatch.setattr(
-        "aos.planning_kernel.subprocess.run",
+        "aos.planning_kernel.run_headless",
         lambda *args, **kwargs: SimpleNamespace(stdout=tracked),
     )
 

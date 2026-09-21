@@ -211,12 +211,12 @@ def test_operations_command_surface(tmp_path: Path):
 
         # 3. heartbeat-now
         r_hb = engine.trigger_relay(is_checkpoint=False, force_remote=False)
-        assert r_hb["status"] == "RELAY_EMITTED"
+        assert r_hb["status"] == "RELAY_QUEUED"
         assert r_hb["is_checkpoint"] is False
 
         # 4. checkpoint-now
         r_cp = engine.trigger_relay(is_checkpoint=True, force_remote=False)
-        assert r_cp["status"] == "RELAY_EMITTED"
+        assert r_cp["status"] in ("RELAY_QUEUED", "RELAY_BUSY")
         assert r_cp["is_checkpoint"] is True
     finally:
         engine.shutdown()
@@ -408,5 +408,3 @@ def test_forward_progress_active_without_delta(tmp_path: Path):
     assert snap3.completed_batch_delta == 1
     assert snap3.forward_progress == "YES"
     assert snap3.no_progress_reason is None
-
-

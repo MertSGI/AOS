@@ -427,14 +427,14 @@ class TestCandidateStore:
 
     def test_candidate_workspace_with_git_remote_rejected(self, fake_workspace, fake_candidate_store, monkeypatch):
         """F. candidate workspace with a Git remote after copy => persistence fails closed."""
-        orig_run = subprocess.run
+        from aos.candidate_store import run_headless as orig_run
 
         def _mock_run(cmd, *args, **kwargs):
             if len(cmd) >= 4 and cmd[0] == "git" and cmd[1] == "-C" and cmd[3] == "remote":
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="origin\n", stderr="")
             return orig_run(cmd, *args, **kwargs)
 
-        monkeypatch.setattr(subprocess, "run", _mock_run)
+        monkeypatch.setattr("aos.candidate_store.run_headless", _mock_run)
 
         # Mock .git directory in fake workspace
         (fake_workspace / ".git").mkdir(parents=True, exist_ok=True)
@@ -456,14 +456,14 @@ class TestCandidateStore:
 
     def test_clean_zero_remote_git_candidate_succeeds(self, fake_workspace, fake_candidate_store, monkeypatch):
         """G. clean zero-remote Git candidate => persistence succeeds."""
-        orig_run = subprocess.run
+        from aos.candidate_store import run_headless as orig_run
 
         def _mock_run(cmd, *args, **kwargs):
             if len(cmd) >= 4 and cmd[0] == "git" and cmd[1] == "-C" and cmd[3] == "remote":
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
             return orig_run(cmd, *args, **kwargs)
 
-        monkeypatch.setattr(subprocess, "run", _mock_run)
+        monkeypatch.setattr("aos.candidate_store.run_headless", _mock_run)
 
         (fake_workspace / ".git").mkdir(parents=True, exist_ok=True)
 

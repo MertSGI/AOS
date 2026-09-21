@@ -7,6 +7,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -16,8 +17,8 @@ from typing import Any, Dict, Optional
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
-from aos.process_utils import popen_headless, run_headless, get_headless_creationflags
-from aos.controller_relay import ControllerRelayPublisher
+from aos.process_utils import OwnedProcess, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
+from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
 
 
 def _creationflags() -> int:
@@ -85,23 +86,7 @@ class SupervisorSingleton:
 
 
 def pid_alive(pid: Any) -> bool:
-    try:
-        value = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if value <= 0:
-        return False
-    try:
-        if os.name == "nt":
-            proc = run_headless(
-                ["tasklist", "/FI", f"PID eq {value}", "/FO", "CSV", "/NH"],
-                timeout=10,
-            )
-            return proc.returncode == 0 and str(value) in (proc.stdout or "")
-        os.kill(value, 0)
-        return True
-    except Exception:
-        return False
+    return process_alive(pid)
 
 
 def _http_health(url: str) -> Optional[Dict[str, Any]]:
@@ -159,13 +144,7 @@ def _terminate_pid(pid: Any) -> None:
     if value <= 0 or value == os.getpid():
         return
     try:
-        if os.name == "nt":
-            run_headless(
-                ["taskkill", "/PID", str(value), "/F"],
-                timeout=15,
-            )
-        else:
-            os.kill(value, 15)
+        terminate_process_tree(value)
     except Exception:
         return
 
@@ -192,17 +171,20 @@ class RuntimeSupervisor:
         self.root.mkdir(parents=True, exist_ok=True)
         self.slots = SlotManager(self.root)
         self.state_path = self.root / "supervisor-state.json"
-        self.child: Optional[subprocess.Popen] = None
+        self.child: Optional[OwnedProcess] = None
         self.child_slot_id: Optional[str] = None
         self.failures = 0
         self.last_health: Optional[Dict[str, Any]] = None
         self.launch_nonce: Optional[str] = None
         self.runtime_api_pid: Optional[int] = None
-        self.panel_child: Optional[subprocess.Popen] = None
+        self.panel_child: Optional[OwnedProcess] = None
         self.panel_api_pid: Optional[int] = None
         self.singleton_name = str(self.config.get("singleton_name") or r"Local\AOS.RuntimeV1.Supervisor")
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-supervisor-{os.getpid()}")
+        self.relay_worker = AsyncControllerRelay(self.publisher)
+        self.stop_event = threading.Event()
+        self.control_path = self.root / "control-request.json"
 
     def _panel_paths(self) -> tuple[Path, Path, Path]:
         base = self.config_path.parent
@@ -447,10 +429,37 @@ class RuntimeSupervisor:
                 singleton_name=self.singleton_name,
                 singleton_held=True,
             )
-            return self._run_owned_loop()
+            try:
+                return self._run_owned_loop()
+            finally:
+                self._shutdown_owned()
+
+    def _shutdown_requested(self) -> bool:
+        request = read_json(self.control_path, {})
+        return str(request.get("action") or "").upper() == "SHUTDOWN"
+
+    def _shutdown_owned(self) -> None:
+        """Terminate only process trees created and owned by this supervisor."""
+        self.stop_event.set()
+        self.relay_worker.close()
+        for proc in (self.panel_child, self.child):
+            if proc is not None:
+                proc.close()
+        self.panel_child = None
+        self.child = None
+        self._write_state(
+            state="SHUTDOWN",
+            singleton_held=False,
+            child_pid=None,
+            runtime_api_pid=None,
+            panel_pid=None,
+        )
 
     def _run_owned_loop(self) -> int:
-        while True:
+        while not self.stop_event.is_set():
+            if self._shutdown_requested():
+                self._write_state(state="SHUTDOWN_REQUESTED", singleton_held=True)
+                return 0
             pointer = self.slots.read_pointer()
             slot = self.slots.active_slot()
             self._launch(slot)
@@ -461,7 +470,8 @@ class RuntimeSupervisor:
                     break
                 if slot.kind != "runtime_v1" and (self.child is None or self.child.poll() is not None):
                     break
-                time.sleep(1)
+                if self.stop_event.wait(1.0):
+                    return 0
 
             if self._healthy(slot):
                 self.failures = 0
@@ -487,11 +497,13 @@ class RuntimeSupervisor:
                     panel_url="http://127.0.0.1:8765",
                     panel_owner="AOS",
                 )
-                try:
-                    self.publisher.emit_cycle(runtime_health_dict=observed, supervisor_pid=os.getpid())
-                except Exception:
-                    pass
-                time.sleep(max(2, int(self.config.get("poll_seconds", 5))))
+                self.relay_worker.submit(
+                    maintenance=bool(observed.get("paused")),
+                    runtime_health_dict=observed,
+                    supervisor_pid=os.getpid(),
+                )
+                if self.stop_event.wait(max(2, int(self.config.get("poll_seconds", 5)))):
+                    return 0
                 continue
 
             self.failures += 1
@@ -518,7 +530,9 @@ class RuntimeSupervisor:
                 self._write_state(state="ROLLED_BACK_TO_STABLE", rollback_from=slot.slot_id)
                 self.failures = 0
                 continue
-            time.sleep(2)
+            if self.stop_event.wait(2.0):
+                return 0
+        return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

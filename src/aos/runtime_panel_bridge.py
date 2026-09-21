@@ -32,11 +32,14 @@ def runtime_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "ag_backend_enabled": False,
         }
     try:
-        health = _client(config).health()
+        client = _client(config)
+        health = client.health()
+        detailed = client.status()
+        runtime_v1 = {**detailed, **health}
         return {
-            "runtime_v1": health,
+            "runtime_v1": runtime_v1,
             "host_state": health.get("runtime_state", "UNKNOWN"),
-            "pending_jobs": len(health.get("active_commands", []) or []),
+            "pending_jobs": len(detailed.get("active_commands", []) or []),
             "production": "NO_GO",
             "ag_backend_enabled": False,
         }
@@ -114,6 +117,10 @@ def execute_command_on_runtime(command_name: str, payload: Dict[str, Any], confi
         return client.pause_safe()
     if cmd == "resume":
         return client.resume()
+    if cmd == "quiesce":
+        return client.quiesce(float(payload.get("timeout_seconds", 10.0)))
+    if cmd == "shutdown":
+        return client.shutdown(float(payload.get("timeout_seconds", 10.0)))
     if cmd == "heartbeat-now":
         return client.heartbeat_now()
     if cmd == "checkpoint-now":

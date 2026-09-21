@@ -58,6 +58,9 @@ class RuntimeClient:
     def health(self) -> Dict[str, Any]:
         return self._request("GET", "/v1/health", auth=False)
 
+    def status(self) -> Dict[str, Any]:
+        return self._request("GET", "/v1/status")
+
     def continue_project(
         self,
         *,
@@ -98,13 +101,20 @@ class RuntimeClient:
         if command_id:
             return self.command(command_id)
         health = self.health()
-        latest = health.get("latest_command")
+        status = self.status()
+        latest = status.get("latest_command")
         if isinstance(latest, dict) and latest.get("command_id"):
             return self.command(str(latest["command_id"]))
-        return {"health": health, "command": None, "state": None}
+        return {"health": health, "status": status, "command": None, "state": None}
 
     def pause_safe(self) -> Dict[str, Any]:
         return self._request("POST", "/v1/commands/pause-safe", {})
+
+    def quiesce(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/quiesce", {"timeout_seconds": timeout_seconds})
+
+    def shutdown(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/shutdown", {"timeout_seconds": timeout_seconds})
 
     def resume(self) -> Dict[str, Any]:
         return self._request("POST", "/v1/commands/resume", {})
@@ -120,4 +130,3 @@ class RuntimeClient:
 
     def publish_relay_now(self) -> Dict[str, Any]:
         return self._request("POST", "/v1/commands/publish-relay-now", {})
-

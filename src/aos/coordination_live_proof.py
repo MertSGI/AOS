@@ -137,7 +137,7 @@ def _default_coordination_git_runner(cmd: List[str]) -> str:
     target_fn = getattr(subprocess, "check_output", None)
     if target_fn is not None and getattr(target_fn, "__module__", "") == "unittest.mock":
         return str(target_fn(cmd, text=True, stderr=subprocess.PIPE)).strip()
-    res = run_headless(cmd)
+    res = run_headless(cmd, timeout=30)
     if res.returncode != 0:
         raise RuntimeError(f"Git readiness check failed reading {cmd}: {res.stderr.strip() or res.stdout.strip()}")
     return res.stdout.strip()

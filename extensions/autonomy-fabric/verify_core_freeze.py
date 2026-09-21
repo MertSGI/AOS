@@ -6,9 +6,9 @@ have been modified, deleted, renamed, or mode-changed, and checks that all added
 
 from dataclasses import dataclass
 from typing import List, Set
-import subprocess
 import os
 import sys
+from aos.process_utils import run_headless
 
 BASE_SHA = "7c4c75e32c0d7c43fc071b0eb872b2b73fdd3c1e"
 
@@ -41,12 +41,12 @@ class CoreFreezeReport:
 def audit_core_freeze(repo_root: str) -> CoreFreezeReport:
     # Get all tracked files existing at BASE_SHA
     cmd_base_files = ["git", "ls-tree", "-r", "--name-only", BASE_SHA]
-    proc_base = subprocess.run(cmd_base_files, cwd=repo_root, capture_output=True, text=True, check=True)
+    proc_base = run_headless(cmd_base_files, cwd=repo_root, timeout=60, check=True)
     base_tracked_files: Set[str] = set(proc_base.stdout.strip().splitlines())
 
     # Get diff of current tree/commit against BASE_SHA
     cmd_diff = ["git", "diff", "--name-status", BASE_SHA]
-    proc_diff = subprocess.run(cmd_diff, cwd=repo_root, capture_output=True, text=True, check=True)
+    proc_diff = run_headless(cmd_diff, cwd=repo_root, timeout=60, check=True)
 
     mutations = []
     added_files = []

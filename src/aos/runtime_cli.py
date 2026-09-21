@@ -36,7 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-root", default=str(default_runtime_root()))
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("health")
     sub.add_parser("status")
+    sub.add_parser("pause-safe")
+    sub.add_parser("resume")
+    quiesce = sub.add_parser("quiesce")
+    quiesce.add_argument("--timeout", type=float, default=10.0)
+    shutdown = sub.add_parser("shutdown")
+    shutdown.add_argument("--timeout", type=float, default=10.0)
 
     cont = sub.add_parser("continue", help="Submit a goal to the detached runtime")
     cont.add_argument("--goal", required=True)
@@ -62,8 +69,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         client = client_from_args(args)
-        if args.command == "status":
+        if args.command == "health":
             value = client.health()
+        elif args.command == "status":
+            value = client.status()
+        elif args.command == "pause-safe":
+            value = client.pause_safe()
+        elif args.command == "resume":
+            value = client.resume()
+        elif args.command == "quiesce":
+            value = client.quiesce(args.timeout)
+        elif args.command == "shutdown":
+            value = client.shutdown(args.timeout)
         elif args.command == "continue":
             value = client.continue_project(
                 goal=args.goal,
