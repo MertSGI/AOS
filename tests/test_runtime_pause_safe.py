@@ -3,8 +3,11 @@ from pathlib import Path
 import pytest
 
 import aos.runtime_server as runtime_server
+import aos.runtime_worker as runtime_worker
 from aos.runtime_contract import ContinueProjectCommand, ProjectProfile
+from aos.runtime_maintenance import PAUSED_SAFE, persist_maintenance, read_maintenance
 from aos.runtime_server import RuntimeEngine
+from aos.runtime_store import RuntimeStore
 
 
 def _config(tmp_path: Path):
@@ -133,3 +136,214 @@ def test_pause_blocks_provider_wake_and_resume_recovers_deterministically(tmp_pa
         assert engine.health()["paused"] is False
     finally:
         engine.shutdown()
+
+def test_continuous_worker_stops_at_persisted_pause_cycle_boundary(
+    tmp_path,
+    monkeypatch,
+):
+    runtime_root = (
+        tmp_path
+        / "runtime"
+    )
+
+    descriptor = (
+        tmp_path
+        / "descriptor.json"
+    )
+
+    descriptor.write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    policy = (
+        tmp_path
+        / "policy.json"
+    )
+
+    policy.write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    workspace = (
+        tmp_path
+        / "workspace"
+    )
+
+    workspace.mkdir()
+
+    profile = ProjectProfile(
+        project_id="lari",
+        descriptor_path=str(
+            descriptor
+        ),
+        workspace=str(
+            workspace
+        ),
+        routing_policy_path=str(
+            policy
+        ),
+    )
+
+    command = (
+        ContinueProjectCommand
+        .from_mapping(
+            {
+                "command_id":
+                    "pause-cycle-boundary",
+
+                "goal":
+                    "continue",
+
+                "continuous":
+                    True,
+            },
+            project=profile,
+        )
+    )
+
+    store = RuntimeStore(
+        runtime_root
+    )
+
+    store.create_command(
+        command.to_dict()
+    )
+
+    calls = []
+
+    def fake_run_autonomous_project(
+        **kwargs,
+    ):
+        calls.append(
+            kwargs
+        )
+
+        # Model the real race that exposed the defect:
+        # maintenance becomes PAUSED_SAFE while the current
+        # continuous planning cycle is still in flight.
+        persist_maintenance(
+            runtime_root,
+            paused=True,
+            reason="test_cycle_boundary",
+        )
+
+        return {
+            "disposition":
+                "BOUNDED_RUN_EXHAUSTED",
+
+            "completed_batch_count":
+                1,
+
+            "canonical_source_sha":
+                "a" * 40,
+
+            "canonical_execution_base_sha":
+                "b" * 40,
+        }
+
+    monkeypatch.setattr(
+        runtime_worker,
+        "hydrate_environment",
+        lambda **kwargs: None,
+    )
+
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        fake_run_autonomous_project,
+    )
+
+    result = (
+        runtime_worker
+        .execute_command(
+            runtime_root,
+            command.command_id,
+        )
+    )
+
+    state = store.read_state(
+        command.command_id
+    )
+
+    events = store.read_events(
+        command.command_id
+    )
+
+    assert (
+        len(calls)
+        ==
+        1
+    )
+
+    assert (
+        read_maintenance(
+            runtime_root
+        )["state"]
+        ==
+        PAUSED_SAFE
+    )
+
+    assert (
+        result["state"]
+        ==
+        "RUNNING"
+    )
+
+    assert (
+        result["disposition"]
+        ==
+        "PAUSED_SAFE"
+    )
+
+    assert (
+        result[
+            "completed_batch_count"
+        ]
+        ==
+        1
+    )
+
+    assert (
+        state["state"]
+        ==
+        "RUNNING"
+    )
+
+    assert (
+        state["disposition"]
+        ==
+        "PAUSED_SAFE"
+    )
+
+    assert (
+        state["worker_pid"]
+        is None
+    )
+
+    assert (
+        state[
+            "completed_batch_count"
+        ]
+        ==
+        1
+    )
+
+    assert any(
+        event.get(
+            "event_type"
+        )
+        ==
+        "runtime.worker_paused_safe"
+        and
+        event.get(
+            "payload",
+            {},
+        ).get(
+            "lineage_preserved"
+        )
+        is True
+        for event in events
+    )
+

@@ -33,6 +33,7 @@ from aos.runtime_store import RuntimeStore, exclusive_file_lock, read_json
 from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
 from aos.provider_circuit import ProviderCircuitBreakerRegistry
+from aos.runtime_maintenance import is_paused
 
 
 class PlanningArtifactWatcher(threading.Thread):
@@ -144,6 +145,116 @@ class PlanningArtifactWatcher(threading.Thread):
             self.stop_event.wait(0.5)
 
 
+def _pause_safe_cycle_result(
+    store: RuntimeStore,
+    command_id: str,
+    project_runtime: Path,
+    *,
+    cycle: int,
+    receipt: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Stop a continuous worker at a durable cycle boundary.
+
+    PAUSED_SAFE allows an already in-flight planning cycle to finish, but it
+    must not silently begin another continuous cycle after maintenance has
+    been persisted.  Keep the lineage non-terminal so explicit resume can
+    recover it from the durable checkpoint without creating a new command.
+    """
+    checkpoint = (
+        read_json(
+            project_runtime
+            / "planning-kernel-checkpoint.json"
+        )
+        or {}
+    )
+
+    completed = (
+        cumulative_completed_batch_count(
+            checkpoint,
+            receipt,
+        )
+    )
+
+    canonical_source_sha = (
+        checkpoint.get(
+            "canonical_source_sha"
+        )
+        or
+        receipt.get(
+            "canonical_source_sha"
+        )
+    )
+
+    canonical_execution_base_sha = (
+        checkpoint.get(
+            "canonical_execution_base_sha"
+        )
+        or
+        receipt.get(
+            "canonical_execution_base_sha"
+        )
+    )
+
+    paused_receipt = dict(
+        receipt
+        or {}
+    )
+
+    paused_receipt[
+        "pause_safe"
+    ] = True
+
+    paused_receipt[
+        "pause_boundary_cycle"
+    ] = int(cycle)
+
+    result = RuntimeResult(
+        command_id=command_id,
+        state="RUNNING",
+        disposition="PAUSED_SAFE",
+        completed_batch_count=completed,
+        canonical_source_sha=canonical_source_sha,
+        canonical_execution_base_sha=canonical_execution_base_sha,
+        receipt=paused_receipt,
+    ).to_dict()
+
+    store.write_result(
+        command_id,
+        result,
+    )
+
+    store.write_state(
+        command_id,
+        state="RUNNING",
+        disposition="PAUSED_SAFE",
+        completed_batch_count=completed,
+        canonical_source_sha=canonical_source_sha,
+        canonical_execution_base_sha=canonical_execution_base_sha,
+        worker_pid=None,
+        retry_after_epoch=0,
+    )
+
+    store.append_event(
+        command_id,
+        "runtime.worker_paused_safe",
+        {
+            "cycle":
+                int(cycle),
+
+            "completed_batch_count":
+                completed,
+
+            "lineage_preserved":
+                True,
+
+            "checkpoint_preserved":
+                True,
+        },
+    )
+
+    return result
+
+
 def _safe_exception_message(exc: BaseException) -> str:
     return redact_secrets(str(exc))[:1500]
 
@@ -236,6 +347,15 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
             watcher.start()
             while True:
+                if is_paused(runtime_root):
+                    return _pause_safe_cycle_result(
+                        store,
+                        command_id,
+                        project_runtime,
+                        cycle=cycle,
+                        receipt=receipt,
+                    )
+
                 cycle += 1
                 store.append_event(command_id, "continuation.cycle_started", {
                     "cycle": cycle,
@@ -313,6 +433,18 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 })
 
                 if disposition == "BOUNDED_RUN_EXHAUSTED" and command.continuous:
+                    # An already in-flight cycle may finish after PAUSED_SAFE is
+                    # persisted, but continuous execution must not begin a new
+                    # cycle while maintenance is active.
+                    if is_paused(runtime_root):
+                        return _pause_safe_cycle_result(
+                            store,
+                            command_id,
+                            project_runtime,
+                            cycle=cycle,
+                            receipt=receipt,
+                        )
+
                     # No routine user prompt. Re-enter the planning kernel from its
                     # durable checkpoint; it fresh-reads canonical state and replans.
                     continue
