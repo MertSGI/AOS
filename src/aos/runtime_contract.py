@@ -312,6 +312,80 @@ def validate_runtime_config(value: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def cumulative_completed_batch_count(
+    value: Optional[Mapping[str, Any]],
+    fallback: Optional[Mapping[str, Any]] = None,
+) -> int:
+    """Return the durable cumulative batch count with legacy-window fallback."""
+    if value:
+        count = value.get("total_completed_batch_count")
+        if count is not None:
+            return int(count or 0)
+        count = value.get("completed_batch_count")
+        if count is not None:
+            return int(count or 0)
+        if "completed_batches" in value:
+            completed = value.get("completed_batches", [])
+            return len(completed) if isinstance(completed, (list, tuple)) else 0
+    if fallback is not None:
+        return cumulative_completed_batch_count(fallback)
+    return 0
+
+
+def validate_project_profile_paths(profile: ProjectProfile) -> None:
+    """Fail closed when a configured project artifact is absent or invalid."""
+    from aos.validate import load_json_strict, validate_file
+
+    descriptor = Path(profile.descriptor_path).expanduser().resolve()
+    if not descriptor.is_file():
+        raise ValueError(
+            f"Invalid project descriptor: File not found: {descriptor}"
+        )
+    descriptor_result, _ = validate_file("project_descriptor", descriptor)
+    if not descriptor_result.is_valid:
+        errors = "; ".join(str(error) for error in descriptor_result.errors)
+        raise ValueError(f"Invalid project descriptor '{descriptor}': {errors}")
+    descriptor_data = load_json_strict(descriptor)
+    if descriptor_data.get("project_id") != profile.project_id:
+        raise ValueError(
+            f"Project descriptor project_id '{descriptor_data.get('project_id')}' "
+            f"does not match configured project_id '{profile.project_id}'"
+        )
+
+    policy = Path(profile.routing_policy_path).expanduser().resolve()
+    if not policy.is_file():
+        raise ValueError(
+            f"Invalid routing policy: File not found: {policy}"
+        )
+    policy_result, _ = validate_file("planner_routing_policy", policy)
+    if not policy_result.is_valid:
+        errors = "; ".join(str(error) for error in policy_result.errors)
+        raise ValueError(f"Invalid routing policy '{policy}': {errors}")
+
+
+def validate_configured_project_profiles(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Validate every configured profile before a runtime candidate can start."""
+    normalized = validate_runtime_config(config)
+    for project_id, raw_profile in normalized["projects"].items():
+        profile = ProjectProfile.from_mapping(raw_profile)
+        if profile.project_id != project_id:
+            raise ValueError(
+                f"Project profile key '{project_id}' does not match project_id '{profile.project_id}'"
+            )
+        roots = normalized["authorized_roots"]
+        resolved = ProjectProfile(
+            project_id=profile.project_id,
+            descriptor_path=str(resolve_under_authorized_roots(profile.descriptor_path, roots)),
+            workspace=str(resolve_under_authorized_roots(profile.workspace, roots)),
+            routing_policy_path=str(resolve_under_authorized_roots(profile.routing_policy_path, roots)),
+            standing_authority=profile.standing_authority,
+        )
+        if not Path(resolved.workspace).is_dir():
+            raise ValueError(f"Project workspace missing: {resolved.workspace}")
+        validate_project_profile_paths(resolved)
+    return normalized
+
+
 def resolve_project(config: Mapping[str, Any], project_id: Optional[str]) -> ProjectProfile:
     normalized = validate_runtime_config(config)
     selected = project_id or normalized["default_project"]

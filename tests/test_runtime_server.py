@@ -6,10 +6,17 @@ from aos.runtime_server import RuntimeEngine
 
 
 def _config(tmp_path: Path):
+    repo_root = Path(__file__).resolve().parents[1]
     descriptor = tmp_path / "descriptor.json"
-    descriptor.write_text("{}", encoding="utf-8")
+    descriptor.write_text(
+        (repo_root / "descriptors" / "lari.autonomous-host.descriptor.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     policy = tmp_path / "policy.json"
-    policy.write_text("{}", encoding="utf-8")
+    policy.write_text(
+        (repo_root / "descriptors" / "nemotron.planner-policy.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     return {
@@ -45,8 +52,26 @@ def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypa
         assert result["accepted"] is True
         assert result["run_plan_required"] is False
         assert result["project_id"] == "lari"
+        assert result["workspace"] == str((tmp_path / "workspace").resolve())
+        assert result["descriptor_path"] == str((tmp_path / "descriptor.json").resolve())
+        assert result["routing_policy_path"] == str((tmp_path / "policy.json").resolve())
         command = engine.store.read_command(result["command_id"])
         assert spawned == [(result["command_id"], False)]
+    finally:
+        engine.shutdown()
+
+
+def test_invalid_project_profile_fails_before_worker_execution(tmp_path, monkeypatch):
+    cfg = _config(tmp_path)
+    Path(cfg["projects"]["lari"]["descriptor_path"]).write_text("{}", encoding="utf-8")
+    engine = RuntimeEngine(cfg)
+    spawned = []
+    monkeypatch.setattr(engine, "_spawn_worker", lambda *args, **kwargs: spawned.append(args))
+    try:
+        with pytest.raises(ValueError, match="Invalid project descriptor"):
+            engine.submit_continue({"goal": "must not execute"})
+        assert spawned == []
+        assert engine.store.list_command_ids() == []
     finally:
         engine.shutdown()
 
@@ -159,5 +184,4 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
         assert captured["kwargs"]["detached"] is True
     finally:
         engine.shutdown()
-
 

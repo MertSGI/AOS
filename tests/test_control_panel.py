@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import aos.control_panel as control_panel
-from aos.control_panel import build_status, configure_provider, submit_job
+from aos.control_panel import _HTML, _get_sanitized_providers, build_status, configure_provider, submit_job
 
 
 def _config(tmp_path: Path):
@@ -156,3 +156,40 @@ def test_build_status_includes_deliberation_and_lane_telemetry(tmp_path, monkeyp
     assert status2["deliberation"]["agreement_count"] == 1
     assert status2["deliberation"]["trigger_reasons"]["MATERIAL_AMBIGUITY_OR_HIGH_IMPACT"] == 1
 
+
+def test_provider_telemetry_uses_credential_identity_and_paid_remains_disabled(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[1]
+    policy_path = repo_root / "descriptors" / "nemotron.planner-policy.json"
+    expected_identities = {
+        "nemotron": "NVIDIA",
+        "gemini": "GEMINI",
+        "groq": "GROQ",
+        "cloudflare": "CLOUDFLARE",
+        "openrouter_free": "OPENROUTER",
+        "cerebras": "CEREBRAS",
+        "huggingface_router": "HUGGINGFACE",
+        "openai_paid_safety": "OPENAI",
+    }
+    for env_var in (
+        "NVIDIA_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "CLOUDFLARE_API_TOKEN",
+        "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "HF_TOKEN", "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(env_var, raising=False)
+    rows = _get_sanitized_providers(
+        {"default_project": {"routing_policy_path": str(policy_path)}},
+        {identity: True for identity in expected_identities.values()},
+    )
+    by_id = {row["provider_id"]: row for row in rows}
+    for provider_id in expected_identities:
+        assert by_id[provider_id]["configured"] is True
+    assert by_id["openai_paid_safety"]["enabled"] is False
+
+
+def test_goal_composer_uses_project_selector_readonly_profile_and_checks_http_status():
+    assert 'id="goal-project"' in _HTML
+    assert 'id="goal-descriptor" type="text" readonly' in _HTML
+    assert 'id="goal-workspace" type="text" readonly' in _HTML
+    assert 'id="goal-policy" type="text" readonly' in _HTML
+    assert "project_id: projectEl ? projectEl.value : ''" in _HTML
+    assert "if (!r.ok)" in _HTML
+    assert _HTML.index("if (!r.ok)") < _HTML.index("toast('Autonomous Goal Accepted')")

@@ -1,5 +1,8 @@
+import json
+from pathlib import Path
+
 from aos.runtime_slots import SlotRecord
-from aos.runtime_supervisor import _runtime_health_matches
+from aos.runtime_supervisor import RuntimeSupervisor, _runtime_health_matches
 
 
 def _slot():
@@ -36,3 +39,31 @@ def test_runtime_supervisor_rejects_foreign_supervisor_nonce_sha_or_slot():
     assert _runtime_health_matches(slot, {**good, "runtime_launch_nonce": "other"}, "nonce-1", 12144) is False
     assert _runtime_health_matches(slot, {**good, "runtime_source_sha": "b" * 40}, "nonce-1", 12144) is False
     assert _runtime_health_matches(slot, {**good, "runtime_slot_id": "old-slot"}, "nonce-1", 12144) is False
+
+
+def test_panel_host_config_preserves_all_runtime_project_profiles(tmp_path: Path):
+    runtime_config = {
+        "port": 8770,
+        "runtime_root": str(tmp_path / "state"),
+        "authorized_roots": [str(tmp_path)],
+        "projects": {
+            "lari": {"project_id": "lari", "workspace": "lari-ws"},
+            "lari-ui-v2": {"project_id": "lari-ui-v2", "workspace": "ui-ws"},
+        },
+        "default_project": "lari",
+    }
+    (tmp_path / "runtime-config.json").write_text(json.dumps(runtime_config), encoding="utf-8")
+    supervisor_config = tmp_path / "supervisor-config.json"
+    supervisor_config.write_text(json.dumps({
+        "supervisor_root": str(tmp_path / "supervisor"),
+        "runtime_config_path": str(tmp_path / "runtime-config.json"),
+        "panel_host_config_path": str(tmp_path / "panel-host.json"),
+        "panel_config_path": str(tmp_path / "panel.json"),
+    }), encoding="utf-8")
+    supervisor = RuntimeSupervisor(supervisor_config)
+
+    host_path, _ = supervisor._ensure_panel_configs()
+    host = json.loads(host_path.read_text(encoding="utf-8"))
+
+    assert host["default_project_id"] == "lari"
+    assert set(host["projects"]) == {"lari", "lari-ui-v2"}

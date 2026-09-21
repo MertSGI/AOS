@@ -26,6 +26,8 @@ from aos.runtime_contract import (
     resolve_project,
     resolve_under_authorized_roots,
     utc_now,
+    validate_configured_project_profiles,
+    validate_project_profile_paths,
     validate_runtime_config,
 )
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
@@ -33,7 +35,7 @@ from aos.process_utils import popen_headless, run_headless, get_headless_creatio
 from aos.controller_relay import ControllerRelayPublisher
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
-from aos.secure_store import provider_presence
+from aos.secure_store import credential_is_configured, provider_presence
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -42,7 +44,7 @@ def load_config(path: Path) -> Dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("Runtime config must be a JSON object")
-    return validate_runtime_config(value)
+    return validate_configured_project_profiles(value)
 
 
 def pid_alive(pid: Any) -> bool:
@@ -103,6 +105,7 @@ class RuntimeEngine:
         self.runtime_root = Path(self.config["runtime_root"])
         self.store = RuntimeStore(self.runtime_root)
         self.stop_event = threading.Event()
+        self._pause_lock = threading.RLock()
         self.is_paused = False
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-api-{os.getpid()}")
@@ -211,7 +214,7 @@ class RuntimeEngine:
                         "secrets_exposed": False,
                     })
 
-            if any_success:
+            if any_success and not self.is_paused:
                 for command_id in self.store.list_command_ids()[-200:]:
                     state = self.store.read_state(command_id)
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
@@ -237,75 +240,88 @@ class RuntimeEngine:
             raise ValueError(f"Project workspace missing: {workspace}")
         if not policy.is_file():
             raise ValueError(f"Routing policy missing: {policy}")
-        return ProjectProfile(
+        normalized = ProjectProfile(
             project_id=profile.project_id,
             descriptor_path=str(descriptor),
             workspace=str(workspace),
             routing_policy_path=str(policy),
             standing_authority=profile.standing_authority,
         )
+        validate_project_profile_paths(normalized)
+        return normalized
 
     def submit_continue(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        profile = self._normalize_project(payload.get("project_id"))
-        command = ContinueProjectCommand.from_mapping(payload, project=profile)
-        self.store.create_command(command.to_dict())
-        self._spawn_worker(command.command_id, recovered=False)
+        with self._pause_lock:
+            if self.is_paused:
+                raise RuntimeError("Runtime is paused-safe; resume before submitting a new goal")
+            profile = self._normalize_project(payload.get("project_id"))
+            command = ContinueProjectCommand.from_mapping(payload, project=profile)
+            self.store.create_command(command.to_dict())
+            self._spawn_worker(command.command_id, recovered=False)
         return {
             "contract_version": CONTRACT_VERSION,
             "accepted": True,
             "command_id": command.command_id,
             "state": "QUEUED",
             "project_id": profile.project_id,
+            "workspace": profile.workspace,
+            "descriptor_path": profile.descriptor_path,
+            "routing_policy_path": profile.routing_policy_path,
             "run_plan_required": False,
             "production": "NO_GO",
             "ag_backend_enabled": False,
         }
 
     def _spawn_worker(self, command_id: str, *, recovered: bool) -> Optional[int]:
-        state = self.store.read_state(command_id)
-        existing = state.get("worker_pid")
-        if pid_alive(existing):
-            return int(existing)
-        command = self.store.read_command(command_id)
-        if not command:
-            return None
-        target_state = "RECOVERING" if recovered else "QUEUED"
-        self.store.write_state(command_id, state=target_state, worker_pid=None)
-        cmd = [
-            _resolve_worker_executable(),
-            "-m",
-            "aos.runtime_worker",
-            "--runtime-root",
-            str(self.runtime_root),
-            "--command-id",
-            command_id,
-        ]
-        slot_root = self.config.get("runtime_slot_root")
-        worker_env = _build_worker_env(str(slot_root) if slot_root else None)
-        proc = popen_headless(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            detached=True,
-            env=worker_env,
-        )
-        # The worker can reach RUNNING before Popen returns. Never downgrade a
-        # concurrently advanced state back to QUEUED/RECOVERING.
-        current = self.store.read_state(command_id)
-        updates = {"worker_pid": proc.pid}
-        if str(current.get("state")) not in ("RUNNING", "WAITING_FOR_REASONING_PROVIDER", "PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"):
-            updates["state"] = target_state
-        self.store.write_state(command_id, **updates)
-        if recovered:
-            self.store.append_event(command_id, "runtime.worker_respawned", {
-                "worker_pid": proc.pid,
-                "reason": "unfinished_command_recovery",
-            })
-        return proc.pid
+        with self._pause_lock:
+            if self.is_paused:
+                return None
+            state = self.store.read_state(command_id)
+            existing = state.get("worker_pid")
+            if pid_alive(existing):
+                return int(existing)
+            command = self.store.read_command(command_id)
+            if not command:
+                return None
+            target_state = "RECOVERING" if recovered else "QUEUED"
+            self.store.write_state(command_id, state=target_state, worker_pid=None)
+            cmd = [
+                _resolve_worker_executable(),
+                "-m",
+                "aos.runtime_worker",
+                "--runtime-root",
+                str(self.runtime_root),
+                "--command-id",
+                command_id,
+            ]
+            slot_root = self.config.get("runtime_slot_root")
+            worker_env = _build_worker_env(str(slot_root) if slot_root else None)
+            proc = popen_headless(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                detached=True,
+                env=worker_env,
+            )
+            # The worker can reach RUNNING before Popen returns. Never downgrade a
+            # concurrently advanced state back to QUEUED/RECOVERING.
+            current = self.store.read_state(command_id)
+            updates = {"worker_pid": proc.pid}
+            if str(current.get("state")) not in ("RUNNING", "WAITING_FOR_REASONING_PROVIDER", "PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"):
+                updates["state"] = target_state
+            self.store.write_state(command_id, **updates)
+            if recovered:
+                self.store.append_event(command_id, "runtime.worker_respawned", {
+                    "worker_pid": proc.pid,
+                    "reason": "unfinished_command_recovery",
+                })
+            return proc.pid
 
     def _recover_one(self, command_id: str) -> None:
+        if self.is_paused:
+            return
         state = self.store.read_state(command_id)
         current = str(state.get("state") or "")
         if current in ("PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"):
@@ -339,6 +355,8 @@ class RuntimeEngine:
         stale success from overriding a newer failure while avoiding a long
         backoff after another lineage has already proved the provider recovered.
         """
+        if self.is_paused:
+            return
         enabled, _paths, registries = self._provider_evidence()
         aggregate = ProviderCircuitBreakerRegistry.aggregate_registries(
             registries,
@@ -426,19 +444,8 @@ class RuntimeEngine:
         )
         circuit_summary = circuit_reg.summarize(enabled_providers)
         presence = provider_presence()
-        provider_to_presence_key = {
-            "nemotron": "NVIDIA",
-            "gemini": "GEMINI",
-            "groq": "GROQ",
-            "cloudflare": "CLOUDFLARE",
-            "openrouter_free": "OPENROUTER",
-            "cerebras": "CEREBRAS",
-            "huggingface_router": "HUGGINGFACE",
-            "openai": "OPENAI",
-            "openai_paid_safety": "OPENAI",
-        }
         credential_status = {
-            pid: bool(presence.get(provider_to_presence_key.get(pid, pid.upper())))
+            pid: credential_is_configured(pid, presence=presence)
             for pid in enabled_providers
         }
 
@@ -457,6 +464,8 @@ class RuntimeEngine:
         return {
             "contract_version": CONTRACT_VERSION,
             "runtime_state": "HEALTHY",
+            "paused": bool(self.is_paused),
+            "autonomous_spawning_enabled": not self.is_paused,
             "pid": os.getpid(),
             "timestamp": utc_now(),
             "active_commands": active,
@@ -491,7 +500,8 @@ class RuntimeEngine:
         }
 
     def pause_safe(self) -> Dict[str, Any]:
-        self.is_paused = True
+        with self._pause_lock:
+            self.is_paused = True
         return {
             "status": "PAUSED_SAFE",
             "message": "Autonomous command spawning paused safely. In-flight batches complete normally.",
@@ -499,7 +509,9 @@ class RuntimeEngine:
         }
 
     def resume(self) -> Dict[str, Any]:
-        self.is_paused = False
+        with self._pause_lock:
+            self.is_paused = False
+        self.recover_unfinished()
         return {
             "status": "RESUMED",
             "message": "Autonomous recovery and execution resumed.",
@@ -507,19 +519,29 @@ class RuntimeEngine:
         }
 
     def restart_worker(self, command_id: str) -> Dict[str, Any]:
-        state = self.store.read_state(command_id)
-        if not state:
-            raise ValueError(f"Command not found: {command_id}")
-        old_pid = state.get("worker_pid")
-        if pid_alive(old_pid):
-            if os.name == "nt":
-                run_headless(["taskkill", "/PID", str(old_pid), "/F"], timeout=10)
-            else:
-                try:
-                    os.kill(int(old_pid), 15)
-                except Exception:
-                    pass
-        new_pid = self._spawn_worker(command_id, recovered=True)
+        with self._pause_lock:
+            state = self.store.read_state(command_id)
+            if not state:
+                raise ValueError(f"Command not found: {command_id}")
+            old_pid = state.get("worker_pid")
+            if self.is_paused:
+                return {
+                    "status": "PAUSED_SAFE",
+                    "command_id": command_id,
+                    "old_worker_pid": old_pid,
+                    "new_worker_pid": None,
+                    "worker_restarted": False,
+                    "timestamp": utc_now(),
+                }
+            if pid_alive(old_pid):
+                if os.name == "nt":
+                    run_headless(["taskkill", "/PID", str(old_pid), "/F"], timeout=10)
+                else:
+                    try:
+                        os.kill(int(old_pid), 15)
+                    except Exception:
+                        pass
+            new_pid = self._spawn_worker(command_id, recovered=True)
         return {
             "status": "WORKER_RESTARTED",
             "command_id": command_id,

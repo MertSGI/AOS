@@ -43,6 +43,32 @@ def test_runtime_worker_persists_structured_failure_result(tmp_path, monkeypatch
     assert store.read_events(command.command_id)[-1]["event_type"] == "run.failed"
 
 
+def test_runtime_worker_exception_preserves_cumulative_batch_count(tmp_path, monkeypatch):
+    root = tmp_path / "runtime"
+    store = RuntimeStore(root)
+    command = _command(tmp_path)
+    store.create_command(command.to_dict())
+    project_runtime = store.command_dir(command.command_id) / "project-runtime"
+    project_runtime.mkdir(parents=True)
+    (project_runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "total_completed_batch_count": 97,
+        "completed_batch_count": 97,
+        "completed_batches": [{"batch_number": index} for index in range(68, 98)],
+    }), encoding="utf-8")
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("forced regression failure")),
+    )
+
+    with pytest.raises(RuntimeError, match="forced regression failure"):
+        runtime_worker.execute_command(root, command.command_id)
+
+    assert store.read_result(command.command_id)["completed_batch_count"] == 97
+    assert store.read_state(command.command_id)["completed_batch_count"] == 97
+
+
 def test_recovery_watcher_baselines_existing_artifacts_and_checkpoint(tmp_path):
     project_runtime = tmp_path / "project-runtime"
     project_runtime.mkdir()

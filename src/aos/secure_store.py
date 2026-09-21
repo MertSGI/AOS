@@ -26,6 +26,18 @@ PROVIDER_ENV_VARS: Dict[str, str] = {
     "HF": "HF_TOKEN",
 }
 
+PROVIDER_ID_ENV_VARS: Dict[str, str] = {
+    "nemotron": "NVIDIA_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "cloudflare": "CLOUDFLARE_API_TOKEN",
+    "openrouter_free": "OPENROUTER_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
+    "huggingface_router": "HF_TOKEN",
+    "openai": "OPENAI_API_KEY",
+    "openai_paid_safety": "OPENAI_API_KEY",
+}
+
 
 _TARGET_PREFIX = "AOS/Provider/"
 _CRED_TYPE_GENERIC = 1
@@ -47,6 +59,55 @@ def _target(provider: str, env_var: Optional[str] = None) -> str:
     normalized = _normalize_provider(provider, allow_custom=bool(env_var))
     target_key = env_var or PROVIDER_ENV_VARS[normalized]
     return f"{_TARGET_PREFIX}{target_key}"
+
+
+def resolve_credential_env_var(
+    provider_id: str,
+    configured_env_var: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a runtime provider id to its secure credential identity."""
+    if configured_env_var:
+        return str(configured_env_var).strip() or None
+    provider = str(provider_id).strip()
+    mapped = PROVIDER_ID_ENV_VARS.get(provider.lower())
+    if mapped:
+        return mapped
+    return PROVIDER_ENV_VARS.get(provider.upper())
+
+
+def secure_store_identity(
+    provider_id: str,
+    configured_env_var: Optional[str] = None,
+) -> Optional[str]:
+    """Return the normalized Windows-vault identity without reading its value."""
+    env_var = resolve_credential_env_var(provider_id, configured_env_var)
+    if not env_var:
+        return None
+    for identity, known_env_var in PROVIDER_ENV_VARS.items():
+        if known_env_var == env_var:
+            return identity
+    return str(provider_id).strip().upper() or None
+
+
+def credential_is_configured(
+    provider_id: str,
+    configured_env_var: Optional[str] = None,
+    *,
+    presence: Optional[Dict[str, bool]] = None,
+) -> bool:
+    """Report credential presence without returning or logging a secret value."""
+    env_var = resolve_credential_env_var(provider_id, configured_env_var)
+    identity = secure_store_identity(provider_id, env_var)
+    if not env_var or not identity:
+        return False
+    if os.environ.get(env_var):
+        return True
+    if presence is not None:
+        return bool(presence.get(env_var) or presence.get(identity))
+    try:
+        return bool(read_provider_secret(identity, env_var=env_var))
+    except OSError:
+        return False
 
 
 class _FILETIME(ctypes.Structure):

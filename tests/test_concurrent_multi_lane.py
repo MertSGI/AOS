@@ -8,6 +8,7 @@ Proves:
 4. Attempting concurrent commands against the same workspace is rejected with a clear conflict error.
 5. Multi-lane recovery preserves independent command states with duplicate_completed_work = 0.
 """
+import json
 from pathlib import Path
 import pytest
 from unittest.mock import MagicMock
@@ -18,12 +19,20 @@ from aos import runtime_worker
 
 
 def _make_project_fixtures(tmp_path: Path, project_id: str):
+    repo_root = Path(__file__).resolve().parents[1]
     proj_dir = tmp_path / project_id
     proj_dir.mkdir(parents=True, exist_ok=True)
     descriptor = proj_dir / "descriptor.json"
-    descriptor.write_text("{}", encoding="utf-8")
+    descriptor_data = json.loads(
+        (repo_root / "descriptors" / "lari.autonomous-host.descriptor.json").read_text(encoding="utf-8")
+    )
+    descriptor_data["project_id"] = project_id
+    descriptor.write_text(json.dumps(descriptor_data), encoding="utf-8")
     policy = proj_dir / "policy.json"
-    policy.write_text("{}", encoding="utf-8")
+    policy.write_text(
+        (repo_root / "descriptors" / "nemotron.planner-policy.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     workspace = proj_dir / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     return {

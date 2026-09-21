@@ -513,11 +513,9 @@ class NativeGitWorker(ExecutionBackend):
 
         cmd = ["git", action] + args
         try:
-            proc = subprocess.run(
+            proc = run_headless(
                 cmd,
                 cwd=workspace,
-                capture_output=True,
-                text=True,
                 timeout=request.timeout_seconds or 60,
             )
             stdout_clean = redact_secrets(proc.stdout)

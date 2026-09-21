@@ -7,25 +7,24 @@ and security policies.
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Any
 import datetime
-import subprocess
 import json
+
+from aos.process_utils import run_headless
 
 def measure_git_remote_truth():
     """Dynamically measures local git HEAD, current branch, and remote origin ref."""
     try:
-        proc_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10)
+        proc_sha = run_headless(["git", "rev-parse", "HEAD"], timeout=10)
         local_sha = proc_sha.stdout.strip() if proc_sha.returncode == 0 else "UNKNOWN"
 
-        proc_br = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, timeout=10)
+        proc_br = run_headless(["git", "branch", "--show-current"], timeout=10)
         current_branch = proc_br.stdout.strip() if proc_br.returncode == 0 else "UNKNOWN"
 
         remote_sha = "UNKNOWN"
         remote_branch_present = False
         if current_branch and current_branch != "UNKNOWN":
-            proc_ls = subprocess.run(
+            proc_ls = run_headless(
                 ["git", "ls-remote", "origin", current_branch],
-                capture_output=True,
-                text=True,
                 timeout=15,
             )
             if proc_ls.returncode == 0 and proc_ls.stdout.strip():

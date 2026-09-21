@@ -54,6 +54,20 @@ def runtime_status(config: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
+def configured_project_profiles(config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    projects = config.get("projects")
+    if isinstance(projects, dict):
+        return {
+            str(project_id): dict(profile)
+            for project_id, profile in projects.items()
+            if isinstance(profile, dict)
+        }
+    default_profile = config.get("default_project")
+    if isinstance(default_profile, dict) and default_profile.get("project_id"):
+        return {str(default_profile["project_id"]): dict(default_profile)}
+    return {}
+
+
 def submit_goal_to_runtime(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     goal = payload.get("goal")
     if not isinstance(goal, str) or not goal.strip():
@@ -67,15 +81,27 @@ def submit_goal_to_runtime(payload: Dict[str, Any], config: Dict[str, Any]) -> D
     max_batches = int(payload.get("max_batches", 1))
     if not 1 <= max_batches <= 50:
         raise ValueError("max_batches must be between 1 and 50")
+    project_id = payload.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("project_id is required")
+    project_id = project_id.strip()
+    projects = configured_project_profiles(config)
+    if project_id not in projects:
+        raise ValueError(f"Unknown project_id: {project_id}")
     result = _client(config).continue_project(
         goal=goal.strip(),
-        project_id=payload.get("project_id"),
+        project_id=project_id,
         constraints=constraints,
         red_lines=red_lines,
         max_batches_per_cycle=max_batches,
         max_iterations_per_batch=int(payload.get("max_iterations", 30)),
         continuous=True,
     )
+    if result.get("project_id") != project_id:
+        raise RuntimeClientError("Runtime response project_id did not match the requested project")
+    resolved_fields = ("workspace", "descriptor_path", "routing_policy_path")
+    if any(not isinstance(result.get(field), str) or not result.get(field) for field in resolved_fields):
+        raise RuntimeClientError("Runtime response omitted the resolved project profile")
     result["mode"] = "RUNTIME_V1_AUTONOMOUS_GOAL"
     result["run_plan_required"] = False
     return result

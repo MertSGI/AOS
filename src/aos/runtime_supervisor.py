@@ -212,6 +212,7 @@ class RuntimeSupervisor:
         return runtime_config, host_config, panel_config
 
     def _ensure_panel_configs(self) -> tuple[Path, Path]:
+        base = self.config_path.parent
         runtime_config_path, host_config_path, panel_config_path = self._panel_paths()
         runtime_config = read_json(runtime_config_path, {})
         projects = runtime_config.get("projects", {}) if isinstance(runtime_config, dict) else {}
@@ -226,6 +227,8 @@ class RuntimeSupervisor:
             "runtime_api_url": f"http://127.0.0.1:{int(runtime_config.get('port', 8770))}",
             "runtime_token_path": runtime_config.get("runtime_token_path") or str(base / "runtime-api.token"),
             "default_project": default_project,
+            "default_project_id": default_id,
+            "projects": projects,
             "authoritative_repo_path": runtime_config.get("authoritative_repo_path", "C:/Projects/AOS-lane-b"),
         })
         if not panel_config_path.exists():

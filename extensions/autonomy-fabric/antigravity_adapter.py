@@ -7,12 +7,12 @@ stream-json terminal contract enforcement, fail-closed state mapping, and worksp
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Any
-import subprocess
 import json
 import time
 import os
 import shutil
 from extensions.autonomy_fabric.run_registry import RunStatus
+from aos.process_utils import run_headless
 
 
 class AntigravityStatus(str, Enum):
@@ -301,11 +301,9 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         t0 = time.time()
 
         try:
-            proc = subprocess.run(
+            proc = run_headless(
                 cmd,
                 cwd=workspace_path,
-                capture_output=True,
-                text=True,
                 check=False,
                 timeout=300,
             )

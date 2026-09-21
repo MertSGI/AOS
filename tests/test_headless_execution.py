@@ -1,6 +1,7 @@
 """Regression proof that normal AOS Runtime and worker execution produces zero visible console windows."""
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -115,3 +116,33 @@ def test_runtime_server_worker_spawning_uses_headless_flags(tmp_path, monkeypatc
         assert captured_kwargs.get("stderr") == subprocess.DEVNULL
     finally:
         engine.shutdown()
+
+
+def test_background_production_modules_do_not_call_subprocess_directly():
+    repo_root = Path(__file__).resolve().parents[1]
+    modules = (
+        "extensions/autonomy-fabric/native_workers.py",
+        "extensions/autonomy-fabric/antigravity_adapter.py",
+        "extensions/autonomy-fabric/remote_source_evidence.py",
+        "src/aos/git_workspace.py",
+        "src/aos/execution_preflight.py",
+        "src/aos/verification_workspace.py",
+        "src/aos/candidate_store.py",
+        "src/aos/workers/antigravity.py",
+        "src/aos/workers/antigravity_probe.py",
+        "src/aos/controlled_execution.py",
+    )
+    violations = []
+    for relative_path in modules:
+        path = repo_root / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative_path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "subprocess"
+                and node.func.attr in {"run", "Popen", "call", "check_call", "check_output"}
+            ):
+                violations.append(f"{relative_path}:{node.lineno}:{node.func.attr}")
+    assert violations == []

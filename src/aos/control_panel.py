@@ -18,8 +18,20 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
-from aos.secure_store import delete_provider_secret, provider_presence, write_provider_secret
-from aos.runtime_panel_bridge import runtime_configured, runtime_status, submit_goal_to_runtime, execute_command_on_runtime
+from aos.runtime_contract import cumulative_completed_batch_count
+from aos.secure_store import (
+    credential_is_configured,
+    delete_provider_secret,
+    provider_presence,
+    write_provider_secret,
+)
+from aos.runtime_panel_bridge import (
+    configured_project_profiles,
+    execute_command_on_runtime,
+    runtime_configured,
+    runtime_status,
+    submit_goal_to_runtime,
+)
 from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
 from aos.self_diagnosis import SelfDiagnosisEngine
 
@@ -661,7 +673,7 @@ label.field-lbl {
   color: var(--text-sub);
   margin-bottom: 5px;
 }
-input[type=text], input[type=password], input[type=number], textarea {
+input[type=text], input[type=password], input[type=number], select, textarea {
   width: 100%;
   background: var(--bg-input);
   color: var(--text-main);
@@ -673,7 +685,7 @@ input[type=text], input[type=password], input[type=number], textarea {
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, textarea:focus {
+input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, select:focus, textarea:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
@@ -1124,19 +1136,23 @@ textarea.goal-main {
           <!-- ADVANCED EXECUTION CONTEXT -->
           <div class="form-row">
             <div>
-              <label class="field-lbl" for="goal-descriptor">Project Descriptor</label>
-              <input id="goal-descriptor" type="text" placeholder="C:\Projects\AOS\descriptors\lari.autonomous-host.descriptor.json">
+              <label class="field-lbl" for="goal-project">Configured Runtime Project</label>
+              <select id="goal-project" onchange="syncGoalProjectProfile()"></select>
             </div>
             <div>
-              <label class="field-lbl" for="goal-workspace">Workspace Directory</label>
-              <input id="goal-workspace" type="text" placeholder="Local project workspace">
+              <label class="field-lbl" for="goal-descriptor">Resolved Project Descriptor</label>
+              <input id="goal-descriptor" type="text" readonly>
             </div>
           </div>
 
-          <div class="form-row full">
+          <div class="form-row">
+            <div>
+              <label class="field-lbl" for="goal-workspace">Workspace Directory</label>
+              <input id="goal-workspace" type="text" readonly>
+            </div>
             <div>
               <label class="field-lbl" for="goal-policy">Routing Policy Path</label>
-              <input id="goal-policy" type="text" placeholder="C:\Projects\AOS\descriptors\nemotron.planner-policy.json">
+              <input id="goal-policy" type="text" readonly>
             </div>
           </div>
 
@@ -1460,6 +1476,7 @@ textarea.goal-main {
 
 <script>
 const TOKEN = __AOS_TOKEN_JSON__;
+let GOAL_PROJECTS = {};
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -1469,6 +1486,21 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function syncGoalProjectProfile() {
+  const selector = document.getElementById('goal-project');
+  const profile = selector ? GOAL_PROJECTS[selector.value] : null;
+  const values = profile || {};
+  const fields = {
+    'goal-descriptor': values.descriptor_path || '',
+    'goal-workspace': values.workspace || '',
+    'goal-policy': values.routing_policy_path || ''
+  };
+  for (const [id, value] of Object.entries(fields)) {
+    const element = document.getElementById(id);
+    if (element) element.value = value;
+  }
 }
 
 function toast(msg) {
@@ -2213,14 +2245,17 @@ async function refreshStatus() {
         </div>`;
     }
 
-    // Default Goal Form autofill
-    const d = s.default_project || {};
-    const gd = document.getElementById('goal-descriptor');
-    if (gd && !gd.value && d.descriptor_path) gd.value = d.descriptor_path;
-    const gw = document.getElementById('goal-workspace');
-    if (gw && !gw.value && d.workspace) gw.value = d.workspace;
-    const gp = document.getElementById('goal-policy');
-    if (gp && !gp.value && d.routing_policy_path) gp.value = d.routing_policy_path;
+    GOAL_PROJECTS = s.projects || {};
+    const selector = document.getElementById('goal-project');
+    if (selector) {
+      const previous = selector.value;
+      selector.innerHTML = Object.keys(GOAL_PROJECTS).map(projectId =>
+        `<option value="${escapeHtml(projectId)}">${escapeHtml(projectId)}</option>`
+      ).join('');
+      const preferred = previous && GOAL_PROJECTS[previous] ? previous : s.default_project_id;
+      if (preferred && GOAL_PROJECTS[preferred]) selector.value = preferred;
+      syncGoalProjectProfile();
+    }
 
   } catch (e) {
     if (document.getElementById('top-host-text')) document.getElementById('top-host-text').textContent = 'DISCONNECTED';
@@ -2309,15 +2344,19 @@ async function submitGoal() {
     return el ? el.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) : [];
   };
   const goalEl = document.getElementById('goal-text');
+  const projectEl = document.getElementById('goal-project');
   const payload = {
-    descriptor_path: (document.getElementById('goal-descriptor') || {}).value || '',
-    workspace: (document.getElementById('goal-workspace') || {}).value || '',
-    routing_policy_path: (document.getElementById('goal-policy') || {}).value || '',
+    project_id: projectEl ? projectEl.value : '',
     goal: goalEl ? goalEl.value.trim() : '',
     constraints: lines('goal-constraints'),
     red_lines: lines('goal-redlines'),
     max_batches: Number((document.getElementById('goal-batches') || {}).value || 12)
   };
+  if (!payload.project_id) {
+    if (out) out.textContent = 'Error: Select a configured Runtime V1 project.';
+    toast('Configured project required');
+    return;
+  }
   if (!payload.goal) {
     if (out) out.textContent = 'Error: Primary Goal statement is required.';
     toast('Goal statement required');
@@ -2331,6 +2370,8 @@ async function submitGoal() {
       body:JSON.stringify(payload)
     });
     const data = await r.json();
+    if (!r.ok) throw new Error(data.message || data.error || ('HTTP ' + r.status));
+    if (!data.accepted) throw new Error('Runtime did not accept the autonomous goal');
     if (out) out.textContent = JSON.stringify(data, null, 2);
     toast('Autonomous Goal Accepted');
     await refreshStatus();
@@ -2416,17 +2457,19 @@ def _get_sanitized_providers(config: Optional[Dict[str, Any]], providers: Dict[s
             from aos.provider_registry import load_routing_policy
             reg = load_routing_policy(str(policy_path))
             for entry in reg.list_providers():
-                is_configured = bool(
-                    providers.get(entry.provider_id.upper())
-                    or (entry.credential_env_var and os.environ.get(entry.credential_env_var))
+                is_configured = credential_is_configured(
+                    entry.provider_id,
+                    entry.credential_env_var,
+                    presence=providers,
                 )
+                paid_provider = entry.billing_class == "PAID"
                 sanitized.append({
                     "provider_id": entry.provider_id,
                     "display_name": entry.display_name or entry.provider_id,
                     "credential_env_var": entry.credential_env_var,
                     "billing_class": entry.billing_class,
                     "cloud_local": entry.cloud_local,
-                    "enabled": entry.enabled,
+                    "enabled": bool(entry.enabled and not paid_provider),
                     "credential_configurable": bool(entry.credential_env_var and entry.cloud_local == "CLOUD"),
                     "provider_console_url": entry.provider_console_url,
                     "configured": is_configured,
@@ -2461,10 +2504,7 @@ def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, 
         if isinstance(item, dict) and isinstance(item.get("receipt"), dict) and (item.get("receipt") or {}).get("timestamp")
     ]
 
-    total_executed = checkpoint.get("total_completed_batch_count")
-    if total_executed is None:
-        total_executed = state.get("completed_batch_count", checkpoint.get("completed_batch_count", len(completed_batches)))
-    total_executed_int = int(total_executed or 0)
+    total_executed_int = cumulative_completed_batch_count(checkpoint, state)
 
     successful_batches = checkpoint.get("successful_batch_count")
     successful_batches_int = int(successful_batches) if successful_batches is not None else total_executed_int
@@ -2530,6 +2570,13 @@ def configure_provider(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
+    projects = configured_project_profiles(config)
+    default_project = config.get("default_project", {})
+    default_project_id = config.get("default_project_id")
+    if not default_project_id and isinstance(default_project, dict):
+        default_project_id = default_project.get("project_id")
+    if not default_project_id and isinstance(default_project, str):
+        default_project_id = default_project
     if runtime_configured(config):
         bridge = runtime_status(config)
         providers = _provider_presence()
@@ -2748,7 +2795,9 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "providers": providers,
             "sanitized_providers": _get_sanitized_providers(config, providers),
             "provider_details": runtime_v1.get("provider_details", []),
-            "default_project": config.get("default_project", {}),
+            "projects": projects,
+            "default_project_id": default_project_id,
+            "default_project": default_project,
             "runtime_v1": runtime_v1,
             "active_slot": active_slot,
             "active_sha": active_sha,
@@ -2817,7 +2866,9 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "paid_call_count": 0,
         "providers": providers,
         "sanitized_providers": _get_sanitized_providers(config, providers),
-        "default_project": config.get("default_project", {}),
+        "projects": projects,
+        "default_project_id": default_project_id,
+        "default_project": default_project,
         "runtime_v1": {"runtime_state": "NOT_CONFIGURED"},
         "active_slot": "NONE",
         "active_sha": "NONE",

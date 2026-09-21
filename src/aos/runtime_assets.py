@@ -11,6 +11,7 @@ from typing import Any, Dict
 REQUIRED_FILES = (
     "schemas/v0.1/project_descriptor.schema.json",
     "descriptors/lari.autonomous-host.descriptor.json",
+    "descriptors/lari-ui-v2.autonomous-host.descriptor.json",
     "descriptors/nemotron.planner-policy.json",
 )
 ASSET_DIRS = ("schemas", "descriptors")

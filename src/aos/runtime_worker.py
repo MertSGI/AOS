@@ -23,7 +23,12 @@ from aos.planning_kernel import (
     run_autonomous_project,
 )
 from extensions.autonomy_fabric.native_workers import redact_secrets
-from aos.runtime_contract import ContinueProjectCommand, RuntimeResult, utc_now
+from aos.runtime_contract import (
+    ContinueProjectCommand,
+    RuntimeResult,
+    cumulative_completed_batch_count,
+    utc_now,
+)
 from aos.runtime_store import RuntimeStore, exclusive_file_lock, read_json
 from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
@@ -54,15 +59,10 @@ class PlanningArtifactWatcher(threading.Thread):
 
     @staticmethod
     def _checkpoint_signature(data: Dict[str, Any]) -> str:
-        count = data.get("total_completed_batch_count")
-        if count is None:
-            count = data.get("completed_batch_count")
-        if count is None:
-            count = len(data.get("completed_batches", []) or [])
         return json.dumps({
             "phase": data.get("phase"),
             "batch_number": data.get("batch_number"),
-            "completed_batch_count": int(count or 0),
+            "completed_batch_count": cumulative_completed_batch_count(data),
             "replan_reason": data.get("replan_reason"),
             "canonical_source_sha": data.get("canonical_source_sha"),
         }, sort_keys=True)
@@ -119,15 +119,10 @@ class PlanningArtifactWatcher(threading.Thread):
             "WAITING_FOR_REASONING_PROVIDER": "run.waiting_for_reasoning_provider",
             "BOUNDED_RUN_EXHAUSTED": "run.replan_boundary",
         }.get(phase, "checkpoint.updated")
-        count = data.get("total_completed_batch_count")
-        if count is None:
-            count = data.get("completed_batch_count")
-        if count is None:
-            count = len(data.get("completed_batches", []) or [])
         self.store.append_event(self.command_id, event_type, {
             "phase": phase,
             "batch_number": data.get("batch_number"),
-            "completed_batch_count": int(count or 0),
+            "completed_batch_count": cumulative_completed_batch_count(data),
             "replan_reason": data.get("replan_reason"),
             "canonical_source_sha": data.get("canonical_source_sha"),
             "canonical_execution_base_sha": data.get("canonical_execution_base_sha"),
@@ -225,15 +220,10 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             })
             if recovered:
                 checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json") or {}
-                count = checkpoint.get("total_completed_batch_count")
-                if count is None:
-                    count = checkpoint.get("completed_batch_count")
-                if count is None:
-                    count = len(checkpoint.get("completed_batches", []) or [])
                 store.append_event(command_id, "runtime.worker_recovered", {
                     "checkpoint_phase": checkpoint.get("phase"),
                     "batch_number": checkpoint.get("batch_number"),
-                    "completed_batch_count": int(count or 0),
+                    "completed_batch_count": cumulative_completed_batch_count(checkpoint),
                 })
 
             stop = threading.Event()
@@ -263,7 +253,7 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     max_iterations_per_batch=command.max_iterations_per_batch,
                 )
                 disposition = str(receipt.get("disposition", ""))
-                completed = int(receipt.get("completed_batch_count", 0) or 0)
+                completed = cumulative_completed_batch_count(receipt)
 
                 if (
                     disposition == "HUMAN_REQUIRED"
@@ -388,7 +378,7 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 "structured_runtime_failure": True,
             }
             checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
-            completed = len(checkpoint.get("completed_batches", []) or [])
+            completed = cumulative_completed_batch_count(checkpoint)
             result = RuntimeResult(
                 command_id=command_id,
                 state=state,
