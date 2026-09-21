@@ -346,4 +346,3 @@ def test_continuous_worker_stops_at_persisted_pause_cycle_boundary(
         is True
         for event in events
     )
-

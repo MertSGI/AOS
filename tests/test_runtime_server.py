@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -149,9 +151,28 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
     pythonpath = worker_env.get("PYTHONPATH", "")
     assert str(slot_site.resolve()) in pythonpath
 
-    # Verify _resolve_worker_executable handles pythonw correctly
+    # Long-lived Windows workers use pythonw.exe when the sibling
+    # executable exists. Other platforms keep the current interpreter.
     exe = _resolve_worker_executable()
-    assert not exe.lower().endswith("pythonw.exe")
+
+    if (
+        os.name == "nt"
+        and
+        Path(sys.executable)
+        .with_name("pythonw.exe")
+        .is_file()
+    ):
+        assert (
+            Path(exe).name.lower()
+            ==
+            "pythonw.exe"
+        )
+    else:
+        assert (
+            Path(exe).resolve()
+            ==
+            Path(sys.executable).resolve()
+        )
 
     # Test _spawn_worker passes env and resolved executable
     engine = RuntimeEngine(cfg)
@@ -184,4 +205,3 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
         assert captured["kwargs"]["detached"] is True
     finally:
         engine.shutdown()
-
