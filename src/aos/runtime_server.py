@@ -36,7 +36,11 @@ from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
 from aos.runtime_maintenance import PAUSED_SAFE, is_paused, persist_maintenance
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
-from aos.secure_store import credential_is_configured, provider_presence
+from aos.secure_store import (
+    credential_is_configured,
+    provider_presence,
+    resolve_credential_env_var,
+)
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -64,9 +68,32 @@ def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:
     env = dict(os.environ)
     site_dirs: list[str] = []
     if slot_root:
-        candidate_site = Path(slot_root) / "site"
+        resolved_slot_root = Path(
+            slot_root
+        ).expanduser().resolve()
+
+        candidate_site = (
+            resolved_slot_root
+            / "site"
+        )
+
         if candidate_site.is_dir():
-            site_dirs.append(str(candidate_site.resolve()))
+            site_dirs.append(
+                str(
+                    candidate_site.resolve()
+                )
+            )
+
+        env[
+            "AOS_RUNTIME_SLOT_ROOT"
+        ] = str(
+            resolved_slot_root
+        )
+    else:
+        env.pop(
+            "AOS_RUNTIME_SLOT_ROOT",
+            None,
+        )
     module_parent = Path(__file__).resolve().parent.parent
     if not slot_root and module_parent.is_dir():
         site_dirs.append(str(module_parent))
@@ -119,16 +146,200 @@ class RuntimeEngine:
 
     @staticmethod
     def _enabled_from_policy(policy_path: Path) -> list[str]:
+        """Return enabled runtime providers, excluding unauthorized paid fallback."""
         try:
-            value = json.loads(policy_path.read_text(encoding="utf-8"))
-            providers = value.get("providers", {}) if isinstance(value, dict) else {}
-            return [
-                str(provider_id)
-                for provider_id, provider in providers.items()
-                if isinstance(provider, dict) and provider.get("enabled") is True
-            ]
-        except (OSError, ValueError, json.JSONDecodeError):
+            value = json.loads(
+                policy_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            providers = (
+                value.get(
+                    "providers",
+                    {},
+                )
+                if isinstance(
+                    value,
+                    dict,
+                )
+                else {}
+            )
+
+            paid_allowed = bool(
+                value.get(
+                    "allow_paid_fallback",
+                    False,
+                )
+                and
+                value.get(
+                    "paid_fallback_enabled",
+                    False,
+                )
+                and
+                float(
+                    value.get(
+                        "paid_daily_budget_usd",
+                        0,
+                    )
+                    or 0
+                )
+                > 0
+                and
+                float(
+                    value.get(
+                        "paid_monthly_budget_usd",
+                        0,
+                    )
+                    or 0
+                )
+                > 0
+            )
+
+            result = []
+
+            for (
+                provider_id,
+                provider,
+            ) in providers.items():
+
+                if not (
+                    isinstance(
+                        provider,
+                        dict,
+                    )
+                    and
+                    provider.get(
+                        "enabled"
+                    )
+                    is True
+                ):
+                    continue
+
+                if (
+                    str(
+                        provider.get(
+                            "billing_class",
+                            "",
+                        )
+                    ).upper()
+                    ==
+                    "PAID"
+                    and
+                    not paid_allowed
+                ):
+                    continue
+
+                result.append(
+                    str(
+                        provider_id
+                    )
+                )
+
+            return result
+
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             return []
+
+    def _provider_metadata(
+        self,
+    ) -> Dict[str, Dict[str, Any]]:
+        result: Dict[str, Dict[str, Any]] = {}
+
+        for profile in (
+            self.config.get(
+                "projects"
+            )
+            or {}
+        ).values():
+
+            if not isinstance(
+                profile,
+                dict,
+            ):
+                continue
+
+            policy_value = profile.get(
+                "routing_policy_path"
+            )
+
+            if not policy_value:
+                continue
+
+            path = Path(
+                str(
+                    policy_value
+                )
+            )
+
+            try:
+                policy = json.loads(
+                    path.read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (
+                OSError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                continue
+
+            providers = (
+                policy.get(
+                    "providers",
+                    {}
+                )
+                if isinstance(
+                    policy,
+                    dict,
+                )
+                else {}
+            )
+
+            for (
+                provider_id,
+                cfg,
+            ) in providers.items():
+
+                if not isinstance(
+                    cfg,
+                    dict,
+                ):
+                    continue
+
+                result.setdefault(
+                    str(
+                        provider_id
+                    ),
+                    {
+                        "model_id":
+                            cfg.get(
+                                "model_id"
+                            ),
+
+                        "billing_class":
+                            cfg.get(
+                                "billing_class"
+                            ),
+
+                        "cloud_local":
+                            cfg.get(
+                                "cloud_local"
+                            ),
+
+                        "display_name":
+                            cfg.get(
+                                "display_name"
+                            ),
+                    },
+                )
+
+        return result
 
     def _provider_evidence(self) -> tuple[list[str], list[Path], list[ProviderCircuitBreakerRegistry]]:
         """Discover the exact command-local registries used by active/waiting workers."""
@@ -201,11 +412,29 @@ class RuntimeEngine:
                             "local_service_available": row.get("local_service_available"),
                         }
                         if row.get("probe_status") == "PASS":
-                            registry.record_success(provider_id, **common)
-                        else:
+                            registry.record_success(
+                                provider_id,
+                                **common,
+                            )
+                        elif (
+                            row.get("probe_attempted")
+                            or
+                            row.get("failure_class")
+                            ==
+                            "LOCAL_MODEL_UNAVAILABLE"
+                        ):
+                            # Do not trip cloud circuits merely because a
+                            # credential/configuration was not available for
+                            # an activation probe.
                             registry.record_failure(
                                 provider_id,
-                                str(row.get("failure_class") or "UNKNOWN"),
+                                str(
+                                    row.get(
+                                        "failure_class"
+                                    )
+                                    or
+                                    "UNKNOWN"
+                                ),
                                 **common,
                             )
                     self.store.append_event(command_id, "provider.activation_probe_completed", {
@@ -326,9 +555,25 @@ class RuntimeEngine:
         current = str(state.get("state") or "")
         if current in ("PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"):
             return
-        if current == "WAITING_FOR_REASONING_PROVIDER":
-            retry = float(state.get("retry_after_epoch", 0) or 0)
-            if retry and time.time() < retry:
+        if current in (
+            "WAITING_FOR_REASONING_PROVIDER",
+            "WAITING_FOR_SOURCE_TRANSPORT",
+        ):
+            retry = float(
+                state.get(
+                    "retry_after_epoch",
+                    0,
+                )
+                or 0
+            )
+
+            if (
+                retry
+                and
+                time.time()
+                <
+                retry
+            ):
                 return
         if pid_alive(state.get("worker_pid")):
             return
@@ -440,14 +685,37 @@ class RuntimeEngine:
                     with self._status_lock:
                         self._status_cache = value
                 except Exception as exc:
+                    # Never turn a detailed-telemetry collection fault into
+                    # fabricated zero lanes/providers. Preserve the latest
+                    # accepted snapshot and mark it degraded/stale.
                     with self._status_lock:
-                        self._status_cache = {
-                            "contract_version": CONTRACT_VERSION,
-                            "status_state": "DEGRADED",
-                            "error_class": exc.__class__.__name__,
-                            "timestamp": utc_now(),
-                            "production": "NO_GO",
-                        }
+                        previous = dict(
+                            self._status_cache
+                        )
+
+                        previous.update({
+                            "contract_version":
+                                CONTRACT_VERSION,
+
+                            "status_state":
+                                "DEGRADED",
+
+                            "error_class":
+                                exc.__class__.__name__,
+
+                            "status_error":
+                                str(exc)[:500],
+
+                            "timestamp":
+                                utc_now(),
+
+                            "production":
+                                "NO_GO",
+                        })
+
+                        self._status_cache = (
+                            previous
+                        )
             self.stop_event.wait(5.0)
 
     def _collect_detailed_status(self) -> Dict[str, Any]:
@@ -466,8 +734,13 @@ class RuntimeEngine:
             if current in ("QUEUED", "RUNNING", "RECOVERING"):
                 active.append(command_id)
                 active_by_project.setdefault(proj_id, []).append(command_id)
-            elif current == "WAITING_FOR_REASONING_PROVIDER":
-                waiting.append(command_id)
+            elif current in (
+                "WAITING_FOR_REASONING_PROVIDER",
+                "WAITING_FOR_SOURCE_TRANSPORT",
+            ):
+                waiting.append(
+                    command_id
+                )
             else:
                 terminal.append(command_id)
         if command_ids:
@@ -490,17 +763,128 @@ class RuntimeEngine:
         )
         circuit_summary = circuit_reg.summarize(enabled_providers)
         presence = provider_presence()
-        credential_status = {
-            pid: credential_is_configured(pid, presence=presence)
-            for pid in enabled_providers
-        }
 
-        provider_details = circuit_reg.per_provider_details(enabled_providers, credential_status)
+        credential_status: Dict[
+            str,
+            bool,
+        ] = {}
+
+        for pid in enabled_providers:
+            env_var = (
+                resolve_credential_env_var(
+                    pid
+                )
+            )
+
+            if env_var:
+                credential_status[
+                    pid
+                ] = (
+                    credential_is_configured(
+                        pid,
+                        env_var,
+                        presence=presence,
+                    )
+                )
+
+        provider_details = (
+            circuit_reg.per_provider_details(
+                enabled_providers,
+                credential_status,
+            )
+        )
+
+        provider_metadata = (
+            self._provider_metadata()
+        )
+
         for row in provider_details:
-            row["provider_id"] = row.pop("provider")
-            row["probe_attempted"] = bool(row.get("probe_count"))
-            row["failure_class"] = row.get("last_failure_class")
-        healthy = [row for row in provider_details if row.get("circuit_state") == CircuitState.CLOSED.value]
+            row[
+                "provider_id"
+            ] = row.pop(
+                "provider"
+            )
+
+            row[
+                "probe_attempted"
+            ] = bool(
+                row.get(
+                    "probe_count"
+                )
+            )
+
+            row[
+                "failure_class"
+            ] = row.get(
+                "last_failure_class"
+            )
+
+            row.update(
+                provider_metadata.get(
+                    row[
+                        "provider_id"
+                    ],
+                    {},
+                )
+            )
+
+        operational_details = [
+            row
+            for row in provider_details
+            if row.get(
+                "credential_available"
+            )
+            is not False
+            and
+            row.get(
+                "local_service_available"
+            )
+            is not False
+        ]
+
+        healthy = [
+            row
+            for row in operational_details
+            if row.get(
+                "circuit_state"
+            )
+            ==
+            CircuitState.CLOSED.value
+        ]
+
+        probe_eligible = [
+            row
+            for row in operational_details
+            if row.get(
+                "circuit_state"
+            )
+            in (
+                CircuitState.UNKNOWN.value,
+                CircuitState.HALF_OPEN.value,
+            )
+        ]
+
+        circuit_summary[
+            "healthy_reasoning_provider_count"
+        ] = len(
+            healthy
+        )
+
+        circuit_summary[
+            "probe_eligible_reasoning_provider_count"
+        ] = len(
+            probe_eligible
+        )
+
+        circuit_summary[
+            "all_reasoning_providers_unavailable"
+        ] = bool(
+            provider_details
+            and
+            not healthy
+            and
+            not probe_eligible
+        )
         selected_provider = None
         if healthy:
             selected_provider = max(
@@ -631,10 +1015,18 @@ class RuntimeEngine:
 
     def trigger_relay(self, *, is_checkpoint: bool = False, force_remote: bool = False) -> Dict[str, Any]:
         h = self.health()
+
+        detailed = self.status()
+
+        relay_telemetry = {
+            **detailed,
+            **h,
+        }
+
         reason = "OPERATOR_COMMAND_MANUAL_CHECKPOINT" if is_checkpoint else None
         queued = self.relay_worker.submit(
             maintenance=self.is_paused,
-            runtime_health_dict=h,
+            runtime_health_dict=relay_telemetry,
             supervisor_pid=h.get("runtime_supervisor_pid"),
             major_gate_reason=reason,
             force_checkpoint=is_checkpoint,

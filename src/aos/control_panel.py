@@ -32,7 +32,13 @@ from aos.runtime_panel_bridge import (
     runtime_status,
     submit_goal_to_runtime,
 )
-from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
+from aos.provenance import (
+    get_authoritative_git_head,
+    is_valid_full_sha,
+    validate_exact_sha_provenance,
+    validate_materialized_runtime_provenance,
+    ProvenanceError,
+)
 from aos.self_diagnosis import SelfDiagnosisEngine
 
 MAX_BODY_BYTES = 256 * 1024
@@ -1695,9 +1701,9 @@ async function refreshStatus() {
     const lanesView = document.getElementById('lanes-view');
     const ovLanesSummary = document.getElementById('overview-lanes-summary');
 
-    if (activeLanesCount === 0) {
-      if (lanesView) lanesView.innerHTML = '<div style="color:var(--text-muted); padding:20px; text-align:center;"><em>No active autonomous lanes currently scheduled.</em></div>';
-      if (ovLanesSummary) ovLanesSummary.innerHTML = '<div style="color:var(--text-muted); padding:12px;"><em>No active lanes running. Use Operations to start an autonomous goal.</em></div>';
+    if (trackedLanesCount === 0) {
+      if (lanesView) lanesView.innerHTML = '<div style="color:var(--text-muted); padding:20px; text-align:center;"><em>No tracked autonomous lanes found.</em></div>';
+      if (ovLanesSummary) ovLanesSummary.innerHTML = '<div style="color:var(--text-muted); padding:12px;"><em>No durable lane telemetry is currently available.</em></div>';
     } else {
       let cockpitHtml = '';
       let overviewSummaryHtml = '';
@@ -1895,10 +1901,10 @@ async function refreshStatus() {
 
     // Top Bar Autonomy Status Derivation
     let autonomyStatus = 'UNKNOWN';
-    if (anyRunning) autonomyStatus = 'RUNNING';
-    else if (anyWaiting) autonomyStatus = 'WAITING';
-    else if (anyHumanRequired) autonomyStatus = 'HUMAN_REQUIRED';
+    if (anyHumanRequired) autonomyStatus = 'HUMAN_REQUIRED';
     else if (anyFailed) autonomyStatus = 'ATTENTION';
+    else if (anyRunning) autonomyStatus = 'RUNNING';
+    else if (anyWaiting) autonomyStatus = 'WAITING';
     else if (activeLanesCount === 0) autonomyStatus = 'IDLE';
 
     const topAutonomy = document.getElementById('top-autonomy-text');
@@ -1914,7 +1920,19 @@ async function refreshStatus() {
     const totalProvidersCount = providerRows.length;
 
     if (totalProvidersCount === 0) {
-      if (providersContainer) providersContainer.innerHTML = '<div style="color:var(--text-muted); padding:10px;">No enabled reasoning provider telemetry found.</div>';
+      if (providersContainer) providersContainer.innerHTML = '<div style="color:var(--text-muted); padding:10px;">Detailed provider telemetry is currently unavailable. This does not mean zero providers are configured.</div>';
+
+      const topProvText = document.getElementById('top-providers-text');
+      if (topProvText) topProvText.textContent = 'UNKNOWN';
+
+      const ovProvAvail = document.getElementById('ov-providers-avail');
+      if (ovProvAvail) ovProvAvail.textContent = 'UNKNOWN';
+
+      const railProvStatus = document.getElementById('rail-providers-status');
+      if (railProvStatus) {
+        railProvStatus.textContent = '?';
+        railProvStatus.className = 'nav-badge alert';
+      }
     } else {
       let ph = `
       <table class="cockpit-table">
@@ -2614,11 +2632,122 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
 
         try:
             from aos.runtime_store import RuntimeStore
-            cids_to_scan = list(dict.fromkeys((active_cmds + waiting_cmds)[-10:]))
+            requested_cids = list(
+                dict.fromkeys(
+                    (
+                        active_cmds
+                        +
+                        waiting_cmds
+                    )[-20:]
+                )
+            )
+
             for root in store_roots:
-                if not (root / "commands").is_dir():
+                if not (
+                    root
+                    / "commands"
+                ).is_dir():
                     continue
-                store = RuntimeStore(root)
+
+                store = RuntimeStore(
+                    root
+                )
+
+                # Runtime detailed status can be DEGRADED while durable command
+                # state is still authoritative. Select one current/latest command
+                # per project directly from durable state so the panel never
+                # fabricates zero lanes merely because enrichment failed.
+                preferred_by_project = {}
+
+                for cid in store.list_command_ids()[-200:]:
+                    cmd_data = (
+                        store.read_command(
+                            cid
+                        )
+                        or {}
+                    )
+
+                    state_data = (
+                        store.read_state(
+                            cid
+                        )
+                        or {}
+                    )
+
+                    project_id = (
+                        (
+                            cmd_data.get(
+                                "project"
+                            )
+                            or {}
+                        ).get(
+                            "project_id"
+                        )
+                        or
+                        "unknown"
+                    )
+
+                    state_name = str(
+                        state_data.get(
+                            "state"
+                        )
+                        or
+                        "UNKNOWN"
+                    )
+
+                    nonterminal = state_name in (
+                        "QUEUED",
+                        "RUNNING",
+                        "RECOVERING",
+                        "EXECUTING",
+                        "WAITING_FOR_REASONING_PROVIDER",
+                        "WAITING_FOR_SOURCE_TRANSPORT",
+                    )
+
+                    previous = (
+                        preferred_by_project.get(
+                            project_id
+                        )
+                    )
+
+                    score = (
+                        1
+                        if nonterminal
+                        else
+                        0
+                    )
+
+                    if (
+                        previous is None
+                        or
+                        score
+                        >
+                        previous[0]
+                        or
+                        score
+                        ==
+                        previous[0]
+                    ):
+                        preferred_by_project[
+                            project_id
+                        ] = (
+                            score,
+                            cid,
+                        )
+
+                cids_to_scan = list(
+                    requested_cids
+                )
+
+                for (
+                    _score,
+                    cid,
+                ) in preferred_by_project.values():
+                    if cid not in cids_to_scan:
+                        cids_to_scan.append(
+                            cid
+                        )
+
                 for cid in cids_to_scan:
                     cmd_data = store.read_command(cid)
                     cmd_state = store.read_state(cid)
@@ -2678,15 +2807,16 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         # Check candidate manifest and build provenance if slot_root is known
         candidate_manifest_sha = None
         build_source_sha = None
+        candidate_manifest_data: Dict[str, Any] = {}
         slot_root_str = runtime_v1.get("runtime_slot_root")
         if slot_root_str:
             try:
                 manifest_path = Path(slot_root_str) / "candidate-manifest.json"
                 if manifest_path.is_file():
                     with open(manifest_path, "r", encoding="utf-8") as f:
-                        m_data = json.load(f)
-                        candidate_manifest_sha = m_data.get("candidate_source_sha")
-                        build_source_sha = m_data.get("build_source_sha")
+                        candidate_manifest_data = json.load(f)
+                        candidate_manifest_sha = candidate_manifest_data.get("candidate_source_sha")
+                        build_source_sha = candidate_manifest_data.get("build_source_sha")
                 build_rec = Path(slot_root_str) / "build-record.json"
                 if not build_source_sha and build_rec.is_file():
                     with open(build_rec, "r", encoding="utf-8") as f:
@@ -2718,17 +2848,48 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 continue
 
-        # PROVEN requires actual successful validation across available chain, not merely format
-        if sha_format_valid and candidate_manifest_sha and local_git_head and build_source_sha:
-            validation = validate_exact_sha_provenance(
-                local_git_head=local_git_head,
-                candidate_manifest_source_sha=candidate_manifest_sha,
+        # Live immutable deployment provenance is independent of later source
+        # checkout movement. Source checkout relation remains separately visible.
+        deployment_validation = (
+            validate_materialized_runtime_provenance(
+                manifest=candidate_manifest_data,
                 runtime_source_sha=active_sha,
-                build_source_sha=build_source_sha,
+                runtime_asset_tree_sha256=runtime_v1.get(
+                    "runtime_asset_tree_sha256"
+                ),
             )
-            provenance_status = "PROVEN" if validation.valid else "FAIL"
+        )
+
+        provenance_status = str(
+            deployment_validation.get(
+                "status",
+                "UNPROVEN",
+            )
+        )
+
+        if (
+            local_git_head
+            and
+            is_valid_full_sha(
+                local_git_head
+            )
+            and
+            is_valid_full_sha(
+                active_sha
+            )
+        ):
+            source_checkout_relation = (
+                "MATCH"
+                if local_git_head.lower()
+                ==
+                active_sha.lower()
+                else
+                "DRIFTED"
+            )
         else:
-            provenance_status = "UNPROVEN"
+            source_checkout_relation = (
+                "UNAVAILABLE"
+            )
 
         # Load native relay snapshot if available
         relay_info = {}
@@ -2752,6 +2913,17 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
 
         # Alerts assessment
         alerts = []
+
+        if (
+            runtime_v1.get(
+                "status_state"
+            )
+            ==
+            "DEGRADED"
+        ):
+            alerts.append(
+                "DETAILED_TELEMETRY_DEGRADED: last accepted durable telemetry is being preserved"
+            )
         if any(l.get("state") == "HUMAN_REQUIRED" for l in lanes_detail.values()):
             alerts.append("HUMAN_REQUIRED: One or more lanes require intervention")
         if any(l.get("state") == "FAILED" for l in lanes_detail.values()):
@@ -2806,6 +2978,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "candidate_manifest_sha": candidate_manifest_sha,
             "build_source_sha": build_source_sha,
             "local_git_head": local_git_head,
+            "source_checkout_relation": source_checkout_relation,
+            "provenance_errors": deployment_validation.get("errors", []),
             "ci_head_sha": None,  # Not fabricated when unavailable
             "provenance_valid": (provenance_status == "PROVEN"),
             "active_commands": active_cmds,

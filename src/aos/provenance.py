@@ -67,6 +67,314 @@ def is_valid_full_sha(sha: Optional[str]) -> bool:
     return bool(SHA_REGEX.fullmatch(sha.strip()))
 
 
+def validate_materialized_runtime_provenance(
+    *,
+    manifest: Mapping[str, Any],
+    runtime_source_sha: Optional[str],
+    runtime_asset_tree_sha256: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate immutable materialized-runtime provenance.
+
+    Three-state semantics are intentional:
+
+    PROVEN
+        Every required immutable proof artifact exists and agrees exactly.
+
+    UNPROVEN
+        Required proof material is absent. Absence is never silently
+        synthesized, aliased, or treated as success.
+
+    FAIL
+        Supplied proof material is malformed or contradicts another
+        supplied immutable artifact.
+
+    The current development checkout HEAD is deliberately not part of
+    live immutable-runtime identity. Materialization already bound the
+    candidate to an exact clean source SHA and successful exact-SHA CI.
+    A later source checkout movement therefore represents development
+    drift, not live deployment corruption.
+    """
+    if not isinstance(
+        manifest,
+        Mapping,
+    ) or not manifest:
+
+        return {
+            "valid":
+                False,
+
+            "status":
+                "UNPROVEN",
+
+            "errors":
+                [
+                    "CANDIDATE_MANIFEST_MISSING",
+                ],
+        }
+
+
+    missing: list[str] = []
+    fatal: list[str] = []
+
+
+    manifest_source = str(
+        manifest.get(
+            "candidate_source_sha"
+        )
+        or ""
+    ).strip().lower()
+
+
+    build_source = str(
+        manifest.get(
+            "build_source_sha"
+        )
+        or ""
+    ).strip().lower()
+
+
+    runtime_source = str(
+        runtime_source_sha
+        or ""
+    ).strip().lower()
+
+
+    manifest_tree = str(
+        manifest.get(
+            "candidate_tree_sha256"
+        )
+        or ""
+    ).strip().lower()
+
+
+    runtime_tree = str(
+        runtime_asset_tree_sha256
+        or ""
+    ).strip().lower()
+
+
+    manifest_provenance = str(
+        manifest.get(
+            "provenance"
+        )
+        or ""
+    ).strip().upper()
+
+
+    if not manifest_provenance:
+        missing.append(
+            "CANDIDATE_MANIFEST_PROVENANCE_MISSING"
+        )
+
+    elif (
+        manifest_provenance
+        !=
+        "PROVEN"
+    ):
+        fatal.append(
+            "CANDIDATE_MANIFEST_PROVENANCE_NOT_PROVEN"
+        )
+
+
+    sha_fields = (
+        (
+            "CANDIDATE_MANIFEST_SOURCE_SHA",
+            manifest_source,
+        ),
+        (
+            "BUILD_SOURCE_SHA",
+            build_source,
+        ),
+        (
+            "RUNTIME_SOURCE_SHA",
+            runtime_source,
+        ),
+    )
+
+
+    for (
+        name,
+        value,
+    ) in sha_fields:
+
+        if not value:
+            missing.append(
+                f"{name}_MISSING"
+            )
+
+        elif not is_valid_full_sha(
+            value
+        ):
+            fatal.append(
+                f"{name}_INVALID"
+            )
+
+
+    # Only compare SHAs when all three are syntactically valid.
+    if (
+        is_valid_full_sha(
+            manifest_source
+        )
+        and
+        is_valid_full_sha(
+            build_source
+        )
+        and
+        is_valid_full_sha(
+            runtime_source
+        )
+        and
+        not (
+            manifest_source
+            ==
+            build_source
+            ==
+            runtime_source
+        )
+    ):
+        fatal.append(
+            "MATERIALIZED_RUNTIME_SOURCE_SHA_MISMATCH"
+        )
+
+
+    raw_ci_run_id = manifest.get(
+        "ci_run_id"
+    )
+
+    if raw_ci_run_id in (
+        None,
+        "",
+    ):
+        ci_run_id = 0
+
+        missing.append(
+            "CI_RUN_ID_MISSING"
+        )
+
+    else:
+        try:
+            ci_run_id = int(
+                raw_ci_run_id
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            ci_run_id = 0
+
+            fatal.append(
+                "CI_RUN_ID_INVALID"
+            )
+
+        else:
+            if ci_run_id <= 0:
+                fatal.append(
+                    "CI_RUN_ID_INVALID"
+                )
+
+
+    if not manifest_tree:
+        missing.append(
+            "CANDIDATE_TREE_SHA256_MISSING"
+        )
+
+    elif not re.fullmatch(
+        r"[0-9a-f]{64}",
+        manifest_tree,
+    ):
+        fatal.append(
+            "CANDIDATE_TREE_SHA256_INVALID"
+        )
+
+
+    if not runtime_tree:
+        missing.append(
+            "RUNTIME_ASSET_TREE_SHA256_MISSING"
+        )
+
+    elif not re.fullmatch(
+        r"[0-9a-f]{64}",
+        runtime_tree,
+    ):
+        fatal.append(
+            "RUNTIME_ASSET_TREE_SHA256_INVALID"
+        )
+
+
+    if (
+        re.fullmatch(
+            r"[0-9a-f]{64}",
+            manifest_tree,
+        )
+        and
+        re.fullmatch(
+            r"[0-9a-f]{64}",
+            runtime_tree,
+        )
+        and
+        manifest_tree
+        !=
+        runtime_tree
+    ):
+        fatal.append(
+            "RUNTIME_ASSET_TREE_MISMATCH"
+        )
+
+
+    if fatal:
+        status = "FAIL"
+
+    elif missing:
+        status = "UNPROVEN"
+
+    else:
+        status = "PROVEN"
+
+
+    return {
+        "valid":
+            status
+            ==
+            "PROVEN",
+
+        "status":
+            status,
+
+        "errors":
+            fatal
+            +
+            missing,
+
+        "candidate_manifest_source_sha":
+            manifest_source
+            or
+            None,
+
+        "build_source_sha":
+            build_source
+            or
+            None,
+
+        "runtime_source_sha":
+            runtime_source
+            or
+            None,
+
+        "ci_run_id":
+            ci_run_id,
+
+        "candidate_tree_sha256":
+            manifest_tree
+            or
+            None,
+
+        "runtime_asset_tree_sha256":
+            runtime_tree
+            or
+            None,
+    }
+
 def get_authoritative_git_head(repo_path: Path) -> str:
     """Read authoritative 40-character commit SHA directly from local Git repository using headless execution."""
     resolved_repo = Path(repo_path).resolve()

@@ -229,7 +229,7 @@ class ProviderCircuitBreakerRegistry:
         now_epoch = time.time() if now is None else now
         relevant_circuits = (
             [self.get_circuit(pid) for pid in provider_ids]
-            if provider_ids
+            if provider_ids is not None
             else list(self._circuits.values())
         )
         probes = [

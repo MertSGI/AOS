@@ -145,6 +145,87 @@ class PlanningArtifactWatcher(threading.Thread):
             self.stop_event.wait(0.5)
 
 
+def _active_runtime_artifact_path(
+    stored_path: str,
+) -> Path:
+    """Rebind AOS-owned descriptor/policy files to the executing candidate slot.
+
+    Command lineage, product workspace, goal and history remain unchanged.
+    Only immutable AOS runtime-owned configuration follows the exact candidate
+    that launched this worker.
+    """
+    original = Path(
+        stored_path
+    ).expanduser().resolve()
+
+    slot_root = str(
+        os.environ.get(
+            "AOS_RUNTIME_SLOT_ROOT"
+        )
+        or ""
+    ).strip()
+
+    if not slot_root:
+        return original
+
+    candidate = (
+        Path(slot_root)
+        .expanduser()
+        .resolve()
+        / "descriptors"
+        / original.name
+    )
+
+    if candidate.is_file():
+        return candidate
+
+    return original
+
+
+_SOURCE_TRANSPORT_CONTEXT_MARKERS = (
+    "failed to resolve revision",
+    "failed to resolve ref",
+    "failed to fetch file",
+    "github actions api",
+)
+
+_SOURCE_TRANSPORT_TRANSIENT_MARKERS = (
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "temporarily unavailable",
+    "remote end closed connection",
+    "connection reset",
+    "timed out",
+    "timeout",
+    "urlopen error",
+)
+
+
+def _is_transient_source_transport_error(
+    exc: BaseException,
+) -> bool:
+    message = _safe_exception_message(
+        exc
+    ).lower()
+
+    return (
+        any(
+            marker in message
+            for marker in _SOURCE_TRANSPORT_CONTEXT_MARKERS
+        )
+        and
+        any(
+            marker in message
+            for marker in _SOURCE_TRANSPORT_TRANSIENT_MARKERS
+        )
+    )
+
+
 def _pause_safe_cycle_result(
     store: RuntimeStore,
     command_id: str,
@@ -344,6 +425,19 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             prior_repair = read_json(project_runtime / "canonical-repair.json")
             canonical_repair_attempted = bool(prior_repair)
             hydrate_environment(overwrite=True)
+
+            active_descriptor_path = (
+                _active_runtime_artifact_path(
+                    command.project.descriptor_path
+                )
+            )
+
+            active_routing_policy_path = (
+                _active_runtime_artifact_path(
+                    command.project.routing_policy_path
+                )
+            )
+
             watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
             watcher.start()
             while True:
@@ -362,10 +456,10 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     "max_batches_per_cycle": command.max_batches_per_cycle,
                 })
                 receipt = run_autonomous_project(
-                    descriptor_path=Path(command.project.descriptor_path),
+                    descriptor_path=active_descriptor_path,
                     workspace=Path(command.project.workspace),
                     runtime_dir=project_runtime,
-                    routing_policy_path=Path(command.project.routing_policy_path),
+                    routing_policy_path=active_routing_policy_path,
                     goal=command.goal,
                     constraints=command.constraints,
                     red_lines=command.red_lines or tuple(DEFAULT_RED_LINES),
@@ -424,6 +518,11 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     canonical_source_sha=receipt.get("canonical_source_sha"),
                     canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
                     worker_pid=os.getpid(),
+                    retry_after_epoch=0,
+                    source_transport_failure_count=0,
+                    failure_class=None,
+                    error_class=None,
+                    error=None,
                 )
                 store.append_event(command_id, "continuation.cycle_result", {
                     "cycle": cycle,
@@ -501,8 +600,149 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             # checkpoint. Ordinary failures always become structured Runtime V1 IPC.
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            state, failure_class = _classify_exception(exc)
             message = _safe_exception_message(exc)
+
+            if _is_transient_source_transport_error(exc):
+                checkpoint = (
+                    read_json(
+                        project_runtime
+                        / "planning-kernel-checkpoint.json"
+                    )
+                    or {}
+                )
+
+                completed = (
+                    cumulative_completed_batch_count(
+                        checkpoint
+                    )
+                )
+
+                previous_state = (
+                    store.read_state(
+                        command_id
+                    )
+                    or {}
+                )
+
+                failure_count = (
+                    int(
+                        previous_state.get(
+                            "source_transport_failure_count",
+                            0,
+                        )
+                        or 0
+                    )
+                    + 1
+                )
+
+                retry_delay = min(
+                    600.0,
+                    30.0
+                    * (
+                        2
+                        **
+                        min(
+                            failure_count - 1,
+                            4,
+                        )
+                    ),
+                )
+
+                retry_after = (
+                    time.time()
+                    + retry_delay
+                )
+
+                failure_receipt = {
+                    "reason":
+                        message,
+
+                    "failure_class":
+                        "SOURCE_TRANSPORT_UNAVAILABLE",
+
+                    "error_class":
+                        exc.__class__.__name__,
+
+                    "structured_runtime_failure":
+                        True,
+
+                    "retry_after_epoch":
+                        retry_after,
+
+                    "lineage_preserved":
+                        True,
+                }
+
+                result = RuntimeResult(
+                    command_id=command_id,
+                    state="WAITING_FOR_SOURCE_TRANSPORT",
+                    disposition="WAITING_FOR_SOURCE_TRANSPORT",
+                    completed_batch_count=completed,
+                    canonical_source_sha=checkpoint.get(
+                        "canonical_source_sha"
+                    ),
+                    canonical_execution_base_sha=checkpoint.get(
+                        "canonical_execution_base_sha"
+                    ),
+                    receipt=failure_receipt,
+                ).to_dict()
+
+                store.write_result(
+                    command_id,
+                    result,
+                )
+
+                store.write_state(
+                    command_id,
+                    state="WAITING_FOR_SOURCE_TRANSPORT",
+                    disposition="WAITING_FOR_SOURCE_TRANSPORT",
+                    worker_pid=None,
+                    error_class=exc.__class__.__name__,
+                    failure_class="SOURCE_TRANSPORT_UNAVAILABLE",
+                    error=message,
+                    completed_batch_count=completed,
+                    retry_after_epoch=retry_after,
+                    source_transport_failure_count=failure_count,
+                )
+
+                stop.set()
+
+                if watcher is not None:
+                    watcher.join(
+                        timeout=2.0
+                    )
+                    watcher = None
+
+                store.append_event(
+                    command_id,
+                    "run.waiting_for_source_transport",
+                    {
+                        "error_class":
+                            exc.__class__.__name__,
+
+                        "failure_class":
+                            "SOURCE_TRANSPORT_UNAVAILABLE",
+
+                        "retry_after_epoch":
+                            retry_after,
+
+                        "retry_delay_seconds":
+                            retry_delay,
+
+                        "source_transport_failure_count":
+                            failure_count,
+
+                        "completed_batch_count":
+                            completed,
+
+                        "lineage_preserved":
+                            True,
+                    },
+                )
+
+                return result
+
+            state, failure_class = _classify_exception(exc)
             failure_receipt = {
                 "reason": message,
                 "failure_class": failure_class,

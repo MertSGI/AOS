@@ -234,7 +234,6 @@ class GenericOpenAICompatiblePlannerProvider:
                 "response_format": response_format,
                 "max_tokens": default_max_output_tokens(schema, self.max_output_tokens),
                 "temperature": 0.0,
-                "store": False,
             }
             if self.extra_body:
                 kwargs["extra_body"] = self.extra_body

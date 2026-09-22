@@ -73,7 +73,13 @@ class ProjectSourceAdapter:
 
     @staticmethod
     def _is_api_capacity_error(exc: BaseException) -> bool:
-        return isinstance(exc, urllib.error.HTTPError) and exc.code in (403, 429)
+        # GitHub REST rate limiting and transient upstream/service failures
+        # are availability conditions, not canonical contradictions.
+        # The fallback remains read-only and exact-SHA bound.
+        return (
+            isinstance(exc, urllib.error.HTTPError)
+            and exc.code in (403, 429, 500, 502, 503, 504)
+        )
 
     def _resolve_ref_via_git_transport(self) -> str:
         """Resolve one exact branch through GitHub's read-only Git transport.

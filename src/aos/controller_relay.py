@@ -21,7 +21,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from aos.process_utils import run_headless
-from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
+from aos.provenance import (
+    get_authoritative_git_head,
+    is_valid_full_sha,
+    validate_exact_sha_provenance,
+    validate_materialized_runtime_provenance,
+    ProvenanceError,
+)
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
@@ -213,13 +219,19 @@ class ControllerRelayPublisher:
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
         build_source_sha = None
+        manifest_data: Dict[str, Any] = {}
+
         if slot_root:
             manifest_file = Path(slot_root) / "candidate-manifest.json"
             if manifest_file.is_file():
                 try:
-                    m_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    manifest_sha = m_data.get("candidate_source_sha")
-                    build_source_sha = m_data.get("build_source_sha")
+                    manifest_data = json.loads(
+                        manifest_file.read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    manifest_sha = manifest_data.get("candidate_source_sha")
+                    build_source_sha = manifest_data.get("build_source_sha")
                 except Exception:
                     pass
             build_record = Path(slot_root) / "build-record.json"
@@ -234,10 +246,14 @@ class ControllerRelayPublisher:
             candidate_fallback = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "candidate" / source_sha / "candidate-manifest.json"
             if candidate_fallback.is_file():
                 try:
-                    m_data = json.loads(candidate_fallback.read_text(encoding="utf-8"))
-                    manifest_sha = m_data.get("candidate_source_sha")
+                    manifest_data = json.loads(
+                        candidate_fallback.read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    manifest_sha = manifest_data.get("candidate_source_sha")
                     if not build_source_sha:
-                        build_source_sha = m_data.get("build_source_sha")
+                        build_source_sha = manifest_data.get("build_source_sha")
                 except Exception:
                     pass
 
@@ -264,19 +280,22 @@ class ControllerRelayPublisher:
             except Exception:
                 continue
 
-        if is_valid_full_sha(source_sha) and manifest_sha and local_git_head and build_source_sha:
-            val = validate_exact_sha_provenance(
-                local_git_head=local_git_head,
-                candidate_manifest_source_sha=manifest_sha,
+        deployment_provenance = (
+            validate_materialized_runtime_provenance(
+                manifest=manifest_data,
                 runtime_source_sha=source_sha,
-                build_source_sha=build_source_sha,
+                runtime_asset_tree_sha256=rh.get(
+                    "runtime_asset_tree_sha256"
+                ),
             )
-            prov_status = "PROVEN" if val.valid else "FAIL"
-        elif is_valid_full_sha(source_sha) and manifest_sha and local_git_head and not build_source_sha:
-            # Missing authoritative build source record leaves provenance UNPROVEN
-            prov_status = "UNPROVEN"
-        else:
-            prov_status = "UNPROVEN"
+        )
+
+        prov_status = str(
+            deployment_provenance.get(
+                "status",
+                "UNPROVEN",
+            )
+        )
 
         # Scan lanes across commands
         runtime_root_str = self.runtime_config.get("runtime_root")
@@ -357,7 +376,7 @@ class ControllerRelayPublisher:
                     if state_str in ("RUNNING", "RECOVERING", "EXECUTING"):
                         active_cmd_count += 1
                         running_lanes += 1
-                    elif state_str == "WAITING_FOR_REASONING_PROVIDER":
+                    elif state_str.startswith("WAITING_"):
                         waiting_lanes += 1
 
                     # Detect mutations in project workspace
@@ -414,7 +433,7 @@ class ControllerRelayPublisher:
                         attempts=attempts,
                         worker_execution_attempt_count=attempts,
                         last_meaningful_progress_at=s_data.get("updated_at"),
-                        current_blocker=s_data.get("disposition") if state_str == "WAITING_FOR_REASONING_PROVIDER" else None,
+                        current_blocker=s_data.get("disposition") if state_str.startswith("WAITING_") else None,
                         provider_backoff=backoff,
                         next_retry_at=retry_str,
                         last_failure_class=s_data.get("failure_class"),
@@ -441,7 +460,14 @@ class ControllerRelayPublisher:
         # Sort lanes deterministically: active/running/recovering first, then by lane_id
         def lane_sort_key(x: Dict[str, Any]) -> tuple:
             # Active/recovering/waiting lanes come before terminal ones
-            is_active = x["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED")
+            is_active = x["state"] in (
+                "RUNNING",
+                "RECOVERING",
+                "EXECUTING",
+                "WAITING_FOR_REASONING_PROVIDER",
+                "WAITING_FOR_SOURCE_TRANSPORT",
+                "QUEUED",
+            )
             return (0 if is_active else 1, x["lane_id"], x["command_id"])
 
         lanes.sort(key=lane_sort_key)
@@ -449,7 +475,14 @@ class ControllerRelayPublisher:
         # Active tracked lanes (non-terminal)
         active_tracked_lanes = [
             l for l in lanes
-            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED")
+            if l["state"] in (
+                "RUNNING",
+                "RECOVERING",
+                "EXECUTING",
+                "WAITING_FOR_REASONING_PROVIDER",
+                "WAITING_FOR_SOURCE_TRANSPORT",
+                "QUEUED",
+            )
         ]
         if not active_tracked_lanes and lanes:
             # Fallback to all lanes if all are terminal

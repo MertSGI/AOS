@@ -366,9 +366,16 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 self.circuit_registry.record_probe(provider_id)
             failed_provider = provider_id
 
-        circuit_summary = self.circuit_registry.summarize() if self.circuit_registry else {}
+        # Only route-eligible providers may influence this request's outage
+        # summary and retry deadline. Paid-disabled, missing-credential, or
+        # otherwise policy-ineligible providers must not create retry churn.
+        circuit_summary = (
+            self.circuit_registry.summarize(tried)
+            if self.circuit_registry
+            else {}
+        )
         next_probe_epoch = (
-            self.circuit_registry.earliest_next_probe()
+            self.circuit_registry.earliest_next_probe(tried)
             if self.circuit_registry
             else (time.time() + 60.0)
         )
