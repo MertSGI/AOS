@@ -36,6 +36,7 @@ from aos.providers import (
     NemotronPlannerProvider,
     OllamaPlannerProvider,
     GenericOpenAICompatiblePlannerProvider,
+    FreeLLMAPILocalPlannerProvider,
 )
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
@@ -110,9 +111,14 @@ class ProviderAttempt:
     error_class: Optional[str] = None
     message: Optional[str] = None
     timestamp: str = ""
+    routed_via: Optional[str] = None
+    routed_provider_id: Optional[str] = None
+    routed_model_id: Optional[str] = None
+    fallback_attempts: Optional[int] = None
+    fallback_trail: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "provider_id": self.provider_id,
             "model_id": self.model_id,
             "status": self.status.value,
@@ -120,6 +126,17 @@ class ProviderAttempt:
             "message": self.message,
             "timestamp": self.timestamp,
         }
+        for key in (
+            "routed_via",
+            "routed_provider_id",
+            "routed_model_id",
+            "fallback_attempts",
+            "fallback_trail",
+        ):
+            value = getattr(self, key)
+            if value is not None:
+                payload[key] = value
+        return payload
 
 
 _PROVIDER_FACTORIES: Dict[str, Callable[[str], Any]] = {
@@ -155,6 +172,23 @@ def _bounded_error_message(exc: Exception) -> str:
     return redact_secrets(str(exc))[:500]
 
 
+def _routing_attempt_fields(provider: Any) -> Dict[str, Any]:
+    """Copy only typed, already-sanitized FreeLLMAPI routing metadata."""
+    if not isinstance(provider, FreeLLMAPILocalPlannerProvider):
+        return {}
+    metadata = provider.last_routing_metadata
+    if not isinstance(metadata, dict):
+        return {}
+    allowed = {
+        "routed_via",
+        "routed_provider_id",
+        "routed_model_id",
+        "fallback_attempts",
+        "fallback_trail",
+    }
+    return {key: value for key, value in metadata.items() if key in allowed}
+
+
 class ProviderFailoverReasoningBackend(ExecutionBackend):
     """Model reasoning backend with real post-invocation provider failover.
 
@@ -185,6 +219,18 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         self.circuit_registry = circuit_registry
 
     def _default_provider_factory(self, provider_id: str, model_id: str) -> Any:
+        if provider_id == "freellmapi_local":
+            entry = self.provider_router.registry.get_provider(provider_id)
+            if entry is None:
+                raise PlannerContractError("freellmapi_local registry entry is missing")
+            return FreeLLMAPILocalPlannerProvider(
+                model=entry.model_id,
+                base_url=entry.base_url or "http://127.0.0.1:3000/v1",
+                credential_env_var=entry.credential_env_var or "FREELLMAPI_LOCAL_API_KEY",
+                max_output_tokens=entry.max_output_tokens or 2200,
+                readiness_timeout_seconds=entry.readiness_timeout_seconds or 1.5,
+            )
+
         factory = _PROVIDER_FACTORIES.get(provider_id)
         if factory is not None:
             return factory(model_id)
@@ -247,6 +293,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     == CircuitState.HALF_OPEN.value
                 )
 
+            provider: Any = None
             try:
                 provider = self.provider_factory(provider_id, model_id)
                 plan_data, response_id, usage = provider.generate_plan(prompt, schema)
@@ -264,11 +311,19 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     model_id=model_id,
                     status=ProviderAttemptStatus.SUCCESS,
                     timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    **_routing_attempt_fields(provider),
                 )
                 attempts.append(attempt)
                 self._record_attempt(attempt)
                 if self.circuit_registry is not None:
-                    self.circuit_registry.record_success(provider_id)
+                    self.circuit_registry.record_success(
+                        provider_id,
+                        credential_available=(
+                            bool(os.environ.get("FREELLMAPI_LOCAL_API_KEY"))
+                            if provider_id == "freellmapi_local" else None
+                        ),
+                        local_service_available=True if provider_id == "freellmapi_local" else None,
+                    )
                     if half_open_probe:
                         self.circuit_registry.record_probe(provider_id)
                     if len(attempts) > 1:
@@ -306,7 +361,16 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 failure_class = "CREDENTIAL_UNAVAILABLE"
             except PlannerTransientError as exc:
                 raw = str(exc).upper()
-                if "CREDIT_EXHAUSTED" in raw or "PAYMENT REQUIRED" in raw:
+                if "LOCAL_GATEWAY_UNAVAILABLE" in raw:
+                    status = ProviderAttemptStatus.UNAVAILABLE
+                    failure_class = "LOCAL_GATEWAY_UNAVAILABLE"
+                elif "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE" in raw:
+                    status = ProviderAttemptStatus.UNAVAILABLE
+                    failure_class = "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE"
+                elif "UPSTREAM_ROUTE_UNAVAILABLE" in raw:
+                    status = ProviderAttemptStatus.RETRYABLE_FAILED
+                    failure_class = "UPSTREAM_ROUTE_UNAVAILABLE"
+                elif "CREDIT_EXHAUSTED" in raw or "PAYMENT REQUIRED" in raw:
                     status = ProviderAttemptStatus.RETRYABLE_FAILED
                     failure_class = "CREDIT_EXHAUSTED"
                 elif "QUOTA" in raw or "RESOURCE_EXHAUSTED" in raw:
@@ -342,6 +406,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     error_class=exc.__class__.__name__,
                     message=_bounded_error_message(exc),
                     timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    **_routing_attempt_fields(provider),
                 )
                 attempts.append(attempt)
                 self._record_attempt(attempt)
@@ -368,11 +433,24 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 error_class=error_class,
                 message=message,
                 timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                **_routing_attempt_fields(provider),
             )
             attempts.append(attempt)
             self._record_attempt(attempt)
             if self.circuit_registry is not None:
-                self.circuit_registry.record_failure(provider_id, failure_class)
+                local_service_available = None
+                credential_available = None
+                if provider_id == "freellmapi_local":
+                    credential_available = bool(os.environ.get("FREELLMAPI_LOCAL_API_KEY"))
+                    readiness = getattr(provider, "last_readiness", None)
+                    if readiness is not None:
+                        local_service_available = bool(readiness.service_available)
+                self.circuit_registry.record_failure(
+                    provider_id,
+                    failure_class,
+                    credential_available=credential_available,
+                    local_service_available=local_service_available,
+                )
                 if half_open_probe:
                     self.circuit_registry.record_probe(provider_id)
             failed_provider = provider_id

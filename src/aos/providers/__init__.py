@@ -7,6 +7,7 @@ from aos.providers.ollama import OllamaPlannerProvider
 from aos.providers.council import DeliberationCouncilV1, assess_council_trigger, blind_proposals
 
 from aos.providers.openai_compatible import GenericOpenAICompatiblePlannerProvider
+from aos.providers.freellmapi_local import FreeLLMAPILocalPlannerProvider
 
 __all__ = [
     "GeminiPlannerProvider",
@@ -14,9 +15,9 @@ __all__ = [
     "NemotronPlannerProvider",
     "OllamaPlannerProvider",
     "GenericOpenAICompatiblePlannerProvider",
+    "FreeLLMAPILocalPlannerProvider",
     "DeliberationCouncilV1",
     "assess_council_trigger",
     "blind_proposals",
 ]
-
 

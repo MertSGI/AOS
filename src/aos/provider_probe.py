@@ -21,6 +21,7 @@ from aos.providers import (
     NemotronPlannerProvider,
     OllamaPlannerProvider,
     GenericOpenAICompatiblePlannerProvider,
+    FreeLLMAPILocalPlannerProvider,
 )
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from extensions.autonomy_fabric.native_workers import redact_secrets
@@ -168,7 +169,45 @@ def provider_runtime_matrix(
             continue
         if not isinstance(cfg, dict):
             continue
-        if str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL":
+        is_local = str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL"
+        if is_local and provider_id == "freellmapi_local":
+            env_name = cfg.get("credential_env_var") or "FREELLMAPI_LOCAL_API_KEY"
+            credential_present = bool(os.environ.get(env_name))
+            started = time.monotonic()
+            provider = FreeLLMAPILocalPlannerProvider(
+                model=cfg.get("model_id") or "auto:reliable",
+                base_url=cfg.get("base_url") or "http://127.0.0.1:3000/v1",
+                credential_env_var=env_name,
+                max_output_tokens=cfg.get("max_output_tokens") or 2200,
+                readiness_timeout_seconds=cfg.get("readiness_timeout_seconds") or 1.5,
+            )
+            readiness = provider.check_readiness(force=True)
+            eligible = readiness.eligible and credential_present
+            if not credential_present:
+                failure_class = "CREDENTIAL_UNAVAILABLE"
+            elif readiness.eligible:
+                failure_class = None
+            elif readiness.reason == "all_upstreams_rate_limited":
+                failure_class = "QUOTA_EXHAUSTED"
+            elif readiness.service_available:
+                failure_class = "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE"
+            else:
+                failure_class = "LOCAL_GATEWAY_UNAVAILABLE"
+            result[provider_id] = {
+                "provider_id": provider_id,
+                "credential_present": "YES" if credential_present else "NO",
+                "connectivity": "PASS" if readiness.service_available else "FAIL",
+                "structured_contract": "NOT_PROBED",
+                "readiness_eligible": eligible,
+                "local_service_available": readiness.service_available,
+                "readiness_reason": readiness.reason,
+                "response_id": None,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "failure_class": failure_class,
+                "evidence_class": "LOCAL_RUNTIME_PROOF" if readiness.service_available else "NOT_PROVEN",
+            }
+            continue
+        if is_local:
             continue
 
         billing_class = str(cfg.get("billing_class", "FREE")).upper()
@@ -419,6 +458,23 @@ def probe_enabled_providers(
         cfg = configured.get(provider_id, {})
         is_local = str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL"
         if is_local:
+            if provider_id == "freellmapi_local":
+                row = matrix.get(provider_id, {}) if isinstance(matrix, dict) else {}
+                available = bool(row.get("local_service_available"))
+                credential_available = row.get("credential_present") == "YES"
+                passed = bool(row.get("readiness_eligible"))
+                results[provider_id] = {
+                    "provider_id": provider_id,
+                    "credential_available": credential_available,
+                    "local_service_available": available,
+                    "probe_attempted": True,
+                    "probe_id": probe_id,
+                    "probe_status": "PASS" if passed else "FAIL",
+                    "failure_class": None if passed else (row.get("failure_class") or "LOCAL_GATEWAY_UNAVAILABLE"),
+                    "last_observed_at": observed_at,
+                    "latency_ms": row.get("latency_ms"),
+                }
+                continue
             available = bool(local.get("service_available"))
             passed = bool(local.get("structured_output_compatible"))
             results[provider_id] = {

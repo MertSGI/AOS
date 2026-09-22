@@ -24,6 +24,7 @@ PROVIDER_ENV_VARS: Dict[str, str] = {
     "CEREBRAS": "CEREBRAS_API_KEY",
     "HUGGINGFACE": "HF_TOKEN",
     "HF": "HF_TOKEN",
+    "FREELLMAPI_LOCAL": "FREELLMAPI_LOCAL_API_KEY",
 }
 
 PROVIDER_ID_ENV_VARS: Dict[str, str] = {
@@ -36,6 +37,7 @@ PROVIDER_ID_ENV_VARS: Dict[str, str] = {
     "huggingface_router": "HF_TOKEN",
     "openai": "OPENAI_API_KEY",
     "openai_paid_safety": "OPENAI_API_KEY",
+    "freellmapi_local": "FREELLMAPI_LOCAL_API_KEY",
 }
 
 

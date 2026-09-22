@@ -2504,7 +2504,7 @@ def _get_sanitized_providers(config: Optional[Dict[str, Any]], providers: Dict[s
                     "billing_class": entry.billing_class,
                     "cloud_local": entry.cloud_local,
                     "enabled": bool(entry.enabled and not paid_provider),
-                    "credential_configurable": bool(entry.credential_env_var and entry.cloud_local == "CLOUD"),
+                    "credential_configurable": bool(entry.credential_env_var),
                     "provider_console_url": entry.provider_console_url,
                     "configured": is_configured,
                 })

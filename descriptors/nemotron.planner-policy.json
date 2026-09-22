@@ -17,6 +17,7 @@
         "openrouter_free",
         "cerebras",
         "huggingface_router",
+        "freellmapi_local",
         "ollama",
         "openai_paid_safety"
       ]
@@ -149,6 +150,25 @@
         "PUBLIC",
         "INTERNAL",
         "CONFIDENTIAL"
+      ]
+    },
+    "freellmapi_local": {
+      "provider_id": "freellmapi_local",
+      "display_name": "FreeLLMAPI (Local Meta-Provider)",
+      "adapter_type": "FREELLMAPI_LOCAL",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "http://127.0.0.1:3000/v1",
+      "readiness_url": "http://127.0.0.1:3000/readyz",
+      "readiness_timeout_seconds": 1.5,
+      "upstream_commit_sha": "15c30081d2ce832bea16d804d9edac4ed87c7bc3",
+      "model_id": "auto:reliable",
+      "credential_env_var": "FREELLMAPI_LOCAL_API_KEY",
+      "billing_class": "FREE",
+      "structured_output": true,
+      "cloud_local": "LOCAL",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
       ]
     },
     "openai_paid_safety": {

@@ -32,6 +32,9 @@ class ProviderEntry:
     priority: Optional[int] = None
     capabilities: Optional[List[str]] = None
     max_output_tokens: Optional[int] = None
+    readiness_url: Optional[str] = None
+    readiness_timeout_seconds: Optional[float] = None
+    upstream_commit_sha: Optional[str] = None
 
 
 @dataclass
@@ -89,6 +92,9 @@ class ProviderRegistry:
                 priority=pdata.get("priority"),
                 capabilities=pdata.get("capabilities"),
                 max_output_tokens=pdata.get("max_output_tokens"),
+                readiness_url=pdata.get("readiness_url"),
+                readiness_timeout_seconds=pdata.get("readiness_timeout_seconds"),
+                upstream_commit_sha=pdata.get("upstream_commit_sha"),
             )
 
 
@@ -159,7 +165,7 @@ class ProviderRouter:
                 if not paid_eligible:
                     continue
 
-            if not ignore_credentials and entry.cloud_local == "CLOUD" and entry.credential_env_var:
+            if not ignore_credentials and entry.credential_env_var:
                 if not os.environ.get(entry.credential_env_var):
                     # Eligibility filtering skip - NOT a post-invocation fallback
                     continue
