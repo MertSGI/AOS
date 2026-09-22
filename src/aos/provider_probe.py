@@ -9,6 +9,7 @@ import platform
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -114,6 +115,15 @@ def _model_for(policy: Dict[str, Any], provider_id: str) -> Optional[str]:
 
 def _classify(exc: Exception) -> str:
     text = str(exc).lower()
+    if (
+        "credit_exhausted" in text
+        or "payment required" in text
+        or "insufficient credit" in text
+        or "out of credit" in text
+        or "monthly included credits" in text
+        or ("depleted" in text and "credit" in text)
+    ):
+        return "CREDIT_EXHAUSTED"
     if isinstance(exc, PlannerCredentialError):
         return "CREDENTIAL_UNAVAILABLE"
     if isinstance(exc, PlannerContractError):
@@ -137,21 +147,32 @@ def _classify(exc: Exception) -> str:
     return "UNKNOWN"
 
 
-def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
+def provider_runtime_matrix(
+    policy_path: Path,
+    provider_ids: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     _hydrate()
     policy = _load_policy(policy_path)
     allow_paid = bool(policy.get("allow_paid_fallback", False))
+    paid_enabled = bool(policy.get("paid_fallback_enabled", False))
+    paid_budget_available = (
+        float(policy.get("paid_daily_budget_usd", 0.0) or 0.0) > 0
+        and float(policy.get("paid_monthly_budget_usd", 0.0) or 0.0) > 0
+    )
+    selected = set(provider_ids) if provider_ids is not None else None
     providers_cfg = policy.get("providers", {}) if isinstance(policy.get("providers"), dict) else {}
     result: Dict[str, Any] = {}
 
     for provider_id, cfg in providers_cfg.items():
+        if selected is not None and provider_id not in selected:
+            continue
         if not isinstance(cfg, dict):
             continue
         if str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL":
             continue
 
         billing_class = str(cfg.get("billing_class", "FREE")).upper()
-        if billing_class == "PAID" and not allow_paid:
+        if billing_class == "PAID" and not (allow_paid and paid_enabled and paid_budget_available):
             # Paid safety net disabled: NOT_PROBED without error
             result[provider_id] = {
                 "provider_id": provider_id,
@@ -223,7 +244,11 @@ def provider_runtime_matrix(policy_path: Path) -> Dict[str, Any]:
             row["message"] = redact_secrets(str(exc))[:300]
         result[provider_id] = row
 
-    if "openai" not in result and "OPENAI_API_KEY" in os.environ:
+    if (
+        "openai" not in result
+        and "OPENAI_API_KEY" in os.environ
+        and (selected is None or "openai" in selected)
+    ):
         result["openai"] = {
             "provider_id": "openai",
             "credential_present": "YES",
@@ -260,7 +285,10 @@ def _memory_bytes() -> Optional[int]:
     return None
 
 
-def local_reasoning_discovery(base_url: str = "http://127.0.0.1:11434") -> Dict[str, Any]:
+def local_reasoning_discovery(
+    base_url: str = "http://127.0.0.1:11434",
+    required_model: Optional[str] = None,
+) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "service_available": False,
         "installed_models": [],
@@ -272,6 +300,8 @@ def local_reasoning_discovery(base_url: str = "http://127.0.0.1:11434") -> Dict[
             "total_memory_bytes": _memory_bytes(),
         },
         "state": "UNAVAILABLE_NO_APPROVED_MODEL",
+        "failure_class": "LOCAL_MODEL_UNAVAILABLE",
+        "latency_ms": None,
     }
     try:
         with urllib.request.urlopen(base_url.rstrip("/") + "/api/tags", timeout=3) as response:
@@ -283,29 +313,27 @@ def local_reasoning_discovery(base_url: str = "http://127.0.0.1:11434") -> Dict[
         return result
     if not result["installed_models"]:
         return result
-    model = str(result["installed_models"][0])
-    body = json.dumps({
-        "model": model,
-        "prompt": "PUBLIC synthetic structured-output probe. Return JSON object {\\\"ok\\\": true} only.",
-        "format": "json",
-        "stream": False,
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        base_url.rstrip("/") + "/api/generate",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    if required_model and required_model not in result["installed_models"]:
+        result["state"] = "UNAVAILABLE_CONFIGURED_MODEL_NOT_INSTALLED"
+        return result
+    model = required_model or str(result["installed_models"][0])
+    started = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        generated = json.loads(payload.get("response", "{}"))
-        if generated.get("ok") is True:
+        provider = OllamaPlannerProvider(model=model, base_url=base_url)
+        proposal, _response_id, _usage = provider.generate_plan(PROBE_PROMPT, PROBE_SCHEMA)
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        if (
+            isinstance(proposal, dict)
+            and proposal.get("project_id") == "synthetic-public-probe"
+            and Draft202012Validator(PROBE_SCHEMA).is_valid(proposal)
+        ):
             result["structured_output_compatible"] = True
             result["selected_local_fallback"] = model
             result["state"] = "AVAILABLE_APPROVED_INSTALLED_MODEL"
-    except Exception:
-        pass
+            result["failure_class"] = None
+    except Exception as exc:
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        result["failure_class"] = _classify(exc)
     return result
 
 
@@ -322,14 +350,27 @@ def _restore_provider_env(snapshot: Dict[str, tuple[bool, Optional[str]]]) -> No
             os.environ.pop(name, None)
 
 
-def run_sanitized_probe(policy_path: Path) -> Dict[str, Any]:
+def run_sanitized_probe(
+    policy_path: Path,
+    provider_ids: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     # Credential hydration is deliberately scoped to the live probe.  Provider
     # secrets loaded from Windows Credential Manager must never leak into later
     # regression tests, checkpoints, evidence, or unrelated child processes.
     snapshot = _snapshot_provider_env()
     try:
-        matrix = provider_runtime_matrix(policy_path)
-        local = local_reasoning_discovery()
+        policy = _load_policy(policy_path)
+        matrix = provider_runtime_matrix(policy_path, provider_ids=provider_ids)
+        configured = policy.get("providers", {}) if isinstance(policy.get("providers"), dict) else {}
+        ollama_cfg = configured.get("ollama", {}) if isinstance(configured.get("ollama"), dict) else {}
+        probe_local = provider_ids is None or "ollama" in provider_ids
+        local = (
+            local_reasoning_discovery(
+                base_url=str(ollama_cfg.get("base_url") or "http://127.0.0.1:11434"),
+                required_model=str(ollama_cfg.get("model_id")) if ollama_cfg.get("model_id") else None,
+            )
+            if probe_local else {}
+        )
         nemotron = matrix.get("nemotron", {})
         nemotron_live = "PASS" if (
             nemotron.get("connectivity") == "PASS"
@@ -348,7 +389,10 @@ def run_sanitized_probe(policy_path: Path) -> Dict[str, Any]:
         _restore_provider_env(snapshot)
 
 
-def probe_enabled_providers(policy_path: Path) -> Dict[str, Dict[str, Any]]:
+def probe_enabled_providers(
+    policy_path: Path,
+    provider_ids: Optional[list[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
     """Run one bounded synthetic live cycle for providers enabled by policy.
 
     The returned mapping contains only sanitized operational fields. Raw model
@@ -362,12 +406,16 @@ def probe_enabled_providers(policy_path: Path) -> Dict[str, Dict[str, Any]]:
         for provider_id, cfg in configured.items()
         if isinstance(cfg, dict) and cfg.get("enabled") is True
     ] if isinstance(configured, dict) else []
-    raw = run_sanitized_probe(policy_path)
+    if provider_ids is not None:
+        selected = set(provider_ids)
+        enabled = [provider_id for provider_id in enabled if provider_id in selected]
+    raw = run_sanitized_probe(policy_path, provider_ids=enabled)
     matrix = raw.get("provider_runtime_matrix", {})
     local = raw.get("local_reasoning", {})
     observed_at = str(raw.get("timestamp") or _dt.datetime.now(_dt.timezone.utc).isoformat())
     results: Dict[str, Dict[str, Any]] = {}
     for provider_id in enabled:
+        probe_id = f"probe-{provider_id}-{uuid.uuid4().hex}"
         cfg = configured.get(provider_id, {})
         is_local = str(cfg.get("cloud_local", "CLOUD")).upper() == "LOCAL"
         if is_local:
@@ -378,10 +426,11 @@ def probe_enabled_providers(policy_path: Path) -> Dict[str, Dict[str, Any]]:
                 "credential_available": None,
                 "local_service_available": available,
                 "probe_attempted": available,
+                "probe_id": probe_id if available else None,
                 "probe_status": "PASS" if passed else ("FAIL" if available else "NOT_ATTEMPTED"),
-                "failure_class": None if passed else "LOCAL_MODEL_UNAVAILABLE",
+                "failure_class": None if passed else (local.get("failure_class") or "LOCAL_MODEL_UNAVAILABLE"),
                 "last_observed_at": observed_at,
-                "latency_ms": None,
+                "latency_ms": local.get("latency_ms"),
             }
             continue
 
@@ -398,6 +447,7 @@ def probe_enabled_providers(policy_path: Path) -> Dict[str, Dict[str, Any]]:
             "credential_available": credential_available,
             "local_service_available": None,
             "probe_attempted": attempted,
+            "probe_id": probe_id if attempted else None,
             "probe_status": "PASS" if passed else ("FAIL" if attempted else "NOT_ATTEMPTED"),
             "failure_class": None if passed else (row.get("failure_class") or "UNKNOWN"),
             "last_observed_at": observed_at,

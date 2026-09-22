@@ -7,7 +7,10 @@ import os
 import urllib.request
 from typing import Any, Dict, Tuple
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 
 class OllamaPlannerProvider:
@@ -57,6 +60,12 @@ class OllamaPlannerProvider:
             err_name = e.__class__.__name__
             raise PlannerContractError(f"Ollama provider failure ({err_name}): {e}") from e
 
+        done_reason = data.get("done_reason")
+        if done_reason == "length":
+            raise PlannerTransientError("Ollama response reached configured output capacity before completing JSON")
+        if data.get("done") is False:
+            raise PlannerContractError("Ollama returned an incomplete non-streaming response")
+
         # Extract message content
         message = data.get("message", {})
         content_str = message.get("content")
@@ -68,6 +77,13 @@ class OllamaPlannerProvider:
             parsed_decision = json.loads(content_str)
         except Exception as e:
             raise PlannerContractError(f"Ollama output is not valid JSON: {e}") from e
+
+        parsed_decision = _sanitize_planner_output(parsed_decision, schema)
+        errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
+        if errors:
+            raise PlannerContractError(
+                f"Ollama output failed canonical JSON schema validation: {errors[0].message}"
+            )
 
         # Extract usage
         usage_data = None

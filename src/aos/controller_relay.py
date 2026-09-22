@@ -22,11 +22,10 @@ from typing import Any, Dict, List, Optional, Union
 
 from aos.process_utils import run_headless
 from aos.provenance import (
+    ProvenanceError,
     get_authoritative_git_head,
     is_valid_full_sha,
-    validate_exact_sha_provenance,
     validate_materialized_runtime_provenance,
-    ProvenanceError,
 )
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
@@ -110,6 +109,8 @@ class RelaySnapshot:
     human_required: bool = False
     production: str = "NO_GO"
     provenance_status: str = "UNPROVEN"
+    provenance_basis: str = "UNAVAILABLE"
+    provenance_errors: List[str] = field(default_factory=list)
     remote_outbox_status: str = "DISABLED"
     remote_issue_number: Optional[int] = None
     last_remote_publish_at: Optional[str] = None
@@ -215,12 +216,12 @@ class ControllerRelayPublisher:
         except Exception:
             api_pid = None
 
-        # Determine provenance
+        # An accepted immutable runtime is bound to materialization evidence,
+        # not to a development checkout HEAD that can legitimately advance.
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
         build_source_sha = None
         manifest_data: Dict[str, Any] = {}
-
         if slot_root:
             manifest_file = Path(slot_root) / "candidate-manifest.json"
             if manifest_file.is_file():
@@ -237,8 +238,8 @@ class ControllerRelayPublisher:
             build_record = Path(slot_root) / "build-record.json"
             if not build_source_sha and build_record.is_file():
                 try:
-                    b_data = json.loads(build_record.read_text(encoding="utf-8"))
-                    build_source_sha = b_data.get("build_source_sha") or b_data.get("source_sha")
+                    build_record_data = json.loads(build_record.read_text(encoding="utf-8"))
+                    build_source_sha = build_record_data.get("build_source_sha") or build_record_data.get("source_sha")
                 except Exception:
                     pass
 
@@ -257,45 +258,40 @@ class ControllerRelayPublisher:
                 except Exception:
                     pass
 
-        # Discover authoritative git checkout explicitly (never alias manifest_sha or candidate_manifest_sha)
         local_git_head = None
-        auth_repo_candidates = []
-        if "authoritative_repo_path" in self.runtime_config:
-            if self.runtime_config["authoritative_repo_path"]:
-                auth_repo_candidates.append(Path(self.runtime_config["authoritative_repo_path"]))
-        else:
-            for auth_root in self.runtime_config.get("authorized_roots", []):
-                auth_repo_candidates.append(Path(auth_root))
-            auth_repo_candidates.extend([
-                Path("C:/Projects/AOS-lane-b"),
-                Path("C:/Projects/AOS"),
-            ])
-        for cand in auth_repo_candidates:
-            try:
-                resolved_cand = cand.expanduser().resolve()
-                if (resolved_cand / ".git").exists():
-                    local_git_head = get_authoritative_git_head(resolved_cand)
-                    if local_git_head:
-                        break
-            except Exception:
-                continue
-
-        deployment_provenance = (
-            validate_materialized_runtime_provenance(
+        if manifest_data:
+            provenance_basis = "IMMUTABLE_RUNTIME_SLOT"
+            deployment_provenance = validate_materialized_runtime_provenance(
                 manifest=manifest_data,
                 runtime_source_sha=source_sha,
-                runtime_asset_tree_sha256=rh.get(
-                    "runtime_asset_tree_sha256"
+                runtime_asset_tree_sha256=(
+                    rh.get("runtime_asset_tree_sha256")
+                    or self.runtime_config.get("runtime_asset_tree_sha256")
                 ),
             )
-        )
-
-        prov_status = str(
-            deployment_provenance.get(
-                "status",
-                "UNPROVEN",
-            )
-        )
+            prov_status = str(deployment_provenance.get("status", "UNPROVEN"))
+            provenance_errors = list(deployment_provenance.get("errors", []) or [])
+        else:
+            provenance_basis = "LIVE_DEVELOPMENT_CHECKOUT"
+            provenance_errors = ["CANDIDATE_MANIFEST_MISSING"]
+            prov_status = "UNPROVEN"
+            auth_repo_candidates = []
+            if "authoritative_repo_path" in self.runtime_config:
+                if self.runtime_config["authoritative_repo_path"]:
+                    auth_repo_candidates.append(Path(self.runtime_config["authoritative_repo_path"]))
+            else:
+                for auth_root in self.runtime_config.get("authorized_roots", []):
+                    auth_repo_candidates.append(Path(auth_root))
+                auth_repo_candidates.extend([Path("C:/Projects/AOS-lane-b"), Path("C:/Projects/AOS")])
+            for cand in auth_repo_candidates:
+                try:
+                    resolved_cand = cand.expanduser().resolve()
+                    if (resolved_cand / ".git").exists():
+                        local_git_head = get_authoritative_git_head(resolved_cand)
+                        if local_git_head:
+                            break
+                except Exception:
+                    continue
 
         # Scan lanes across commands
         runtime_root_str = self.runtime_config.get("runtime_root")
@@ -613,6 +609,8 @@ class ControllerRelayPublisher:
             human_required=human_req,
             production="NO_GO",
             provenance_status=prov_status,
+            provenance_basis=provenance_basis,
+            provenance_errors=provenance_errors,
             remote_outbox_status=self.remote_outbox_status,
             remote_issue_number=self.remote_issue_number,
             aos_heartbeat="ALIVE",
@@ -696,6 +694,8 @@ RUNTIME_HEALTH={snapshot.runtime_health}
 SUPERVISOR_PID={snapshot.supervisor_pid or 'NONE'}
 RUNTIME_API_PID={snapshot.api_pid or 'NONE'}
 PROVENANCE_STATUS={snapshot.provenance_status}
+PROVENANCE_BASIS={snapshot.provenance_basis}
+PROVENANCE_ERRORS_JSON={json.dumps(snapshot.provenance_errors)}
 
 ### HEARTBEAT & FORWARD PROGRESS
 AOS_HEARTBEAT={snapshot.aos_heartbeat}

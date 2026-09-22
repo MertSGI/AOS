@@ -9,6 +9,7 @@ from typing import Any, Dict, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
 GROQ_MAX_OUTPUT_TOKENS = 2200
@@ -99,15 +100,6 @@ def project_groq_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         else:
             projected[k] = v
     return projected
-
-
-def _sanitize_planner_output(data: Any) -> Any:
-    """Recursively strip explicit nulls from dictionaries where properties are optional strings/objects."""
-    if isinstance(data, dict):
-        return {k: _sanitize_planner_output(v) for k, v in data.items() if v is not None}
-    if isinstance(data, list):
-        return [_sanitize_planner_output(item) for item in data]
-    return data
 
 
 class GroqPlannerProvider:
@@ -203,7 +195,7 @@ class GroqPlannerProvider:
         except Exception as e:
             raise PlannerContractError(f"Groq output is not valid JSON: {e}") from e
 
-        parsed_decision = _sanitize_planner_output(parsed_decision)
+        parsed_decision = _sanitize_planner_output(parsed_decision, schema)
 
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:

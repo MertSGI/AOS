@@ -393,7 +393,21 @@ class RuntimeEngine:
 
             any_success = False
             for target in targets.values():
-                results = probe_enabled_providers(target["path"])
+                target_registries = [
+                    ProviderCircuitBreakerRegistry(
+                        self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+                    )
+                    for command_id in target["commands"]
+                ]
+                enabled = self._enabled_from_policy(target["path"])
+                aggregate = ProviderCircuitBreakerRegistry.aggregate_registries(
+                    target_registries,
+                    enabled_providers=enabled,
+                )
+                due = [provider_id for provider_id in enabled if aggregate.is_probe_due(provider_id)]
+                if not due:
+                    continue
+                results = probe_enabled_providers(target["path"], due)
                 any_success = any_success or any(
                     row.get("probe_status") == "PASS" for row in results.values()
                 )
@@ -403,7 +417,7 @@ class RuntimeEngine:
                     )
                     for provider_id, row in results.items():
                         if row.get("probe_attempted"):
-                            registry.record_probe(provider_id)
+                            registry.record_probe(provider_id, probe_id=row.get("probe_id"))
                         common = {
                             "observed_at": row.get("last_observed_at"),
                             "probe_status": str(row.get("probe_status") or "UNKNOWN"),
@@ -416,16 +430,9 @@ class RuntimeEngine:
                                 provider_id,
                                 **common,
                             )
-                        elif (
-                            row.get("probe_attempted")
-                            or
-                            row.get("failure_class")
-                            ==
-                            "LOCAL_MODEL_UNAVAILABLE"
-                        ):
-                            # Do not trip cloud circuits merely because a
-                            # credential/configuration was not available for
-                            # an activation probe.
+                        elif row.get("probe_attempted"):
+                            # NOT_ATTEMPTED is availability metadata, not a
+                            # provider failure or circuit transition.
                             registry.record_failure(
                                 provider_id,
                                 str(
@@ -437,6 +444,8 @@ class RuntimeEngine:
                                 ),
                                 **common,
                             )
+                        else:
+                            registry.record_observation(provider_id, **common)
                     self.store.append_event(command_id, "provider.activation_probe_completed", {
                         "providers": list(results.values()),
                         "secrets_exposed": False,

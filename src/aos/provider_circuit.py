@@ -41,6 +41,17 @@ BACKOFF_TIERS = [
     1800.0,  # 5th+ or quota/capacity exhausted: ~30 min max
 ]
 MAX_BACKOFF_SECONDS = 1800.0
+HALF_OPEN_PROBE_LEASE_SECONDS = 120.0
+CREDIT_EXHAUSTED_COOLDOWN_SECONDS = 24 * 60 * 60.0
+
+
+def _timestamp_epoch(value: Optional[str]) -> float:
+    if not value:
+        return float("-inf")
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return float("-inf")
 
 
 @dataclass
@@ -59,6 +70,8 @@ class ProviderCircuit:
     local_service_available: Optional[bool] = None
     probe_count: int = 0
     failover_count: int = 0
+    half_open_probe_started_at: Optional[float] = None
+    probe_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -86,6 +99,11 @@ class ProviderCircuit:
             ),
             probe_count=int(data.get("probe_count", 0)),
             failover_count=int(data.get("failover_count", 0)),
+            half_open_probe_started_at=(
+                float(data["half_open_probe_started_at"])
+                if data.get("half_open_probe_started_at") is not None else None
+            ),
+            probe_ids=[str(item) for item in data.get("probe_ids", []) if item],
         )
 
 
@@ -131,25 +149,47 @@ class ProviderCircuitBreakerRegistry:
         now_epoch = time.time() if now is None else now
         circuit = self.get_circuit(provider_id)
 
-        if circuit.circuit_state in (
-            CircuitState.CLOSED.value,
-            CircuitState.HALF_OPEN.value,
-            CircuitState.UNKNOWN.value,
-        ):
+        if circuit.circuit_state in (CircuitState.CLOSED.value, CircuitState.UNKNOWN.value):
+            return True
+
+        if circuit.circuit_state == CircuitState.HALF_OPEN.value:
+            started = circuit.half_open_probe_started_at
+            if started is not None and now_epoch < started + HALF_OPEN_PROBE_LEASE_SECONDS:
+                return False
+            circuit.half_open_probe_started_at = now_epoch
+            self.save()
             return True
 
         if circuit.circuit_state == CircuitState.OPEN.value:
             if circuit.next_probe_at is not None and now_epoch >= circuit.next_probe_at:
                 circuit.circuit_state = CircuitState.HALF_OPEN.value
+                circuit.half_open_probe_started_at = now_epoch
                 self.save()
                 return True
             return False
 
         return True
 
+    def is_probe_due(self, provider_id: str, now: Optional[float] = None) -> bool:
+        """Return whether a synthetic probe may run without changing circuit state."""
+        now_epoch = time.time() if now is None else now
+        circuit = self.get_circuit(provider_id)
+        if circuit.circuit_state == CircuitState.CLOSED.value:
+            return False
+        if circuit.circuit_state == CircuitState.UNKNOWN.value:
+            return circuit.credential_available is not False and circuit.local_service_available is not False
+        if circuit.circuit_state == CircuitState.OPEN.value:
+            return circuit.next_probe_at is None or now_epoch >= circuit.next_probe_at
+        if circuit.circuit_state == CircuitState.HALF_OPEN.value:
+            started = circuit.half_open_probe_started_at
+            return started is None or now_epoch >= started + HALF_OPEN_PROBE_LEASE_SECONDS
+        return False
+
     def calculate_backoff(self, failure_class: Optional[str], consecutive_failures: int) -> float:
         """Calculate adaptive backoff duration with jitter and failure class awareness."""
         fc = (failure_class or "").upper()
+        if "CREDIT_EXHAUSTED" in fc or "PAYMENT_REQUIRED" in fc:
+            return CREDIT_EXHAUSTED_COOLDOWN_SECONDS
         if any(token in fc for token in ("QUOTA", "RATE_LIMIT", "429", "RESOURCE_EXHAUSTED", "CAPACITY")):
             # Quota or capacity exhaustion: backoff immediately to longer tier (15-30 mins)
             base = 1800.0 if consecutive_failures >= 2 else 900.0
@@ -177,6 +217,7 @@ class ProviderCircuitBreakerRegistry:
         circuit.circuit_state = CircuitState.CLOSED.value
         circuit.consecutive_failure_count = 0
         circuit.next_probe_at = None
+        circuit.half_open_probe_started_at = None
         circuit.last_success_at = observed_at or utc_now()
         circuit.last_observed_at = circuit.last_success_at
         circuit.last_probe_status = probe_status
@@ -211,11 +252,35 @@ class ProviderCircuitBreakerRegistry:
         backoff = self.calculate_backoff(failure_class, circuit.consecutive_failure_count)
         circuit.next_probe_at = now_epoch + backoff
         circuit.circuit_state = CircuitState.OPEN.value
+        circuit.half_open_probe_started_at = None
         self.save()
         return circuit.next_probe_at
 
-    def record_probe(self, provider_id: str) -> None:
+    def record_observation(
+        self,
+        provider_id: str,
+        *,
+        observed_at: Optional[str] = None,
+        probe_status: str = "NOT_ATTEMPTED",
+        latency_ms: Optional[int] = None,
+        credential_available: Optional[bool] = None,
+        local_service_available: Optional[bool] = None,
+    ) -> None:
+        """Persist availability metadata without fabricating health or a failure."""
         circuit = self.get_circuit(provider_id)
+        circuit.last_observed_at = observed_at or utc_now()
+        circuit.last_probe_status = probe_status
+        circuit.latency_ms = latency_ms
+        circuit.credential_available = credential_available
+        circuit.local_service_available = local_service_available
+        self.save()
+
+    def record_probe(self, provider_id: str, probe_id: Optional[str] = None) -> None:
+        circuit = self.get_circuit(provider_id)
+        if probe_id:
+            if probe_id in circuit.probe_ids:
+                return
+            circuit.probe_ids.append(probe_id)
         circuit.probe_count += 1
         self.save()
 
@@ -241,8 +306,13 @@ class ProviderCircuitBreakerRegistry:
             return max(now_epoch + 30.0, min(probes))
         return now_epoch + 60.0
 
-    def summarize(self, enabled_providers: Optional[List[str]] = None) -> Dict[str, Any]:
+    def summarize(
+        self,
+        enabled_providers: Optional[List[str]] = None,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Produce truthful metrics without treating UNKNOWN/HALF_OPEN as healthy."""
+        now_epoch = time.time() if now is None else now
         pids = enabled_providers if enabled_providers is not None else list(self._circuits.keys())
         healthy_count = 0
         probe_eligible_count = 0
@@ -261,16 +331,21 @@ class ProviderCircuitBreakerRegistry:
                 healthy_count += 1
             elif c.circuit_state == CircuitState.UNKNOWN.value:
                 unknown_count += 1
-                probe_eligible_count += 1
+                if c.credential_available is not False and c.local_service_available is not False:
+                    probe_eligible_count += 1
             elif c.circuit_state == CircuitState.HALF_OPEN.value:
-                probe_eligible_count += 1
+                started = c.half_open_probe_started_at
+                if started is None or now_epoch >= started + HALF_OPEN_PROBE_LEASE_SECONDS:
+                    probe_eligible_count += 1
             elif c.circuit_state == CircuitState.OPEN.value:
                 open_count += 1
                 if c.next_probe_at is not None:
                     if next_probe is None or c.next_probe_at < next_probe:
                         next_probe = c.next_probe_at
+                    if now_epoch >= c.next_probe_at:
+                        probe_eligible_count += 1
             if c.last_success_at:
-                if latest_success is None or c.last_success_at > latest_success:
+                if _timestamp_epoch(c.last_success_at) > _timestamp_epoch(latest_success):
                     latest_success = c.last_success_at
 
         return {
@@ -341,32 +416,38 @@ class ProviderCircuitBreakerRegistry:
         for pid in enabled_providers or []:
             all_providers.setdefault(pid, [])
 
-        def timestamp_epoch(value: Optional[str]) -> float:
-            if not value:
-                return float("-inf")
-            try:
-                return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-            except (TypeError, ValueError):
-                return float("-inf")
-
         for pid, circuits in all_providers.items():
             if not circuits:
                 merged._circuits[pid] = ProviderCircuit(provider_id=pid)
                 continue
 
-            total_probes = sum(c.probe_count for c in circuits)
+            unique_probe_ids = {
+                probe_id
+                for circuit in circuits
+                for probe_id in circuit.probe_ids
+            }
+            legacy_probe_count = sum(
+                max(0, circuit.probe_count - len(circuit.probe_ids))
+                for circuit in circuits
+            )
+            total_probes = legacy_probe_count + len(unique_probe_ids)
             total_failovers = sum(c.failover_count for c in circuits)
-            max_failures = max(c.consecutive_failure_count for c in circuits)
 
-            success_times = [c.last_success_at for c in circuits if c.last_success_at]
-            latest_success = max(success_times) if success_times else None
+            success_circuits = [c for c in circuits if c.last_success_at]
+            latest_success_circuit = (
+                max(success_circuits, key=lambda c: _timestamp_epoch(c.last_success_at))
+                if success_circuits else None
+            )
+            latest_success = latest_success_circuit.last_success_at if latest_success_circuit else None
 
-            failure_times = [c.last_failure_at for c in circuits if c.last_failure_at]
-            latest_failure = max(failure_times) if failure_times else None
-
-            latest_failure_circuit = max(circuits, key=lambda c: timestamp_epoch(c.last_failure_at))
-            latest_failure_epoch = timestamp_epoch(latest_failure)
-            latest_success_epoch = timestamp_epoch(latest_success)
+            failure_circuits = [c for c in circuits if c.last_failure_at]
+            latest_failure_circuit = (
+                max(failure_circuits, key=lambda c: _timestamp_epoch(c.last_failure_at))
+                if failure_circuits else None
+            )
+            latest_failure = latest_failure_circuit.last_failure_at if latest_failure_circuit else None
+            latest_failure_epoch = _timestamp_epoch(latest_failure)
+            latest_success_epoch = _timestamp_epoch(latest_success)
             if latest_success_epoch == float("-inf") and latest_failure_epoch == float("-inf"):
                 state = CircuitState.UNKNOWN.value
                 last_observed = None
@@ -376,6 +457,7 @@ class ProviderCircuitBreakerRegistry:
                 last_observed = latest_success
                 next_probe = None
             else:
+                assert latest_failure_circuit is not None
                 next_probe = latest_failure_circuit.next_probe_at
                 state = (
                     CircuitState.HALF_OPEN.value
@@ -387,17 +469,20 @@ class ProviderCircuitBreakerRegistry:
             latest_observation_circuit = max(
                 circuits,
                 key=lambda c: max(
-                    timestamp_epoch(c.last_success_at),
-                    timestamp_epoch(c.last_failure_at),
-                    timestamp_epoch(c.last_observed_at),
+                    _timestamp_epoch(c.last_success_at),
+                    _timestamp_epoch(c.last_failure_at),
+                    _timestamp_epoch(c.last_observed_at),
                 ),
             )
 
             merged._circuits[pid] = ProviderCircuit(
                 provider_id=pid,
                 circuit_state=state,
-                consecutive_failure_count=max_failures,
-                last_failure_class=latest_failure_circuit.last_failure_class if latest_failure else None,
+                consecutive_failure_count=(
+                    0 if state == CircuitState.CLOSED.value
+                    else latest_failure_circuit.consecutive_failure_count if latest_failure_circuit else 0
+                ),
+                last_failure_class=latest_failure_circuit.last_failure_class if latest_failure_circuit else None,
                 last_failure_at=latest_failure,
                 next_probe_at=next_probe,
                 last_success_at=latest_success,
@@ -408,5 +493,10 @@ class ProviderCircuitBreakerRegistry:
                 local_service_available=latest_observation_circuit.local_service_available,
                 probe_count=total_probes,
                 failover_count=total_failovers,
+                half_open_probe_started_at=(
+                    latest_failure_circuit.half_open_probe_started_at
+                    if state == CircuitState.HALF_OPEN.value and latest_failure_circuit else None
+                ),
+                probe_ids=sorted(unique_probe_ids),
             )
         return merged
