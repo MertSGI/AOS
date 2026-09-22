@@ -193,3 +193,16 @@ def test_goal_composer_uses_project_selector_readonly_profile_and_checks_http_st
     assert "project_id: projectEl ? projectEl.value : ''" in _HTML
     assert "if (!r.ok)" in _HTML
     assert _HTML.index("if (!r.ok)") < _HTML.index("toast('Autonomous Goal Accepted')")
+
+
+def test_dashboard_defines_tracked_lane_count_before_using_it():
+    definition = "const trackedLanesCount = laneKeys.length;"
+    usage = "if (trackedLanesCount === 0)"
+
+    assert definition in _HTML
+    assert usage in _HTML
+    assert _HTML.index(definition) < _HTML.index(usage)
+
+    assert "const activeStates = new Set([" in _HTML
+    assert "'WAITING_FOR_REASONING_PROVIDER'" in _HTML
+    assert "'WAITING_FOR_SOURCE_TRANSPORT'" in _HTML

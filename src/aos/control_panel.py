@@ -1680,7 +1680,23 @@ async function refreshStatus() {
     // 3. Autonomous Lanes Telemetry & Durable History Projection
     const lanes = s.lanes || {};
     const laneKeys = Object.keys(lanes);
-    const activeLanesCount = laneKeys.length;
+
+    const activeStates = new Set([
+      'QUEUED',
+      'RUNNING',
+      'RECOVERING',
+      'EXECUTING',
+      'WAITING_FOR_REASONING_PROVIDER',
+      'WAITING_FOR_SOURCE_TRANSPORT'
+    ]);
+
+    const activeLanesCount = laneKeys.filter(
+      key => activeStates.has(
+        String((lanes[key] || {}).state || '')
+      )
+    ).length;
+
+    const trackedLanesCount = laneKeys.length;
 
     const topLanesText = document.getElementById('top-lanes-text');
     if (topLanesText) topLanesText.textContent = activeLanesCount + ' Active';
