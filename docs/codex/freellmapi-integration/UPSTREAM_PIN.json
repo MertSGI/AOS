@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/tashfeenahmed/freellmapi.git",
+  "commit": "15c30081d2ce832bea16d804d9edac4ed87c7bc3",
+  "checkout": "C:\\Projects\\freellmapi-aos-pin-15c30081",
+  "server_package_version": "0.2.1",
+  "automatic_updates": false,
+  "vendored_into_aos": false,
+  "service": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "api_root": "http://127.0.0.1:3000/v1",
+    "liveness_url": "http://127.0.0.1:3000/livez",
+    "readiness_url": "http://127.0.0.1:3000/readyz",
+    "database_path": "%LOCALAPPDATA%\\AOS\\freellmapi-local\\data\\freeapi.db",
+    "build_command": "npm ci && npm run build:server",
+    "start_command": "npm run start -w server"
+  },
+  "source_phase": {
+    "installed": false,
+    "built": false,
+    "started": false,
+    "startup_authority_changed": false,
+    "live_runtime_changed": false
+  }
+}
