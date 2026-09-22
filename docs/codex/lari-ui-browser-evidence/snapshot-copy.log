@@ -1,0 +1,1009 @@
+
+-------------------------------------------------------------------------------
+   ROBOCOPY     ::     Robust File Copy for Windows                              
+-------------------------------------------------------------------------------
+
+  Started : 22 Eylül 2026 Sal 11:28:15
+   Source : C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\
+     Dest : C:\Projects\AOS-lari-ui-v2-snapshot-20260922-01\
+
+    Files : *.*
+	    
+Exc Files : .git
+	    .aos_workspace_active.lock
+	    .env
+	    .env.local
+	    .env.development.local
+	    .env.test.local
+	    .env.production.local
+	    id_rsa
+	    id_ed25519
+	    credentials.json
+	    secrets.json
+	    *.pem
+	    *.pfx
+	    *.p12
+	    
+ Exc Dirs : .git
+	    node_modules
+	    dist
+	    build
+	    coverage
+	    .vite
+	    .pytest_cache
+	    test-results
+	    playwright-report
+	    .next
+	    .turbo
+	    
+  Options : *.* /S /E /DCOPY:DAT /COPY:DAT /XJ /R:1 /W:1 
+
+------------------------------------------------------------------------------
+
+	                  45	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\
+	    New File  		    3398	.env.example100%  
+	    New File  		     327	.gitignore100%  
+	    New File  		   11625	App.tsx100%  
+	    New File  		    1582	design_remediation_items.md100%  
+	    New File  		     211	fix.cjs100%  
+	    New File  		     209	fix.js100%  
+	    New File  		    3022	fix_admin.cjs100%  
+	    New File  		     363	fix_app.cjs100%  
+	    New File  		     323	fix_booking_desc.cjs100%  
+	    New File  		    1037	fix_booking_kvkk.cjs100%  
+	    New File  		     322	fix_booking_loading.cjs100%  
+	    New File  		     594	fix_booking_loading2.cjs100%  
+	    New File  		     949	fix_booking_loading3.cjs100%  
+	    New File  		     186	fix_contact.cjs100%  
+	    New File  		    1770	fix_docs.cjs100%  
+	    New File  		     226	fix_gemini.cjs100%  
+	    New File  		     763	fix_meta.cjs100%  
+	    New File  		    4969	fix_misc.cjs100%  
+	    New File  		    1630	fix_salon_view.cjs100%  
+	    New File  		    2990	fix_strings2.cjs100%  
+	    New File  		    2628	fix_translations.cjs100%  
+	    New File  		    5338	fix_trans_fast.cjs100%  
+	    New File  		    1286	fix_ts_errors.cjs100%  
+	    New File  		    2941	fix_ts_errors2.cjs100%  
+	    New File  		    9218	FULL_PRODUCT_INTEGRITY_AUDIT.md100%  
+	    New File  		     105	get_app.cjs100%  
+	    New File  		    2431	GO_LIVE_CHECKLIST.md100%  
+	    New File  		    4468	index.html100%  
+	    New File  		     363	index.tsx100%  
+	    New File  		     286	metadata.json100%  
+	    New File  		  140627	package-lock.json100%  
+	    New File  		   14855	package.json100%  
+	    New File  		    3304	QA_WEBSITE_PROFILE.md100%  
+	    New File  		    8309	README.md100%  
+	    New File  		     679	security_runtime_prep.md100%  
+	    New File  		    2361	SECURITY_TODO.md100%  
+	    New File  		     614	tsconfig.json100%  
+	    New File  		   24982	types.ts100%  
+	    New File  		    2841	update_tr.cjs100%  
+	    New File  		      75	vercel.json100%  
+	    New File  		     283	visual_productization_status.md100%  
+	    New File  		     187	vite-env.d.ts100%  
+	    New File  		     603	vite.config.ts100%  
+	  New Dir          0	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\.github\
+	  New Dir          6	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\.github\workflows\
+	    New File  		   49351	lari-health-tourism-slice4-final-e2.yml100%  
+	    New File  		    9381	lari-p2a-local-db-qa.yml100%  
+	    New File  		   13528	lari-phase5-postgres-acceptance.yml100%  
+	    New File  		    4138	lari-qa.yml100%  
+	    New File  		    2468	lari-staging-migrations.yml100%  
+	    New File  		    1033	qa-screenshots.yml100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\backups\
+	    New File  		       0	staging-pre-20260804-20260810-data-20260731-163833.sql
+	    New File  		       0	staging-pre-20260804-20260810-schema-20260731-163833.sql
+	  New Dir         23	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\components\
+	    New File  		   12542	AdminSettingsTab.tsx100%  
+	    New File  		    1600	AppErrorBoundary.tsx100%  
+	    New File  		   41431	BillingTab.tsx100%  
+	    New File  		   18767	BillingTab.tsx.txt100%  
+	    New File  		    5540	BranchManagementSection.tsx100%  
+	    New File  		   18688	BusinessProfileTab.tsx100%  
+	    New File  		    4619	CheckoutPreviewModal.tsx100%  
+	    New File  		   23899	CommunicationOutboxPanel.tsx100%  
+	    New File  		    1651	ConfirmModal.tsx100%  
+	    New File  		   37929	CustomerMemoryTab.tsx100%  
+	    New File  		     503	FeatureBadge.tsx100%  
+	    New File  		    4908	ImageUpload.tsx100%  
+	    New File  		   17755	MockDiagnosticTool.tsx100%  
+	    New File  		   66212	OnboardingWizard.tsx100%  
+	    New File  		    7846	ProductShowcasePreview.tsx100%  
+	    New File  		    2349	ProtectedRoute.tsx100%  
+	    New File  		    6930	PublicLinkSection.tsx100%  
+	    New File  		   55107	ReferralTab.tsx100%  
+	    New File  		   21107	RescheduleRequestsTab.tsx100%  
+	    New File  		    2410	SafeErrorBoundary.tsx100%  
+	    New File  		   12229	SalonReportsTab.tsx100%  
+	    New File  		   69616	SalonWebsiteView.tsx100%  
+	    New File  		    9976	ShareToolkitSection.tsx100%  
+	  New Dir          6	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\components\clinic\
+	    New File  		   25794	ClinicAiAssistPanel.tsx100%  
+	    New File  		   16656	ClinicEncounterPanel.tsx100%  
+	    New File  		   26315	ClinicHtAcceptancePanel.tsx100%  
+	    New File  		    9335	ClinicOperationalDayView.tsx100%  
+	    New File  		   20980	ClinicPatientPanel.tsx100%  
+	    New File  		   16816	ClinicStaffSetupPanel.tsx100%  
+	  New Dir          4	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\components\health-tourism\
+	    New File  		   24145	HealthTourismIntakeForm.tsx100%  
+	    New File  		   15740	HtAiChatWidget.tsx100%  
+	    New File  		   16368	HtLeadDetailPanel.tsx100%  
+	    New File  		    9608	HtLeadListPanel.tsx100%  
+	  New Dir          5	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\components\layouts\
+	    New File  		    2694	AdminLayout.tsx100%  
+	    New File  		    4097	ClinicLayout.tsx100%  
+	    New File  		   14169	MarketingLayout.tsx100%  
+	    New File  		    7746	SalonBookingLayout.tsx100%  
+	    New File  		    6541	SuperAdminLayout.tsx100%  
+	  New Dir          5	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\contexts\
+	    New File  		    1828	AuthContext.tsx100%  
+	    New File  		    2245	DialogContext.tsx100%  
+	    New File  		    2090	LanguageContext.tsx100%  
+	    New File  		    2268	TenantContext.tsx100%  
+	    New File  		    1460	ThemeContext.tsx100%  
+	  New Dir        191	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\docs\
+	    New File  		    2712	AI_ASSISTANT_CONFIGURATION.md100%  
+	    New File  		    8399	BACKGROUND_JOBS_AND_SCHEDULER_OPERATIONS.md100%  
+	    New File  		    3964	BILLING_AND_SUBSCRIPTION_OPERATIONS.md100%  
+	    New File  		    1445	BOOKING_AVAILABILITY_MODEL.md100%  
+	    New File  		    6465	BOOKING_SELF_SERVICE_AND_ABUSE_PREVENTION.md100%  
+	    New File  		    2038	BUTTON_ACTION_AUDIT.md100%  
+	    New File  		    7442	BUTTON_AND_FLOW_SMOKE_TEST_CHECKLIST.md100%  
+	    New File  		    6415	COMMERCIAL_QUOTA_ENFORCEMENT_PATH_MANIFEST.md100%  
+	    New File  		    7112	COMMUNICATION_AND_NOTIFICATION_OPERATIONS.md100%  
+	    New File  		    4830	COMMUNICATION_CONSENT_AND_COMPLIANCE_CHECKLIST.md100%  
+	    New File  		    5825	COMMUNICATION_PROVIDER_CONTRACT_MATRIX.md100%  
+	    New File  		    5012	COMMUNICATION_WEBHOOK_AND_DELIVERY_STATUS_PLAN.md100%  
+	    New File  		    9410	CONTROLLED_FIRST_PILOT_EXECUTION_PLAYBOOK.md100%  
+	    New File  		     987	CUSTOMER_ACCOUNT_LITE_MODEL.md100%  
+	    New File  		    4730	CUSTOMER_PILOT_READINESS_CHECKLIST.md100%  
+	    New File  		    1452	CUSTOMER_PORTAL_LITE_MODEL.md100%  
+	    New File  		    3898	CUSTOMER_PROFILE_LITE_MODEL.md100%  
+	    New File  		    4268	CUSTOM_DOMAIN_DNS_OPERATIONS.md100%  
+	    New File  		    1352	CUSTOM_DOMAIN_STRATEGY.md100%  
+	    New File  		    4646	DATA_EXPORT_IMPORT_AND_MIGRATION_DRY_RUN.md100%  
+	    New File  		    2846	DATA_GOVERNANCE_AND_PRIVACY.md100%  
+	    New File  		    1978	DATA_MODE_AND_SERVICE_BOUNDARIES.md100%  
+	    New File  		    4407	DATA_RIGHTS_REQUEST_OPERATIONS.md100%  
+	    New File  		    2346	DATA_SOURCE_ADAPTERS.md100%  
+	    New File  		    2290	DEMO_DEPLOYMENT_CHECKLIST.md100%  
+	    New File  		    2821	DEPLOYMENT_ROUTING.md100%  
+	    New File  		    3800	EDGE_FUNCTION_CONTRACTS.md100%  
+	    New File  		    2677	EDGE_FUNCTION_DEPLOYMENT_CHECKLIST.md100%  
+	    New File  		    3365	END_TO_END_FLOW_QA.md100%  
+	    New File  		    3339	ENVIRONMENT_MODE_MATRIX.md100%  
+	    New File  		    1049	ENVIRONMENT_VARIABLES.md100%  
+	    New File  		    1519	FINAL_PILOT_READINESS_CHECKLIST.md100%  
+	    New File  		    4971	FINAL_REAL_PILOT_READINESS_REPORT.md100%  
+	    New File  		    1458	FIREBASE_VS_SUPABASE_DECISION.md100%  
+	    New File  		    4107	FIRST_7_DAY_PILOT_MONITORING_SCORECARD.md100%  
+	    New File  		    3711	FIRST_DEMO_FEEDBACK_SCORECARD.md100%  
+	    New File  		    4607	FIRST_IYZICO_SANDBOX_RUN.md100%  
+	    New File  		    4707	FIRST_MANUAL_PILOT_FEEDBACK_SCORECARD.md100%  
+	    New File  		    7499	FIRST_MANUAL_PILOT_OPERATING_PACK.md100%  
+	    New File  		    7651	FIRST_PILOT_ACCEPTANCE_CRITERIA.md100%  
+	    New File  		    7327	FIRST_PILOT_FIXTURE_DATA_PLAN.md100%  
+	    New File  		    5944	FIRST_PILOT_ISSUE_TRIAGE_BOARD.md100%  
+	    New File  		    9030	FIRST_REAL_SALON_DEMO_SCRIPT.md100%  
+	    New File  		   11343	FIRST_REAL_SALON_END_TO_END_REHEARSAL.md100%  
+	    New File  		    3787	FIRST_SALES_DEMO_SCRIPT.md100%  
+	    New File  		    2036	FIRST_WEEK_FOLLOW_UP_SCRIPT.md100%  
+	    New File  		    9608	FOUNDER_PILOT_REHEARSAL_CHECKLIST.md100%  
+	    New File  		    6914	FOUNDER_SALON_OUTREACH_MESSAGE_PACK.md100%  
+	    New File  		   11358	FULL_SYSTEM_QA_CHECKLIST.md100%  
+	    New File  		    2144	GO_LIVE_PROCESS.md100%  
+	    New File  		    2828	GO_LIVE_READINESS_CONSOLE.md100%  
+	    New File  		    2249	GO_NO_GO_LIVE_CHECKLIST.md100%  
+	    New File  		    3350	HOSTING_REWRITE_REQUIREMENTS.md100%  
+	    New File  		    1487	I18N_LANGUAGE_QA.md100%  
+	    New File  		    3273	IYZICO_INTEGRATION_PLAN.md100%  
+	    New File  		    3105	IYZICO_INTEGRATION_RUNBOOK.md100%  
+	    New File  		    6110	IYZICO_SANDBOX_PAYMENT_REHEARSAL.md100%  
+	    New File  		    1995	IYZICO_SANDBOX_PRODUCT_PLAN_SETUP.md100%  
+	    New File  		    2623	IYZICO_SANDBOX_SETUP.md100%  
+	    New File  		    2550	IYZICO_SANDBOX_SETUP_GUIDE.md100%  
+	    New File  		    2475	IYZICO_SANDBOX_TEST_FLOW.md100%  
+	    New File  		    2664	IYZICO_WEBHOOK_TEST_PAYLOADS.md100%  
+	    New File  		    5286	LARI_FOUNDER_READINESS_SCORECARD.md100%  
+	    New File  		   13824	LARI_FULL_SAAS_GAP_AUDIT.md100%  
+	    New File  		    5740	LARI_FULL_SYSTEM_INVENTORY.md100%  
+	    New File  		    5487	LARI_LAUNCH_BLOCKER_REGISTER.md100%  
+	    New File  		   16254	LARI_LIVE_DEPLOYMENT_OPERATIONS_GUIDE.md100%  
+	    New File  		    7150	LARI_NEXT_PHASE_ROADMAP.md100%  
+	    New File  		    4280	LEGAL_KVKK_AND_POLICY_OPERATIONS.md100%  
+	    New File  		    4550	LEGAL_REVIEW_CHECKLIST_BEFORE_PILOT.md100%  
+	    New File  		    4228	LIMITED_LIVE_MINIMUM_INFRASTRUCTURE_CHECKLIST.md100%  
+	    New File  		    5342	LIVE_CUTOVER_EXECUTION_RUNBOOK.md100%  
+	    New File  		    3841	LIVE_DEPLOYMENT_COMMAND_CHECKLIST.md100%  
+	    New File  		    5458	LIVE_RISK_REGISTER.md100%  
+	    New File  		    6159	LIVE_ROUTE_AND_CTA_SMOKE_TEST.md100%  
+	    New File  		    2174	LIVE_SMOKE_TEST_SCRIPT.md100%  
+	    New File  		    4529	LOCAL_TO_SUPABASE_PAYMENTLESS_PRODUCTION_CUTOVER_RUNBOOK.md100%  
+	    New File  		    4634	MANUAL_BILLING_LIVE_SMOKE_TEST.md100%  
+	    New File  		    4538	MANUAL_BILLING_TENANT_OPERATIONS.md100%  
+	    New File  		    5864	MANUAL_PILOT_COMMERCIAL_OPERATIONS_CHECKLIST.md100%  
+	    New File  		    4380	MANUAL_PILOT_SETUP_CHECKLIST.md100%  
+	    New File  		    9314	MANUAL_SALES_DEMO_REHEARSAL_CHECKLIST.md100%  
+	    New File  		    5842	MANUAL_TENANT_ACTIVATION_LIVE_RUNBOOK.md100%  
+	    New File  		    4530	MANUAL_TO_ONLINE_PAYMENT_MIGRATION_RUNBOOK.md100%  
+	    New File  		    2142	MARKETING_WEBSITE_QA.md100%  
+	    New File  		    9844	MASTER_END_TO_END_SYSTEM_AUDIT.md100%  
+	    New File  		    8318	MEDIA_STORAGE_AND_ASSET_OPERATIONS.md100%  
+	    New File  		    3857	MEDIA_STORAGE_PROVIDER_CONTRACT_MATRIX.md100%  
+	    New File  		    1908	MEDIA_UPLOAD_STORAGE_PLAN.md100%  
+	    New File  		    3042	MICRO_FIX_QUEUE.md100%  
+	    New File  		    2440	MIGRATION_PLAN_LOCAL_TO_SUPABASE.md100%  
+	    New File  		    2454	MOBILE_PUBLIC_SITE_QA.md100%  
+	    New File  		    5708	MOCK_STORAGE_RESET_GUIDE.md100%  
+	    New File  		    4071	MULTI_BRANCH_FOUNDATION.md100%  
+	    New File  		    2211	MULTI_MARKET_AND_GLOBALIZATION_STRATEGY.md100%  
+	    New File  		    1344	NAVIGATION_QA_CHECKLIST.md100%  
+	    New File  		    3856	NOTIFICATION_READINESS.md100%  
+	    New File  		    7104	OBSERVABILITY_AUDIT_AND_SUPPORT_OPERATIONS.md100%  
+	    New File  		    4323	OBSERVABILITY_PROVIDER_CONTRACT_MATRIX.md100%  
+	    New File  		    6669	OFFLINE_PAYMENT_LAUNCH_READINESS.md100%  
+	    New File  		    2433	ONBOARDING_QA_CHECKLIST.md100%  
+	    New File  		    2452	ONBOARDING_WIZARD_FLOW.md100%  
+	    New File  		    4112	ONLINE_PAYMENT_ENABLEMENT_LATER_PLAN.md100%  
+	    New File  		    4778	PAYMENTLESS_LIMITED_LIVE_LAUNCH_PLAN.md100%  
+	    New File  		    4892	PAYMENTLESS_LIMITED_PILOT_ACCEPTANCE.md100%  
+	    New File  		    4813	PAYMENTLESS_PRODUCTION_BACKUP_RESTORE_RUNBOOK.md100%  
+	    New File  		   10475	PAYMENTLESS_PRODUCTION_CUTOVER_PLAN.md100%  
+	    New File  		    7113	PAYMENTLESS_PRODUCTION_DATA_CUTOVER_MATRIX.md100%  
+	    New File  		    8843	PAYMENTLESS_PRODUCTION_GO_NO_GO_REPORT.md100%  
+	    New File  		    6053	PAYMENTLESS_PRODUCTION_HOSTING_DOMAIN_SSL_PREFLIGHT.md100%  
+	    New File  		    7827	PAYMENTLESS_PRODUCTION_SCOPE_CLARIFICATION.md100%  
+	    New File  		    2873	PAYMENT_EDGE_FUNCTIONS_PLAN.md100%  
+	    New File  		    2653	PAYMENT_INTEGRATION_RUNBOOK.md100%  
+	    New File  		    5261	PAYMENT_PROVIDER_CONTRACT_MATRIX.md100%  
+	    New File  		    2814	PAYMENT_PROVIDER_DECISION.md100%  
+	    New File  		    3442	PAYMENT_READINESS_CHECKLIST.md100%  
+	    New File  		    2220	PAYMENT_RUN_MODES.md100%  
+	    New File  		    1688	PAYMENT_WEBHOOKS.md100%  
+	    New File  		    5173	PAYMENT_WEBHOOK_IDEMPOTENCY_AND_RECONCILIATION.md100%  
+	    New File  		    8769	PERSISTENT_DATABASE_REQUIRED_FOR_LIVE.md100%  
+	    New File  		    2676	PILOT_ACCEPTANCE_CHECKLIST.md100%  
+	    New File  		    1865	PILOT_CUSTOMER_INTAKE_FORM.md100%  
+	    New File  		    1624	PILOT_DEMO_QA_CHECKLIST.md100%  
+	    New File  		    3844	PILOT_DEMO_SCRIPT.md100%  
+	    New File  		   19815	PILOT_DOCS_INDEX.md100%  
+	    New File  		    6025	PILOT_LAUNCH_DECISION_GATE.md100%  
+	    New File  		    2284	PILOT_ONBOARDING_CALL_SCRIPT.md100%  
+	    New File  		    4767	PILOT_SALON_INTAKE_FORM.md100%  
+	    New File  		    2515	PLAN_MANAGEMENT_MODEL.md100%  
+	    New File  		    4745	POLICY_ACCEPTANCE_AND_CONSENT_LEDGER.md100%  
+	    New File  		    2885	POST_PAYMENT_ONBOARDING_PLAN.md100%  
+	    New File  		    4076	PRE_LIVE_HARDENING_AND_CUTOVER_BLOCKERS.md100%  
+	    New File  		    2872	PRIVACY_AND_CUSTOMER_DATA_NOTES.md100%  
+	    New File  		    2680	PRODUCT_ARCHITECTURE.md100%  
+	    New File  		    6034	PRODUCT_CAPABILITY_MATRIX.md100%  
+	    New File  		    2140	PROHIBITED_BUSINESS_POLICY.md100%  
+	    New File  		    2252	PROJECT_REMAINING_GAPS.md100%  
+	    New File  		    3271	PUBLIC_LINKS_AND_DOMAINS.md100%  
+	    New File  		    5800	PUBLIC_SALES_FUNNEL_STRATEGY.md100%  
+	    New File  		    5336	PUBLIC_SITE_PROVISIONING.md100%  
+	    New File  		   10163	REAL_SUPABASE_STAGING_EXECUTION_OPERATOR_GUIDE.md100%  
+	    New File  		    6525	REFERRAL_SYSTEM_PLAN.md100%  
+	    New File  		    2190	REPORTING_MODEL.md100%  
+	    New File  		    2459	RESPONSIVE_QA_MATRIX.md100%  
+	    New File  		   11178	RLS_POLICY_PLAN.md100%  
+	    New File  		    1397	ROLE_RESPONSIBILITIES.md100%  
+	    New File  		    3158	ROUTE_SMOKE_TEST.md100%  
+	    New File  		    1855	ROUTING_AND_ROLE_QA.md100%  
+	    New File  		    6851	SALES_DEMO_OBJECTION_CHEAT_SHEET.md100%  
+	    New File  		    2167	SALON_WEBSITE_DESIGN_SYSTEM.md100%  
+	    New File  		    2477	SANDBOX_PAYMENT_TEST_CHECKLIST.md100%  
+	    New File  		    1859	SANDBOX_PAYMENT_TEST_PLAN.md100%  
+	    New File  		    3070	SANDBOX_RUN_EVIDENCE_TEMPLATE.md100%  
+	    New File  		    5679	SCHEMA_MISMATCH_REPORT.md100%  
+	    New File  		    5168	SCREENSHOT_QA_CHECKLIST.md100%  
+	    New File  		    2261	SELF_SERVICE_REGISTRATION_FLOW.md100%  
+	    New File  		    3007	SERVICE_CONTRACTS.md100%  
+	    New File  		    2868	SHARE_TOOLKIT.md100%  
+	    New File  		    1514	SITE_ROUTING_AND_DOMAIN_MODEL.md100%  
+	    New File  		    3000	SUBSCRIPTION_LIFECYCLE.md100%  
+	    New File  		    3246	SUBSCRIPTION_QA_CHECKLIST.md100%  
+	    New File  		    3680	SUPABASE_ADAPTER_GAP_NOTES.md100%  
+	    New File  		    5326	SUPABASE_ADAPTER_PARITY_MATRIX.md100%  
+	    New File  		    5194	SUPABASE_AUTH_PAYMENTLESS_PRODUCTION_READINESS.md100%  
+	    New File  		    7320	SUPABASE_AUTH_RLS_BOOTSTRAP_RUNBOOK.md100%  
+	    New File  		    6830	SUPABASE_CANONICAL_MIGRATION_APPLY_STRATEGY.md100%  
+	    New File  		    2329	SUPABASE_DEPLOYMENT_GUIDE.md100%  
+	    New File  		    2527	SUPABASE_EDGE_FUNCTION_DEPLOYMENT.md100%  
+	    New File  		    2226	SUPABASE_EDGE_FUNCTION_LOG_INSPECTION.md100%  
+	    New File  		    6823	SUPABASE_PAYMENTLESS_PRODUCTION_IMPLEMENTATION_MATRIX.md100%  
+	    New File  		    3196	SUPABASE_RLS_AND_SECURITY_MODEL.md100%  
+	    New File  		    7861	SUPABASE_RLS_EXECUTION_CHECKLIST.md100%  
+	    New File  		    5757	SUPABASE_RLS_IDENTITY_MODEL_DECISION.md100%  
+	    New File  		    6607	SUPABASE_RLS_TENANT_ISOLATION_SMOKE_TEST.md100%  
+	    New File  		    5541	SUPABASE_SCHEMA.md100%  
+	    New File  		    3755	SUPABASE_STAGING_AUTH_SEED_PLAN.md100%  
+	    New File  		    5675	SUPABASE_STAGING_BROWSER_SMOKE_CHECKLIST.md100%  
+	    New File  		    3463	SUPABASE_STAGING_COMMAND_SHEET.md100%  
+	    New File  		    8051	SUPABASE_STAGING_CUTOVER_REHEARSAL.md100%  
+	    New File  		    5831	SUPABASE_STAGING_EXECUTION_CHECKLIST.md100%  
+	    New File  		    4581	SUPABASE_STAGING_EXECUTION_RESULT_LOG.md100%  
+	    New File  		   11804	SUPABASE_STAGING_EXECUTION_RUNBOOK.md100%  
+	    New File  		    5511	SUPABASE_STAGING_SEED_DATA_PLAN.md100%  
+	    New File  		    2930	SUPABASE_TEST_PLAN.md100%  
+	    New File  		    4038	SUPPORT_RESPONSE_TEMPLATES.md100%  
+	    New File  		    6830	SUPPORT_TICKET_AND_INCIDENT_RESPONSE.md100%  
+	    New File  		    7108	TRANSACTIONAL_COMMUNICATION_PROVIDER_REHEARSAL.md100%  
+	    New File  		    2012	VERTICAL_MARKET_EXPANSION_MODEL.md100%  
+	    New File  		    5361	VISUAL_AND_IMAGE_RELEVANCE_AUDIT.md100%  
+	    New File  		    1411	WHITE_SCREEN_RECOVERY.md100%  
+	    New File  		    4165	WILDCARD_DNS_AND_SSL_REHEARSAL.md100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\docs\examples\
+	    New File  		     272	iyzico-subscription-webhook.sample.json100%  
+	  New Dir          5	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\docs\h1e\
+	    New File  		   10618	h1e_architecture_decision_record.md100%  
+	    New File  		    4489	h1e_a_runtime_contract_forward_fix.md100%  
+	    New File  		    8164	h1e_eligibility_snapshot_schema.md100%  
+	    New File  		    7177	h1e_gate_truth_table_and_matrix.md100%  
+	    New File  		    7563	h1e_release_control_erd.md100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\docs\p2a\
+	    New File  		    7436	P2A_FOUNDATION_LEDGER.md100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\hooks\
+	    New File  		    3945	useHealthTourismLanguage.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\migrated_prompt_history\
+	    New File  		  165506	prompt_2026-02-19T13_33_39.569Z.json100%  
+	  New Dir         19	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\
+	    New File  		  101480	AdminPage.tsx100%  
+	    New File  		   15032	AIVisualizerPage.tsx100%  
+	    New File  		   37775	AppointmentSelfServicePage.tsx100%  
+	    New File  		   82880	BookingPage.tsx100%  
+	    New File  		    6934	ContactPage.tsx100%  
+	    New File  		   42382	DemoLandingPage.tsx100%  
+	    New File  		   33663	FeaturesPage.tsx100%  
+	    New File  		     295	HealthCheckPage.tsx100%  
+	    New File  		   10778	LoginPage.tsx100%  
+	    New File  		   59710	MarketingHomePage.tsx100%  
+	    New File  		    7060	MobileAppPage.tsx100%  
+	    New File  		   25966	PilotAdminPreviewPage.tsx100%  
+	    New File  		    8824	PilotDemoEntryPage.tsx100%  
+	    New File  		   13297	PricingPage.tsx100%  
+	    New File  		    2465	PrivacyPage.tsx100%  
+	    New File  		   19803	RegistrationPage.tsx100%  
+	    New File  		    5010	SuperAdminDashboard.tsx100%  
+	    New File  		    1676	SupportPage.tsx100%  
+	    New File  		    1870	TermsPage.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\admin\
+	    New File  		    2789	SitePreviewPage.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\clinic\
+	    New File  		    9674	ClinicWorkspacePage.tsx100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\customer\
+	    New File  		    4967	CustomerLoginPage.tsx100%  
+	    New File  		   11320	CustomerPortalPage.tsx100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\health-tourism\
+	    New File  		   19977	HealthTourismLandingPage.tsx100%  
+	    New File  		    8811	HtCoordinatorWorkspacePage.tsx100%  
+	  New Dir         19	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\pages\super-admin\
+	    New File  		    9785	SuperAdminAISettingsPage.tsx100%  
+	    New File  		   82954	SuperAdminCommercialManagementPage.tsx100%  
+	    New File  		   11574	SuperAdminDataExportSection.tsx100%  
+	    New File  		   21032	SuperAdminGoLivePage.tsx100%  
+	    New File  		   46492	SuperAdminLegalPage.tsx100%  
+	    New File  		   15911	SuperAdminManualProvisioningPage.tsx100%  
+	    New File  		   60825	SuperAdminObservabilityPage.tsx100%  
+	    New File  		    7808	SuperAdminOnboardingPage.tsx100%  
+	    New File  		    6038	SuperAdminPaymentsPage.tsx100%  
+	    New File  		   11375	SuperAdminPaymentTestPage.tsx100%  
+	    New File  		   31611	SuperAdminPilotTrackerPage.tsx100%  
+	    New File  		   19167	SuperAdminPlansPage.tsx100%  
+	    New File  		   22990	SuperAdminReferralsPage.tsx100%  
+	    New File  		    3620	SuperAdminReportsPage.tsx100%  
+	    New File  		   17946	SuperAdminSchedulerPage.tsx100%  
+	    New File  		    3293	SuperAdminSettingsPage.tsx100%  
+	    New File  		    7746	SuperAdminSubscriptionsPage.tsx100%  
+	    New File  		    2847	SuperAdminTenantPreviewPage.tsx100%  
+	    New File  		    9910	SuperAdminTenantsPage.tsx100%  
+	  New Dir          3	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\public\
+	    New File  		     503	manifest.json100%  
+	    New File  		     429	sw.js100%  
+	    New File  		      20	_redirects100%  
+	  New Dir          7	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\qa-reports\
+	    New File  		     810	AUTH_ISOLATION_REPORT.md100%  
+	    New File  		     269	PAYMENT_RUN_MODES_REPORT.md100%  
+	    New File  		     671	PILOT_DEMO_REPORT.md100%  
+	    New File  		    2187	product-flow-report.json100%  
+	    New File  		    1236	PRODUCT_FLOW_QA_REPORT.md100%  
+	    New File  		  155424	registration-page-debug.png100%  
+	    New File  		     846	SANDBOX_READINESS_REPORT.md100%  
+	  New Dir        199	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\scripts\
+	    New File  		   24060	aggregate-lari-e2-evidence.mjs100%  
+	    New File  		   10193	audit-manifest-generator.mjs100%  
+	    New File  		   37010	capture-qa-screenshots.mjs100%  
+	    New File  		    1124	check-edge-contracts.mjs100%  
+	    New File  		    1451	check-payment-env.mjs100%  
+	    New File  		   14488	diagnose-h1e-c-dedicated-tenant-readiness.mjs100%  
+	    New File  		    4607	diagnose-h1e-c-dedicated-tenant-readiness.test.mjs100%  
+	    New File  		   16690	execute-e1-token-cancellation-matrix.mjs100%  
+	    New File  		     709	fix-branding.mjs100%  
+	    New File  		    1752	generate-canonical-baseline.mjs100%  
+	    New File  		    6868	prepare-h1e-c-dedicated-tenant-fixture.mjs100%  
+	    New File  		    9044	prepare-h1e-c-dedicated-tenant-fixture.test.mjs100%  
+	    New File  		   23848	run-paymentless-real-pilot-activation.mjs100%  
+	    New File  		   12187	run-paymentless-real-pilot-rollback.mjs100%  
+	    New File  		    2569	scan-frontend-secrets.mjs100%  
+	    New File  		   12334	smoke-supabase-paymentless-staging.mjs100%  
+	    New File  		   75399	test-admin-mutation-rpc-staging.mjs100%  
+	    New File  		   20859	test-admin-mutation-ui-integration.mjs100%  
+	    New File  		    5517	test-admin-reschedule-decision-rpc.mjs100%  
+	    New File  		    4242	test-admin-reschedule-review-ui.mjs100%  
+	    New File  		   12368	test-admin-security-staging.mjs100%  
+	    New File  		   13536	test-appointments-direct-write-hardening.mjs100%  
+	    New File  		   31513	test-clinic-ai-assist-behavioral.mjs100%  
+	    New File  		   31706	test-clinic-ai-assist-contracts.mjs100%  
+	    New File  		   11332	test-clinic-ai-assist-quota-concurrency.mjs100%  
+	    New File  		   11650	test-clinic-application-contracts.mjs100%  
+	    New File  		    9627	test-clinic-domain-server-authority.mjs100%  
+	    New File  		   10237	test-clinic-operational-integration.mjs100%  
+	    New File  		    9092	test-clinic-workspace-static-contracts.mjs100%  
+	    New File  		   14736	test-clinic-workspace-ui.mjs100%  
+	    New File  		    6597	test-commercial-eligibility-enforcement.mjs100%  
+	    New File  		    1932	test-commercial-legacy-compatibility.mjs100%  
+	    New File  		    4916	test-commercial-plan-version-immutability.mjs100%  
+	    New File  		    2271	test-commercial-read-contracts.mjs100%  
+	    New File  		    2764	test-commercial-schema-foundation.mjs100%  
+	    New File  		    2136	test-commercial-security.mjs100%  
+	    New File  		   14860	test-commercial-source-of-truth.mjs100%  
+	    New File  		    2752	test-commercial-super-admin-mutations.mjs100%  
+	    New File  		    3896	test-consistency-scanner-regression.mjs100%  
+	    New File  		   13791	test-customer-rescheduling-rpc.mjs100%  
+	    New File  		    4061	test-customer-rescheduling-ui.mjs100%  
+	    New File  		    6577	test-customer-token-cancellation-rpc.mjs100%  
+	    New File  		    8588	test-data-mode-regression.mjs100%  
+	    New File  		   14364	test-h1d-commercial-admin-contracts-staging-unit.test.mjs100%  
+	    New File  		   41712	test-h1d-commercial-admin-contracts-staging.mjs100%  
+	    New File  		    4929	test-h1d-commercial-admin-contracts.mjs100%  
+	    New File  		    9757	test-h1e-a-credentialed-runner-helpers.mjs100%  
+	    New File  		   17206	test-h1e-a-credentialed-runner.mjs100%  
+	    New File  		   10469	test-h1e-a-credentialed-runner.test.mjs100%  
+	    New File  		    6330	test-h1e-a-migration-47.mjs100%  
+	    New File  		    6732	test-h1e-a-migration-48.mjs100%  
+	    New File  		   23906	test-h1e-b-credentialed-runner.mjs100%  
+	    New File  		   17987	test-h1e-b-credentialed-runner.test.mjs100%  
+	    New File  		    6234	test-h1e-b-migration-49.mjs100%  
+	    New File  		    5515	test-h1e-b-migration-50.mjs100%  
+	    New File  		    9097	test-h1e-c-controlled-acceptance-orchestrator.mjs100%  
+	    New File  		   13886	test-h1e-c-controlled-acceptance-orchestrator.test.mjs100%  
+	    New File  		   11745	test-h1e-c-controlled-browser.mjs100%  
+	    New File  		   15642	test-h1e-c-controlled-browser.test.mjs100%  
+	    New File  		    8594	test-h1e-c-credentialed-runner-helpers.mjs100%  
+	    New File  		   43768	test-h1e-c-credentialed-runner.mjs100%  
+	    New File  		   30199	test-h1e-c-credentialed-runner.test.mjs100%  
+	    New File  		    4620	test-h1e-c-migration-51.mjs100%  
+	    New File  		    4813	test-h1e-c-migration-52.mjs100%  
+	    New File  		    6279	test-h1e-c-migration-53.mjs100%  
+	    New File  		    7116	test-h1e-c-migration-54.mjs100%  
+	    New File  		     675	test-h1e-c-pre-pilot-readonly-smoke.mjs100%  
+	    New File  		    6745	test-health-tourism-foundation-static-contracts.mjs100%  
+	    New File  		   13693	test-health-tourism-slice2-public-intake.mjs100%  
+	    New File  		   41345	test-health-tourism-slice3-lead-ops-ai-assist.mjs100%  
+	    New File  		    7304	test-health-tourism-slice4-block2-clinic-workspace.mjs100%  
+	    New File  		   21502	test-health-tourism-slice4-booking-concurrency.mjs100%  
+	    New File  		   11025	test-health-tourism-slice4-booking-concurrency.py100%  
+	    New File  		    5728	test-health-tourism-slice4-clinic-acceptance.mjs100%  
+	    New File  		   18390	test-health-tourism-slice4-fixture-arity-contract.mjs100%  
+	    New File  		    3510	test-health-tourism-slice4-fixture-uuid-contract.mjs100%  
+	    New File  		     460	test-iyzico-webhook-signature.mjs100%  
+	    New File  		   72177	test-p1a-paymentless-real-pilot-runners.test.mjs100%  
+	    New File  		    7734	test-p1c-public-branch-read-contract.mjs100%  
+	    New File  		    3440	test-p2a-mock-registration-regression.test.mjs100%  
+	    New File  		   15663	test-p2a-owner-onboarding-boundary.test.mjs100%  
+	    New File  		    2194	test-p2a-static-security-scan.test.mjs100%  
+	    New File  		    8935	test-p2a-supabase-registration-boundary.test.mjs100%  
+	    New File  		     563	test-package-branch-concurrency.mjs100%  
+	    New File  		    8712	test-package-branch-server-authority.mjs100%  
+	    New File  		    6460	test-phase2-staff-scheduling-contracts.mjs100%  
+	    New File  		    6421	test-phase3-background-job-calendar-contracts.mjs100%  
+	    New File  		   11381	test-phase3-communications-contracts.mjs100%  
+	    New File  		    6221	test-phase3-custom-domain-contracts.mjs100%  
+	    New File  		    4558	test-phase3-customer360-segmentation-contracts.mjs100%  
+	    New File  		    8370	test-phase3-package-multibranch-contracts.mjs100%  
+	    New File  		   10522	test-phase3-payment-foundation-contracts.mjs100%  
+	    New File  		    5979	test-phase3-reporting-analytics-contracts.mjs100%  
+	    New File  		    7953	test-phase3-resource-capacity-contracts.mjs100%  
+	    New File  		    8900	test-phase3-waitlist-contracts.mjs100%  
+	    New File  		    5701	test-phase4-deposit-noshow-contracts.mjs100%  
+	    New File  		    6020	test-phase4-giftcards-wallet-contracts.mjs100%  
+	    New File  		   11394	test-phase4-loyalty-contracts.mjs100%  
+	    New File  		    6525	test-phase4-packages-memberships-contracts.mjs100%  
+	    New File  		    2972	test-phase5-clinic-practitioner-contracts.mjs100%  
+	    New File  		    5900	test-phase5-ht-journey-contracts.mjs100%  
+	    New File  		    5419	test-phase5-node4-clinic-ai-contracts.mjs100%  
+	    New File  		    6031	test-phase5-node5-funnel-contracts.mjs100%  
+	    New File  		    4318	test-phase5-node6-lead-ops-contracts.mjs100%  
+	    New File  		    5381	test-phase5-vertical-skus-contracts.mjs100%  
+	    New File  		    5393	test-phase6-node1-product-inventory-contracts.mjs100%  
+	    New File  		    6208	test-phase6-node2-suppliers-po-receiving-contracts.mjs100%  
+	    New File  		    2460	test-public-schema-security-inventory.mjs100%  
+	    New File  		  180350	test-r9-contracts-selftest.mjs100%  
+	    New File  		    6624	test-self-service-detail-ui.mjs100%  
+	    New File  		    4466	test-self-service-runtime-target.mjs100%  
+	    New File  		     695	test-setup-env.mjs100%  
+	    New File  		    3903	test-slug-regression.mjs100%  
+	    New File  		   19649	test-super-admin-commercial-browser.mjs100%  
+	    New File  		    6054	test-super-admin-commercial-ui.mjs100%  
+	    New File  		   10769	test-super-admin-commercial-ui.test.ts100%  
+	    New File  		   32147	test-superadmin-and-availability-regression.ts100%  
+	    New File  		    1753	validate-supabase-migration-sql.mjs100%  
+	    New File  		    3348	verify-admin-ux-readiness.mjs100%  
+	    New File  		    1586	verify-appointment-operations.mjs100%  
+	    New File  		    4724	verify-auth-session-isolation.mjs100%  
+	    New File  		    4714	verify-background-jobs-readiness.mjs100%  
+	    New File  		    3830	verify-booking-customer-consistency.mjs100%  
+	    New File  		    6104	verify-booking-self-service-readiness.mjs100%  
+	    New File  		    2985	verify-branch-aware-booking.mjs100%  
+	    New File  		    2944	verify-catalog-consistency.mjs100%  
+	    New File  		    6209	verify-commercial-packaging-readiness.mjs100%  
+	    New File  		    4270	verify-communication-notification-readiness.mjs100%  
+	    New File  		    6159	verify-communication-provider-rehearsal.mjs100%  
+	    New File  		    3894	verify-controlled-pilot-execution-readiness.mjs100%  
+	    New File  		    3376	verify-customer-campaign-referrals-rewards.mjs100%  
+	    New File  		    3201	verify-customer-campaign-referrals.mjs100%  
+	    New File  		    4398	verify-customer-pilot-readiness.mjs100%  
+	    New File  		    2982	verify-customer-portal-containment.mjs100%  
+	    New File  		    2706	verify-data-export-readiness.mjs100%  
+	    New File  		    2497	verify-data-governance-readiness.mjs100%  
+	    New File  		    2659	verify-data-source-adapters.mjs100%  
+	    New File  		    3988	verify-demo-data-quality.mjs100%  
+	    New File  		    2772	verify-demo-rehearsal-pack.mjs100%  
+	    New File  		    7640	verify-dns-subdomain-readiness.mjs100%  
+	    New File  		    1875	verify-entitlements.mjs100%  
+	    New File  		    2228	verify-final-pilot-readiness.mjs100%  
+	    New File  		    5885	verify-final-pilot-rehearsal-readiness.mjs100%  
+	    New File  		    4006	verify-first-manual-pilot-pack.mjs100%  
+	    New File  		    4315	verify-first-sandbox-run-readiness.mjs100%  
+	    New File  		    5278	verify-full-saas-gap-audit.mjs100%  
+	    New File  		   25485	verify-h1e-c-fixture-sql-contract.test.mjs100%  
+	    New File  		    5191	verify-iyzico-sandbox-readiness.mjs100%  
+	    New File  		    6932	verify-legal-consent-readiness.mjs100%  
+	    New File  		    1597	verify-live-cutover-runbook.mjs100%  
+	    New File  		    3153	verify-live-operations-docs.mjs100%  
+	    New File  		    4268	verify-live-readiness-smoke.mjs100%  
+	    New File  		    2975	verify-market-global-readiness.mjs100%  
+	    New File  		    2221	verify-master-system-audit.mjs100%  
+	    New File  		    9633	verify-media-storage-readiness.mjs100%  
+	    New File  		    5711	verify-mock-crud.ts100%  
+	    New File  		    2043	verify-multi-branch-foundation.mjs100%  
+	    New File  		    3389	verify-notification-readiness.mjs100%  
+	    New File  		    9017	verify-observability-support-readiness.mjs100%  
+	    New File  		    9928	verify-onboarding-readiness.mjs100%  
+	    New File  		    2600	verify-payment-run-modes.mjs100%  
+	    New File  		    4274	verify-paymentless-limited-live-readiness.mjs100%  
+	    New File  		    4849	verify-paymentless-production-cutover-readiness.mjs100%  
+	    New File  		    4643	verify-paymentless-production-go-no-go-readiness.mjs100%  
+	    New File  		    5213	verify-paymentless-production-scope-clarity.mjs100%  
+	    New File  		    4948	verify-paymentless-production-technical-cutover.mjs100%  
+	    New File  		    1818	verify-pilot-admin-preview.mjs100%  
+	    New File  		    5101	verify-pilot-demo.mjs100%  
+	    New File  		    2650	verify-pilot-launch-readiness.mjs100%  
+	    New File  		    1732	verify-pilot-onboarding-readiness.mjs100%  
+	    New File  		    3370	verify-pilot-readiness.mjs100%  
+	    New File  		    1877	verify-pre-live-hardening.mjs100%  
+	    New File  		    9805	verify-product-flow.mjs100%  
+	    New File  		    7031	verify-provisioning-e2e-readiness.mjs100%  
+	    New File  		    2391	verify-public-booking-flow.mjs100%  
+	    New File  		    2800	verify-public-links.mjs100%  
+	    New File  		     750	verify-publish-gate.mjs100%  
+	    New File  		    5201	verify-real-supabase-staging-execution-readiness.mjs100%  
+	    New File  		    3936	verify-referral-program.mjs100%  
+	    New File  		    7180	verify-rls-policy-pack.mjs100%  
+	    New File  		    2062	verify-route-link-integrity.mjs100%  
+	    New File  		    2066	verify-sales-demo-polish.mjs100%  
+	    New File  		    1918	verify-sales-funnel-logic.mjs100%  
+	    New File  		    4438	verify-sales-funnel-navigation.mjs100%  
+	    New File  		    4009	verify-sandbox-readiness.mjs100%  
+	    New File  		    5329	verify-sandbox-run-evidence.mjs100%  
+	    New File  		    2801	verify-share-toolkit.mjs100%  
+	    New File  		    2173	verify-site-provisioning-and-manual-sales.mjs100%  
+	    New File  		    3825	verify-subscription-lifecycle-readiness.mjs100%  
+	    New File  		    5534	verify-supabase-active-migration-path.mjs100%  
+	    New File  		    6784	verify-supabase-adapter-parity.mjs100%  
+	    New File  		    3129	verify-supabase-auth-rls-bootstrap-readiness.mjs100%  
+	    New File  		   13357	verify-supabase-migration-integrity.mjs100%  
+	    New File  		    4809	verify-supabase-paymentless-production-readiness.mjs100%  
+	    New File  		    5682	verify-supabase-priority1-core-flows.mjs100%  
+	    New File  		    3962	verify-supabase-schema.mjs100%  
+	    New File  		   18555	verify-supabase-staging-consistency.mjs100%  
+	    New File  		    4158	verify-supabase-staging-env.mjs100%  
+	    New File  		    4615	verify-supabase-staging-readiness.mjs100%  
+	  New Dir         96	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\services\
+	    New File  		    6682	adminAppointmentService.ts100%  
+	    New File  		    3244	adminCustomerService.ts100%  
+	    New File  		    3660	adminFeatureAvailabilityService.ts100%  
+	    New File  		    6103	adminRescheduleService.ts100%  
+	    New File  		   36323	appointmentSelfServiceService.ts100%  
+	    New File  		   11747	appointmentService.ts100%  
+	    New File  		    9668	auditLogService.ts100%  
+	    New File  		    1549	authProfileMapper.ts100%  
+	    New File  		    5165	authService.ts100%  
+	    New File  		    8742	availabilityService.ts100%  
+	    New File  		   26041	backgroundJobService.ts100%  
+	    New File  		    9778	bookingAbuseProtectionService.ts100%  
+	    New File  		   13079	branchService.ts100%  
+	    New File  		    1473	brandingService.ts100%  
+	    New File  		    2270	businessProfileService.ts100%  
+	    New File  		    3918	businessVerificationService.ts100%  
+	    New File  		    1189	calendarProviderContract.ts100%  
+	    New File  		    2387	calendarService.ts100%  
+	    New File  		    6228	clinicAiAssistService.ts100%  
+	    New File  		    6525	clinicService.ts100%  
+	    New File  		    6361	clinicUiPolicy.ts100%  
+	    New File  		    2679	commercialCatalogService.ts100%  
+	    New File  		    8378	communicationEventService.ts100%  
+	    New File  		    2102	communicationProviderConfigService.ts100%  
+	    New File  		    8377	consentLedgerService.ts100%  
+	    New File  		    6740	consentService.ts100%  
+	    New File  		     767	currencyService.ts100%  
+	    New File  		    5942	customer360Service.ts100%  
+	    New File  		   21333	customerCampaignService.ts100%  
+	    New File  		    4948	customerPilotReadinessService.ts100%  
+	    New File  		    1698	customerService.ts100%  
+	    New File  		    9585	dataExportService.ts100%  
+	    New File  		     679	dataProvider.ts100%  
+	    New File  		    9024	dataRightsRequestService.ts100%  
+	    New File  		     618	dataSourceConfig.ts100%  
+	    New File  		    2086	dataSourceModeResolver.ts100%  
+	    New File  		    2683	deterministicTestCalendarProvider.ts100%  
+	    New File  		    5243	deterministicTestCommunicationProvider.ts100%  
+	    New File  		    5233	deterministicTestPaymentProvider.ts100%  
+	    New File  		    1881	domainResolverService.ts100%  
+	    New File  		   14904	entitlementService.ts100%  
+	    New File  		    5308	environmentPreflightService.ts100%  
+	    New File  		    1968	geminiService.ts100%  
+	    New File  		   10107	goLiveReadinessService.ts100%  
+	    New File  		   11109	goLiveService.ts100%  
+	    New File  		    6614	incidentResponseService.ts100%  
+	    New File  		    8318	launchModeService.ts100%  
+	    New File  		   26340	legalDocumentService.ts100%  
+	    New File  		    3416	loyaltyReactivationService.ts100%  
+	    New File  		    4588	manualProvisioningService.ts100%  
+	    New File  		    4960	marketConfigService.ts100%  
+	    New File  		   15169	mediaAssetService.ts100%  
+	    New File  		    1874	mediaUploadService.ts100%  
+	    New File  		   23621	messageTemplateService.ts100%  
+	    New File  		   10360	migrationDryRunService.ts100%  
+	    New File  		     936	mockDataProvider.ts100%  
+	    New File  		    5561	notificationService.ts100%  
+	    New File  		    6835	notificationTemplateService.ts100%  
+	    New File  		   12735	onboardingChecklistService.ts100%  
+	    New File  		    1859	paymentDiagnosticsService.ts100%  
+	    New File  		    2889	paymentProvider.ts100%  
+	    New File  		    1517	paymentProviderConfigService.ts100%  
+	    New File  		    2030	paymentProviderContract.ts100%  
+	    New File  		    4268	paymentRunModeService.ts100%  
+	    New File  		    1811	paymentSandboxTestService.ts100%  
+	    New File  		    1019	pilotBypassPolicy.ts100%  
+	    New File  		    9204	pilotCustomerOnboardingService.ts100%  
+	    New File  		   17652	pilotDemoService.ts100%  
+	    New File  		   14798	planService.ts100%  
+	    New File  		    8480	policyAcceptanceService.ts100%  
+	    New File  		     664	postBookingSideEffectPolicy.ts100%  
+	    New File  		   11373	productionReadinessGateService.ts100%  
+	    New File  		    4366	productionStorageGuardService.ts100%  
+	    New File  		    3738	provisioningService.ts100%  
+	    New File  		    4204	publicLinkService.ts100%  
+	    New File  		   13571	referralProgramService.ts100%  
+	    New File  		    6474	referralService.ts100%  
+	    New File  		    2963	reportingService.ts100%  
+	    New File  		    9323	repositoryContracts.ts100%  
+	    New File  		   13674	repositoryFactory.ts100%  
+	    New File  		    1395	serviceCatalogService.ts100%  
+	    New File  		    3489	shareToolkitService.ts100%  
+	    New File  		    5702	siteProvisioningService.ts100%  
+	    New File  		    2249	staffService.ts100%  
+	    New File  		   32292	subscriptionService.ts100%  
+	    New File  		     831	supabaseClient.ts100%  
+	    New File  		    1166	supabaseDataProvider.ts100%  
+	    New File  		   15624	superAdminCommercialAdapter.ts100%  
+	    New File  		   12305	superAdminService.ts100%  
+	    New File  		    9650	supportTicketService.ts100%  
+	    New File  		    9831	tenantOnboardingFlowService.ts100%  
+	    New File  		   16127	tenantRegistrationService.ts100%  
+	    New File  		   17141	tenantService.ts100%  
+	    New File  		     179	trialConfigService.ts100%  
+	    New File  		    8788	useAdminBootstrap.ts100%  
+	    New File  		    1784	verticalCommercialService.ts100%  
+	  New Dir         28	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\services\repositories\
+	    New File  		   10531	index.ts100%  
+	    New File  		    1558	localAuditEventRepository.ts100%  
+	    New File  		   10820	localBookingRepository.ts100%  
+	    New File  		    3390	localBusinessProfileRepository.ts100%  
+	    New File  		    3836	localCampaignRepository.ts100%  
+	    New File  		   14109	localCatalogRepository.ts100%  
+	    New File  		    1993	localCommunicationOutboxRepository.ts100%  
+	    New File  		     575	localManualProvisioningRepository.ts100%  
+	    New File  		    3270	localPolicyAndConsentRepository.ts100%  
+	    New File  		    3113	localSelfServiceRepository.ts100%  
+	    New File  		    1829	localSubscriptionRepository.ts100%  
+	    New File  		    2244	localSupportTicketRepository.ts100%  
+	    New File  		    2032	localTenantRepository.ts100%  
+	    New File  		    3108	supabaseAuditEventRepository.ts100%  
+	    New File  		   13544	supabaseBookingRepository.ts100%  
+	    New File  		    5162	supabaseBusinessProfileRepository.ts100%  
+	    New File  		    7522	supabaseCampaignRepository.ts100%  
+	    New File  		   11771	supabaseCatalogRepository.ts100%  
+	    New File  		    2106	supabaseClient.ts100%  
+	    New File  		   29210	supabaseClinicRepository.ts100%  
+	    New File  		    3855	supabaseCommunicationOutboxRepository.ts100%  
+	    New File  		    2049	supabaseManualProvisioningRepository.ts100%  
+	    New File  		    5508	supabasePolicyAndConsentRepository.ts100%  
+	    New File  		    5989	supabaseSelfServiceRepository.ts100%  
+	    New File  		    4570	supabaseSubscriptionRepository.ts100%  
+	    New File  		    3369	supabaseSupportTicketRepository.ts100%  
+	    New File  		    5801	supabaseTenantRepository.ts100%  
+	    New File  		    7969	types.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\
+	    New File  		     588	routes.tsx100%  
+	  New Dir          5	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\
+	    New File  		    1069	ClinicGoldenPathVisual.tsx100%  
+	    New File  		     603	CommercialDemoContainer.tsx100%  
+	    New File  		     786	CommercialDemoIntegration.tsx100%  
+	    New File  		    2260	HealthTourismGoldenPathVisual.module.css100%  
+	    New File  		    2143	HealthTourismGoldenPathVisual.tsx100%  
+	  New Dir          3	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\clinic\
+	    New File  		    2448	ClinicDashboard.module.css100%  
+	    New File  		    1427	ClinicDashboard.tsx100%  
+	    New File  		    2062	ClinicGoldenPathDemo.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\commercial\
+	    New File  		    1345	CommercialDemoShowcase.tsx100%  
+	  New Dir          4	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\CommercialDemo\
+	    New File  		    2025	ClinicShowcase.tsx100%  
+	    New File  		    2104	CommercialDemoIntegration.tsx100%  
+	    New File  		    1107	EV056R3HardeningV2.tsx100%  
+	    New File  		    2503	HealthTourismShowcase.tsx100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\health-tourism\
+	    New File  		    1102	HealthTourismGoldenPathDemo.tsx100%  
+	    New File  		     935	HealthTourismHero.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\HealthTourism\
+	    New File  		     878	HealthTourismHero.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\components\SecurityRuntime\
+	    New File  		    1165	EV058R1ValidationPrep.tsx100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\hooks\
+	    New File  		    1067	useResponsiveViewport.ts100%  
+	    New File  		    1007	useViewport.ts100%  
+	  New Dir         19	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\pages\
+	    New File  		    1604	ClinicCommercialDemo.css100%  
+	    New File  		     190	ClinicCommercialDemo.tsx100%  
+	    New File  		     514	ClinicDashboard.styles.ts100%  
+	    New File  		    1157	ClinicDashboard.tsx100%  
+	    New File  		     857	ClinicGoldenPath.tsx100%  
+	    New File  		     437	ClinicGoldenPathCommercialDemo.css100%  
+	    New File  		     222	ClinicGoldenPathCommercialDemo.tsx100%  
+	    New File  		     486	ClinicGoldenPathDemo.css100%  
+	    New File  		     267	ClinicGoldenPathDemo.tsx100%  
+	    New File  		     700	CommercialDemo.tsx100%  
+	    New File  		    1015	HealthTourism.tsx100%  
+	    New File  		     425	HealthTourismCommercialDemo.css100%  
+	    New File  		     212	HealthTourismCommercialDemo.tsx100%  
+	    New File  		    1111	HealthTourismDashboard.tsx100%  
+	    New File  		     470	HealthTourismDemo.css100%  
+	    New File  		     250	HealthTourismDemo.tsx100%  
+	    New File  		    2568	HealthTourismGoldenPath.tsx100%  
+	    New File  		     244	HealthTourismGoldenPathCommercialDemo.tsx100%  
+	    New File  		     798	HealthTourismLanding.tsx100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\relay\
+	    New File  		    2549	CR2LiteRelay.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\src\styles\
+	    New File  		    1504	responsive-viewport.css100%  
+	  New Dir          3	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\
+	    New File  		     737	config.toml100%  
+	    New File  		   24802	MIGRATION_APPLY_MANIFEST.md100%  
+	    New File  		    2967	seed.sql100%  
+	  New Dir          9	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\.temp\
+	    New File  		       0	cli-latest
+	    New File  		       8	gotrue-version100%  
+	    New File  		     136	linked-project.json100%  
+	    New File  		      95	pooler-url100%  
+	    New File  		      10	postgres-version100%  
+	    New File  		      20	project-ref100%  
+	    New File  		       5	rest-version100%  
+	    New File  		      33	storage-migration100%  
+	    New File  		       8	storage-version100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\archive\
+	    New File  		   11355	20260526_initial_schema.sql100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\baselines\
+	    New File  		  485756	20260814_canonical_baseline_1_to_39.sql100%  
+	    New File  		  487327	20260815_canonical_baseline_1_to_40.sql100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\
+	    New File  		    1403	.env.example100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\ai-quota-check\
+	    New File  		     714	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\ai-recommendation\
+	    New File  		    1342	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\ai-visualization\
+	    New File  		    1327	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\clinic-ai-draft\
+	    New File  		    9020	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\clinic-ai-transcribe\
+	    New File  		    9320	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\create-billing-portal-session\
+	    New File  		    1506	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\create-checkout-session\
+	    New File  		    4991	index.ts100%  
+	  New Dir          3	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\ht-ai-chat\
+	    New File  		   43145	index.ts100%  
+	    New File  		    7593	provider-policy.test.ts100%  
+	    New File  		   10758	provider-policy.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\payment-health\
+	    New File  		    1761	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\payment-webhook\
+	    New File  		    7905	index.ts100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\subscription-sync\
+	    New File  		    4273	index.ts100%  
+	  New Dir          4	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\functions\_shared\
+	    New File  		   32418	clinicAiAssistProvider.ts100%  
+	    New File  		    6498	iyzicoClient.ts100%  
+	    New File  		     515	paymentTypes.ts100%  
+	    New File  		    1121	subscriptionMapper.ts100%  
+	  New Dir         90	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\migrations\
+	    New File  		   15506	001_initial_schema.sql100%  
+	    New File  		     407	002_subscription_alignment.sql100%  
+	    New File  		    2688	003_provisioning_onboarding.sql100%  
+	    New File  		     799	004_iyzico_provider_alignment.sql100%  
+	    New File  		    4013	005_salon_business_profile.sql100%  
+	    New File  		    9798	20260601_lari_core_schema_alignment.sql100%  
+	    New File  		   26930	20260619_lari_rls_policy_draft.sql100%  
+	    New File  		    6310	20260620_paymentless_production_core_tables.sql100%  
+	    New File  		     526	20260621_paymentless_production_repository_columns.sql100%  
+	    New File  		    9005	20260622_paymentless_production_rls_identity_alignment.sql100%  
+	    New File  		    1606	20260713_communication_outbox_rls_hardening.sql100%  
+	    New File  		    1065	20260714_tenants_update_rls_hardening.sql100%  
+	    New File  		    5679	20260715_super_admin_provisioning_rpc.sql100%  
+	    New File  		    3430	20260716_public_booking_eligibility_rpc.sql100%  
+	    New File  		   17809	20260720_public_booking_rpc.sql100%  
+	    New File  		   20223	20260722_public_booking_search_path_fix.sql100%  
+	    New File  		   34178	20260723_booking_lifecycle_foundation.sql100%  
+	    New File  		    8475	20260724_admin_rls_and_read_model_fix.sql100%  
+	    New File  		    7086	20260725_admin_bootstrap_and_runtime_consistency.sql100%  
+	    New File  		    1232	20260726_admin_rpc_execute_acl_hardening.sql100%  
+	    New File  		   10003	20260727_admin_runtime_schema_contract_fix.sql100%  
+	    New File  		   12939	20260728_admin_rpc_live_schema_reconstruction.sql100%  
+	    New File  		    7205	20260729_admin_bootstrap_subscription_contract_fix.sql100%  
+	    New File  		    6883	20260730_self_service_token_read_rpc.sql100%  
+	    New File  		   14416	20260731_admin_appointment_status_mutation_rpc.sql100%  
+	    New File  		    7761	20260801_cancel_public_appointment_by_manage_token_rpc.sql100%  
+	    New File  		    7323	20260802_cancel_public_appointment_by_manage_token_schema_fix.sql100%  
+	    New File  		    7245	20260803_cancel_public_appointment_by_manage_token_audit_outbox_fix.sql100%  
+	    New File  		    2150	20260804_appointments_direct_update_hardening.sql100%  
+	    New File  		   11527	20260805_request_public_appointment_reschedule_by_manage_token_rpc.sql100%  
+	    New File  		   10728	20260806_request_public_appointment_reschedule_outbox_fix.sql100%  
+	    New File  		    3630	20260807_get_public_pending_reschedule_request_by_manage_token_rpc.sql100%  
+	    New File  		   16702	20260808_admin_reschedule_request_decision_rpc.sql100%  
+	    New File  		   16364	20260809_admin_reschedule_decision_lock_and_reason_fix.sql100%  
+	    New File  		   80203	20260810_h1a_commercial_catalog_and_read_contracts.sql100%  
+	    New File  		   34058	20260811_h1b_super_admin_commercial_mutations.sql100%  
+	    New File  		    4968	20260812_h1b_apply_due_scheduled_plan_change_rpc.sql100%  
+	    New File  		   47595	20260813_h1c_commercial_eligibility_and_quota_enforcement.sql100%  
+	    New File  		    4244	20260814_h1c_feature_gate_reason_code_fix.sql100%  
+	    New File  		    1507	20260815_h1c_usage_counters_invariant.sql100%  
+	    New File  		   15297	20260816_h1d_missing_commercial_admin_contracts.sql100%  
+	    New File  		   12612	20260817_h1d_contract_truth_and_idempotency_fix.sql100%  
+	    New File  		   14111	20260818_h1d_idempotency_concurrency_and_filter_fix.sql100%  
+	    New File  		    1555	20260819_h1d_idempotency_helper_record_fix.sql100%  
+	    New File  		   10142	20260820_h1d_audit_events_schema_alignment_fix.sql100%  
+	    New File  		    5392	20260821_h1d_future_restriction_end_fix.sql100%  
+	    New File  		    9732	20260822_h1e_release_control_and_eligibility_read_contracts.sql100%  
+	    New File  		   16621	20260823_h1e_a_eligibility_runtime_contract_fix.sql100%  
+	    New File  		   32570	20260824_h1e_b_pilot_authorization_history.sql100%  
+	    New File  		   18498	20260825_h1e_b_authorization_contract_hardening.sql100%  
+	    New File  		   24518	20260826_h1e_c_public_booking_release_gate.sql100%  
+	    New File  		   24334	20260827_h1e_c_public_booking_release_gate_runtime_fix.sql100%  
+	    New File  		   13849	20260828_h1e_c_controlled_release_phase_transition.sql100%  
+	    New File  		   12438	20260829_h1e_c_controlled_transition_runtime_fix.sql100%  
+	    New File  		    2497	20260830_p1c_public_branch_read_contract.sql100%  
+	    New File  		    2716	20260831_p1c_public_branch_read_contract_runtime_fix.sql100%  
+	    New File  		   14264	20260901_p2a_atomic_tenant_provisioning_rpc.sql100%  
+	    New File  		    7518	20260902_p2a_publish_commercial_contract_alignment.sql100%  
+	    New File  		   24231	20260903_p2a_owner_onboarding_contracts.sql100%  
+	    New File  		   18720	20260904_authenticated_owner_branch_mutations_rpc.sql100%  
+	    New File  		   34301	20260905_lari_clinic_domain_server_authority.sql100%  
+	    New File  		   21471	20260906_lari_clinic_operational_integration.sql100%  
+	    New File  		   10661	20260907_lari_clinic_workspace_authority_hardening.sql100%  
+	    New File  		    9054	20260908_commercial_lifecycle_eligibility_alignment.sql100%  
+	    New File  		    7508	20260909_clinic_ai_assist_commercial_authority.sql100%  
+	    New File  		   29650	20260910_lari_health_tourism_foundation.sql100%  
+	    New File  		   60436	20260911_lari_health_tourism_lead_ops_ai_assist.sql100%  
+	    New File  		   14817	20260912_lari_health_tourism_clinic_acceptance.sql100%  
+	    New File  		   11892	20260913_lari_health_tourism_clinic_acceptance_workspace.sql100%  
+	    New File  		   11126	20260914_public_booking_branch_id_response_contract_fix.sql100%  
+	    New File  		   28748	20260916_phase2_staff_scheduling_foundation.sql100%  
+	    New File  		   34411	20260917_phase3_waitlist_foundation.sql100%  
+	    New File  		   28422	20260918_phase3_communications_foundation.sql100%  
+	    New File  		   27098	20260919_phase3_provider_neutral_payment_foundation.sql100%  
+	    New File  		   18655	20260920_phase3_background_job_calendar_foundation.sql100%  
+	    New File  		   50307	20260920_phase3_resource_capacity_foundation.sql100%  
+	    New File  		   22549	20260921_phase3_customer360_segmentation_foundation.sql100%  
+	    New File  		   13808	20260921_phase3_package_limits_multibranch_completeness.sql100%  
+	    New File  		   22863	20260922_phase3_reporting_analytics_foundation.sql100%  
+	    New File  		   21875	20260923_phase3_custom_domain_verification_foundation.sql100%  
+	    New File  		   16678	20260924_phase4_deposit_noshow_policy_foundation.sql100%  
+	    New File  		   29006	20260925_phase4_loyalty_reactivation_foundation.sql100%  
+	    New File  		   20576	20260925_phase4_packages_memberships_foundation.sql100%  
+	    New File  		   20368	20260926_phase4_giftcards_wallet_foundation.sql100%  
+	    New File  		   35381	20260927_phase5_vertical_skus_commercial_packaging.sql100%  
+	    New File  		    8832	20260928_phase5_clinic_practitioners_workspace_hardening.sql100%  
+	    New File  		   23532	20260928_phase5_ht_treatment_journey_quote_itinerary.sql100%  
+	    New File  		   10203	20260929_phase5_scheduling_buffer_parity_hardening.sql100%  
+	    New File  		   39942	20260930_phase6_product_inventory_foundation.sql100%  
+	    New File  		   43809	20261001_phase6_node2_suppliers_po_receiving.sql100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\seed\
+	    New File  		   18524	h1e_c_dedicated_tenant_fixture.sql100%  
+	    New File  		   10830	paymentless_staging_seed.sql100%  
+	  New Dir         20	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\
+	    New File  		   31277	clinic_ai_assist_commercial_authority_tests.sql100%  
+	    New File  		   12121	clinic_domain_concurrency_harness.ts100%  
+	    New File  		   30744	clinic_domain_server_authority_tests.sql100%  
+	    New File  		   18869	clinic_operational_concurrency_harness.ts100%  
+	    New File  		   31005	clinic_operational_integration_tests.sql100%  
+	    New File  		   34123	clinic_workspace_authority_hardening_tests.sql100%  
+	    New File  		   16906	commercial_lifecycle_eligibility_alignment_tests.sql100%  
+	    New File  		   34747	health_tourism_clinic_acceptance_tests.sql100%  
+	    New File  		   19595	health_tourism_clinic_acceptance_workspace_tests.sql100%  
+	    New File  		   13978	health_tourism_foundation_server_authority_tests.sql100%  
+	    New File  		   30413	health_tourism_lead_ops_ai_assist_tests.sql100%  
+	    New File  		    7158	p2a_concurrency_harness.ts100%  
+	    New File  		   24777	p2a_onboarding_integration_tests.sql100%  
+	    New File  		   18503	p2a_tenant_provisioning_integration_tests.sql100%  
+	    New File  		    1092	p2a_tenant_provisioning_static_test.sql100%  
+	    New File  		   27495	package_branch_concurrency_harness.ts100%  
+	    New File  		   12408	package_branch_server_authority_tests.sql100%  
+	    New File  		    8419	paymentless_production_rls_smoke.sql100%  
+	    New File  		  106519	public_booking_rpc_behavioral_tests.sql100%  
+	    New File  		   12808	rls_tenant_isolation_scenarios.sql100%  
+	  New Dir          4	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\fixtures\
+	    New File  		     701	p2a_historical_replay_bridge_before_migration_38.sql100%  
+	    New File  		    6146	p2a_managed_runtime_bootstrap.sql100%  
+	    New File  		    5112	slice4_e2_commercial_fixture.sql100%  
+	    New File  		    3655	slice4_e2_commercial_verification.sql100%  
+	  New Dir          0	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\program-v2\
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\program-v2\p3p4-live\
+	    New File  		  104193	test-live-behavioral-matrix.mjs100%  
+	  New Dir          1	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\program-v2\p5-live\
+	    New File  		   22917	test-phase5-postgres-security-matrix.mjs100%  
+	  New Dir          2	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\supabase\tests\program-v2\phase6-live\
+	    New File  		   15787	test-phase6-node1-inventory-behavioral-matrix.mjs100%  
+	    New File  		   22757	test-phase6-node2-procurement-receiving-behavioral-matrix.mjs100%  
+	  New Dir          6	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\types\
+	    New File  		    6962	clinic.ts100%  
+	    New File  		    2867	clinicAiAssist.ts100%  
+	    New File  		    4599	commercial.ts100%  
+	    New File  		    6149	healthTourism.ts100%  
+	    New File  		    1216	healthTourismAi.ts100%  
+	    New File  		    3129	healthTourismPublic.ts100%  
+	  New Dir         17	C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2\utils\
+	    New File  		    1419	countryHelper.ts100%  
+	    New File  		    6825	demoSeeder.ts100%  
+	    New File  		    4527	featureStatus.ts100%  
+	    New File  		    3011	healthTourismAiService.ts100%  
+	    New File  		   13116	healthTourismService.ts100%  
+	    New File  		   32265	healthTourismTranslations.ts100%  
+	    New File  		    2206	hostnameSimulationHelpers.ts100%  
+	    New File  		    2695	i18nLanguageConfig.ts100%  
+	    New File  		    2737	mockEntityStore.ts100%  
+	    New File  		     616	mutationResult.ts100%  
+	    New File  		    2839	paymentCtaResolver.ts100%  
+	    New File  		     437	previewAuth.ts100%  
+	    New File  		    2260	slugUtils.ts100%  
+	    New File  		    3576	sourceAttributionHelper.ts100%  
+	    New File  		    4660	supabaseJsonbHelpers.ts100%  
+	    New File  		   62121	translations.ts100%  
+	    New File  		    1292	usePWAInstall.ts100%  
+
+------------------------------------------------------------------------------
+
+               Total    Copied   Skipped  Mismatch    FAILED    Extras
+    Dirs :        67        64         3         0         0         0
+   Files :       890       888         2         0         0         0
+   Bytes :    9.12 m    9.12 m       115         0         0         0
+   Times :   0:00:03   0:00:03                       0:00:00   0:00:00
+
+
+   Speed :           3.105.895 Bytes/sec.
+   Speed :             177,721 MegaBytes/min.
+   Ended : 22 Eylül 2026 Sal 11:28:18
+
