@@ -5,19 +5,19 @@
 - `BASE_SHA`: `a0cfc2e329b36dca1964ed427ab17d8c82cbacb6`
 - `BRANCH`: `feature/lari-ui-v2-browser-evidence-20260922-01`
 - `WORKTREE`: `C:\Projects\AOS-lari-ui-v2-browser-evidence-20260922-01`
-- `CURRENT_PHASE`: `NON_DESTRUCTIVE_DISCOVERY`
-- `COMPLETED_PHASES`: `DURABLE_RESUME_INITIALIZED`
-- `LAST_GOOD_COMMIT`: `a0cfc2e329b36dca1964ed427ab17d8c82cbacb6`
-- `PROTECTED_UI_WORKSPACE`: `PENDING_RUNTIME_V1_DISCOVERY`
-- `SNAPSHOT_WORKSPACE`: `PENDING`
+- `CURRENT_PHASE`: `SNAPSHOT_CREATION`
+- `COMPLETED_PHASES`: `DURABLE_RESUME_INITIALIZED, NON_DESTRUCTIVE_DISCOVERY`
+- `LAST_GOOD_COMMIT`: `59796d4`
+- `PROTECTED_UI_WORKSPACE`: `C:\Users\mozcelikbas\AppData\Local\AOS\managed-workspaces\lari-ui-v2`
+- `SNAPSHOT_WORKSPACE`: `C:\Projects\AOS-lari-ui-v2-snapshot-20260922-01`
 - `APP_START_COMMAND`: `PENDING`
 - `APP_URL`: `PENDING`
-- `SCREENSHOT_OUTPUT_DIR`: `PENDING`
+- `SCREENSHOT_OUTPUT_DIR`: `C:\Projects\AOS-visual-evidence\LARI-UI-V2\20260922T112659+0300`
 - `BROWSER_TEST_STATUS`: `NOT_RUN`
 - `CONSOLE_ERROR_STATUS`: `NOT_RUN`
 - `CURRENT_BLOCKER`: `NONE`
-- `NEXT_ACTION`: `Resolve continue-61be4ab1af53cfa646d773ce from Runtime V1 durable command state without mutating the protected workspace.`
-- `SAFE_RESUME_COMMANDS`: `git -C C:\Projects\AOS-lari-ui-v2-browser-evidence-20260922-01 status --short --branch`; `Get-Content -Raw C:\Projects\AOS-lari-ui-v2-browser-evidence-20260922-01\docs\codex\lari-ui-browser-evidence\STATE.md`
+- `NEXT_ACTION`: `Copy the protected workspace into the isolated snapshot with VCS metadata, dependencies, caches, active locks, and secrets excluded; then hash the snapshot.`
+- `SAFE_RESUME_COMMANDS`: `git -C C:\Projects\AOS-lari-ui-v2-browser-evidence-20260922-01 status --short --branch`; `Get-Content -Raw C:\Projects\AOS-lari-ui-v2-browser-evidence-20260922-01\docs\codex\lari-ui-browser-evidence\STATE.md`; `Test-Path C:\Projects\AOS-lari-ui-v2-snapshot-20260922-01`
 - `PROTECTED_WORKSPACE_MUTATED`: `false`
 - `LIVE_RUNTIME_CHANGED`: `false`
 - `PRODUCTION`: `NO_GO`
