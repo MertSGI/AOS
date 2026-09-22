@@ -1232,7 +1232,9 @@ def _shadow_deliberate(
         if circuit_files:
             try:
                 from aos.provider_circuit import ProviderCircuitBreakerRegistry
-                agg_reg = ProviderCircuitBreakerRegistry.aggregate_registries(circuit_files)
+                agg_reg = ProviderCircuitBreakerRegistry.aggregate_registries(
+                    [ProviderCircuitBreakerRegistry(path) for path in circuit_files]
+                )
                 sm = agg_reg.summarize()
                 if sm.get("healthy_reasoning_provider_count", 0) <= 1:
                     spare_capacity = False

@@ -95,6 +95,7 @@ def validate_exact_sha_provenance(
     runtime_source_sha: Optional[str] = None,
     github_actions_head_sha: Optional[str] = None,
     require_ci_sha: bool = False,
+    require_local_git_head: bool = True,
 ) -> ProvenanceValidationResult:
     """Fail-closed validator enforcing literal full-string equality across the provenance chain.
 
@@ -104,11 +105,12 @@ def validate_exact_sha_provenance(
     errors: list[str] = []
 
     fields = {
-        "LOCAL_GIT_HEAD": local_git_head,
         "BUILD_SOURCE_SHA": build_source_sha,
         "CANDIDATE_MANIFEST_SOURCE_SHA": candidate_manifest_source_sha,
         "RUNTIME_SOURCE_SHA": runtime_source_sha,
     }
+    if require_local_git_head:
+        fields = {"LOCAL_GIT_HEAD": local_git_head, **fields}
     if require_ci_sha or github_actions_head_sha is not None:
         fields["GITHUB_ACTIONS_HEAD_SHA"] = github_actions_head_sha
 
@@ -145,4 +147,67 @@ def validate_exact_sha_provenance(
         candidate_manifest_source_sha=normalized.get("CANDIDATE_MANIFEST_SOURCE_SHA"),
         runtime_source_sha=normalized.get("RUNTIME_SOURCE_SHA"),
         github_actions_head_sha=normalized.get("GITHUB_ACTIONS_HEAD_SHA"),
+    )
+
+
+def validate_materialized_runtime_provenance(
+    *,
+    candidate_manifest: Mapping[str, Any],
+    build_record: Mapping[str, Any],
+    runtime_source_sha: Optional[str],
+    runtime_asset_tree_sha256: Optional[str],
+) -> ProvenanceValidationResult:
+    """Validate an immutable runtime slot without consulting a mutable checkout HEAD.
+
+    Materialization already binds the clean source HEAD and successful CI run to
+    the candidate manifest. Runtime validation therefore checks that immutable
+    attestation, the separate build record, the running SHA, and the runtime's
+    loaded asset-tree digest still agree.
+    """
+    manifest_source_sha = candidate_manifest.get("candidate_source_sha")
+    manifest_build_sha = candidate_manifest.get("build_source_sha")
+    build_source_sha = build_record.get("build_source_sha") or build_record.get("source_sha")
+    base = validate_exact_sha_provenance(
+        build_source_sha=str(build_source_sha) if build_source_sha is not None else None,
+        candidate_manifest_source_sha=(
+            str(manifest_source_sha) if manifest_source_sha is not None else None
+        ),
+        runtime_source_sha=runtime_source_sha,
+        require_local_git_head=False,
+    )
+    errors = list(base.errors)
+
+    if str(candidate_manifest.get("provenance") or "").upper() != "PROVEN":
+        errors.append("CANDIDATE_MANIFEST_PROVENANCE is not PROVEN")
+    try:
+        if int(candidate_manifest.get("ci_run_id", 0) or 0) <= 0:
+            errors.append("CANDIDATE_MANIFEST_CI_RUN_ID is missing or invalid")
+    except (TypeError, ValueError):
+        errors.append("CANDIDATE_MANIFEST_CI_RUN_ID is missing or invalid")
+    if manifest_build_sha != build_source_sha:
+        errors.append(
+            "Provenance mismatch: CANDIDATE_MANIFEST_BUILD_SOURCE_SHA "
+            f"({manifest_build_sha}) != BUILD_RECORD_SOURCE_SHA ({build_source_sha})"
+        )
+
+    manifest_tree = candidate_manifest.get("candidate_tree_sha256")
+    tree_pattern = re.compile(r"^[0-9a-fA-F]{64}$")
+    if not isinstance(manifest_tree, str) or not tree_pattern.fullmatch(manifest_tree.strip()):
+        errors.append("CANDIDATE_MANIFEST_TREE_SHA256 is missing or invalid")
+    if not isinstance(runtime_asset_tree_sha256, str) or not tree_pattern.fullmatch(runtime_asset_tree_sha256.strip()):
+        errors.append("RUNTIME_ASSET_TREE_SHA256 is missing or invalid")
+    elif isinstance(manifest_tree, str) and manifest_tree.strip().lower() != runtime_asset_tree_sha256.strip().lower():
+        errors.append(
+            "Provenance mismatch: RUNTIME_ASSET_TREE_SHA256 "
+            f"({runtime_asset_tree_sha256}) != CANDIDATE_MANIFEST_TREE_SHA256 ({manifest_tree})"
+        )
+
+    valid = base.valid and not errors
+    return ProvenanceValidationResult(
+        valid=valid,
+        status="PROVEN" if valid else "FAIL",
+        errors=errors,
+        build_source_sha=base.build_source_sha,
+        candidate_manifest_source_sha=base.candidate_manifest_source_sha,
+        runtime_source_sha=base.runtime_source_sha,
     )

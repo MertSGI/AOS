@@ -313,7 +313,6 @@ class TestProviderRouterPolicy:
         res = router.select(risk_class="R0")
         assert res is not None
         assert res.selected_provider_id == "groq"
-        assert res.fallback_used is False
         assert res.context.fallback_used is False
 
     def test_transient_failure_falls_back_when_allowed(self, monkeypatch):
@@ -344,9 +343,7 @@ class TestProviderRouterPolicy:
             ignore_credentials=True,
             post_invocation_failed_provider="gemini",
         )
-        assert res is not None
-        assert res.selected_provider_id == "groq"
-        assert res.fallback_used is False
+        assert res is None
 
 
 # =========================================================================
@@ -1135,7 +1132,21 @@ class TestGeminiSchemaVersionProjectionRemediation:
         mock_candidate = MagicMock()
         mock_candidate.finish_reason = "STOP"
         mock_response = MagicMock()
-        mock_response.text = '{"schema_version": "0.1.0", "project_id": "lari"}'
+        mock_response.text = json.dumps({
+            "schema_version": "0.1.0",
+            "project_id": "lari",
+            "source_sha": "4c55eecdbe064c74b34af31a1daf9851689e4fe8",
+            "selected_milestone": "LARİ Clinic",
+            "selected_next_action": "Action",
+            "target_base_sha": None,
+            "risk_class": "R0",
+            "mutation_intent": "NONE",
+            "ambiguity_detected": False,
+            "ambiguity_reasons": [],
+            "human_gate_required": False,
+            "rationale": "Test",
+            "disposition": "SHADOW_ACCEPT",
+        })
         mock_response.candidates = [mock_candidate]
         mock_response.usage_metadata.prompt_token_count = 100
         mock_response.usage_metadata.cached_content_token_count = 0
@@ -1158,8 +1169,8 @@ class TestGeminiSchemaVersionProjectionRemediation:
         sent_contents = call_kwargs["contents"]
         assert 'For the current AOS planner decision contract, schema_version MUST be exactly "0.1.0".' in sent_contents
 
-    def test_gemini_response_with_schema_version_1_0_0_is_rejected_by_policy_without_rewriting(self, monkeypatch, tmp_path):
-        """A 1.0.0 response from Gemini is not rewritten and fails downstream canonical policy validation."""
+    def test_gemini_response_with_schema_version_1_0_0_is_rejected_locally_without_rewriting(self, monkeypatch, tmp_path):
+        """A 1.0.0 response is rejected by the adapter's canonical validation."""
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
         provider = GeminiPlannerProvider(model="gemini-3.6-flash")
 
@@ -1192,22 +1203,10 @@ class TestGeminiSchemaVersionProjectionRemediation:
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = mock_response
 
+        from aos.validate import load_schema
         with patch("google.genai.Client", return_value=mock_client):
-            decision, resp_id, usage = provider.generate_plan("test prompt", {})
+            with pytest.raises(PlannerContractError, match="canonical JSON schema validation"):
+                provider.generate_plan("test prompt", load_schema("planner_decision.schema.json"))
 
-            # Confirm no rewriting occurred in provider adapter
-            assert decision["schema_version"] == "1.0.0"
-
-            # Pass through shadow orchestration and verify policy rejection
-            disp, traces, code = run_shadow_orchestration(
-                descriptor_path=str(DESCRIPTOR_PATH),
-                expectation_path=str(EXPECTATION_PATH),
-                provider_override=provider,
-                adapter_override=FakeProjectSourceAdapter(),
-                trace_dir_override=tmp_path,
-                source_mode="pinned_proof",
-            )
-        assert disp == "HOLD"
-        assert traces[0]["final_disposition"] == "HOLD"
-        failed_checks = [c for c in traces[0]["policy_checks"] if c["status"] == "FAIL"]
-        assert any(c["check_id"] == "SCHEMA_VALIDATION" for c in failed_checks)
+        # The adapter rejected the value; it did not rewrite the provider payload.
+        assert json.loads(mock_response.text)["schema_version"] == "1.0.0"

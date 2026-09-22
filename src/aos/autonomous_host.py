@@ -237,9 +237,15 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             model_id = route.selected_model_id
             tried.append(provider_id)
 
-            if self.circuit_registry is not None and not self.circuit_registry.is_provider_available(provider_id):
-                # Provider circuit is OPEN and probe interval has not elapsed; bypass to next provider
-                continue
+            half_open_probe = False
+            if self.circuit_registry is not None:
+                if not self.circuit_registry.is_provider_available(provider_id):
+                    # Provider circuit is OPEN or already has a leased HALF_OPEN probe.
+                    continue
+                half_open_probe = (
+                    self.circuit_registry.get_circuit(provider_id).circuit_state
+                    == CircuitState.HALF_OPEN.value
+                )
 
             try:
                 provider = self.provider_factory(provider_id, model_id)
@@ -263,7 +269,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 self._record_attempt(attempt)
                 if self.circuit_registry is not None:
                     self.circuit_registry.record_success(provider_id)
-                    self.circuit_registry.record_probe(provider_id)
+                    if half_open_probe:
+                        self.circuit_registry.record_probe(provider_id)
                     if len(attempts) > 1:
                         self.circuit_registry.record_failover(provider_id)
                 return ExecutionResult(
@@ -363,7 +370,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             self._record_attempt(attempt)
             if self.circuit_registry is not None:
                 self.circuit_registry.record_failure(provider_id, failure_class)
-                self.circuit_registry.record_probe(provider_id)
+                if half_open_probe:
+                    self.circuit_registry.record_probe(provider_id)
             failed_provider = provider_id
 
         circuit_summary = self.circuit_registry.summarize() if self.circuit_registry else {}

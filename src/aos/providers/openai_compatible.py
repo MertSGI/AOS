@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.providers.schema_utils import sanitize_planner_output
 
 UNSUPPORTED_META_KEYWORDS = {"$schema", "$id"}
 DEFAULT_MAX_OUTPUT_TOKENS = 2200
@@ -64,15 +65,6 @@ def strict_schema_compatible(schema: Any) -> bool:
     return all(strict_schema_compatible(value) for value in schema.values())
 
 
-def sanitize_planner_output(data: Any) -> Any:
-    """Recursively strip explicit nulls from dictionaries where properties are optional."""
-    if isinstance(data, dict):
-        return {k: sanitize_planner_output(v) for k, v in data.items() if v is not None}
-    if isinstance(data, list):
-        return [sanitize_planner_output(item) for item in data]
-    return data
-
-
 class GenericOpenAICompatiblePlannerProvider:
     """Bounded, policy-driven OpenAI-compatible provider adapter."""
 
@@ -99,6 +91,10 @@ class GenericOpenAICompatiblePlannerProvider:
         self.max_output_tokens = max_output_tokens
         self.default_headers = default_headers or {}
         self.extra_body = extra_body or {}
+        if self.provider_id == "openrouter_free":
+            provider_preferences = dict(self.extra_body.get("provider") or {})
+            provider_preferences.setdefault("require_parameters", True)
+            self.extra_body = {**self.extra_body, "provider": provider_preferences}
         self.cloud_local = cloud_local.upper()
         self.billing_class = billing_class.upper()
         if self.cloud_local == "LOCAL":
@@ -163,7 +159,15 @@ class GenericOpenAICompatiblePlannerProvider:
                 )
             except Exception as e:
                 err_name = e.__class__.__name__
-                if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)):
+                if (
+                    isinstance(e, (
+                        openai.APIConnectionError,
+                        openai.APITimeoutError,
+                        openai.RateLimitError,
+                        openai.InternalServerError,
+                    ))
+                    or (isinstance(e, openai.APIStatusError) and getattr(e, "status_code", 0) >= 500)
+                ):
                     raise PlannerTransientError(f"{self.provider_id} transient error ({err_name}): {e}") from e
                 elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                     raise PlannerCredentialError(f"{self.provider_id} auth/permission failure ({err_name}): {e}") from e
@@ -175,6 +179,13 @@ class GenericOpenAICompatiblePlannerProvider:
             status = getattr(response, "status", None)
             if status and status not in ("completed", "complete"):
                 inc_details = getattr(response, "incomplete_details", None)
+                reason = getattr(inc_details, "reason", None)
+                if reason is None and isinstance(inc_details, dict):
+                    reason = inc_details.get("reason")
+                if str(reason).lower() in ("max_output_tokens", "max_tokens"):
+                    raise PlannerTransientError(
+                        f"{self.provider_id} response reached configured output capacity before completing JSON"
+                    )
                 raise PlannerContractError(f"{self.provider_id} response status '{status}' incomplete: {inc_details}")
 
             content_str = None
@@ -212,8 +223,10 @@ class GenericOpenAICompatiblePlannerProvider:
                     "Return a JSON object matching this canonical schema exactly; AOS will validate it locally: "
                     + json.dumps(provider_schema, ensure_ascii=False, sort_keys=True)
                 )
-            response_format = (
-                {
+            strict_response_format = (
+                {"type": "json_schema", "json_schema": provider_schema}
+                if self.provider_id == "cloudflare"
+                else {
                     "type": "json_schema",
                     "json_schema": {
                         "name": "planner_decision",
@@ -221,6 +234,9 @@ class GenericOpenAICompatiblePlannerProvider:
                         "schema": provider_schema,
                     },
                 }
+            )
+            response_format = (
+                strict_response_format
                 if strict_compatible
                 else {"type": "json_object"}
             )
@@ -234,7 +250,6 @@ class GenericOpenAICompatiblePlannerProvider:
                 "response_format": response_format,
                 "max_tokens": default_max_output_tokens(schema, self.max_output_tokens),
                 "temperature": 0.0,
-                "store": False,
             }
             if self.extra_body:
                 kwargs["extra_body"] = self.extra_body
@@ -291,7 +306,7 @@ class GenericOpenAICompatiblePlannerProvider:
         except Exception as e:
             raise PlannerContractError(f"{self.provider_id} output is not valid JSON: {e}") from e
 
-        parsed_decision = sanitize_planner_output(parsed_decision)
+        parsed_decision = sanitize_planner_output(parsed_decision, schema)
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:
             raise PlannerContractError(f"{self.provider_id} output failed canonical JSON schema validation: {errors[0].message}")

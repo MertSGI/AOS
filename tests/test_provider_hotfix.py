@@ -135,7 +135,7 @@ def test_waiting_command_exposes_next_probe_and_probe_does_not_increment_worker_
         command_id = "continue-preserved"
         circuit_path = _command(engine, command_id, policy)
         before = engine.store.read_state(command_id)["attempts"]
-        monkeypatch.setattr(runtime_server, "probe_enabled_providers", lambda _path: {
+        monkeypatch.setattr(runtime_server, "probe_enabled_providers", lambda _path, _providers: {
             "gemini": {
                 "provider_id": "gemini", "credential_available": True,
                 "local_service_available": None, "probe_attempted": True,
@@ -158,7 +158,7 @@ def test_healthy_alternate_wakes_same_command_lineage(tmp_path, monkeypatch):
     try:
         command_id = "continue-b181ddc574c25c2aa0f2a6b9"
         _command(engine, command_id, policy)
-        monkeypatch.setattr(runtime_server, "probe_enabled_providers", lambda _path: {
+        monkeypatch.setattr(runtime_server, "probe_enabled_providers", lambda _path, _providers: {
             "groq": {
                 "provider_id": "groq", "credential_available": True,
                 "local_service_available": None, "probe_attempted": True,

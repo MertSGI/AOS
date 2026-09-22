@@ -6,7 +6,10 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 GEMINI_MAX_OUTPUT_TOKENS = 4096
 UNSUPPORTED_GEMINI_KEYWORDS = {"$schema", "$id", "pattern", "minLength", "maxLength", "format"}
@@ -53,15 +56,6 @@ def project_gemini_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
             # current canonical version, without affecting other callers.
             projected_version["enum"] = ["0.1.0"]
     return projected
-
-
-def _sanitize_planner_output(data: Any) -> Any:
-    """Recursively strip explicit nulls from dictionaries where properties are optional strings/objects."""
-    if isinstance(data, dict):
-        return {k: _sanitize_planner_output(v) for k, v in data.items() if v is not None}
-    if isinstance(data, list):
-        return [_sanitize_planner_output(item) for item in data]
-    return data
 
 
 class GeminiPlannerProvider:
@@ -155,7 +149,13 @@ class GeminiPlannerProvider:
         except Exception as e:
             raise PlannerContractError(f"Gemini output is not valid JSON: {e}") from e
 
-        parsed_decision = _sanitize_planner_output(parsed_decision)
+        parsed_decision = _sanitize_planner_output(parsed_decision, schema)
+
+        errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
+        if errors:
+            raise PlannerContractError(
+                f"Gemini output failed canonical JSON schema validation: {errors[0].message}"
+            )
 
         # Extract usage
         usage_data = None

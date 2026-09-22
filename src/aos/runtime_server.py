@@ -122,10 +122,20 @@ class RuntimeEngine:
         try:
             value = json.loads(policy_path.read_text(encoding="utf-8"))
             providers = value.get("providers", {}) if isinstance(value, dict) else {}
+            paid_eligible = (
+                bool(value.get("allow_paid_fallback", False))
+                and bool(value.get("paid_fallback_enabled", False))
+                and float(value.get("paid_daily_budget_usd", 0.0) or 0.0) > 0
+                and float(value.get("paid_monthly_budget_usd", 0.0) or 0.0) > 0
+            )
             return [
                 str(provider_id)
                 for provider_id, provider in providers.items()
-                if isinstance(provider, dict) and provider.get("enabled") is True
+                if (
+                    isinstance(provider, dict)
+                    and provider.get("enabled") is True
+                    and (str(provider.get("billing_class", "FREE")).upper() != "PAID" or paid_eligible)
+                )
             ]
         except (OSError, ValueError, json.JSONDecodeError):
             return []
@@ -182,7 +192,21 @@ class RuntimeEngine:
 
             any_success = False
             for target in targets.values():
-                results = probe_enabled_providers(target["path"])
+                target_registries = [
+                    ProviderCircuitBreakerRegistry(
+                        self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+                    )
+                    for command_id in target["commands"]
+                ]
+                enabled = self._enabled_from_policy(target["path"])
+                aggregate = ProviderCircuitBreakerRegistry.aggregate_registries(
+                    target_registries,
+                    enabled_providers=enabled,
+                )
+                due = [provider_id for provider_id in enabled if aggregate.is_probe_due(provider_id)]
+                if not due:
+                    continue
+                results = probe_enabled_providers(target["path"], due)
                 any_success = any_success or any(
                     row.get("probe_status") == "PASS" for row in results.values()
                 )
@@ -192,7 +216,7 @@ class RuntimeEngine:
                     )
                     for provider_id, row in results.items():
                         if row.get("probe_attempted"):
-                            registry.record_probe(provider_id)
+                            registry.record_probe(provider_id, probe_id=row.get("probe_id"))
                         common = {
                             "observed_at": row.get("last_observed_at"),
                             "probe_status": str(row.get("probe_status") or "UNKNOWN"),
@@ -202,12 +226,14 @@ class RuntimeEngine:
                         }
                         if row.get("probe_status") == "PASS":
                             registry.record_success(provider_id, **common)
-                        else:
+                        elif row.get("probe_attempted"):
                             registry.record_failure(
                                 provider_id,
                                 str(row.get("failure_class") or "UNKNOWN"),
                                 **common,
                             )
+                        else:
+                            registry.record_observation(provider_id, **common)
                     self.store.append_event(command_id, "provider.activation_probe_completed", {
                         "providers": list(results.values()),
                         "secrets_exposed": False,

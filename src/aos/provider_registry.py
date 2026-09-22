@@ -125,6 +125,8 @@ class ProviderRouter:
         data_class = self.registry.data_classification
 
         # Post-invocation fallback only applies if a prior provider was actually invoked and failed transiently
+        if post_invocation_failed_provider is not None and not self.registry.allow_provider_fallback:
+            return None
         is_post_invocation_fallback = (
             post_invocation_failed_provider is not None
             and self.registry.allow_provider_fallback

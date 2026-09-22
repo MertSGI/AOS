@@ -21,7 +21,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from aos.process_utils import run_headless
-from aos.provenance import get_authoritative_git_head, is_valid_full_sha, validate_exact_sha_provenance, ProvenanceError
+from aos.provenance import (
+    ProvenanceError,
+    get_authoritative_git_head,
+    is_valid_full_sha,
+    validate_exact_sha_provenance,
+    validate_materialized_runtime_provenance,
+)
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
@@ -104,6 +110,8 @@ class RelaySnapshot:
     human_required: bool = False
     production: str = "NO_GO"
     provenance_status: str = "UNPROVEN"
+    provenance_basis: str = "UNAVAILABLE"
+    provenance_errors: List[str] = field(default_factory=list)
     remote_outbox_status: str = "DISABLED"
     remote_issue_number: Optional[int] = None
     last_remote_publish_at: Optional[str] = None
@@ -209,24 +217,29 @@ class ControllerRelayPublisher:
         except Exception:
             api_pid = None
 
-        # Determine provenance
+        # Determine provenance. An accepted immutable runtime is bound to its
+        # materialization records and asset tree, not to a checkout HEAD that
+        # can legitimately advance after deployment.
         slot_root = rh.get("runtime_slot_root") or self.runtime_config.get("runtime_slot_root")
         manifest_sha = None
         build_source_sha = None
+        manifest_data: Dict[str, Any] = {}
+        build_record_data: Dict[str, Any] = {}
         if slot_root:
             manifest_file = Path(slot_root) / "candidate-manifest.json"
             if manifest_file.is_file():
                 try:
-                    m_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    manifest_sha = m_data.get("candidate_source_sha")
-                    build_source_sha = m_data.get("build_source_sha")
+                    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    manifest_sha = manifest_data.get("candidate_source_sha")
+                    build_source_sha = manifest_data.get("build_source_sha")
                 except Exception:
                     pass
             build_record = Path(slot_root) / "build-record.json"
-            if not build_source_sha and build_record.is_file():
+            if build_record.is_file():
                 try:
-                    b_data = json.loads(build_record.read_text(encoding="utf-8"))
-                    build_source_sha = b_data.get("build_source_sha") or b_data.get("source_sha")
+                    build_record_data = json.loads(build_record.read_text(encoding="utf-8"))
+                    if not build_source_sha:
+                        build_source_sha = build_record_data.get("build_source_sha") or build_record_data.get("source_sha")
                 except Exception:
                     pass
 
@@ -234,49 +247,65 @@ class ControllerRelayPublisher:
             candidate_fallback = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "candidate" / source_sha / "candidate-manifest.json"
             if candidate_fallback.is_file():
                 try:
-                    m_data = json.loads(candidate_fallback.read_text(encoding="utf-8"))
-                    manifest_sha = m_data.get("candidate_source_sha")
+                    manifest_data = json.loads(candidate_fallback.read_text(encoding="utf-8"))
+                    manifest_sha = manifest_data.get("candidate_source_sha")
                     if not build_source_sha:
-                        build_source_sha = m_data.get("build_source_sha")
+                        build_source_sha = manifest_data.get("build_source_sha")
+                    fallback_build = candidate_fallback.parent / "build-record.json"
+                    if fallback_build.is_file():
+                        build_record_data = json.loads(fallback_build.read_text(encoding="utf-8"))
                 except Exception:
                     pass
 
-        # Discover authoritative git checkout explicitly (never alias manifest_sha or candidate_manifest_sha)
         local_git_head = None
-        auth_repo_candidates = []
-        if "authoritative_repo_path" in self.runtime_config:
-            if self.runtime_config["authoritative_repo_path"]:
-                auth_repo_candidates.append(Path(self.runtime_config["authoritative_repo_path"]))
+        provenance_basis = "UNAVAILABLE"
+        provenance_errors: List[str] = []
+        if manifest_data or build_record_data:
+            provenance_basis = "IMMUTABLE_RUNTIME_SLOT"
+            runtime_tree = rh.get("runtime_asset_tree_sha256") or self.runtime_config.get("runtime_asset_tree_sha256")
+            if manifest_data and build_record_data and runtime_tree:
+                val = validate_materialized_runtime_provenance(
+                    candidate_manifest=manifest_data,
+                    build_record=build_record_data,
+                    runtime_source_sha=source_sha,
+                    runtime_asset_tree_sha256=str(runtime_tree),
+                )
+                prov_status = val.status
+                provenance_errors = list(val.errors)
+            else:
+                prov_status = "UNPROVEN"
+                provenance_errors = ["Immutable runtime-slot provenance evidence is incomplete"]
         else:
-            for auth_root in self.runtime_config.get("authorized_roots", []):
-                auth_repo_candidates.append(Path(auth_root))
-            auth_repo_candidates.extend([
-                Path("C:/Projects/AOS-lane-b"),
-                Path("C:/Projects/AOS"),
-            ])
-        for cand in auth_repo_candidates:
-            try:
-                resolved_cand = cand.expanduser().resolve()
-                if (resolved_cand / ".git").exists():
-                    local_git_head = get_authoritative_git_head(resolved_cand)
-                    if local_git_head:
-                        break
-            except Exception:
-                continue
+            provenance_basis = "LIVE_DEVELOPMENT_CHECKOUT"
+            auth_repo_candidates = []
+            if "authoritative_repo_path" in self.runtime_config:
+                if self.runtime_config["authoritative_repo_path"]:
+                    auth_repo_candidates.append(Path(self.runtime_config["authoritative_repo_path"]))
+            else:
+                for auth_root in self.runtime_config.get("authorized_roots", []):
+                    auth_repo_candidates.append(Path(auth_root))
+                auth_repo_candidates.extend([Path("C:/Projects/AOS-lane-b"), Path("C:/Projects/AOS")])
+            for cand in auth_repo_candidates:
+                try:
+                    resolved_cand = cand.expanduser().resolve()
+                    if (resolved_cand / ".git").exists():
+                        local_git_head = get_authoritative_git_head(resolved_cand)
+                        if local_git_head:
+                            break
+                except Exception:
+                    continue
 
-        if is_valid_full_sha(source_sha) and manifest_sha and local_git_head and build_source_sha:
-            val = validate_exact_sha_provenance(
-                local_git_head=local_git_head,
-                candidate_manifest_source_sha=manifest_sha,
-                runtime_source_sha=source_sha,
-                build_source_sha=build_source_sha,
-            )
-            prov_status = "PROVEN" if val.valid else "FAIL"
-        elif is_valid_full_sha(source_sha) and manifest_sha and local_git_head and not build_source_sha:
-            # Missing authoritative build source record leaves provenance UNPROVEN
-            prov_status = "UNPROVEN"
-        else:
-            prov_status = "UNPROVEN"
+            if is_valid_full_sha(source_sha) and manifest_sha and local_git_head and build_source_sha:
+                val = validate_exact_sha_provenance(
+                    local_git_head=local_git_head,
+                    candidate_manifest_source_sha=manifest_sha,
+                    runtime_source_sha=source_sha,
+                    build_source_sha=build_source_sha,
+                )
+                prov_status = val.status
+                provenance_errors = list(val.errors)
+            else:
+                prov_status = "UNPROVEN"
 
         # Scan lanes across commands
         runtime_root_str = self.runtime_config.get("runtime_root")
@@ -580,6 +609,8 @@ class ControllerRelayPublisher:
             human_required=human_req,
             production="NO_GO",
             provenance_status=prov_status,
+            provenance_basis=provenance_basis,
+            provenance_errors=provenance_errors,
             remote_outbox_status=self.remote_outbox_status,
             remote_issue_number=self.remote_issue_number,
             aos_heartbeat="ALIVE",
@@ -663,6 +694,8 @@ RUNTIME_HEALTH={snapshot.runtime_health}
 SUPERVISOR_PID={snapshot.supervisor_pid or 'NONE'}
 RUNTIME_API_PID={snapshot.api_pid or 'NONE'}
 PROVENANCE_STATUS={snapshot.provenance_status}
+PROVENANCE_BASIS={snapshot.provenance_basis}
+PROVENANCE_ERRORS_JSON={json.dumps(snapshot.provenance_errors)}
 
 ### HEARTBEAT & FORWARD PROGRESS
 AOS_HEARTBEAT={snapshot.aos_heartbeat}
