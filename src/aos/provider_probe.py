@@ -24,7 +24,7 @@ from aos.providers import (
     FreeLLMAPILocalPlannerProvider,
 )
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
-from aos.provider_observation import TaskClass
+from aos.provider_observation import RateLimitObservation, TaskClass
 from extensions.autonomy_fabric.native_workers import redact_secrets
 
 
@@ -299,7 +299,11 @@ def provider_runtime_matrix(
             elif isinstance(exc, PlannerTransientError):
                 observation = exc.rate_limit_observation
                 if observation is not None:
-                    row["rate_limit_observation"] = observation.to_dict()
+                    observation_payload = observation.to_dict()
+                    observation_payload["task_class"] = TaskClass.SMALL_REASONING.value
+                    row["rate_limit_observation"] = RateLimitObservation.from_dict(
+                        observation_payload
+                    ).to_dict()
                 row["message"] = None
             else:
                 row["message"] = redact_secrets(str(exc))[:300]

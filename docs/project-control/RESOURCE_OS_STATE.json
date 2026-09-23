@@ -6,14 +6,15 @@
   "resource_os_base_sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
   "branch": "feature/aos-resource-os-master-20260923-01",
   "worktree": "C:\\Projects\\AOS-resource-os-master-20260923-01",
-  "current_phase": "R2_QUOTA_GOVERNOR",
+  "current_phase": "R3_RESOURCE_LEDGER",
   "completed_phases": [
     "PHASE_0_CANONICAL_PROGRAM_PLAN",
     "R1_PROVIDER_OBSERVATIONS_AND_HEALTH",
     "R1B_CONTENT_AWARE_READ_DEDUPLICATION",
-    "R1C_DETERMINISTIC_RECOVERY_CHURN_GUARD"
+    "R1C_DETERMINISTIC_RECOVERY_CHURN_GUARD",
+    "R2_QUOTA_GOVERNOR"
   ],
-  "last_good_commit": "0b20b74720e1e60a6b262abc5c11f324ea24cc20",
+  "last_good_commit": "8747b948ddb65ccc0362fe14ae44ce82ad7a23cc",
   "authoritative_inputs": {
     "freellmapi": {
       "branch": "feature/aos-freellmapi-local-meta-provider-20260922-01",
@@ -35,7 +36,7 @@
     "R1": "COMPLETE",
     "R1B": "COMPLETE",
     "R1C": "COMPLETE",
-    "R2": "PENDING",
+    "R2": "COMPLETE",
     "R3": "PENDING",
     "AG_BACKEND": "PENDING",
     "CODEX_BACKEND": "PENDING",

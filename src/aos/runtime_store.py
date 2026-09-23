@@ -11,11 +11,12 @@ from aos.runtime_contract import CONTRACT_VERSION, RuntimeEvent, utc_now
 
 
 import time
+import uuid
 
 
 def atomic_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
         handle.write("\n")
@@ -94,6 +95,14 @@ class RuntimeStore:
 
     def command_dir(self, command_id: str) -> Path:
         return self.commands_root / command_id
+
+    def resource_os_dir(self, command_id: Optional[str] = None) -> Path:
+        root = (
+            self.command_dir(command_id) / "project-runtime" / "resource-os"
+            if command_id else self.runtime_root / "resource-os"
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     def create_command(self, command: Dict[str, Any]) -> Path:
         command_id = str(command["command_id"])

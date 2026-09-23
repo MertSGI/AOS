@@ -38,6 +38,7 @@ from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
 from aos.provider_observation import RateLimitObservation, TaskClass
 from aos.runtime_worker import build_recovery_fingerprint
+from aos.quota_governor import QuotaGovernor
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -417,6 +418,12 @@ class RuntimeEngine:
                     registry = ProviderCircuitBreakerRegistry(
                         self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
                     )
+                    quota_governor = QuotaGovernor(
+                        self.store.command_dir(command_id)
+                        / "project-runtime"
+                        / "resource-os"
+                        / "quota-governor.json"
+                    )
                     for provider_id, row in results.items():
                         if row.get("probe_attempted"):
                             registry.record_probe(provider_id, probe_id=row.get("probe_id"))
@@ -429,6 +436,10 @@ class RuntimeEngine:
                             "model_id": row.get("model_id"),
                             "task_class": row.get("task_class") or TaskClass.SMALL_REASONING.value,
                         }
+                        if isinstance(row.get("rate_limit_observation"), dict):
+                            quota_governor.record(
+                                RateLimitObservation.from_dict(row["rate_limit_observation"])
+                            )
                         if row.get("probe_status") == "PASS":
                             registry.record_success(
                                 provider_id,
@@ -465,6 +476,23 @@ class RuntimeEngine:
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                         continue
                     if str(state.get("required_task_class") or TaskClass.STRUCTURED_PLANNING.value) != TaskClass.SMALL_REASONING.value:
+                        continue
+                    governor = QuotaGovernor(
+                        self.store.command_dir(command_id)
+                        / "project-runtime"
+                        / "resource-os"
+                        / "quota-governor.json"
+                    )
+                    quota_eligible = any(
+                        row.get("probe_status") == "PASS"
+                        and governor.decision(
+                            provider_id,
+                            row.get("model_id"),
+                            TaskClass.SMALL_REASONING.value,
+                        ).eligible
+                        for provider_id, row in results.items()
+                    )
+                    if not quota_eligible:
                         continue
                     self.store.write_state(command_id, retry_after_epoch=0)
                     self.store.append_event(command_id, "provider.healthy_alternate_wake", {
@@ -717,6 +745,35 @@ class RuntimeEngine:
             registry = ProviderCircuitBreakerRegistry(
                 self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
             )
+            governor = QuotaGovernor(
+                self.store.command_dir(command_id)
+                / "project-runtime"
+                / "resource-os"
+                / "quota-governor.json"
+            )
+            quota_eligible_healthy = []
+            for provider_id in healthy:
+                source = aggregate.get_circuit(provider_id)
+                matching = [
+                    value for value in source.health_records.values()
+                    if value.get("task_class") == required_task_class
+                    and value.get("circuit_state") == CircuitState.CLOSED.value
+                ]
+                if not matching:
+                    continue
+                newest = max(
+                    matching,
+                    key=lambda value: str(value.get("last_observed_at") or value.get("last_success_at") or ""),
+                )
+                if governor.decision(
+                    provider_id,
+                    newest.get("model_id"),
+                    required_task_class,
+                ).eligible:
+                    quota_eligible_healthy.append(provider_id)
+            healthy = quota_eligible_healthy
+            if not healthy:
+                continue
             for provider_id in healthy:
                 source = aggregate.get_circuit(provider_id)
                 candidates = [

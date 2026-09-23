@@ -696,7 +696,12 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
 
                 if disposition == "WAITING_FOR_REASONING_PROVIDER":
                     circuit_reg = ProviderCircuitBreakerRegistry(project_runtime / "provider-circuits.json")
-                    retry_at = circuit_reg.earliest_next_probe()
+                    quota_retry = receipt.get("quota_retry_after_epoch")
+                    retry_at = (
+                        float(quota_retry)
+                        if quota_retry is not None
+                        else circuit_reg.earliest_next_probe()
+                    )
                     # Command attempts count real worker execution attempts; do not inflate during provider outage probe loops
                     final_attempts = initial_attempts
                     store.write_state(
@@ -708,6 +713,7 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         required_task_class=receipt.get(
                             "required_task_class", "structured_planning"
                         ),
+                        quota_key=receipt.get("quota_key"),
                     )
                     store.append_event(command_id, "run.waiting_for_reasoning_provider", {
                         "retry_after_epoch": retry_at,
@@ -716,6 +722,7 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         "required_task_class": receipt.get(
                             "required_task_class", "structured_planning"
                         ),
+                        "quota_key": receipt.get("quota_key"),
                     })
                     result = RuntimeResult(
                         command_id=command_id,

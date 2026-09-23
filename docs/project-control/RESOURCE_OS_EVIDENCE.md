@@ -68,3 +68,16 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Pause-safe/provider-wait/recovery regression: `20 passed in 10.84s`.
 - Python compileall: PASS. `git diff --check`: PASS.
 - Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### R2 — QuotaGovernor
+
+- Added a durable `QuotaGovernor` keyed by provider, model, quota scope, and task class with `UNKNOWN`, `AVAILABLE`, `CONSTRAINED`, and `EXHAUSTED` states.
+- Provider metadata outranks runtime/documentation/adaptive evidence per field; weaker observations cannot shorten an active stronger deadline.
+- Quota-blocked resources are skipped without provider invocation; quota does not mutate health and health failures do not fabricate quota state.
+- Governor snapshots are atomic, versioned, lock-protected, restart-stable, and fail closed on corruption while leaving project state intact.
+- Waiting state persists the exact quota deadline/key; compatible health wakes only when the corresponding quota decision is eligible.
+- Existing four-part paid-provider policy remains fail closed and unchanged. Paid fallback remains disabled.
+- Concurrent runtime atomic JSON writes now use unique temp files, closing a deterministic create/probe race found by focused testing.
+- Focused quota/provider/runtime suite: `68 passed in 10.85s`; isolated concurrency regression: PASS.
+- Python compileall: PASS. `git diff --check`: PASS.
+- Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

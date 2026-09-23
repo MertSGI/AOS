@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aos.process_utils import run_headless
 from aos.read_identity import build_workspace_source_generation
+from aos.quota_governor import QuotaGovernor
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_observation import (
@@ -127,6 +128,7 @@ class ProviderAttempt:
     contract_subtype: Optional[str] = None
     safe_detail: Optional[Dict[str, Any]] = None
     rate_limit_observation: Optional[RateLimitObservation] = None
+    quota_decision: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -144,6 +146,8 @@ class ProviderAttempt:
             payload["safe_detail"] = dict(self.safe_detail)
         if self.rate_limit_observation is not None:
             payload["rate_limit_observation"] = self.rate_limit_observation.to_dict()
+        if self.quota_decision is not None:
+            payload["quota_decision"] = dict(self.quota_decision)
         for key in (
             "routed_via",
             "routed_provider_id",
@@ -226,6 +230,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         provider_factory: Optional[Callable[[str, str], Any]] = None,
         attempt_journal: Optional[Path] = None,
         circuit_registry: Optional[ProviderCircuitBreakerRegistry] = None,
+        quota_governor: Optional[QuotaGovernor] = None,
     ) -> None:
         self.provider_router = provider_router
         self.provider_factory = provider_factory or self._default_provider_factory
@@ -235,6 +240,11 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 attempt_journal.parent / "provider-circuits.json"
             )
         self.circuit_registry = circuit_registry
+        if quota_governor is None and attempt_journal is not None:
+            quota_governor = QuotaGovernor(
+                attempt_journal.parent / "resource-os" / "quota-governor.json"
+            )
+        self.quota_governor = quota_governor
 
     def _default_provider_factory(self, provider_id: str, model_id: str) -> Any:
         if provider_id == "freellmapi_local":
@@ -287,6 +297,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         ignore_credentials = bool(request.payload.get("ignore_credentials", False))
         tried: List[str] = []
         attempts: List[ProviderAttempt] = []
+        quota_decisions: List[Dict[str, Any]] = []
         failed_provider: Optional[str] = None
 
         provider_limit = max(1, len(self.provider_router.registry.list_providers()))
@@ -303,6 +314,33 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             provider_id = route.selected_provider_id
             model_id = route.selected_model_id
             tried.append(provider_id)
+
+            quota_decision = (
+                self.quota_governor.decision(provider_id, model_id, task_class)
+                if self.quota_governor is not None else None
+            )
+            if quota_decision is not None:
+                quota_decisions.append({
+                    "provider_id": provider_id,
+                    "model_id": model_id,
+                    "task_class": task_class,
+                    **quota_decision.to_dict(),
+                })
+                if not quota_decision.eligible:
+                    attempt = ProviderAttempt(
+                        provider_id=provider_id,
+                        model_id=model_id,
+                        status=ProviderAttemptStatus.QUOTA_EXHAUSTED,
+                        error_class="QUOTA_EXHAUSTED",
+                        message=None,
+                        timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        task_class=task_class,
+                        quota_decision=quota_decision.to_dict(),
+                    )
+                    attempts.append(attempt)
+                    self._record_attempt(attempt)
+                    failed_provider = provider_id
+                    continue
 
             half_open_probe = False
             if self.circuit_registry is not None:
@@ -377,6 +415,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                         "provider_attempts": [item.to_dict() for item in attempts],
                         "fallback_used": len(attempts) > 1,
                         "circuit_summary": self.circuit_registry.summarize() if self.circuit_registry else {},
+                        "quota_decisions": quota_decisions,
                     },
                     evidence_class=evidence_class,
                 )
@@ -427,6 +466,14 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 contract_subtype = None
                 safe_detail = None
                 rate_observation = exc.rate_limit_observation
+                if rate_observation is not None and self.quota_governor is not None:
+                    quota_decision = self.quota_governor.record(rate_observation)
+                    quota_decisions.append({
+                        "provider_id": provider_id,
+                        "model_id": model_id,
+                        "task_class": task_class,
+                        **quota_decision.to_dict(),
+                    })
             except TimeoutError as exc:
                 status = ProviderAttemptStatus.TIMED_OUT
                 error_class = "TIMEOUT"
@@ -483,6 +530,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 contract_subtype=contract_subtype,
                 safe_detail=safe_detail,
                 rate_limit_observation=rate_observation,
+                quota_decision=(quota_decision.to_dict() if quota_decision is not None else None),
                 **_routing_attempt_fields(provider),
             )
             attempts.append(attempt)
@@ -521,6 +569,12 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             if self.circuit_registry
             else (time.time() + 60.0)
         )
+        quota_retry_epoch = (
+            self.quota_governor.earliest_retry(tried, task_class=task_class)
+            if self.quota_governor is not None else None
+        )
+        if quota_retry_epoch is not None:
+            next_probe_epoch = max(next_probe_epoch, quota_retry_epoch)
         return ExecutionResult(
             backend_id=self.backend_id,
             worker_id="model_reasoner",
@@ -535,6 +589,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 "provider_attempts": [item.to_dict() for item in attempts],
                 "circuit_summary": circuit_summary,
                 "next_probe_at": next_probe_epoch,
+                "quota_retry_after_epoch": quota_retry_epoch,
+                "quota_decisions": quota_decisions,
                 "local_reasoning_result": (
                     "LOCAL_REASONING_UNAVAILABLE"
                     if any(a.provider_id == "ollama" for a in attempts)

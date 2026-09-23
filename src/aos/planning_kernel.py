@@ -151,9 +151,18 @@ class HumanRequired(PlanningKernelError):
 
 
 class WaitingForReasoningProvider(PlanningKernelError):
-    def __init__(self, message: str, task_class: str = TaskClass.STRUCTURED_PLANNING.value):
+    def __init__(
+        self,
+        message: str,
+        task_class: str = TaskClass.STRUCTURED_PLANNING.value,
+        *,
+        retry_after_epoch: Optional[float] = None,
+        quota_key: Optional[str] = None,
+    ):
         super().__init__(message)
         self.task_class = canonical_task_class(task_class)
+        self.retry_after_epoch = retry_after_epoch
+        self.quota_key = quota_key
 
 
 class PlannerValidationExhausted(PlanningKernelError):
@@ -1243,7 +1252,19 @@ def _reason(
     if result.status != "SUCCESS":
         failure = str(result.evidence_payload.get("failure_class", result.status))
         if result.status in ("DEGRADED", "WAITING_FOR_REASONING_PROVIDER") or "UNAVAILABLE" in failure.upper():
-            raise WaitingForReasoningProvider(failure, task_class=task_class)
+            decisions = result.evidence_payload.get("quota_decisions", [])
+            blocking = [
+                item for item in decisions
+                if isinstance(item, Mapping) and item.get("eligible") is False
+            ] if isinstance(decisions, list) else []
+            retry = result.evidence_payload.get("quota_retry_after_epoch")
+            quota_key = blocking[0].get("key") if blocking else None
+            raise WaitingForReasoningProvider(
+                failure,
+                task_class=task_class,
+                retry_after_epoch=(float(retry) if retry is not None else None),
+                quota_key=(str(quota_key) if quota_key else None),
+            )
         raise PlanningKernelError(f"Reasoning failed: {failure}")
     proposal = result.evidence_payload.get("proposal")
     if not isinstance(proposal, dict):
@@ -2689,6 +2710,8 @@ def run_autonomous_project(
                         failed_batch_count=failed_batch_count,
                     )
                     result["required_task_class"] = exc.task_class
+                    result["quota_retry_after_epoch"] = exc.retry_after_epoch
+                    result["quota_key"] = exc.quota_key
                     _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
                     return result
                 _save_replan_completion(
@@ -2797,6 +2820,8 @@ def run_autonomous_project(
                 failed_batch_count=failed_batch_count,
             )
             result["required_task_class"] = exc.task_class
+            result["quota_retry_after_epoch"] = exc.retry_after_epoch
+            result["quota_key"] = exc.quota_key
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
             return result
         except PlannerValidationExhausted as exc:
