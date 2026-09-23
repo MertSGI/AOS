@@ -121,6 +121,24 @@ class RunIdentity:
     last_evidence_id: Optional[str] = None
     result_artifact: Optional[str] = None
     worker_id: Optional[str] = None
+    resource_id: Optional[str] = None
+    backend_id: Optional[str] = None
+    session_or_thread_id: Optional[str] = None
+    workspace_fingerprint: Optional[str] = None
+    source_sha: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+    last_successful_turn: int = 0
+    last_successful_artifact: Optional[Dict[str, str]] = None
+    adapter_contract_version: Optional[str] = None
+    backend_version: Optional[str] = None
+    executable_sha256: Optional[str] = None
+    auth_mode: Optional[str] = None
+    objective_id: Optional[str] = None
+    last_terminal_event: Optional[str] = None
+    completed_work_unit_ids: List[str] = field(default_factory=list)
+    completed_work_unit_signatures: Dict[str, str] = field(default_factory=dict)
+    artifact_hashes: Dict[str, str] = field(default_factory=dict)
+    superseded_session_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -177,26 +195,32 @@ class RunJournal:
         for ev in events:
             if ev.to_status:
                 run.status = RunStatus(ev.to_status)
-            if "current_phase" in ev.payload:
-                run.current_phase = ev.payload["current_phase"]
-            if "agent_conversation_id" in ev.payload:
-                run.agent_conversation_id = ev.payload["agent_conversation_id"]
-            if "worker_id" in ev.payload:
-                run.worker_id = ev.payload["worker_id"]
-            if "human_input_required" in ev.payload:
-                run.human_input_required = ev.payload["human_input_required"]
-            if "authority_required" in ev.payload:
-                run.authority_required = ev.payload["authority_required"]
-            if "last_evidence_id" in ev.payload:
-                run.last_evidence_id = ev.payload["last_evidence_id"]
-            if "result_artifact" in ev.payload:
-                run.result_artifact = ev.payload["result_artifact"]
-            if "started_at" in ev.payload:
-                run.started_at = ev.payload["started_at"]
-            if "completed_at" in ev.payload:
-                run.completed_at = ev.payload["completed_at"]
+            _apply_event_payload(run, ev.payload)
             run.updated_at = ev.timestamp
         return run
+
+
+_REPLAYABLE_FIELDS = {
+    "current_phase", "agent_conversation_id", "worker_id",
+    "human_input_required", "authority_required", "last_evidence_id",
+    "result_artifact", "started_at", "completed_at", "resource_id",
+    "backend_id", "session_or_thread_id", "workspace_fingerprint",
+    "source_sha", "checkpoint_id", "last_successful_turn",
+    "last_successful_artifact", "adapter_contract_version",
+    "backend_version", "executable_sha256", "auth_mode", "objective_id",
+    "last_terminal_event", "completed_work_unit_ids",
+    "completed_work_unit_signatures", "artifact_hashes",
+    "superseded_session_ids",
+}
+
+
+def _apply_event_payload(run: RunIdentity, payload: Dict[str, Any]) -> None:
+    for key in _REPLAYABLE_FIELDS:
+        if key in payload:
+            value = payload[key]
+            if isinstance(value, (dict, list)):
+                value = value.copy()
+            setattr(run, key, value)
 
 
 class FileRunJournal(RunJournal):
@@ -257,24 +281,7 @@ class AgentRunRegistry:
                 run = self._runs[ev.run_id]
                 if ev.to_status:
                     run.status = RunStatus(ev.to_status)
-                if "current_phase" in ev.payload:
-                    run.current_phase = ev.payload["current_phase"]
-                if "agent_conversation_id" in ev.payload:
-                    run.agent_conversation_id = ev.payload["agent_conversation_id"]
-                if "worker_id" in ev.payload:
-                    run.worker_id = ev.payload["worker_id"]
-                if "human_input_required" in ev.payload:
-                    run.human_input_required = ev.payload["human_input_required"]
-                if "authority_required" in ev.payload:
-                    run.authority_required = ev.payload["authority_required"]
-                if "last_evidence_id" in ev.payload:
-                    run.last_evidence_id = ev.payload["last_evidence_id"]
-                if "result_artifact" in ev.payload:
-                    run.result_artifact = ev.payload["result_artifact"]
-                if "started_at" in ev.payload:
-                    run.started_at = ev.payload["started_at"]
-                if "completed_at" in ev.payload:
-                    run.completed_at = ev.payload["completed_at"]
+                _apply_event_payload(run, ev.payload)
                 run.updated_at = ev.timestamp
 
     def create_run(
@@ -291,6 +298,11 @@ class AgentRunRegistry:
         branch: Optional[str] = None,
         parent_run_id: Optional[str] = None,
         worker_id: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        backend_id: Optional[str] = None,
+        source_sha: Optional[str] = None,
+        checkpoint_id: Optional[str] = None,
+        objective_id: Optional[str] = None,
     ) -> RunIdentity:
         rid = run_id or f"run-{uuid.uuid4().hex[:12]}"
         identity = RunIdentity(
@@ -306,6 +318,11 @@ class AgentRunRegistry:
             branch=branch,
             parent_run_id=parent_run_id,
             worker_id=worker_id,
+            resource_id=resource_id,
+            backend_id=backend_id,
+            source_sha=source_sha,
+            checkpoint_id=checkpoint_id,
+            objective_id=objective_id,
             status=RunStatus.QUEUED,
         )
         self._runs[rid] = identity
@@ -391,6 +408,75 @@ class AgentRunRegistry:
         )
         self.journal.append(ev)
         return run
+
+    def record_agentic_checkpoint(
+        self,
+        run_id: str,
+        *,
+        session_or_thread_id: str,
+        workspace_fingerprint: str,
+        source_sha: str,
+        checkpoint_id: str,
+        last_successful_turn: int,
+        completed_work_unit_ids: List[str],
+        completed_work_unit_signatures: Dict[str, str],
+        artifact_hashes: Dict[str, str],
+        last_successful_artifact: Optional[Dict[str, str]] = None,
+        last_terminal_event: str = "turn.completed",
+    ) -> RunIdentity:
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError(f"Run {run_id} not found")
+        if run.status == RunStatus.COMPLETED:
+            raise InvalidStateTransitionError("completed run cannot re-enter agentic execution")
+        if last_successful_turn < run.last_successful_turn:
+            raise ValueError("last_successful_turn cannot move backwards")
+        prior_ids = set(run.completed_work_unit_ids)
+        next_ids = set(completed_work_unit_ids)
+        if not prior_ids.issubset(next_ids):
+            raise ValueError("completed work cannot be removed from a checkpoint")
+        return self.update_run_metadata(run_id, {
+            "session_or_thread_id": session_or_thread_id,
+            "agent_conversation_id": session_or_thread_id,
+            "workspace_fingerprint": workspace_fingerprint,
+            "source_sha": source_sha,
+            "checkpoint_id": checkpoint_id,
+            "last_successful_turn": int(last_successful_turn),
+            "last_successful_artifact": dict(last_successful_artifact) if last_successful_artifact else None,
+            "last_terminal_event": last_terminal_event,
+            "completed_work_unit_ids": sorted(next_ids),
+            "completed_work_unit_signatures": dict(completed_work_unit_signatures),
+            "artifact_hashes": dict(artifact_hashes),
+        })
+
+    def supersede_agentic_session(
+        self, run_id: str, *, session_id: str, reason: str
+    ) -> RunIdentity:
+        if reason != "SUPERSEDED_STALE_WORKSPACE":
+            raise ValueError("agentic session supersession requires a typed reason")
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError(f"Run {run_id} not found")
+        superseded = list(run.superseded_session_ids)
+        if session_id not in superseded:
+            superseded.append(session_id)
+        return self.update_run_metadata(run_id, {
+            "superseded_session_ids": superseded,
+            "session_or_thread_id": None,
+            "agent_conversation_id": None,
+            "last_terminal_event": reason,
+        })
+
+    def assert_work_unit_not_completed(
+        self, run_id: str, work_unit_id: str, signature: Optional[str] = None
+    ) -> None:
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError(f"Run {run_id} not found")
+        if work_unit_id in run.completed_work_unit_ids:
+            raise InvalidStateTransitionError(f"completed work unit cannot be re-entered: {work_unit_id}")
+        if signature and signature in set(run.completed_work_unit_signatures.values()):
+            raise InvalidStateTransitionError("completed work signature cannot be re-entered")
 
     def get_run(self, run_id: str) -> Optional[RunIdentity]:
         return self._runs.get(run_id)

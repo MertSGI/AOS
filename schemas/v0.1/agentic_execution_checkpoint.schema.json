@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/agentic_execution_checkpoint.schema.json",
+  "title": "AOS Agentic Execution Checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "resource_id", "backend_id", "session_or_thread_id",
+    "workspace_fingerprint", "source_sha", "checkpoint_id",
+    "last_successful_turn", "last_successful_artifact", "started_at",
+    "updated_at", "adapter_contract_version", "objective_id",
+    "completed_work_unit_ids", "completed_work_unit_signatures",
+    "artifact_hashes", "superseded_session_ids", "availability", "context_pack"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "resource_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "backend_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "session_or_thread_id": {"type": ["string", "null"], "maxLength": 128},
+    "workspace_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "last_successful_turn": {"type": "integer", "minimum": 0},
+    "last_successful_artifact": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/artifact"}
+      ]
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "adapter_contract_version": {"type": "string", "minLength": 1},
+    "backend_version": {"type": ["string", "null"], "maxLength": 128},
+    "executable_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "auth_mode": {"type": ["string", "null"], "enum": ["chatgpt", "subscription", "local", null]},
+    "objective_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "last_terminal_event": {"type": ["string", "null"], "maxLength": 128},
+    "completed_work_unit_ids": {
+      "type": "array", "uniqueItems": true, "maxItems": 10000,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256}
+    },
+    "completed_work_unit_signatures": {
+      "type": "object", "maxProperties": 10000,
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    },
+    "artifact_hashes": {
+      "type": "object", "maxProperties": 10000,
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    },
+    "superseded_session_ids": {
+      "type": "array", "uniqueItems": true, "maxItems": 1000,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    },
+    "availability": {"$ref": "#/$defs/availability"},
+    "context_pack": {"type": ["object", "null"]}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "availability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "observed_at", "retry_after_epoch", "source", "evidence"],
+      "properties": {
+        "state": {"enum": ["AVAILABLE", "LOW_OR_SCARCE", "QUOTA_EXHAUSTED", "TEMPORARILY_UNAVAILABLE", "AUTH_UNAVAILABLE", "CONTRACT_FAILURE", "UNKNOWN"]},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "retry_after_epoch": {"type": ["number", "null"], "minimum": 0},
+        "source": {"type": "string", "minLength": 1, "maxLength": 128},
+        "evidence": {"type": "object"}
+      }
+    }
+  }
+}

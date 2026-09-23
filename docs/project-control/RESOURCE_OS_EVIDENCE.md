@@ -100,3 +100,15 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Fresh origin fetch found `audit/aos-jev-decision-layer-preflight-20260923-01` at exact SHA `d28a1350ecf270b94eb3f48014201cc53ab9b517`.
 - Durable Jev state reports `STATUS=COMPLETE`, `READY_FOR_INTEGRATION=YES`, `SOURCE_MUTATION_COUNT=0`, `PAID_CALLS_MADE=0`, and `PRODUCTION=NO_GO`.
 - The four authoritative Jev documents remain scheduled for complete reading immediately before the optional Jev phase. No Jev call or activation occurred in R3.
+
+### Shared agentic contract and workspace fingerprint
+
+- Added a shared `AGENTIC_EXECUTION_BACKEND` contract with `SUBSCRIPTION_INCLUDED` cost, long-horizon/test capabilities, structured availability states, typed session identity, and typed request/result handoff fields while preserving existing backend compatibility.
+- Extended the durable run registry with resource/backend/session identity, source and workspace bindings, checkpoint/turn metadata, completed work-unit IDs/signatures, artifact hashes, and immutable superseded-session history. Journal replay restores every field; completed work IDs/signatures are rejected on re-entry.
+- Added strict Draft 2020-12 schemas for agentic checkpoints and execution-resource policy. Both enforce `PRODUCTION=NO_GO`/paid fallback disabled at the policy boundary and are registered with the deterministic validator.
+- Added content-sensitive Git workspace fingerprints over repository/object format, resolved root, `HEAD`, canonical source SHA, exact NUL-delimited index/status records, tracked and non-ignored untracked raw bytes, tombstones, file type/mode/size, symlink targets, and recursive initialized-submodule fingerprints.
+- Fingerprint tests prove clean determinism and changes for source binding, staged/unstaged/untracked/binary/deleted/renamed/executable/symlink/submodule states; ignored cache content remains excluded.
+- Source-checkout extension bootstrap now prefers this worktree's `src` tree, preventing detached restart tests from importing an unrelated installed AOS package.
+- Focused contract/schema/fingerprint/registry/coordinator restart suite: `109 passed in 29.48s`; focused host/planning/runtime/router/supervisor regression: `87 passed in 34.80s`.
+- Python compile/schema parse checks: PASS. `git diff --check`: PASS.
+- No external agent was invoked, no live runtime was changed, protected lineages/workspaces remain untouched, paid fallback remains disabled, and production remains `NO_GO`.

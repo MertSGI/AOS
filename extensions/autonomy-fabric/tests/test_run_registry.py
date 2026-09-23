@@ -6,6 +6,7 @@ from extensions.autonomy_fabric.run_registry import (
     RunStatus,
     InvalidStateTransitionError,
     RunIdentity,
+    FileRunJournal,
 )
 
 
@@ -93,3 +94,72 @@ def test_journal_replay_rebuilds_state():
     assert rebuilt.current_phase == "PHASE_1"
     assert rebuilt.agent_conversation_id == "conv-abc-123"
     assert rebuilt.human_input_required is True
+
+
+def test_agentic_checkpoint_fields_round_trip_through_file_journal(tmp_path):
+    journal_path = tmp_path / "runs.jsonl"
+    registry = AgentRunRegistry(FileRunJournal(str(journal_path)))
+    run = registry.create_run(
+        project_id="proj-1",
+        run_type="AGENTIC",
+        authority_id="AUTH-123",
+        controller_id="ctrl-1",
+        agent_provider="codex_cli",
+        resource_id="local-codex",
+        backend_id="codex_cli",
+        source_sha="a" * 40,
+        checkpoint_id="checkpoint-1",
+        objective_id="objective-1",
+    )
+    registry.record_agentic_checkpoint(
+        run.run_id,
+        session_or_thread_id="11111111-1111-4111-8111-111111111111",
+        workspace_fingerprint="b" * 64,
+        source_sha="a" * 40,
+        checkpoint_id="checkpoint-2",
+        last_successful_turn=1,
+        completed_work_unit_ids=["work-1"],
+        completed_work_unit_signatures={"work-1": "c" * 64},
+        artifact_hashes={"artifact.json": "d" * 64},
+        last_successful_artifact={"path": "artifact.json", "sha256": "d" * 64},
+    )
+
+    restarted = AgentRunRegistry(FileRunJournal(str(journal_path)))
+    replayed = restarted.get_run(run.run_id)
+
+    assert replayed is not None
+    assert replayed.session_or_thread_id == "11111111-1111-4111-8111-111111111111"
+    assert replayed.workspace_fingerprint == "b" * 64
+    assert replayed.last_successful_turn == 1
+    assert replayed.completed_work_unit_ids == ["work-1"]
+    assert replayed.artifact_hashes == {"artifact.json": "d" * 64}
+    with pytest.raises(InvalidStateTransitionError, match="completed work unit"):
+        restarted.assert_work_unit_not_completed(run.run_id, "work-1")
+    with pytest.raises(InvalidStateTransitionError, match="signature"):
+        restarted.assert_work_unit_not_completed(run.run_id, "new-work", "c" * 64)
+
+
+def test_stale_agentic_session_is_superseded_and_never_selected_implicitly():
+    registry = AgentRunRegistry()
+    run = registry.create_run(
+        project_id="proj-1",
+        run_type="AGENTIC",
+        authority_id="AUTH-123",
+        controller_id="ctrl-1",
+        agent_provider="antigravity",
+    )
+    registry.update_run_metadata(run.run_id, {
+        "session_or_thread_id": "old-session",
+        "workspace_fingerprint": "a" * 64,
+    })
+
+    registry.supersede_agentic_session(
+        run.run_id,
+        session_id="old-session",
+        reason="SUPERSEDED_STALE_WORKSPACE",
+    )
+
+    assert run.session_or_thread_id is None
+    assert run.agent_conversation_id is None
+    assert run.superseded_session_ids == ["old-session"]
+    assert run.last_terminal_event == "SUPERSEDED_STALE_WORKSPACE"

@@ -3,6 +3,10 @@ import importlib.util
 from pathlib import Path
 
 _base_dir = Path(__file__).parent
+_source_root = _base_dir.parent / "src"
+if _source_root.is_dir() and str(_source_root) not in sys.path:
+    # Source-checkout subprocesses must not bind an unrelated installed AOS.
+    sys.path.insert(0, str(_source_root))
 
 def _load_hyphenated_pkg(pkg_name: str, folder_name: str):
     folder_path = _base_dir / folder_name

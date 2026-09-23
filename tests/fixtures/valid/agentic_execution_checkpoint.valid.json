@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0.0",
+  "resource_id": "local_agentic_subscription",
+  "backend_id": "agentic_backend",
+  "session_or_thread_id": "11111111-1111-4111-8111-111111111111",
+  "workspace_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "checkpoint_id": "checkpoint-1",
+  "last_successful_turn": 1,
+  "last_successful_artifact": {
+    "path": "artifact.json",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "started_at": "2026-09-24T00:00:00Z",
+  "updated_at": "2026-09-24T00:01:00Z",
+  "adapter_contract_version": "1.0.0",
+  "backend_version": "1.0.0",
+  "executable_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "auth_mode": "subscription",
+  "objective_id": "objective-1",
+  "last_terminal_event": "turn.completed",
+  "completed_work_unit_ids": ["work-1"],
+  "completed_work_unit_signatures": {
+    "work-1": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "artifact_hashes": {
+    "artifact.json": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "superseded_session_ids": [],
+  "availability": {
+    "state": "AVAILABLE",
+    "observed_at": "2026-09-24T00:01:00Z",
+    "retry_after_epoch": null,
+    "source": "OBSERVED_RUNTIME",
+    "evidence": {}
+  },
+  "context_pack": null
+}

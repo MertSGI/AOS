@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/execution_resource_policy.schema.json",
+  "title": "AOS Execution Resource Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "policy_id", "production", "paid_api_fallback",
+    "resources"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "policy_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "production": {"const": "NO_GO"},
+    "paid_api_fallback": {"const": "DISABLED"},
+    "resources": {
+      "type": "array", "minItems": 1, "maxItems": 64,
+      "items": {"$ref": "#/$defs/resource"}
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource_id", "backend_id", "backend_class", "enabled",
+        "cost_class", "api_key_fallback_enabled", "trust_zone",
+        "capabilities", "scarcity_threshold", "production_allowed"
+      ],
+      "properties": {
+        "resource_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "backend_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "backend_class": {"enum": ["NATIVE_EXECUTION_BACKEND", "REASONING_BACKEND", "AGENTIC_EXECUTION_BACKEND"]},
+        "enabled": {"type": "boolean"},
+        "cost_class": {"enum": ["FREE_LOCAL", "FREE_TIER_CLOUD", "SUBSCRIPTION_INCLUDED", "QUOTA_LIMITED", "PAID_CLOUD"]},
+        "api_key_fallback_enabled": {"const": false},
+        "trust_zone": {"enum": ["SANDBOXED_LOCAL", "RESTRICTED_WORKSPACE", "HOST_USER", "REMOTE_CI"]},
+        "capabilities": {
+          "type": "array", "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "scarcity_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "production_allowed": {"const": false},
+        "sandbox": {"type": ["string", "null"], "maxLength": 128},
+        "extensions": {"type": "object", "additionalProperties": true}
+      }
+    }
+  }
+}

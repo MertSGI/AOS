@@ -22,6 +22,8 @@ class TestValidFixtures:
             ("decision_event", "decision_event.valid.json"),
             ("escalation", "escalation.valid.json"),
             ("control_request", "control_request.valid.json"),
+            ("agentic_execution_checkpoint", "agentic_execution_checkpoint.valid.json"),
+            ("execution_resource_policy", "execution_resource_policy.valid.json"),
         ],
     )
     def test_valid_fixtures_pass(self, doc_type: str, fixture_file: str):
@@ -49,6 +51,8 @@ class TestInvalidFixtures:
             ("escalation", "escalation.missing_required_decision.json", "'required_decision' is a required property"),
             ("control_request", "control_request.force_pass.json", "is not one of"),
             ("control_request", "control_request.missing_type.json", "'request_type' is a required property"),
+            ("agentic_execution_checkpoint", "agentic_execution_checkpoint.missing_fingerprint.json", "'workspace_fingerprint' is a required property"),
+            ("execution_resource_policy", "execution_resource_policy.paid_fallback.json", "'DISABLED' was expected"),
         ],
     )
     def test_invalid_fixtures_rejected(
@@ -158,6 +162,8 @@ class TestSchemaMetaValidation:
         "control_request.schema.json",
         "controlled_execution_result.schema.json",
         "worker_capability_attestation.schema.json",
+        "agentic_execution_checkpoint.schema.json",
+        "execution_resource_policy.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)

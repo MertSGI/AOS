@@ -32,6 +32,8 @@ TYPE_TO_SCHEMA = {
     "worker_capability_attestation": "worker_capability_attestation.schema.json",
     "execution_authorization": "execution_authorization.schema.json",
     "verification_result": "verification_result.schema.json",
+    "agentic_execution_checkpoint": "agentic_execution_checkpoint.schema.json",
+    "execution_resource_policy": "execution_resource_policy.schema.json",
 }
 
 

@@ -11,12 +11,18 @@ Implements bounded persistent coordination loop:
 from __future__ import annotations
 
 import os
+import sys
 import time
 import json
 import hashlib
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Set
 import datetime
+from pathlib import Path
+
+_SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src"
+if _SOURCE_ROOT.is_dir() and str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
 
 from extensions.autonomy_fabric.run_registry import (
     AgentRunRegistry,

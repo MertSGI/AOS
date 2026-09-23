@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "unsafe-policy",
+  "production": "NO_GO",
+  "paid_api_fallback": "ENABLED",
+  "resources": []
+}
