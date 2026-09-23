@@ -140,3 +140,15 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused Codex backend/capability suite: `11 passed in 13.85s`; shared agentic/router/schema/fingerprint regression: `118 passed in 78.59s`.
 - Execution-resource policy schema validation and `git diff --check`: PASS.
 - A read-only redacted `codex doctor --json` diagnostic verified parser compatibility with the installed CLI; no Codex model turn, quota-consuming execution, paid API call, deployment, or production action occurred. Protected lineages/workspaces remain untouched; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### Qwen3-4B Q4_K_M bounded local reasoning
+
+- Added `LlamaCppQwenReasoningBackend` as a `FREE_LOCAL`, loopback-only, `MODEL_REASONING` resource ahead of cloud reasoning. It is deliberately limited to classification, triage, and schema-bounded decisions and has no file, process, agentic, production, or authorization capability.
+- The fixed CPU profile caps context at 4096 tokens, output at 512 tokens, threads at 8, batch/ubatch at 128, parallelism at one, request timeout at 120 seconds, and response bytes at 2 MiB. The server argv binds only `127.0.0.1` and rejects non-Qwen3-4B/Q4_K_M GGUF artifacts.
+- Capability proof binds the llama.cpp executable hash/version, exact model hash/size/quantization, adapter/profile version, and a successful structured classification benchmark under 12 GiB peak RSS and 120-second latency. Missing or drifted proof fails closed.
+- Runtime completion is deterministic (`temperature=0`, fixed seed), requires exactly one choice and JSON Schema validation, and persists only usage plus an output hash. Prompt and generated decision content remain transient and are excluded from serialized `ExecutionResult` evidence.
+- The execution-resource policy declares the exact model/quantization/runtime and bounded CPU/memory profile with paid fallback and production both disabled.
+- Current-machine discovery found neither `llama-server` nor a configured/local Qwen3-4B Q4_K_M artifact. No download or benchmark was fabricated; the resource therefore remains `UNPROVEN` and unavailable while scheduler fallback remains intact.
+- Focused Qwen adapter/capability suite: `14 passed in 1.48s`; focused router/host/schema regression: `118 passed in 6.00s`.
+- A broader native-worker run produced `125 passed, 1 failed`; the isolated failure is the unchanged browser test and reports `Playwright is not installed or accessible in current Python environment`. It is unrelated to Qwen and the complete affected routing/host/schema set passed.
+- Execution-resource policy validation, Python compile checks, and `git diff --check`: PASS. No model inference, paid call, download, deployment, protected-lineage mutation, or production action occurred.

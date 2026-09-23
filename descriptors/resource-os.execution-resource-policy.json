@@ -5,6 +5,30 @@
   "paid_api_fallback": "DISABLED",
   "resources": [
     {
+      "resource_id": "local_qwen3_4b_q4_k_m_cpu",
+      "backend_id": "qwen3_4b_llama_cpp",
+      "backend_class": "REASONING_BACKEND",
+      "enabled": true,
+      "cost_class": "FREE_LOCAL",
+      "api_key_fallback_enabled": false,
+      "trust_zone": "SANDBOXED_LOCAL",
+      "capabilities": ["MODEL_REASONING"],
+      "scarcity_threshold": 0.0,
+      "production_allowed": false,
+      "sandbox": "loopback-only",
+      "extensions": {
+        "model_family": "Qwen3-4B",
+        "quantization": "Q4_K_M",
+        "runtime": "llama.cpp",
+        "context_size": 4096,
+        "max_output_tokens": 512,
+        "max_parallel": 1,
+        "memory_acceptance_bytes": 12884901888,
+        "requires_machine_local_capability_attestation": true,
+        "benchmark_required": true
+      }
+    },
+    {
       "resource_id": "local_antigravity_subscription",
       "backend_id": "antigravity",
       "backend_class": "AGENTIC_EXECUTION_BACKEND",

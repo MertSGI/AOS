@@ -94,6 +94,9 @@ from extensions.autonomy_fabric.antigravity_agentic_backend import (  # noqa: E4
     AntigravityAgenticExecutionBackend,
 )
 from extensions.autonomy_fabric.codex_cli_backend import CodexCliExecutionBackend  # noqa: E402
+from extensions.autonomy_fabric.llama_cpp_reasoning_backend import (  # noqa: E402
+    LlamaCppQwenReasoningBackend,
+)
 from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     BrowserExecutionBackend,
     GitHubCIWorker,
@@ -879,6 +882,7 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
             NativeGitWorker(),
             GitHubCIWorker(),
             BrowserExecutionBackend(),
+            LlamaCppQwenReasoningBackend(),
             reasoning_backend,
             AntigravityAgenticExecutionBackend(),
             CodexCliExecutionBackend(),
