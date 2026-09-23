@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0.0",
+  "track_id": "AOS-CODEX-CLI-EXECUTION-BACKEND-PREFLIGHT-20260923-01",
+  "recorded_at": "2026-09-23T12:55:01Z",
+  "repository": "MertSGI/AOS",
+  "worktree": "C:\\Projects\\AOS-codex-cli-backend-preflight-20260923-01",
+  "branch": "audit/aos-codex-cli-backend-preflight-20260923-01",
+  "base_sha": "a0cfc2e329b36dca1964ed427ab17d8c82cbacb6",
+  "production": "NO_GO",
+  "implementation_phase": false,
+  "implementation_base_requirement": "INDEPENDENTLY_ACCEPTED_FINAL_FREELLMAPI_TRACK_A_SHA",
+  "phases": {
+    "C0_LOCAL_CODEX_CAPABILITY_PROOF": "COMPLETE",
+    "C1_EXISTING_AOS_REUSE_AUDIT": "COMPLETE",
+    "C2_CODEX_EXECUTION_BACKEND_CONTRACT": "COMPLETE",
+    "C3_SAFE_RESUME_REENTRY_DESIGN": "COMPLETE",
+    "C4_IMPLEMENTATION_MAP": "COMPLETE"
+  },
+  "capability_evidence": {
+    "codex_cli_version": "codex-cli 0.146.0-alpha.3",
+    "subscription_auth_usable": true,
+    "authentication_mode": "chatgpt",
+    "api_key_fallback_used": false,
+    "exec_json_proven": true,
+    "session_identity_proven": true,
+    "exact_id_resume_proven": true,
+    "cross_workspace_resume_accepted_by_cli": true,
+    "repo_write_proven": true,
+    "shell_execution_proven": true,
+    "test_execution_proven": true,
+    "git_inspection_proven": true,
+    "structured_quota_observability": true,
+    "quota_surface": "codex app-server account/rateLimits/read",
+    "actual_quota_exhaustion_induced": false,
+    "immediate_interruption_can_leave_unresumable_session": true
+  },
+  "proposed_backend": {
+    "class_name": "CodexCliExecutionBackend",
+    "backend_class": "AGENTIC_EXECUTION_BACKEND",
+    "backend_id": "codex_cli",
+    "resource_id": "local_codex_cli_chatgpt_subscription",
+    "cost_class": "SUBSCRIPTION_INCLUDED",
+    "paid_api_fallback": "DISABLED"
+  },
+  "required_durable_session_fields": [
+    "resource_id",
+    "backend_id",
+    "session_or_thread_id",
+    "workspace_fingerprint",
+    "source_sha",
+    "checkpoint_id",
+    "last_successful_turn",
+    "last_successful_artifact",
+    "started_at",
+    "updated_at"
+  ],
+  "availability_states": [
+    "AVAILABLE",
+    "LOW_OR_SCARCE",
+    "QUOTA_EXHAUSTED",
+    "TEMPORARILY_UNAVAILABLE",
+    "AUTH_UNAVAILABLE",
+    "CONTRACT_FAILURE",
+    "UNKNOWN"
+  ],
+  "requested_file_discrepancies": {
+    "extensions/autonomy-fabric/parallel_supervisor.py": "ABSENT_AT_BASE_SHA",
+    "equivalent_inspected": "extensions/autonomy-fabric/supervisor.py"
+  },
+  "mutation_counts": {
+    "source": 0,
+    "live_runtime": 0,
+    "lari": 0,
+    "production": 0
+  },
+  "disposable_probe_cleanup": {
+    "test_threads_deleted": true,
+    "temporary_repositories_deleted": true
+  },
+  "implementation_ready_for_post_track_a": true
+}
