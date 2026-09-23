@@ -1234,6 +1234,15 @@ def _reason(
         )
     else:
         backend = backend_override
+    request_identity = hashlib.sha256(json.dumps({
+        "project_id": situation.project_id,
+        "control_sha": situation.control_sha,
+        "execution_base_sha": situation.execution_base_sha,
+        "task_id": task_id,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "schema": schema,
+        "task_class": canonical_task_class(task_class),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     request = ExecutionRequest(
         task_id=task_id,
         project_id=situation.project_id,
@@ -1241,6 +1250,7 @@ def _reason(
         operation_class="MODEL_REASONING",
         required_capabilities=[ExecutionCapability.MODEL_REASONING],
         authority_id=authority_id,
+        request_id=f"reason-{request_identity}",
         payload={
             "prompt": prompt,
             "schema": schema,

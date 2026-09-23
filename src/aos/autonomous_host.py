@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import subprocess
@@ -28,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from aos.process_utils import run_headless
 from aos.read_identity import build_workspace_source_generation
 from aos.quota_governor import QuotaGovernor
+from aos.resource_ledger import ResourceEventType, ResourceLedger
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_observation import (
@@ -231,6 +233,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         attempt_journal: Optional[Path] = None,
         circuit_registry: Optional[ProviderCircuitBreakerRegistry] = None,
         quota_governor: Optional[QuotaGovernor] = None,
+        resource_ledger: Optional[ResourceLedger] = None,
     ) -> None:
         self.provider_router = provider_router
         self.provider_factory = provider_factory or self._default_provider_factory
@@ -240,10 +243,21 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 attempt_journal.parent / "provider-circuits.json"
             )
         self.circuit_registry = circuit_registry
+        if resource_ledger is None and attempt_journal is not None:
+            resource_dir = attempt_journal.parent / "resource-os"
+            resource_ledger = ResourceLedger(
+                resource_dir / "resource-ledger.jsonl",
+                resource_dir / "resource-ledger-snapshot.json",
+            )
+        self.resource_ledger = resource_ledger
         if quota_governor is None and attempt_journal is not None:
             quota_governor = QuotaGovernor(
-                attempt_journal.parent / "resource-os" / "quota-governor.json"
+                attempt_journal.parent / "resource-os" / "quota-governor.json",
+                ledger=resource_ledger,
             )
+        elif quota_governor is not None and resource_ledger is not None:
+            quota_governor.ledger = resource_ledger
+            quota_governor._reconcile_ledger()
         self.quota_governor = quota_governor
 
     def _default_provider_factory(self, provider_id: str, model_id: str) -> Any:
@@ -287,6 +301,57 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
     def _record_attempt(self, attempt: ProviderAttempt) -> None:
         _append_jsonl(self.attempt_journal, attempt.to_dict())
 
+    @staticmethod
+    def _ledger_attempt_id(
+        request: ExecutionRequest,
+        provider_id: str,
+        model_id: str,
+        task_class: str,
+    ) -> str:
+        material = "|".join((
+            request.request_id,
+            request.task_id,
+            provider_id,
+            model_id,
+            task_class,
+        ))
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _ledger_append(
+        self,
+        event_type: ResourceEventType,
+        attempt_id: str,
+        suffix: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        if self.resource_ledger is None:
+            return
+        self.resource_ledger.append(
+            event_type,
+            idempotency_key=f"attempt:{attempt_id}:{suffix}",
+            payload={"attempt_id": attempt_id, **payload},
+        )
+
+    @staticmethod
+    def _normalized_usage(usage: Any) -> Dict[str, Any]:
+        if not isinstance(usage, dict):
+            return {"request_count": 1}
+        aliases = {
+            "prompt_tokens": "input_tokens",
+            "completion_tokens": "output_tokens",
+        }
+        allowed = {
+            "input_tokens", "cached_input_tokens", "output_tokens",
+            "reasoning_output_tokens", "total_tokens",
+            "cost_estimate_usd", "cost_actual_usd",
+        }
+        normalized: Dict[str, Any] = {"request_count": 1}
+        for key, value in usage.items():
+            target = aliases.get(key, key)
+            if target in allowed:
+                normalized[target] = value
+        return normalized
+
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         prompt = request.payload.get("prompt", "")
         schema = request.payload.get("schema", {})
@@ -314,18 +379,31 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             provider_id = route.selected_provider_id
             model_id = route.selected_model_id
             tried.append(provider_id)
+            ledger_attempt_id = self._ledger_attempt_id(
+                request, provider_id, model_id, task_class
+            )
 
             quota_decision = (
                 self.quota_governor.decision(provider_id, model_id, task_class)
                 if self.quota_governor is not None else None
             )
             if quota_decision is not None:
-                quota_decisions.append({
+                quota_decision_payload = {
                     "provider_id": provider_id,
                     "model_id": model_id,
                     "task_class": task_class,
                     **quota_decision.to_dict(),
-                })
+                }
+                quota_decisions.append(quota_decision_payload)
+                quota_decision_hash = hashlib.sha256(json.dumps(
+                    quota_decision_payload, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")).hexdigest()
+                self._ledger_append(
+                    ResourceEventType.QUOTA_DECISION,
+                    ledger_attempt_id,
+                    f"quota-decision:{quota_decision_hash}",
+                    quota_decision_payload,
+                )
                 if not quota_decision.eligible:
                     attempt = ProviderAttempt(
                         provider_id=provider_id,
@@ -361,6 +439,17 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
 
             provider: Any = None
             try:
+                self._ledger_append(
+                    ResourceEventType.ATTEMPT_STARTED,
+                    ledger_attempt_id,
+                    "started",
+                    {
+                        "provider_id": provider_id,
+                        "model_id": model_id,
+                        "task_class": task_class,
+                        "status": "STARTED",
+                    },
+                )
                 provider = self.provider_factory(provider_id, model_id)
                 plan_data, response_id, usage = provider.generate_plan(prompt, schema)
                 if not isinstance(plan_data, dict):
@@ -382,6 +471,28 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 )
                 attempts.append(attempt)
                 self._record_attempt(attempt)
+                self._ledger_append(
+                    ResourceEventType.ATTEMPT_FINISHED,
+                    ledger_attempt_id,
+                    "finished",
+                    {
+                        "provider_id": provider_id,
+                        "model_id": model_id,
+                        "task_class": task_class,
+                        "status": ProviderAttemptStatus.SUCCESS.value,
+                    },
+                )
+                self._ledger_append(
+                    ResourceEventType.RESOURCE_USAGE,
+                    ledger_attempt_id,
+                    "usage",
+                    {
+                        "provider_id": provider_id,
+                        "model_id": model_id,
+                        "task_class": task_class,
+                        **self._normalized_usage(usage),
+                    },
+                )
                 if self.circuit_registry is not None:
                     self.circuit_registry.record_success(
                         provider_id,
@@ -503,6 +614,18 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 )
                 attempts.append(attempt)
                 self._record_attempt(attempt)
+                self._ledger_append(
+                    ResourceEventType.ATTEMPT_FINISHED,
+                    ledger_attempt_id,
+                    "finished",
+                    {
+                        "provider_id": provider_id,
+                        "model_id": model_id,
+                        "task_class": task_class,
+                        "status": ProviderAttemptStatus.NON_RETRYABLE_FAILED.value,
+                        "failure_family": "UNKNOWN",
+                    },
+                )
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="model_reasoner",
@@ -535,6 +658,18 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             )
             attempts.append(attempt)
             self._record_attempt(attempt)
+            self._ledger_append(
+                ResourceEventType.ATTEMPT_FINISHED,
+                ledger_attempt_id,
+                "finished",
+                {
+                    "provider_id": provider_id,
+                    "model_id": model_id,
+                    "task_class": task_class,
+                    "status": status.value,
+                    "failure_family": failure_class,
+                },
+            )
             if self.circuit_registry is not None:
                 local_service_available = None
                 credential_available = None

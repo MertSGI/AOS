@@ -39,6 +39,7 @@ from aos.provider_probe import probe_enabled_providers
 from aos.provider_observation import RateLimitObservation, TaskClass
 from aos.runtime_worker import build_recovery_fingerprint
 from aos.quota_governor import QuotaGovernor
+from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -681,6 +682,13 @@ class RuntimeEngine:
                 "same_fingerprint_respawns": same_fingerprint_respawns,
                 "lineage_preserved": True,
             })
+            self._record_recovery_disposition(
+                command_id,
+                fingerprint,
+                recovery_disposition,
+                same_fingerprint_respawns,
+                strategy_generation,
+            )
             return
         self.store.write_state(
             command_id,
@@ -693,7 +701,41 @@ class RuntimeEngine:
             last_worker_exit_code=last_exit_code,
             last_recovery_at=utc_now(),
         )
+        self._record_recovery_disposition(
+            command_id,
+            fingerprint,
+            recovery_disposition,
+            same_fingerprint_respawns,
+            strategy_generation,
+        )
         self._spawn_worker(command_id, recovered=True)
+
+    def _record_recovery_disposition(
+        self,
+        command_id: str,
+        fingerprint: Dict[str, Any],
+        disposition: str,
+        same_fingerprint_respawns: int,
+        strategy_generation: int,
+    ) -> None:
+        resource_dir = (
+            self.store.command_dir(command_id) / "project-runtime" / "resource-os"
+        )
+        ledger = ResourceLedger(resource_dir / "resource-ledger.jsonl")
+        fingerprint_sha = str(fingerprint.get("fingerprint_sha256") or "UNKNOWN")
+        ledger.append(
+            ResourceEventType.RECOVERY_DISPOSITION,
+            idempotency_key=(
+                f"recovery:{fingerprint_sha}:{same_fingerprint_respawns}:"
+                f"{strategy_generation}:{disposition}"
+            ),
+            payload={
+                "disposition": disposition,
+                "recovery_fingerprint": fingerprint,
+                "same_fingerprint_respawns": same_fingerprint_respawns,
+                "strategy_generation": strategy_generation,
+            },
+        )
 
     def recover_unfinished(self) -> None:
         for command_id in self.store.list_command_ids():
@@ -882,6 +924,7 @@ class RuntimeEngine:
         active_by_project: Dict[str, List[str]] = {}
         command_ids = self.store.list_command_ids()[-200:]
         latest_summary = None
+        latest_resource_ledger_summary = None
         for command_id in command_ids:
             state = self.store.read_state(command_id)
             current = str(state.get("state") or "UNKNOWN")
@@ -910,6 +953,12 @@ class RuntimeEngine:
                 "failure_class": latest_state.get("failure_class"),
                 "canonical_source_sha": latest_state.get("canonical_source_sha"),
             }
+            latest_resource_ledger_summary = ResourceLedger(
+                self.store.command_dir(latest_id)
+                / "project-runtime"
+                / "resource-os"
+                / "resource-ledger.jsonl"
+            ).summary()
         # Aggregate the same command-local registries workers persist. No global
         # provider registry is created or consulted.
         enabled_providers, circuit_paths, registries = self._provider_evidence()
@@ -1060,6 +1109,7 @@ class RuntimeEngine:
             "waiting_commands": waiting,
             "terminal_command_count": len(terminal),
             "latest_command": latest_summary,
+            "latest_resource_ledger": latest_resource_ledger_summary,
             "default_project": self.config["default_project"],
             "runtime_source_sha": self.config.get("candidate_source_sha"),
             "runtime_asset_tree_sha256": self.config.get("runtime_asset_tree_sha256"),

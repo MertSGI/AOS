@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from aos.provider_observation import (
     merge_rate_limit_observations,
 )
 from aos.runtime_store import atomic_json, exclusive_file_lock
+from aos.resource_ledger import ResourceEventType, ResourceLedger
 
 
 class QuotaState(str, Enum):
@@ -70,13 +72,56 @@ class QuotaGovernor:
         *,
         clock: Callable[[], float] = time.time,
         scarcity_ratio: float = 0.10,
+        ledger: Optional[ResourceLedger] = None,
     ) -> None:
         self.persistence_path = persistence_path
         self.clock = clock
         self.scarcity_ratio = max(0.0, min(float(scarcity_ratio), 1.0))
+        self.ledger = ledger
         self._observations: Dict[str, RateLimitObservation] = {}
         self._corrupt = False
+        self._ledger_rate_head_hash = "0" * 64
         self.load()
+        self._reconcile_ledger()
+
+    def _current_ledger_rate_head_hash(self) -> str:
+        if self.ledger is None:
+            return "0" * 64
+        events = self.ledger.events([ResourceEventType.RATE_OBSERVED.value])
+        return events[-1].event_hash if events else "0" * 64
+
+    def _reconcile_ledger(self) -> None:
+        if self.ledger is None:
+            return
+        if self.ledger.corrupt:
+            self._observations = {}
+            self._corrupt = True
+            return
+        ledger_rate_head = self._current_ledger_rate_head_hash()
+        if self._corrupt or ledger_rate_head != self._ledger_rate_head_hash:
+            self.rebuild_from_ledger()
+
+    def rebuild_from_ledger(self) -> None:
+        if self.ledger is None or self.ledger.corrupt:
+            self._observations = {}
+            self._corrupt = True
+            return
+        rebuilt: Dict[str, RateLimitObservation] = {}
+        for event in self.ledger.events([ResourceEventType.RATE_OBSERVED.value]):
+            raw = event.payload.get("rate_limit_observation")
+            if not isinstance(raw, dict):
+                self._observations = {}
+                self._corrupt = True
+                return
+            observation = RateLimitObservation.from_dict(raw)
+            key = _quota_key(observation)
+            rebuilt[key] = merge_rate_limit_observations(
+                rebuilt.get(key), observation, now_epoch=self.clock()
+            )
+        self._observations = rebuilt
+        self._ledger_rate_head_hash = self._current_ledger_rate_head_hash()
+        self._corrupt = False
+        self.save()
 
     def load(self) -> None:
         if self.persistence_path is None or not self.persistence_path.exists():
@@ -97,6 +142,9 @@ class QuotaGovernor:
                     raise ValueError("quota record key mismatch")
                 loaded[key] = observation
             self._observations = loaded
+            self._ledger_rate_head_hash = str(
+                data.get("ledger_rate_head_hash") or "0" * 64
+            )
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             self._observations = {}
             self._corrupt = True
@@ -109,6 +157,7 @@ class QuotaGovernor:
             atomic_json(self.persistence_path, {
                 "schema_version": self.schema_version,
                 "updated_at_epoch": self.clock(),
+                "ledger_rate_head_hash": self._ledger_rate_head_hash,
                 "records": {
                     key: observation.to_dict()
                     for key, observation in sorted(self._observations.items())
@@ -118,6 +167,18 @@ class QuotaGovernor:
     def record(self, observation: RateLimitObservation) -> QuotaDecision:
         if not isinstance(observation, RateLimitObservation):
             raise TypeError("QuotaGovernor accepts only RateLimitObservation")
+        if self.ledger is not None:
+            encoded = json.dumps(
+                observation.to_dict(), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            self.ledger.append(
+                ResourceEventType.RATE_OBSERVED,
+                idempotency_key=(
+                    "rate-observation:" + hashlib.sha256(encoded).hexdigest()
+                ),
+                payload={"rate_limit_observation": observation.to_dict()},
+            )
+            self._ledger_rate_head_hash = self._current_ledger_rate_head_hash()
         key = _quota_key(observation)
         current = self._observations.get(key)
         self._observations[key] = merge_rate_limit_observations(
@@ -272,6 +333,7 @@ class QuotaGovernor:
         return {
             "schema_version": self.schema_version,
             "corrupt": self._corrupt,
+            "ledger_rate_head_hash": self._ledger_rate_head_hash,
             "records": {
                 key: observation.to_dict()
                 for key, observation in sorted(self._observations.items())

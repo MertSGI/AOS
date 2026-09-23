@@ -81,3 +81,22 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused quota/provider/runtime suite: `68 passed in 10.85s`; isolated concurrency regression: PASS.
 - Python compileall: PASS. `git diff --check`: PASS.
 - Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### R3 — ResourceLedger
+
+- Added an append-only, fsynced, lock-protected, hash-chained JSONL `ResourceLedger` with typed event kinds, deterministic event IDs, bounded safe identifiers, and atomic derived snapshots.
+- Idempotency keys prevent duplicate attempt/usage accounting. Reusing a key with different type or normalized payload fails closed instead of silently changing history.
+- Replay accepts only a valid hash-linked sequence. An incomplete final line is ignored and repaired from the valid prefix on the next append; any earlier corruption makes the affected resource ledger and quota state unavailable without mutating project state.
+- The ledger allowlists typed identifiers, numeric usage/cost fields, quota decisions, rate-limit observations, and recovery fingerprints. Prompts, generated content, raw headers/bodies, arbitrary messages, credentials, and unknown usage fields are discarded.
+- `QuotaGovernor` records typed rate observations in the ledger and reconstructs its mutable snapshot when corrupt or inconsistent with the latest rate event.
+- Provider reasoning attempts record starts, finishes, normalized usage, and quota decisions. Runtime recovery records normal resume, strategy escalation, and churn-guard dispositions; runtime status exposes only the bounded derived summary.
+- Planning reasoning request IDs are content-sensitive and deterministic, so an identical restarted request reuses accounting identity while a materially changed prompt/schema/source generation does not.
+- Focused R3/resource/provider/runtime/planning suite: `120 passed in 48.14s`.
+- Python compile checks: PASS. `git diff --check`: PASS.
+- Live/provider/paid/production actions: none; protected lineages/workspaces untouched; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### Jev preflight availability checkpoint
+
+- Fresh origin fetch found `audit/aos-jev-decision-layer-preflight-20260923-01` at exact SHA `d28a1350ecf270b94eb3f48014201cc53ab9b517`.
+- Durable Jev state reports `STATUS=COMPLETE`, `READY_FOR_INTEGRATION=YES`, `SOURCE_MUTATION_COUNT=0`, `PAID_CALLS_MADE=0`, and `PRODUCTION=NO_GO`.
+- The four authoritative Jev documents remain scheduled for complete reading immediately before the optional Jev phase. No Jev call or activation occurred in R3.
