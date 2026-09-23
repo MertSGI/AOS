@@ -46,3 +46,14 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Planning-kernel/worker regression: `57 passed in 31.41s`.
 - Python compileall: PASS. `git diff --check`: PASS.
 - Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### R1B — content-aware read deduplication
+
+- Successful `FILE/read_file` results now persist a bounded, redacted, worker-observed content hash, normalized path, source generation, character count, and deterministic read identity in the checksummed coordinator checkpoint and host receipt.
+- Workspace source generation binds project id, canonical source SHA, and canonical execution base SHA.
+- The planning kernel reuses an excerpt and rejects a read only when path, current byte hash, and source generation match the durable worker observation.
+- Changed bytes or source generation create a new legal read identity; legacy receipts without hash/generation are `LEGACY_UNBOUND` and permit one fresh upgrade read.
+- Generic lifetime task signatures no longer include `FILE/read_file`; confinement and sensitive-path exclusions remain unchanged.
+- Focused coordinator/host/planning suite: `71 passed in 30.45s` using `python -m pytest` so the worktree extension package is authoritative.
+- Python compileall: PASS. `git diff --check`: PASS.
+- Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

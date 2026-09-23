@@ -3,6 +3,7 @@
 import pytest
 import os
 import tempfile
+import json
 from extensions.autonomy_fabric.run_registry import AgentRunRegistry, RunStatus
 from extensions.autonomy_fabric.task_dag import TaskDAG
 from extensions.autonomy_fabric.execution_router import ExecutionRouter
@@ -91,3 +92,45 @@ def test_failed_task_is_not_retried_within_same_bounded_run(tmp_path):
 
     assert state.iteration_count == 1
     assert state.failed_task_ids == ["bad-process"]
+
+
+def test_completed_read_observation_is_hash_bound_redacted_and_restartable(tmp_path):
+    target = tmp_path / "README.md"
+    target.write_text("safe prefix OPENAI_API_KEY=sk-forbidden-value\n", encoding="utf-8")
+    checkpoint = tmp_path / "coordinator.json"
+    generation = "a" * 64
+    registry = AgentRunRegistry()
+    dag = TaskDAG("proj-read", registry)
+    node = dag.add_node("read-doc", "FILE", "auth-1")
+    node.payload = {"action": "read_file", "path": "README.md"}
+    router = ExecutionRouter(backends=[NativeFileWorker()])
+    coordinator = PersistentCoordinator(
+        project_id="proj-read",
+        workspace_path=str(tmp_path),
+        dag=dag,
+        router=router,
+        registry=registry,
+        checkpoint_file=str(checkpoint),
+        workspace_source_generation=generation,
+    )
+
+    result = coordinator.execute_next_batch(max_tasks=1)[0]
+    assert result.status == "SUCCESS"
+    assert len(coordinator.state.completed_read_observations) == 1
+    observation = coordinator.state.completed_read_observations[0]
+    assert observation["normalized_path"] == "readme.md"
+    assert observation["workspace_source_generation"] == generation
+    assert len(observation["content_sha256"]) == 64
+    assert len(observation["read_identity"]) == 64
+    assert "sk-forbidden-value" not in json.dumps(observation)
+
+    restarted = PersistentCoordinator(
+        project_id="proj-read",
+        workspace_path=str(tmp_path),
+        dag=dag,
+        router=router,
+        registry=registry,
+        checkpoint_file=str(checkpoint),
+        workspace_source_generation=generation,
+    )
+    assert restarted.state.completed_read_observations == [observation]

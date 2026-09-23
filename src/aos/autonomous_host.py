@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aos.process_utils import run_headless
+from aos.read_identity import build_workspace_source_generation
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_observation import (
@@ -719,6 +720,11 @@ def run_host(
         router=router,
         registry=registry,
         checkpoint_file=str(runtime_dir / "coordinator-checkpoint.json"),
+        workspace_source_generation=build_workspace_source_generation(
+            project_id=canonical_binding["project_id"],
+            canonical_source_sha=canonical_binding["source_sha"],
+            canonical_execution_base_sha=canonical_binding.get("execution_base_sha"),
+        ),
     )
     state = coordinator.run_until_complete(max_iterations=max_iterations)
     receipt = {
@@ -729,6 +735,7 @@ def run_host(
         "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
         "completed_task_ids": state.completed_task_ids,
         "failed_task_ids": state.failed_task_ids,
+        "completed_read_observations": state.completed_read_observations,
         "iteration_count": state.iteration_count,
         "progress": dag.compute_progress(),
         "ag_backend_enabled": False,

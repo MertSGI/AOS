@@ -34,6 +34,8 @@ from extensions.autonomy_fabric.execution_backend import (
 from extensions.autonomy_fabric.execution_router import ExecutionRouter
 from extensions.autonomy_fabric.evidence_aggregator import EvidenceAggregator, EvidenceType
 from extensions.autonomy_fabric.completion_supervisor import CompletionSupervisor, ControllerReviewDisposition
+from extensions.autonomy_fabric.native_workers import redact_secrets
+from aos.read_identity import build_read_identity, normalize_read_path
 
 
 class CheckpointCorruptionError(ValueError):
@@ -48,6 +50,7 @@ class CoordinatorState:
     running: bool = False
     completed_task_ids: List[str] = field(default_factory=list)
     failed_task_ids: List[str] = field(default_factory=list)
+    completed_read_observations: List[Dict[str, Any]] = field(default_factory=list)
     iteration_count: int = 0
     schema_version: str = "2.0.0"
     last_checkpoint: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -69,6 +72,7 @@ class PersistentCoordinator:
         evidence_aggregator: Optional[EvidenceAggregator] = None,
         completion_supervisor: Optional[CompletionSupervisor] = None,
         checkpoint_file: Optional[str] = None,
+        workspace_source_generation: Optional[str] = None,
     ):
         self.project_id = project_id
         self.workspace_path = workspace_path
@@ -78,6 +82,9 @@ class PersistentCoordinator:
         self.evidence_aggregator = evidence_aggregator or EvidenceAggregator(registry)
         self.completion_supervisor = completion_supervisor or CompletionSupervisor(registry)
         self.checkpoint_file = checkpoint_file
+        self.workspace_source_generation = workspace_source_generation or hashlib.sha256(
+            f"legacy:{project_id}".encode("utf-8")
+        ).hexdigest()
 
         self.state = CoordinatorState(
             coordinator_id=f"coord-{project_id}",
@@ -135,6 +142,8 @@ class PersistentCoordinator:
 
             self.state.completed_task_ids = data.get("completed_task_ids", [])
             self.state.failed_task_ids = data.get("failed_task_ids", [])
+            observations = data.get("completed_read_observations", [])
+            self.state.completed_read_observations = self._validated_read_observations(observations)
             self.state.iteration_count = data.get("iteration_count", 0)
             self.state.last_checkpoint = data.get("last_checkpoint", "")
             self.state.schema_version = "2.0.0"
@@ -158,6 +167,81 @@ class PersistentCoordinator:
                         self.registry.transition(run.run_id, RunStatus.RUNNING)
                         self.registry.transition(run.run_id, RunStatus.COMPLETED)
                     self.dag.associate_run(completed_id, synth_run_id)
+
+    def _validated_read_observations(self, values: Any) -> List[Dict[str, Any]]:
+        if not isinstance(values, list):
+            return []
+        validated: List[Dict[str, Any]] = []
+        for value in values[-128:]:
+            if not isinstance(value, dict):
+                continue
+            try:
+                normalized_path = normalize_read_path(str(value.get("normalized_path", "")))
+                content_hash = str(value.get("content_sha256", "")).lower()
+                generation = str(value.get("workspace_source_generation", "")).lower()
+                identity = build_read_identity(
+                    normalized_path=normalized_path,
+                    content_sha256=content_hash,
+                    workspace_source_generation=generation,
+                )
+                target = os.path.abspath(os.path.join(self.workspace_path, normalized_path))
+                root = os.path.abspath(self.workspace_path)
+                if os.path.commonpath((root, target)) != root:
+                    continue
+                character_count = int(value.get("character_count", 0))
+                excerpt = redact_secrets(str(value.get("redacted_excerpt", "")))[:4000]
+            except (TypeError, ValueError, OSError):
+                continue
+            validated.append({
+                "schema_version": "1.0.0",
+                "read_identity": identity,
+                "normalized_path": normalized_path,
+                "content_sha256": content_hash,
+                "workspace_source_generation": generation,
+                "character_count": max(0, min(character_count, 100_000_000)),
+                "redacted_excerpt": excerpt,
+            })
+        return validated
+
+    def _record_completed_read(self, node: DAGNode, result: ExecutionResult) -> None:
+        payload = getattr(node, "payload", {})
+        if not isinstance(payload, dict) or payload.get("action") != "read_file":
+            return
+        raw_path = str(payload.get("path", ""))
+        try:
+            normalized_path = normalize_read_path(raw_path)
+            target = os.path.abspath(os.path.join(self.workspace_path, raw_path))
+            root = os.path.abspath(self.workspace_path)
+            if os.path.commonpath((root, target)) != root:
+                return
+            content_hash = None
+            for key, value in result.artifact_hashes.items():
+                if normalize_read_path(str(key)) == normalized_path:
+                    content_hash = str(value).lower()
+                    break
+            if content_hash is None:
+                return
+            read_identity = build_read_identity(
+                normalized_path=normalized_path,
+                content_sha256=content_hash,
+                workspace_source_generation=self.workspace_source_generation,
+            )
+            content = str(result.evidence_payload.get("content", ""))
+            observation = {
+                "schema_version": "1.0.0",
+                "read_identity": read_identity,
+                "normalized_path": normalized_path,
+                "content_sha256": content_hash,
+                "workspace_source_generation": self.workspace_source_generation,
+                "character_count": len(content),
+                "redacted_excerpt": redact_secrets(content)[:4000],
+            }
+        except (TypeError, ValueError, OSError):
+            return
+        self.state.completed_read_observations = [
+            existing for existing in self.state.completed_read_observations
+            if existing.get("read_identity") != read_identity
+        ][-127:] + [observation]
 
     def _save_checkpoint(self):
         if self.checkpoint_file:
@@ -268,6 +352,7 @@ class PersistentCoordinator:
                 self.registry.transition(run.run_id, RunStatus.COMPLETED, phase="EXECUTION_SUCCESS")
                 if node.node_id not in self.state.completed_task_ids:
                     self.state.completed_task_ids.append(node.node_id)
+                self._record_completed_read(node, res)
                 if node.gate_type != NodeGateType.NONE:
                     self.dag.pass_gate(node.node_id)
             else:

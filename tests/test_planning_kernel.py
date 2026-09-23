@@ -8,6 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 import aos.planning_kernel as planning_kernel
+from aos.read_identity import (
+    build_read_identity,
+    build_workspace_source_generation,
+    normalize_read_path,
+)
 
 from aos.planning_kernel import (
     AuthorityDenied,
@@ -64,6 +69,33 @@ def _situation(*, status="ACTIVE", next_action="Continue authorized work", ambig
         ambiguity_reasons=tuple(ambiguity),
         captured_at="2026-09-15T00:00:00+00:00",
     )
+
+
+def _test_generation(situation=None):
+    value = situation or _situation()
+    return build_workspace_source_generation(
+        project_id=value.project_id,
+        canonical_source_sha=value.control_sha,
+        canonical_execution_base_sha=value.execution_base_sha,
+    )
+
+
+def _read_observation(path: Path, generation: str):
+    normalized = normalize_read_path(path.name)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {
+        "schema_version": "1.0.0",
+        "read_identity": build_read_identity(
+            normalized_path=normalized,
+            content_sha256=digest,
+            workspace_source_generation=generation,
+        ),
+        "normalized_path": normalized,
+        "content_sha256": digest,
+        "workspace_source_generation": generation,
+        "character_count": len(path.read_text(encoding="utf-8")),
+        "redacted_excerpt": path.read_text(encoding="utf-8"),
+    }
 
 
 class QueueBackend:
@@ -225,14 +257,22 @@ def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_p
     ]
     (batch_runtime / "generated-run-plan.json").write_text(json.dumps(plan), encoding="utf-8")
 
+    generation = _test_generation()
     context = _bounded_completed_read_context(
         runtime,
         workspace,
-        [{"batch_number": 0, "receipt": {"completed_task_ids": ["read-roadmap", "read-env"]}}],
+        [{"batch_number": 0, "receipt": {
+            "completed_task_ids": ["read-roadmap", "read-env"],
+            "completed_read_observations": [
+                _read_observation(roadmap, generation),
+                _read_observation(workspace / ".env", generation),
+            ],
+        }}],
+        workspace_source_generation=generation,
     )
 
     assert context["status"] == "AVAILABLE"
-    assert context["completed_read_paths"] == ["ROADMAP.md"]
+    assert context["completed_read_paths"] == ["roadmap.md"]
     assert context["files"][0]["redacted_excerpt"] == "Phase 2: implement the bounded API.\n"
     assert context["files"][0]["content_sha256"] == hashlib.sha256(roadmap.read_bytes()).hexdigest()
     assert "must-not-appear" not in json.dumps(context)
@@ -243,6 +283,7 @@ def test_completed_read_context_keeps_only_most_recent_bounded_file(tmp_path):
     runtime = tmp_path / "runtime"
     workspace.mkdir()
     completed_batches = []
+    generation = _test_generation()
     for batch_number in range(4):
         path = f"discovery-{batch_number}.md"
         (workspace / path).write_text(str(batch_number) * 2000, encoding="utf-8")
@@ -257,10 +298,16 @@ def test_completed_read_context_keeps_only_most_recent_bounded_file(tmp_path):
         (batch_runtime / "generated-run-plan.json").write_text(json.dumps(plan), encoding="utf-8")
         completed_batches.append({
             "batch_number": batch_number,
-            "receipt": {"completed_task_ids": [f"read-{batch_number}"]},
+            "receipt": {
+                "completed_task_ids": [f"read-{batch_number}"],
+                "completed_read_observations": [_read_observation(workspace / path, generation)],
+            },
         })
 
-    context = _bounded_completed_read_context(runtime, workspace, completed_batches)
+    context = _bounded_completed_read_context(
+        runtime, workspace, completed_batches,
+        workspace_source_generation=generation,
+    )
 
     assert context["completed_read_paths"] == ["discovery-3.md"]
     assert len(context["files"]) == 1
@@ -279,18 +326,100 @@ def test_plan_compiler_rejects_renamed_repeat_of_completed_read_path(tmp_path):
     })
     backend = QueueBackend([repeated, _plan()])
 
+    generation = _test_generation()
+    observation = _read_observation(roadmap, generation)
     result = compile_execution_plan(
         _situation(),
         Objective.from_dict(_objective()),
         tmp_path / "policy.json",
         tmp_path,
         backend_override=backend,
-        forbidden_read_paths=["roadmap.md"],
+        forbidden_read_paths=[observation["read_identity"]],
         workspace=tmp_path,
+        workspace_source_generation=generation,
     )
 
     assert result["tasks"][0]["run_type"] == "TEST"
     assert backend.calls == 2
+
+
+def test_changed_file_has_new_read_identity_and_can_be_reread(tmp_path):
+    target = tmp_path / "ui.tsx"
+    target.write_text("export const version = 1;\n", encoding="utf-8")
+    generation = _test_generation()
+    old = _read_observation(target, generation)
+    target.write_text("export const version = 2;\n", encoding="utf-8")
+    plan = _plan()
+    plan["tasks"][0].update({
+        "node_id": "read-ui-again",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "ui.tsx"},
+    })
+    backend = QueueBackend([plan])
+
+    result = compile_execution_plan(
+        _situation(), Objective.from_dict(_objective()),
+        tmp_path / "policy.json", tmp_path,
+        backend_override=backend,
+        forbidden_read_paths=[old["read_identity"]],
+        workspace=tmp_path,
+        workspace_source_generation=generation,
+    )
+
+    assert result["tasks"][0]["node_id"] == "read-ui-again"
+    assert backend.calls == 1
+
+
+def test_source_generation_change_permits_same_bytes_reread(tmp_path):
+    target = tmp_path / "README.md"
+    target.write_text("same bytes\n", encoding="utf-8")
+    old_generation = "1" * 64
+    new_generation = "2" * 64
+    old = _read_observation(target, old_generation)
+    plan = _plan()
+    plan["tasks"][0].update({
+        "node_id": "read-new-generation",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "README.md"},
+    })
+
+    result = compile_execution_plan(
+        _situation(), Objective.from_dict(_objective()),
+        tmp_path / "policy.json", tmp_path,
+        backend_override=QueueBackend([plan]),
+        forbidden_read_paths=[old["read_identity"]],
+        workspace=tmp_path,
+        workspace_source_generation=new_generation,
+    )
+
+    assert result["tasks"][0]["node_id"] == "read-new-generation"
+
+
+def test_legacy_read_receipt_is_unbound_and_does_not_ban_path(tmp_path):
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    batch_runtime = runtime / "batches" / "batch-0000"
+    batch_runtime.mkdir(parents=True)
+    workspace.mkdir()
+    (workspace / "ROADMAP.md").write_text("legacy\n", encoding="utf-8")
+    plan = _plan()
+    plan["tasks"][0].update({
+        "node_id": "legacy-read",
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "ROADMAP.md"},
+    })
+    (batch_runtime / "generated-run-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    batches = [{"batch_number": 0, "receipt": {"completed_task_ids": ["legacy-read"]}}]
+
+    context = _bounded_completed_read_context(
+        runtime, workspace, batches,
+        workspace_source_generation=_test_generation(),
+    )
+
+    assert context["files"] == []
+    assert context["completed_read_identities"] == []
+    assert context["legacy_unbound_paths"] == ["roadmap.md"]
+    assert planning_kernel._completed_task_signatures(runtime, batches) == []
 
 
 def test_plan_compiler_rejects_renamed_repeat_of_completed_action(tmp_path):
@@ -371,6 +500,9 @@ def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
         "failed_task_ids": [],
         "ag_invocation_count": 0,
         "production": "NO_GO",
+        "completed_read_observations": [
+            _read_observation(workspace / "ROADMAP.md", _test_generation())
+        ],
     }
     (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
         "schema_version": "1.0.0",
@@ -410,8 +542,8 @@ def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
     plan_prompt = backend.requests[2].payload["prompt"]
     assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
     assert "Implement endpoint Z next." in plan_prompt
-    assert '"completed_read_paths": ["ROADMAP.md"]' in plan_prompt
-    assert 'FILE:{\\"action\\":\\"read_file\\",\\"path\\":\\"ROADMAP.md\\"}' in plan_prompt
+    assert '"completed_read_paths": ["roadmap.md"]' in plan_prompt
+    assert 'FILE:{\\"action\\":\\"read_file\\",\\"path\\":\\"ROADMAP.md\\"}' not in plan_prompt
 
 
 def test_plan_schema_constrains_canonical_run_types():
@@ -1015,6 +1147,9 @@ def test_provider_wait_retry_reuses_exact_bound_replan_and_objective(tmp_path):
     })
     (batch_runtime / "generated-run-plan.json").write_text(json.dumps(completed_plan), encoding="utf-8")
     (tmp_path / "ROADMAP.md").write_text("Implement endpoint Z next.\n", encoding="utf-8")
+    receipt["completed_read_observations"] = [
+        _read_observation(tmp_path / "ROADMAP.md", _test_generation(situation))
+    ]
     (runtime / "situation-0001.json").write_text(json.dumps(situation.to_dict()), encoding="utf-8")
     (runtime / "objective-0001.json").write_text(json.dumps(_objective()), encoding="utf-8")
     replan = {

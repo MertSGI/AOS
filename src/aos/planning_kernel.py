@@ -26,6 +26,11 @@ from jsonschema import Draft202012Validator
 from aos.process_utils import run_headless
 from aos.provider_registry import ProviderRouter, load_routing_policy
 from aos.provider_observation import TaskClass, canonical_task_class
+from aos.read_identity import (
+    build_read_identity,
+    build_workspace_source_generation,
+    normalize_read_path,
+)
 from aos.providers.council import (
     COUNCIL_MIN_REAL_QUORUM,
     COUNCIL_TARGET_MEMBER_COUNT,
@@ -274,6 +279,7 @@ class DurableBatchHistory:
     completed_task_ids: Tuple[str, ...]
     completed_task_signatures: Tuple[str, ...]
     completed_read_paths: Tuple[str, ...]
+    completed_read_observations: Tuple[Dict[str, Any], ...]
     recent_completed_batches: Tuple[Dict[str, Any], ...]
     durable_batches: Tuple[Dict[str, Any], ...]
 
@@ -286,6 +292,7 @@ class DurableBatchHistory:
             "completed_task_ids": list(self.completed_task_ids),
             "completed_task_signatures": list(self.completed_task_signatures),
             "completed_read_paths": list(self.completed_read_paths),
+            "completed_read_observations": [dict(item) for item in self.completed_read_observations],
             "recent_completed_batches": list(self.recent_completed_batches),
             "durable_batches": list(self.durable_batches),
         }
@@ -782,20 +789,16 @@ def _bounded_completed_read_context(
     workspace: Path,
     completed_batches: Sequence[Mapping[str, Any]],
     *,
+    workspace_source_generation: Optional[str] = None,
     max_files: int = PLANNER_COMPLETED_READ_MAX_FILES,
     max_chars_per_file: int = PLANNER_COMPLETED_READ_MAX_CHARS_PER_FILE,
 ) -> Dict[str, Any]:
-    """Fresh-read bounded outputs of completed FILE reads for the next planner.
-
-    Execution evidence is deliberately not copied wholesale into durable receipts.
-    Instead, the planning kernel reopens only completed, locally validated text reads
-    from their durable plans. This keeps the context current, workspace-confined,
-    bounded, hash-bound, and redacted while allowing discovery batches to inform the
-    next dependency-safe plan.
-    """
+    """Reuse only worker-observed reads whose content and generation still match."""
     workspace_root = workspace.resolve()
-    selected: List[Tuple[int, str, Path]] = []
+    selected: List[Tuple[int, Dict[str, Any], Path]] = []
     seen_paths: set[str] = set()
+    observed_paths: set[str] = set()
+    legacy_unbound_paths: set[str] = set()
 
     for completed in reversed(list(completed_batches)):
         if not isinstance(completed, Mapping):
@@ -807,6 +810,50 @@ def _bounded_completed_read_context(
         receipt = completed.get("receipt", {})
         if not isinstance(receipt, Mapping):
             continue
+        observations = receipt.get("completed_read_observations", [])
+        if isinstance(observations, list):
+            for raw_observation in reversed(observations):
+                if not isinstance(raw_observation, Mapping):
+                    continue
+                try:
+                    observation = dict(raw_observation)
+                    normalized_path = normalize_read_path(str(observation.get("normalized_path", "")))
+                    observed_paths.add(normalized_path)
+                    if normalized_path in seen_paths:
+                        continue
+                    generation = str(observation.get("workspace_source_generation", "")).lower()
+                    content_hash = str(observation.get("content_sha256", "")).lower()
+                    identity = build_read_identity(
+                        normalized_path=normalized_path,
+                        content_sha256=content_hash,
+                        workspace_source_generation=generation,
+                    )
+                    if observation.get("read_identity") not in (None, identity):
+                        continue
+                    if workspace_source_generation is not None and generation != workspace_source_generation:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                parts = {part.casefold() for part in Path(normalized_path).parts}
+                if parts & _SENSITIVE_READ_CONTEXT_PARTS:
+                    continue
+                target = (workspace_root / normalized_path).resolve()
+                if target != workspace_root and workspace_root not in target.parents:
+                    continue
+                if target.suffix.casefold() not in _PLANNER_READ_CONTEXT_SUFFIXES or not target.is_file():
+                    continue
+                try:
+                    current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                except OSError:
+                    continue
+                if current_hash != content_hash:
+                    continue
+                observation["read_identity"] = identity
+                observation["normalized_path"] = normalized_path
+                selected.append((batch_number, observation, target))
+                seen_paths.add(normalized_path)
+                if len(selected) >= max_files:
+                    break
         completed_ids = {
             str(task_id) for task_id in receipt.get("completed_task_ids", [])
             if str(task_id).strip()
@@ -825,44 +872,35 @@ def _bounded_completed_read_context(
                 continue
             raw_path = str(payload.get("path", "")).strip()
             normalized_path = raw_path.replace("\\", "/")
-            path_key = normalized_path.casefold()
-            if not raw_path or path_key in seen_paths:
+            try:
+                path_key = normalize_read_path(normalized_path)
+            except ValueError:
                 continue
-            parts = {part.casefold() for part in Path(normalized_path).parts}
-            if parts & _SENSITIVE_READ_CONTEXT_PARTS:
-                continue
-            target = (workspace_root / raw_path).resolve()
-            if target != workspace_root and workspace_root not in target.parents:
-                continue
-            if target.suffix.casefold() not in _PLANNER_READ_CONTEXT_SUFFIXES or not target.is_file():
-                continue
-            seen_paths.add(path_key)
-            selected.append((batch_number, normalized_path, target))
-            if len(selected) >= max_files:
-                break
+            if path_key not in observed_paths:
+                legacy_unbound_paths.add(path_key)
         if len(selected) >= max_files:
             break
 
     files: List[Dict[str, Any]] = []
-    for batch_number, normalized_path, target in selected:
-        try:
-            raw_bytes = target.read_bytes()
-        except OSError:
-            continue
-        raw = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
-        redacted = redact_secrets(raw)
+    for batch_number, observation, _target in selected:
+        excerpt = redact_secrets(str(observation.get("redacted_excerpt", "")))
         files.append({
             "batch_number": batch_number,
-            "path": normalized_path,
-            "content_chars": len(raw),
-            "content_sha256": hashlib.sha256(raw_bytes).hexdigest(),
-            "redacted_excerpt": _bounded_prompt_excerpt(redacted, max_chars=max_chars_per_file),
+            "path": observation["normalized_path"],
+            "read_identity": observation["read_identity"],
+            "content_chars": int(observation.get("character_count", 0) or 0),
+            "content_sha256": observation["content_sha256"],
+            "workspace_source_generation": observation["workspace_source_generation"],
+            "redacted_excerpt": _bounded_prompt_excerpt(excerpt, max_chars=max_chars_per_file),
         })
     return {
         "status": "AVAILABLE" if files else "NONE",
-        "fresh_read": True,
+        "fresh_read": False,
+        "hash_bound": True,
         "files": files,
         "completed_read_paths": [entry["path"] for entry in files],
+        "completed_read_identities": [entry["read_identity"] for entry in files],
+        "legacy_unbound_paths": sorted(legacy_unbound_paths),
     }
 
 
@@ -899,8 +937,40 @@ def _completed_task_signatures(
             continue
         for task in tasks:
             if isinstance(task, Mapping) and str(task.get("node_id")) in completed_ids:
+                payload = task.get("payload", {})
+                if (
+                    task.get("run_type") == "FILE"
+                    and isinstance(payload, Mapping)
+                    and payload.get("action") == "read_file"
+                ):
+                    continue
                 signatures.add(_task_signature(task))
     return sorted(signatures)
+
+
+def _current_read_identity(
+    workspace: Optional[Path],
+    raw_path: str,
+    workspace_source_generation: Optional[str],
+) -> Optional[str]:
+    if workspace is None or workspace_source_generation is None:
+        return None
+    try:
+        normalized_path = normalize_read_path(raw_path)
+        workspace_root = workspace.resolve()
+        target = (workspace_root / raw_path).resolve()
+        if target != workspace_root and workspace_root not in target.parents:
+            return None
+        if not target.is_file():
+            return None
+        content_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        return build_read_identity(
+            normalized_path=normalized_path,
+            content_sha256=content_hash,
+            workspace_source_generation=workspace_source_generation,
+        )
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 def reconstruct_batch_history(
@@ -918,6 +988,7 @@ def reconstruct_batch_history(
     completed_task_ids: set[str] = set()
     completed_signatures: set[str] = set()
     completed_read_paths: set[str] = set()
+    completed_read_observations: Dict[str, Dict[str, Any]] = {}
     successful_count = 0
     failed_count = 0
     highest_batch_number = -1
@@ -964,6 +1035,30 @@ def reconstruct_batch_history(
             }
             completed_task_ids.update(batch_completed_ids)
 
+            raw_observations = receipt.get("completed_read_observations", [])
+            if isinstance(raw_observations, list):
+                for raw_observation in raw_observations:
+                    if not isinstance(raw_observation, Mapping):
+                        continue
+                    try:
+                        observation = dict(raw_observation)
+                        normalized_path = normalize_read_path(str(observation.get("normalized_path", "")))
+                        content_hash = str(observation.get("content_sha256", "")).lower()
+                        generation = str(observation.get("workspace_source_generation", "")).lower()
+                        identity = build_read_identity(
+                            normalized_path=normalized_path,
+                            content_sha256=content_hash,
+                            workspace_source_generation=generation,
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                    observation["normalized_path"] = normalized_path
+                    observation["content_sha256"] = content_hash
+                    observation["workspace_source_generation"] = generation
+                    observation["read_identity"] = identity
+                    completed_read_observations[identity] = observation
+                    completed_read_paths.add(normalized_path)
+
             plan_path = b_dir / "generated-run-plan.json"
             objective_id = receipt.get("objective_id") or ""
             plan = _read_json(plan_path) if plan_path.is_file() else {}
@@ -977,13 +1072,15 @@ def reconstruct_batch_history(
                             continue
                         node_id = str(task.get("node_id") or "").strip()
                         if node_id in batch_completed_ids:
-                            completed_signatures.add(_task_signature(task))
                             payload = task.get("payload", {})
-                            if (
+                            is_read = (
                                 task.get("run_type") == "FILE"
                                 and isinstance(payload, Mapping)
                                 and payload.get("action") == "read_file"
-                            ):
+                            )
+                            if not is_read:
+                                completed_signatures.add(_task_signature(task))
+                            if is_read:
                                 raw_path = str(payload.get("path", "")).strip()
                                 normalized_path = raw_path.replace("\\", "/")
                                 path_key = normalized_path.casefold()
@@ -1019,6 +1116,10 @@ def reconstruct_batch_history(
         completed_task_ids=tuple(sorted(completed_task_ids)),
         completed_task_signatures=tuple(sorted(completed_signatures)),
         completed_read_paths=tuple(sorted(completed_read_paths)),
+        completed_read_observations=tuple(
+            completed_read_observations[key]
+            for key in sorted(completed_read_observations)
+        ),
         recent_completed_batches=tuple(recent_batches),
         durable_batches=tuple(executed_batches),
     )
@@ -1795,11 +1896,12 @@ def compile_execution_plan(
     forbidden_read_paths: Sequence[str] = (),
     forbidden_task_signatures: Sequence[str] = (),
     workspace: Optional[Path] = None,
+    workspace_source_generation: Optional[str] = None,
     batch_number: Optional[int] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
-    forbidden_reads = {
-        str(item).strip().replace("\\", "/").casefold()
+    forbidden_read_identities = {
+        str(item).strip().lower()
         for item in forbidden_read_paths if str(item).strip()
     }
     forbidden_signatures = {
@@ -1838,11 +1940,12 @@ def compile_execution_plan(
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
         f"COMPLETED_TASK_IDS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_ids), ensure_ascii=False)}\n"
-        f"COMPLETED_READ_PATHS_NOT_TO_REPEAT={json.dumps(sorted(forbidden_reads), ensure_ascii=False)}\n"
+        f"COMPLETED_READ_IDENTITIES_NOT_TO_REPEAT={json.dumps(sorted(forbidden_read_identities), ensure_ascii=False)}\n"
         "COMPLETED_ACTION_SIGNATURES_NOT_TO_REPEAT="
         f"{json.dumps(_bounded_task_signatures_for_prompt(sorted(forbidden_signatures)), ensure_ascii=False, sort_keys=True)}\n"
         "COMPLETED_READ_CONTEXT_RULE=Treat completed_read_context as fresh, hash-bound local observation. "
-        "Use it to plan concrete product work or verification; do not reread those exact paths.\n"
+        "Use it to plan concrete product work or verification; do not reread an unchanged file in the same source generation. "
+        "A changed file or source generation is a new read identity and may be read again.\n"
         "PROGRESS_RULE=Do not repeat a completed action under a new task id. A batch made entirely of generic "
         "git identity/status checks and runtime version probes is invalid because it does not advance product work.\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
@@ -1966,7 +2069,11 @@ def compile_execution_plan(
                     if node_id in forbidden_ids:
                         rejected[node_id] = "COMPLETED_TASK_ID"
                         continue
-                    if signature in forbidden_signatures:
+                    is_read_task = (
+                        task["run_type"] == "FILE"
+                        and task["payload"].get("action") == "read_file"
+                    )
+                    if signature in forbidden_signatures and not is_read_task:
                         rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
                         continue
                     if task["run_type"] in ("PROCESS", "TEST", "BUILD"):
@@ -1988,8 +2095,12 @@ def compile_execution_plan(
                                 rejected[node_id] = "PYTHON_SCRIPT_UNAVAILABLE"
                                 continue
                     if task["run_type"] == "FILE" and task["payload"].get("action") == "read_file":
-                        read_path = str(task["payload"].get("path", "")).strip().replace("\\", "/").casefold()
-                        if read_path in forbidden_reads:
+                        read_identity = _current_read_identity(
+                            workspace,
+                            str(task["payload"].get("path", "")),
+                            workspace_source_generation,
+                        )
+                        if read_identity in forbidden_read_identities:
                             rejected[node_id] = "COMPLETED_READ_PATH"
 
                 changed = True
@@ -2084,8 +2195,12 @@ def compile_execution_plan(
                 for task in normalized["tasks"]:
                     if task["run_type"] != "FILE" or task["payload"].get("action") != "read_file":
                         continue
-                    normalized_read_path = str(task["payload"].get("path", "")).strip().replace("\\", "/").casefold()
-                    if normalized_read_path in forbidden_reads:
+                    read_identity = _current_read_identity(
+                        workspace,
+                        str(task["payload"].get("path", "")),
+                        workspace_source_generation,
+                    )
+                    if read_identity in forbidden_read_identities:
                         raise PlanningKernelError(
                             f"Task {task['node_id']} repeats completed FILE read target: "
                             f"{task['payload'].get('path')}"
@@ -2111,6 +2226,10 @@ def compile_execution_plan(
                 _task_signature(task)
                 for task in normalized["tasks"]
                 if _task_signature(task) in forbidden_signatures
+                and not (
+                    task["run_type"] == "FILE"
+                    and task["payload"].get("action") == "read_file"
+                )
             })
             if repeated_actions:
                 raise PlanningKernelError(
@@ -2461,7 +2580,6 @@ def run_autonomous_project(
     # Maintain cumulative sets from durable history
     cumulative_completed_task_ids = set(durable_history.completed_task_ids)
     cumulative_completed_signatures = set(durable_history.completed_task_signatures)
-    cumulative_completed_read_paths = set(durable_history.completed_read_paths)
 
     resumed_receipt: Optional[Dict[str, Any]] = None
 
@@ -2605,11 +2723,23 @@ def run_autonomous_project(
             }
             all_completed_task_ids = sorted(cumulative_completed_task_ids | session_completed_task_ids)
 
-            completed_read_context = _bounded_completed_read_context(
-                runtime_dir, workspace, completed_batches,
+            current_workspace_generation = build_workspace_source_generation(
+                project_id=situation.project_id,
+                canonical_source_sha=situation.control_sha,
+                canonical_execution_base_sha=situation.execution_base_sha,
             )
-            all_completed_read_paths = sorted(
-                set(completed_read_context["completed_read_paths"]) | cumulative_completed_read_paths
+
+            read_history_batches = list(durable_history.durable_batches)
+            read_history_batches.extend(completed_batches)
+
+            completed_read_context = _bounded_completed_read_context(
+                runtime_dir,
+                workspace,
+                read_history_batches,
+                workspace_source_generation=current_workspace_generation,
+            )
+            all_completed_read_identities = sorted(
+                set(completed_read_context["completed_read_identities"])
             )
 
             session_signatures = _completed_task_signatures(
@@ -2631,9 +2761,10 @@ def run_autonomous_project(
                 backend_override=backend_override,
                 repair_context=repair_context,
                 forbidden_task_ids=all_completed_task_ids,
-                forbidden_read_paths=all_completed_read_paths,
+                forbidden_read_paths=all_completed_read_identities,
                 forbidden_task_signatures=all_completed_signatures,
                 workspace=workspace,
+                workspace_source_generation=current_workspace_generation,
                 batch_number=batch_number,
             )
         except WaitingForReasoningProvider as exc:
