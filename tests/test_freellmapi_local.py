@@ -20,6 +20,7 @@ from aos.providers.freellmapi_local import (
     FreeLLMAPILocalPlannerProvider,
     sanitize_routing_headers,
 )
+from aos.validate import validate_document
 from extensions.autonomy_fabric.execution_backend import ExecutionCapability, ExecutionRequest
 
 
@@ -529,6 +530,8 @@ def test_default_policy_preserves_direct_routes_and_disables_paid() -> None:
     assert policy["paid_fallback_enabled"] is False
     assert policy["paid_daily_budget_usd"] == 0
     assert policy["paid_monthly_budget_usd"] == 0
+    validation = validate_document("planner_routing_policy", policy)
+    assert validation.is_valid, [error.to_dict() for error in validation.errors]
 
 
 def test_existing_credit_exhausted_semantics_are_unchanged(tmp_path: Path) -> None:
