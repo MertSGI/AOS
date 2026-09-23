@@ -66,6 +66,22 @@ class FreeLLMAPIReadiness:
         }
 
 
+@dataclass(frozen=True)
+class FreeLLMAPILiveness:
+    """Sanitized process/DB/encryption liveness observation."""
+
+    service_available: bool
+    reason: str
+    status_code: Optional[int]
+
+    def to_telemetry(self) -> Dict[str, Any]:
+        return {
+            "service_available": self.service_available,
+            "reason": self.reason,
+            "status_code": self.status_code,
+        }
+
+
 def _is_loopback_host(hostname: Optional[str]) -> bool:
     if not hostname:
         return False
@@ -226,6 +242,28 @@ class FreeLLMAPILocalPlannerProvider:
         self.last_readiness = result
         self._readiness_checked_at = now
         return result
+
+    def check_liveness(self) -> FreeLLMAPILiveness:
+        """Probe the local process without checking or consuming upstream quota."""
+        request = urllib.request.Request(
+            f"{self.service_root}/livez",
+            method="GET",
+            headers={"Accept": "application/json", "User-Agent": "AOS/freellmapi-local-liveness"},
+        )
+        try:
+            with self._opener(request, timeout=self.readiness_timeout_seconds) as response:
+                status = int(getattr(response, "status", response.getcode()))
+                body = _bounded_json_body(response, MAX_READINESS_BYTES)
+            status_value = body.get("status") if isinstance(body, dict) else None
+            if status == 200 and status_value == "ok":
+                return FreeLLMAPILiveness(True, "live", status)
+            return FreeLLMAPILiveness(False, "invalid_liveness_response", status)
+        except urllib.error.HTTPError as exc:
+            return FreeLLMAPILiveness(False, "local_gateway_not_live", int(exc.code))
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return FreeLLMAPILiveness(False, "local_gateway_unavailable", None)
+        except PlannerContractError:
+            return FreeLLMAPILiveness(False, "invalid_liveness_response", 200)
 
     def _require_ready(self) -> None:
         readiness = self.check_readiness()
@@ -390,4 +428,3 @@ class FreeLLMAPILocalPlannerProvider:
                 usage[key] = value if isinstance(value, int) and value >= 0 else 0
 
         return parsed_decision, _safe_response_id(body.get("id")), usage
-
