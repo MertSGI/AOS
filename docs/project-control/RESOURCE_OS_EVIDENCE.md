@@ -34,3 +34,15 @@ Track: `AOS-RESOURCE-OS-MASTER-20260923-01`
 - Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
 
 Later phase checkpoint commits, focused commands/results, remote equality, and disposable proofs are appended here as they are accepted.
+
+### R1 — provider observations and task-class health
+
+- Added immutable, validated, sanitized `RateLimitObservation` plus closed task, source, failure-family, and contract-subtype enums.
+- `Retry-After` delta/date and allowlisted numeric rate metadata survive adapter, attempt journal, circuit, and probe boundaries without raw headers/bodies or provider text.
+- Provider contract failures preserve one of eight typed subtypes with bounded allowlisted details; known failure messages remain absent from attempt evidence.
+- Circuit schema `2.0.0` stores task/model health records and independent family streaks; quota/rate/credit does not increment health streaks.
+- Actual requests and probes declare a task class; `small_reasoning` evidence cannot clear or wake `structured_planning`, `repo_ui_planning`, `large_context`, or `agentic_execution` work.
+- Focused provider/runtime suite: `166 passed, 1 deselected in 14.68s`.
+- Planning-kernel/worker regression: `57 passed in 31.41s`.
+- Python compileall: PASS. `git diff --check`: PASS.
+- Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

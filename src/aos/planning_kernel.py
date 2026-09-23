@@ -25,6 +25,7 @@ from jsonschema import Draft202012Validator
 
 from aos.process_utils import run_headless
 from aos.provider_registry import ProviderRouter, load_routing_policy
+from aos.provider_observation import TaskClass, canonical_task_class
 from aos.providers.council import (
     COUNCIL_MIN_REAL_QUORUM,
     COUNCIL_TARGET_MEMBER_COUNT,
@@ -145,7 +146,9 @@ class HumanRequired(PlanningKernelError):
 
 
 class WaitingForReasoningProvider(PlanningKernelError):
-    pass
+    def __init__(self, message: str, task_class: str = TaskClass.STRUCTURED_PLANNING.value):
+        super().__init__(message)
+        self.task_class = canonical_task_class(task_class)
 
 
 class PlannerValidationExhausted(PlanningKernelError):
@@ -250,6 +253,16 @@ class Objective:
             completion_criteria=tuple(_string_list(value.get("completion_criteria"), "completion_criteria", 32, 500)),
             parallel_candidates=tuple(_string_list(value.get("parallel_candidates", []), "parallel_candidates", 16, 240)),
         )
+
+
+def _objective_task_class(objective: "Objective") -> str:
+    text = " ".join((objective.title, objective.description, *objective.scope_tags)).lower()
+    markers = ("ui", "frontend", "browser", "react", "tsx", "css", "visual")
+    return (
+        TaskClass.REPO_UI_PLANNING.value
+        if any(marker in text for marker in markers)
+        else TaskClass.STRUCTURED_PLANNING.value
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1100,6 +1113,7 @@ def _reason(
     authority_id: str,
     *,
     backend_override: Optional[Any] = None,
+    task_class: str = TaskClass.STRUCTURED_PLANNING.value,
 ) -> Dict[str, Any]:
     _hydrate_credentials()
     if backend_override is None:
@@ -1117,13 +1131,18 @@ def _reason(
         operation_class="MODEL_REASONING",
         required_capabilities=[ExecutionCapability.MODEL_REASONING],
         authority_id=authority_id,
-        payload={"prompt": prompt, "schema": schema, "risk_class": "R0"},
+        payload={
+            "prompt": prompt,
+            "schema": schema,
+            "risk_class": "R0",
+            "task_class": canonical_task_class(task_class),
+        },
     )
     result = backend.execute(request)
     if result.status != "SUCCESS":
         failure = str(result.evidence_payload.get("failure_class", result.status))
         if result.status in ("DEGRADED", "WAITING_FOR_REASONING_PROVIDER") or "UNAVAILABLE" in failure.upper():
-            raise WaitingForReasoningProvider(failure)
+            raise WaitingForReasoningProvider(failure, task_class=task_class)
         raise PlanningKernelError(f"Reasoning failed: {failure}")
     proposal = result.evidence_payload.get("proposal")
     if not isinstance(proposal, dict):
@@ -1883,6 +1902,7 @@ def compile_execution_plan(
             PLAN_SCHEMA,
             objective.authority_id,
             backend_override=backend_override,
+            task_class=_objective_task_class(objective),
         )
         try:
             repair_pruned: Dict[str, str] = {}
@@ -2532,6 +2552,7 @@ def run_autonomous_project(
                         successful_batch_count=successful_batch_count,
                         failed_batch_count=failed_batch_count,
                     )
+                    result["required_task_class"] = exc.task_class
                     _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
                     return result
                 _save_replan_completion(
@@ -2623,6 +2644,7 @@ def run_autonomous_project(
                 successful_batch_count=successful_batch_count,
                 failed_batch_count=failed_batch_count,
             )
+            result["required_task_class"] = exc.task_class
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "WAITING_FOR_REASONING_PROVIDER"})
             return result
         except PlannerValidationExhausted as exc:

@@ -21,6 +21,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from aos.provider_observation import (
+    FailureFamily,
+    RateLimitObservation,
+    TaskClass,
+    canonical_failure_family,
+    canonical_task_class,
+)
 from aos.runtime_contract import utc_now
 from aos.runtime_store import atomic_json, read_json
 
@@ -72,6 +79,8 @@ class ProviderCircuit:
     failover_count: int = 0
     half_open_probe_started_at: Optional[float] = None
     probe_ids: List[str] = field(default_factory=list)
+    health_records: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    rate_limit_observation: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -104,6 +113,15 @@ class ProviderCircuit:
                 if data.get("half_open_probe_started_at") is not None else None
             ),
             probe_ids=[str(item) for item in data.get("probe_ids", []) if item],
+            health_records={
+                str(key): dict(value)
+                for key, value in data.get("health_records", {}).items()
+                if isinstance(value, dict)
+            },
+            rate_limit_observation=(
+                dict(data["rate_limit_observation"])
+                if isinstance(data.get("rate_limit_observation"), dict) else None
+            ),
         )
 
 
@@ -129,7 +147,7 @@ class ProviderCircuitBreakerRegistry:
         if not self.persistence_path:
             return
         payload = {
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "updated_at": utc_now(),
             "circuits": {pid: c.to_dict() for pid, c in self._circuits.items()},
         }
@@ -140,7 +158,46 @@ class ProviderCircuitBreakerRegistry:
             self._circuits[provider_id] = ProviderCircuit(provider_id=provider_id)
         return self._circuits[provider_id]
 
-    def is_provider_available(self, provider_id: str, now: Optional[float] = None) -> bool:
+    @staticmethod
+    def _health_key(model_id: Optional[str], task_class: str) -> str:
+        return f"{model_id or '*'}|{canonical_task_class(task_class)}"
+
+    def get_health_record(
+        self,
+        provider_id: str,
+        *,
+        model_id: Optional[str] = None,
+        task_class: str = TaskClass.UNKNOWN.value,
+    ) -> Dict[str, Any]:
+        """Return the task-scoped health record, creating UNKNOWN evidence."""
+        circuit = self.get_circuit(provider_id)
+        key = self._health_key(model_id, task_class)
+        record = circuit.health_records.get(key)
+        if record is None:
+            record = {
+                "model_id": model_id,
+                "task_class": canonical_task_class(task_class),
+                "circuit_state": CircuitState.UNKNOWN.value,
+                "family_streaks": {},
+                "last_failure_family": None,
+                "last_failure_class": None,
+                "last_failure_at": None,
+                "last_success_at": None,
+                "last_observed_at": None,
+                "next_probe_at": None,
+                "half_open_probe_started_at": None,
+            }
+            circuit.health_records[key] = record
+        return record
+
+    def is_provider_available(
+        self,
+        provider_id: str,
+        now: Optional[float] = None,
+        *,
+        model_id: Optional[str] = None,
+        task_class: Optional[str] = None,
+    ) -> bool:
         """Check whether provider is available for reasoning requests.
         
         If OPEN and probe interval elapsed, transitions to HALF_OPEN.
@@ -148,22 +205,43 @@ class ProviderCircuitBreakerRegistry:
         """
         now_epoch = time.time() if now is None else now
         circuit = self.get_circuit(provider_id)
+        scoped = task_class is not None
+        if (
+            canonical_failure_family(circuit.last_failure_class) == "QUOTA"
+            and circuit.next_probe_at is not None
+            and now_epoch < circuit.next_probe_at
+        ):
+            return False
+        record = (
+            self.get_health_record(provider_id, model_id=model_id, task_class=task_class or TaskClass.UNKNOWN.value)
+            if scoped else None
+        )
+        state = str(record["circuit_state"]) if record is not None else circuit.circuit_state
+        next_probe_at = record.get("next_probe_at") if record is not None else circuit.next_probe_at
+        half_open_started = record.get("half_open_probe_started_at") if record is not None else circuit.half_open_probe_started_at
 
-        if circuit.circuit_state in (CircuitState.CLOSED.value, CircuitState.UNKNOWN.value):
+        if state in (CircuitState.CLOSED.value, CircuitState.UNKNOWN.value):
             return True
 
-        if circuit.circuit_state == CircuitState.HALF_OPEN.value:
-            started = circuit.half_open_probe_started_at
+        if state == CircuitState.HALF_OPEN.value:
+            started = half_open_started
             if started is not None and now_epoch < started + HALF_OPEN_PROBE_LEASE_SECONDS:
                 return False
-            circuit.half_open_probe_started_at = now_epoch
+            if record is not None:
+                record["half_open_probe_started_at"] = now_epoch
+            else:
+                circuit.half_open_probe_started_at = now_epoch
             self.save()
             return True
 
-        if circuit.circuit_state == CircuitState.OPEN.value:
-            if circuit.next_probe_at is not None and now_epoch >= circuit.next_probe_at:
-                circuit.circuit_state = CircuitState.HALF_OPEN.value
-                circuit.half_open_probe_started_at = now_epoch
+        if state == CircuitState.OPEN.value:
+            if next_probe_at is not None and now_epoch >= float(next_probe_at):
+                if record is not None:
+                    record["circuit_state"] = CircuitState.HALF_OPEN.value
+                    record["half_open_probe_started_at"] = now_epoch
+                else:
+                    circuit.circuit_state = CircuitState.HALF_OPEN.value
+                    circuit.half_open_probe_started_at = now_epoch
                 self.save()
                 return True
             return False
@@ -211,14 +289,28 @@ class ProviderCircuitBreakerRegistry:
         latency_ms: Optional[int] = None,
         credential_available: Optional[bool] = None,
         local_service_available: Optional[bool] = None,
+        model_id: Optional[str] = None,
+        task_class: str = TaskClass.UNKNOWN.value,
     ) -> None:
-        """Record a successful reasoning request/probe, closing the circuit."""
+        """Record success only for the observed model/task health bucket."""
         circuit = self.get_circuit(provider_id)
+        record = self.get_health_record(provider_id, model_id=model_id, task_class=task_class)
+        timestamp = observed_at or utc_now()
+        record.update({
+            "circuit_state": CircuitState.CLOSED.value,
+            "family_streaks": {},
+            "last_success_at": timestamp,
+            "last_observed_at": timestamp,
+            "next_probe_at": None,
+            "half_open_probe_started_at": None,
+        })
+        # Provider-wide fields remain a display/backward-compatibility projection
+        # of the newest observation; task-scoped records retain scheduling truth.
         circuit.circuit_state = CircuitState.CLOSED.value
         circuit.consecutive_failure_count = 0
         circuit.next_probe_at = None
         circuit.half_open_probe_started_at = None
-        circuit.last_success_at = observed_at or utc_now()
+        circuit.last_success_at = timestamp
         circuit.last_observed_at = circuit.last_success_at
         circuit.last_probe_status = probe_status
         circuit.latency_ms = latency_ms
@@ -236,25 +328,65 @@ class ProviderCircuitBreakerRegistry:
         latency_ms: Optional[int] = None,
         credential_available: Optional[bool] = None,
         local_service_available: Optional[bool] = None,
+        model_id: Optional[str] = None,
+        task_class: str = TaskClass.UNKNOWN.value,
+        rate_limit_observation: Optional[RateLimitObservation] = None,
     ) -> float:
-        """Record a transient provider failure, incrementing failure count and tripping circuit."""
+        """Record a task/family-isolated failure and return its retry epoch.
+
+        Quota/rate/credit evidence is preserved as a separate compatibility gate
+        and never increments a health-family streak.
+        """
         now_epoch = time.time() if now is None else now
         circuit = self.get_circuit(provider_id)
-        circuit.consecutive_failure_count += 1
+        record = self.get_health_record(provider_id, model_id=model_id, task_class=task_class)
+        family = canonical_failure_family(failure_class)
+        quota_only = family == "QUOTA"
+        streaks = dict(record.get("family_streaks") or {})
+        if quota_only:
+            streak = 0
+        else:
+            streak = int(streaks.get(family, 0)) + 1
+            streaks[family] = streak
+            record["family_streaks"] = streaks
+            record["last_failure_family"] = family
+            record["last_failure_class"] = failure_class
+        # Retain the legacy provider-wide counter as display-only compatibility
+        # data. Scheduling uses the task/family streak above.
+        circuit.consecutive_failure_count = (
+            streak if not quota_only else circuit.consecutive_failure_count + 1
+        )
         circuit.last_failure_class = failure_class
-        circuit.last_failure_at = observed_at or utc_now()
+        timestamp = observed_at or utc_now()
+        circuit.last_failure_at = timestamp
         circuit.last_observed_at = circuit.last_failure_at
         circuit.last_probe_status = probe_status
         circuit.latency_ms = latency_ms
         circuit.credential_available = credential_available
         circuit.local_service_available = local_service_available
         
-        backoff = self.calculate_backoff(failure_class, circuit.consecutive_failure_count)
-        circuit.next_probe_at = now_epoch + backoff
+        backoff = self.calculate_backoff(failure_class, max(1, streak))
+        adaptive_deadline = now_epoch + backoff
+        exact_deadline = (
+            rate_limit_observation.retry_at_epoch
+            if rate_limit_observation is not None else None
+        )
+        next_probe_at = float(exact_deadline) if exact_deadline is not None else adaptive_deadline
+        circuit.next_probe_at = next_probe_at
         circuit.circuit_state = CircuitState.OPEN.value
         circuit.half_open_probe_started_at = None
+        if rate_limit_observation is not None:
+            circuit.rate_limit_observation = rate_limit_observation.to_dict()
+        if not quota_only:
+            record.update({
+                "circuit_state": CircuitState.OPEN.value,
+                "last_failure_at": timestamp,
+                "last_observed_at": timestamp,
+                "next_probe_at": next_probe_at,
+                "half_open_probe_started_at": None,
+            })
         self.save()
-        return circuit.next_probe_at
+        return next_probe_at
 
     def record_observation(
         self,
@@ -265,6 +397,8 @@ class ProviderCircuitBreakerRegistry:
         latency_ms: Optional[int] = None,
         credential_available: Optional[bool] = None,
         local_service_available: Optional[bool] = None,
+        model_id: Optional[str] = None,
+        task_class: str = TaskClass.UNKNOWN.value,
     ) -> None:
         """Persist availability metadata without fabricating health or a failure."""
         circuit = self.get_circuit(provider_id)
@@ -273,6 +407,10 @@ class ProviderCircuitBreakerRegistry:
         circuit.latency_ms = latency_ms
         circuit.credential_available = credential_available
         circuit.local_service_available = local_service_available
+        record = self.get_health_record(
+            provider_id, model_id=model_id, task_class=task_class
+        )
+        record["last_observed_at"] = circuit.last_observed_at
         self.save()
 
     def record_probe(self, provider_id: str, probe_id: Optional[str] = None) -> None:
@@ -392,6 +530,35 @@ class ProviderCircuitBreakerRegistry:
             })
         return details
 
+    def healthy_providers_for_task(
+        self,
+        task_class: str,
+        enabled_providers: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Return only providers with explicit CLOSED evidence for this class."""
+        required = canonical_task_class(task_class)
+        pids = enabled_providers if enabled_providers is not None else list(self._circuits.keys())
+        healthy: List[str] = []
+        for provider_id in pids:
+            circuit = self.get_circuit(provider_id)
+            records = [
+                value for value in circuit.health_records.values()
+                if value.get("task_class") == required
+            ]
+            if not records:
+                continue
+            newest = max(
+                records,
+                key=lambda value: max(
+                    _timestamp_epoch(value.get("last_success_at")),
+                    _timestamp_epoch(value.get("last_failure_at")),
+                    _timestamp_epoch(value.get("last_observed_at")),
+                ),
+            )
+            if newest.get("circuit_state") == CircuitState.CLOSED.value:
+                healthy.append(provider_id)
+        return sorted(healthy)
+
     @classmethod
     def aggregate_registries(
         cls,
@@ -475,6 +642,25 @@ class ProviderCircuitBreakerRegistry:
                 ),
             )
 
+            merged_health_records: Dict[str, Dict[str, Any]] = {}
+            health_keys = {
+                key for circuit in circuits for key in circuit.health_records
+            }
+            for health_key in health_keys:
+                candidates = [
+                    circuit.health_records[health_key]
+                    for circuit in circuits if health_key in circuit.health_records
+                ]
+                newest = max(
+                    candidates,
+                    key=lambda value: max(
+                        _timestamp_epoch(value.get("last_success_at")),
+                        _timestamp_epoch(value.get("last_failure_at")),
+                        _timestamp_epoch(value.get("last_observed_at")),
+                    ),
+                )
+                merged_health_records[health_key] = dict(newest)
+
             merged._circuits[pid] = ProviderCircuit(
                 provider_id=pid,
                 circuit_state=state,
@@ -498,5 +684,10 @@ class ProviderCircuitBreakerRegistry:
                     if state == CircuitState.HALF_OPEN.value and latest_failure_circuit else None
                 ),
                 probe_ids=sorted(unique_probe_ids),
+                health_records=merged_health_records,
+                rate_limit_observation=(
+                    dict(latest_observation_circuit.rate_limit_observation)
+                    if latest_observation_circuit.rate_limit_observation else None
+                ),
             )
         return merged

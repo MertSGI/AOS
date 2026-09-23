@@ -26,6 +26,7 @@ from aos.provider_circuit import (
     BACKOFF_TIERS,
 )
 from aos.provider_registry import ProviderRegistry, ProviderRouter
+from aos.provider_observation import RateLimitObservation
 from aos.runtime_contract import ContinueProjectCommand, ProjectProfile, RuntimeResult
 from aos.runtime_store import RuntimeStore
 from extensions.autonomy_fabric.execution_backend import ExecutionCapability, ExecutionRequest
@@ -251,6 +252,52 @@ def test_half_open_successful_probe_closes_circuit(tmp_path):
     registry.record_success("nemotron")
     assert registry.get_circuit("nemotron").circuit_state == CircuitState.CLOSED.value
     assert registry.get_circuit("nemotron").consecutive_failure_count == 0
+
+
+def test_failure_family_streaks_are_isolated_by_task_class(monkeypatch):
+    monkeypatch.setattr("aos.provider_circuit.random.uniform", lambda _a, _b: 0.0)
+    registry = ProviderCircuitBreakerRegistry()
+    registry.record_failure("nemotron", "SERVER_CAPACITY", now=1000.0, model_id="m", task_class="repo_ui_planning")
+    registry.record_failure("nemotron", "NETWORK_UNAVAILABLE", now=1000.0, model_id="m", task_class="repo_ui_planning")
+    deadline = registry.record_failure("nemotron", "CONTRACT_FAILURE", now=1000.0, model_id="m", task_class="repo_ui_planning")
+    record = registry.get_health_record("nemotron", model_id="m", task_class="repo_ui_planning")
+    assert record["family_streaks"] == {"SERVER_CAPACITY": 1, "NETWORK": 1, "CONTRACT": 1}
+    assert deadline == 1060.0
+
+
+def test_small_success_does_not_clear_repo_ui_failure():
+    registry = ProviderCircuitBreakerRegistry()
+    registry.record_failure("groq", "CONTRACT_FAILURE", now=1000.0, model_id="m", task_class="repo_ui_planning")
+    registry.record_success("groq", model_id="m", task_class="small_reasoning")
+    repo = registry.get_health_record("groq", model_id="m", task_class="repo_ui_planning")
+    small = registry.get_health_record("groq", model_id="m", task_class="small_reasoning")
+    assert repo["circuit_state"] == CircuitState.OPEN.value
+    assert small["circuit_state"] == CircuitState.CLOSED.value
+    assert registry.healthy_providers_for_task("small_reasoning") == ["groq"]
+    assert registry.healthy_providers_for_task("repo_ui_planning") == []
+
+
+def test_exact_retry_after_wins_without_incrementing_health_family():
+    registry = ProviderCircuitBreakerRegistry()
+    observation = RateLimitObservation(
+        provider_id="groq",
+        model_id="m",
+        task_class="structured_planning",
+        observed_at="2026-09-23T00:00:00+00:00",
+        http_status=429,
+        classification="RATE_LIMITED",
+        retry_at_epoch=1120.0,
+        evidence_source="PROVIDER_METADATA",
+        field_sources={"retry_at_epoch": "PROVIDER_METADATA"},
+    )
+    deadline = registry.record_failure(
+        "groq", "RATE_LIMITED", now=1000.0, model_id="m",
+        task_class="structured_planning", rate_limit_observation=observation,
+    )
+    record = registry.get_health_record("groq", model_id="m", task_class="structured_planning")
+    assert deadline == 1120.0
+    assert record["family_streaks"] == {}
+    assert record["circuit_state"] == CircuitState.UNKNOWN.value
 
 
 def test_all_provider_outage_does_not_cause_5min_respawn_storm(tmp_path):

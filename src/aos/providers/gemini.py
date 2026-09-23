@@ -9,6 +9,12 @@ from typing import Any, Dict, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 GEMINI_MAX_OUTPUT_TOKENS = 4096
@@ -112,9 +118,22 @@ class GeminiPlannerProvider:
             if "api_key" in err_str or "authentication" in err_str or "permission" in err_str or "403" in err_str or "401" in err_str:
                 raise PlannerCredentialError(f"Gemini auth/permission failure ({err_name}): {e}") from e
             elif "timeout" in err_str or "connection" in err_str or "rate" in err_str or "429" in err_str or "503" in err_str:
-                raise PlannerTransientError(f"Gemini transient error ({err_name}): {e}") from e
+                family = FailureFamily.TIMEOUT if "timeout" in err_str else (
+                    FailureFamily.NETWORK if "connection" in err_str else FailureFamily.SERVER_CAPACITY
+                )
+                raise PlannerTransientError(
+                    f"Gemini transient error ({err_name})",
+                    failure_family=family,
+                    rate_limit_observation=extract_rate_limit_observation(
+                        provider_id="gemini", model_id=self.model,
+                        task_class="structured_planning", exc=e,
+                    ),
+                ) from e
             else:
-                raise PlannerContractError(f"Gemini provider contract failure ({err_name}): {e}") from e
+                raise PlannerContractError(
+                    f"Gemini provider contract failure ({err_name})",
+                    safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                ) from e
 
         # Extract text content
         content_str = None
@@ -139,22 +158,34 @@ class GeminiPlannerProvider:
                         raise PlannerTransientError(
                             f"Gemini response reached its output-token limit: {finish_reason}"
                         )
-                    raise PlannerContractError(f"Gemini response finished with reason: {finish_reason}")
+                    raise PlannerContractError(
+                        f"Gemini response finished with reason: {finish_reason}",
+                        subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                        safe_detail=safe_contract_detail(finish_reason=finish_reason),
+                    )
 
         if not content_str:
-            raise PlannerContractError("Gemini returned empty content")
+            raise PlannerContractError("Gemini returned empty content", subtype=ContractFailureSubtype.EMPTY_CONTENT)
 
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise PlannerContractError(f"Gemini output is not valid JSON: {e}") from e
+            raise PlannerContractError(
+                "Gemini output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(parser_class=e.__class__.__name__, line=getattr(e, "lineno", None), column=getattr(e, "colno", None)),
+            ) from e
 
         parsed_decision = _sanitize_planner_output(parsed_decision, schema)
 
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:
+            error = errors[0]
+            pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
             raise PlannerContractError(
-                f"Gemini output failed canonical JSON schema validation: {errors[0].message}"
+                "Gemini output failed canonical JSON schema validation",
+                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
             )
 
         # Extract usage

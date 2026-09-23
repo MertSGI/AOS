@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 from aos.providers.schema_utils import sanitize_planner_output
 
 UNSUPPORTED_META_KEYWORDS = {"$schema", "$id"}
@@ -180,9 +186,19 @@ class GenericOpenAICompatiblePlannerProvider:
                 )
             except Exception as e:
                 err_name = e.__class__.__name__
+                observation = extract_rate_limit_observation(
+                    provider_id=self.provider_id,
+                    model_id=self.model,
+                    task_class="structured_planning",
+                    exc=e,
+                    classification="CREDIT_EXHAUSTED" if _is_credit_exhaustion_error(e) else None,
+                    quota_scope="ACCOUNT" if _is_credit_exhaustion_error(e) else "UNKNOWN",
+                )
                 if _is_credit_exhaustion_error(e):
                     raise PlannerTransientError(
-                        f"{self.provider_id} CREDIT_EXHAUSTED ({err_name}): {e}"
+                        f"{self.provider_id} CREDIT_EXHAUSTED ({err_name})",
+                        failure_family=FailureFamily.SERVER_CAPACITY,
+                        rate_limit_observation=observation,
                     ) from e
                 elif (
                     isinstance(e, (
@@ -193,13 +209,27 @@ class GenericOpenAICompatiblePlannerProvider:
                     ))
                     or (isinstance(e, openai.APIStatusError) and getattr(e, "status_code", 0) >= 500)
                 ):
-                    raise PlannerTransientError(f"{self.provider_id} transient error ({err_name}): {e}") from e
+                    family = FailureFamily.TIMEOUT if isinstance(e, openai.APITimeoutError) else FailureFamily.SERVER_CAPACITY
+                    if isinstance(e, openai.APIConnectionError):
+                        family = FailureFamily.NETWORK
+                    raise PlannerTransientError(
+                        f"{self.provider_id} transient error ({err_name})",
+                        failure_family=family,
+                        rate_limit_observation=observation,
+                    ) from e
                 elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                     raise PlannerCredentialError(f"{self.provider_id} auth/permission failure ({err_name}): {e}") from e
                 elif isinstance(e, openai.BadRequestError):
-                    raise PlannerContractError(f"{self.provider_id} invalid request/schema ({err_name}): {e}") from e
+                    raise PlannerContractError(
+                        f"{self.provider_id} invalid request/schema ({err_name})",
+                        subtype=ContractFailureSubtype.BAD_REQUEST,
+                        safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                    ) from e
                 else:
-                    raise PlannerContractError(f"{self.provider_id} provider contract failure ({err_name}): {e}") from e
+                    raise PlannerContractError(
+                        f"{self.provider_id} provider contract failure ({err_name})",
+                        safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                    ) from e
 
             status = getattr(response, "status", None)
             if status and status not in ("completed", "complete"):
@@ -211,7 +241,11 @@ class GenericOpenAICompatiblePlannerProvider:
                     raise PlannerTransientError(
                         f"{self.provider_id} response reached configured output capacity before completing JSON"
                     )
-                raise PlannerContractError(f"{self.provider_id} response status '{status}' incomplete: {inc_details}")
+                raise PlannerContractError(
+                    f"{self.provider_id} response status '{status}' incomplete",
+                    subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                    safe_detail=safe_contract_detail(finish_reason=status),
+                )
 
             content_str = None
             if hasattr(response, "output_text") and response.output_text:
@@ -221,13 +255,19 @@ class GenericOpenAICompatiblePlannerProvider:
                     if getattr(item, "type", None) == "message" and hasattr(item, "content"):
                         for part in item.content:
                             if getattr(part, "type", None) == "refusal":
-                                raise PlannerContractError(f"{self.provider_id} model refused response: {getattr(part, 'refusal', '')}")
+                                raise PlannerContractError(
+                                    f"{self.provider_id} model refused response",
+                                    subtype=ContractFailureSubtype.REFUSAL,
+                                )
                             if getattr(part, "type", None) == "text":
                                 content_str = getattr(part, "text", None)
                                 if content_str:
                                     break
             if not content_str:
-                raise PlannerContractError(f"{self.provider_id} returned empty content")
+                raise PlannerContractError(
+                    f"{self.provider_id} returned empty content",
+                    subtype=ContractFailureSubtype.EMPTY_CONTENT,
+                )
             response_id = getattr(response, "id", None)
             usage_data = None
             if hasattr(response, "usage") and response.usage:
@@ -284,40 +324,78 @@ class GenericOpenAICompatiblePlannerProvider:
             except Exception as e:
                 err_name = e.__class__.__name__
                 msg_lower = str(e).lower()
+                observation = extract_rate_limit_observation(
+                    provider_id=self.provider_id,
+                    model_id=self.model,
+                    task_class="structured_planning",
+                    exc=e,
+                    classification="CREDIT_EXHAUSTED" if _is_credit_exhaustion_error(e) else None,
+                    quota_scope="ACCOUNT" if _is_credit_exhaustion_error(e) else "UNKNOWN",
+                )
                 if _is_credit_exhaustion_error(e):
                     raise PlannerTransientError(
-                        f"{self.provider_id} CREDIT_EXHAUSTED ({err_name}): {e}"
+                        f"{self.provider_id} CREDIT_EXHAUSTED ({err_name})",
+                        failure_family=FailureFamily.SERVER_CAPACITY,
+                        rate_limit_observation=observation,
                     ) from e
                 elif (
                     isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError))
                     or any(code in msg_lower for code in ("tokens per minute", "rate_limit_exceeded", "rate limit", "tpm", "429", "quota", "500", "502", "503", "504"))
                 ):
-                    raise PlannerTransientError(f"{self.provider_id} transient/capacity error ({err_name}): {e}") from e
+                    raise PlannerTransientError(
+                        f"{self.provider_id} transient/capacity error ({err_name})",
+                        failure_family=(FailureFamily.TIMEOUT if isinstance(e, openai.APITimeoutError) else FailureFamily.SERVER_CAPACITY),
+                        rate_limit_observation=observation,
+                    ) from e
                 elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)) or any(code in msg_lower for code in ("401", "403", "unauthorized", "forbidden")):
                     raise PlannerCredentialError(f"{self.provider_id} auth/permission failure ({err_name}): {e}") from e
                 elif isinstance(e, openai.BadRequestError) and ("json_validate_failed" in msg_lower or "failed_generation" in msg_lower):
-                    raise PlannerTransientError(f"{self.provider_id} structured generation transient failure ({err_name}): {e}") from e
+                    raise PlannerTransientError(
+                        f"{self.provider_id} structured generation transient failure ({err_name})",
+                        failure_family=FailureFamily.SERVER_CAPACITY,
+                    ) from e
                 elif isinstance(e, openai.BadRequestError):
-                    raise PlannerContractError(f"{self.provider_id} invalid request/schema ({err_name}): {e}") from e
+                    raise PlannerContractError(
+                        f"{self.provider_id} invalid request/schema ({err_name})",
+                        subtype=ContractFailureSubtype.BAD_REQUEST,
+                        safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                    ) from e
                 else:
-                    raise PlannerContractError(f"{self.provider_id} provider contract failure ({err_name}): {e}") from e
+                    raise PlannerContractError(
+                        f"{self.provider_id} provider contract failure ({err_name})",
+                        safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                    ) from e
 
             if not response.choices:
-                raise PlannerContractError(f"{self.provider_id} returned no choices")
+                raise PlannerContractError(
+                    f"{self.provider_id} returned no choices",
+                    subtype=ContractFailureSubtype.NO_CHOICES,
+                    safe_detail=safe_contract_detail(choice_count=0),
+                )
 
             choice = response.choices[0]
             finish_reason = getattr(choice, "finish_reason", None)
             if finish_reason == "length":
                 raise PlannerTransientError(f"{self.provider_id} response reached configured output capacity before completing JSON")
             if finish_reason and finish_reason != "stop":
-                raise PlannerContractError(f"{self.provider_id} response finished with unacceptable reason: {finish_reason}")
+                raise PlannerContractError(
+                    f"{self.provider_id} response finished with unacceptable reason: {finish_reason}",
+                    subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                    safe_detail=safe_contract_detail(finish_reason=finish_reason),
+                )
 
             content_str = getattr(choice.message, "content", None)
             if not content_str:
                 refusal = getattr(choice.message, "refusal", None)
                 if refusal:
-                    raise PlannerContractError(f"{self.provider_id} model refused response: {refusal}")
-                raise PlannerContractError(f"{self.provider_id} returned empty content")
+                    raise PlannerContractError(
+                        f"{self.provider_id} model refused response",
+                        subtype=ContractFailureSubtype.REFUSAL,
+                    )
+                raise PlannerContractError(
+                    f"{self.provider_id} returned empty content",
+                    subtype=ContractFailureSubtype.EMPTY_CONTENT,
+                )
 
             response_id = getattr(response, "id", None)
             usage_data = None
@@ -333,11 +411,21 @@ class GenericOpenAICompatiblePlannerProvider:
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise PlannerContractError(f"{self.provider_id} output is not valid JSON: {e}") from e
+            raise PlannerContractError(
+                f"{self.provider_id} output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(parser_class=e.__class__.__name__, line=getattr(e, "lineno", None), column=getattr(e, "colno", None)),
+            ) from e
 
         parsed_decision = sanitize_planner_output(parsed_decision, schema)
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:
-            raise PlannerContractError(f"{self.provider_id} output failed canonical JSON schema validation: {errors[0].message}")
+            error = errors[0]
+            pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
+            raise PlannerContractError(
+                f"{self.provider_id} output failed canonical JSON schema validation",
+                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
+            )
 
         return parsed_decision, response_id, usage_data

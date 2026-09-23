@@ -24,6 +24,7 @@ from aos.providers import (
     FreeLLMAPILocalPlannerProvider,
 )
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import TaskClass
 from extensions.autonomy_fabric.native_workers import redact_secrets
 
 
@@ -115,6 +116,14 @@ def _model_for(policy: Dict[str, Any], provider_id: str) -> Optional[str]:
 
 
 def _classify(exc: Exception) -> str:
+    observation = getattr(exc, "rate_limit_observation", None)
+    if observation is not None:
+        if observation.classification == "CREDIT_EXHAUSTED":
+            return "CREDIT_EXHAUSTED"
+        if observation.classification == "QUOTA_EXHAUSTED":
+            return "QUOTA_EXHAUSTED"
+        if observation.classification == "RATE_LIMITED":
+            return "RATE_LIMITED"
     text = str(exc).lower()
     if (
         "credit_exhausted" in text
@@ -241,6 +250,8 @@ def provider_runtime_matrix(
             "latency_ms": None,
             "failure_class": "CREDENTIAL_UNAVAILABLE" if not credential_present else ("CONFIGURATION_UNAVAILABLE" if nonsecret_missing else None),
             "evidence_class": "NOT_PROVEN",
+            "task_class": TaskClass.SMALL_REASONING.value,
+            "model_id": cfg.get("model_id"),
         }
 
         model = cfg.get("model_id")
@@ -280,7 +291,18 @@ def provider_runtime_matrix(
             row["latency_ms"] = int((time.monotonic() - started) * 1000)
             row["failure_class"] = _classify(exc)
             row["error_class"] = exc.__class__.__name__
-            row["message"] = redact_secrets(str(exc))[:300]
+            if isinstance(exc, PlannerContractError):
+                row["contract_subtype"] = exc.subtype
+                if exc.safe_detail:
+                    row["safe_detail"] = exc.safe_detail
+                row["message"] = None
+            elif isinstance(exc, PlannerTransientError):
+                observation = exc.rate_limit_observation
+                if observation is not None:
+                    row["rate_limit_observation"] = observation.to_dict()
+                row["message"] = None
+            else:
+                row["message"] = redact_secrets(str(exc))[:300]
         result[provider_id] = row
 
     if (
@@ -473,6 +495,11 @@ def probe_enabled_providers(
                     "failure_class": None if passed else (row.get("failure_class") or "LOCAL_GATEWAY_UNAVAILABLE"),
                     "last_observed_at": observed_at,
                     "latency_ms": row.get("latency_ms"),
+                    "task_class": TaskClass.SMALL_REASONING.value,
+                    "model_id": cfg.get("model_id"),
+                    "contract_subtype": row.get("contract_subtype"),
+                    "safe_detail": row.get("safe_detail"),
+                    "rate_limit_observation": row.get("rate_limit_observation"),
                 }
                 continue
             available = bool(local.get("service_available"))
@@ -487,6 +514,8 @@ def probe_enabled_providers(
                 "failure_class": None if passed else (local.get("failure_class") or "LOCAL_MODEL_UNAVAILABLE"),
                 "last_observed_at": observed_at,
                 "latency_ms": local.get("latency_ms"),
+                "task_class": TaskClass.SMALL_REASONING.value,
+                "model_id": cfg.get("model_id"),
             }
             continue
 
@@ -508,5 +537,10 @@ def probe_enabled_providers(
             "failure_class": None if passed else (row.get("failure_class") or "UNKNOWN"),
             "last_observed_at": observed_at,
             "latency_ms": row.get("latency_ms"),
+            "task_class": TaskClass.SMALL_REASONING.value,
+            "model_id": cfg.get("model_id"),
+            "contract_subtype": row.get("contract_subtype"),
+            "safe_detail": row.get("safe_detail"),
+            "rate_limit_observation": row.get("rate_limit_observation"),
         }
     return results

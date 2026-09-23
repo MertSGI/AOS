@@ -9,6 +9,12 @@ from typing import Any, Dict, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
@@ -161,46 +167,83 @@ class GroqPlannerProvider:
             )
         except Exception as e:
             err_name = e.__class__.__name__
+            observation = extract_rate_limit_observation(
+                provider_id="groq", model_id=self.model,
+                task_class="structured_planning", exc=e,
+            )
             if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)) or _is_transient_capacity_error(e):
-                raise PlannerTransientError(f"Groq transient error ({err_name}): {e}") from e
+                family = FailureFamily.TIMEOUT if isinstance(e, openai.APITimeoutError) else FailureFamily.SERVER_CAPACITY
+                if isinstance(e, openai.APIConnectionError):
+                    family = FailureFamily.NETWORK
+                raise PlannerTransientError(
+                    f"Groq transient error ({err_name})",
+                    failure_family=family,
+                    rate_limit_observation=observation,
+                ) from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                 raise PlannerCredentialError(f"Groq auth/permission failure ({err_name}): {e}") from e
             elif isinstance(e, openai.BadRequestError) and _is_transient_generation_error(e):
-                raise PlannerTransientError(f"Groq structured generation transient failure ({err_name}): {e}") from e
+                raise PlannerTransientError(
+                    f"Groq structured generation transient failure ({err_name})",
+                    failure_family=FailureFamily.SERVER_CAPACITY,
+                ) from e
             elif isinstance(e, openai.BadRequestError):
-                raise PlannerContractError(f"Groq invalid request/schema ({err_name}): {e}") from e
+                raise PlannerContractError(
+                    f"Groq invalid request/schema ({err_name})",
+                    subtype=ContractFailureSubtype.BAD_REQUEST,
+                    safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                ) from e
             else:
-                raise PlannerContractError(f"Groq provider contract failure ({err_name}): {e}") from e
+                raise PlannerContractError(
+                    f"Groq provider contract failure ({err_name})",
+                    safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                ) from e
 
         # Extract completion
         if not response.choices:
-            raise PlannerContractError("Groq returned no choices")
+            raise PlannerContractError(
+                "Groq returned no choices",
+                subtype=ContractFailureSubtype.NO_CHOICES,
+                safe_detail=safe_contract_detail(choice_count=0),
+            )
 
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
             raise PlannerTransientError("Groq response reached the configured output capacity before completing JSON")
         if finish_reason and finish_reason != "stop":
-            raise PlannerContractError(f"Groq response finished with unacceptable reason: {finish_reason}")
+            raise PlannerContractError(
+                f"Groq response finished with unacceptable reason: {finish_reason}",
+                subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                safe_detail=safe_contract_detail(finish_reason=finish_reason),
+            )
 
         content_str = getattr(choice.message, "content", None)
         if not content_str:
             refusal = getattr(choice.message, "refusal", None)
             if refusal:
-                raise PlannerContractError(f"Groq model refused response: {refusal}")
-            raise PlannerContractError("Groq returned empty content")
+                raise PlannerContractError("Groq model refused response", subtype=ContractFailureSubtype.REFUSAL)
+            raise PlannerContractError("Groq returned empty content", subtype=ContractFailureSubtype.EMPTY_CONTENT)
 
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise PlannerContractError(f"Groq output is not valid JSON: {e}") from e
+            raise PlannerContractError(
+                "Groq output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(parser_class=e.__class__.__name__, line=getattr(e, "lineno", None), column=getattr(e, "colno", None)),
+            ) from e
 
         parsed_decision = _sanitize_planner_output(parsed_decision, schema)
 
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:
+            error = errors[0]
+            pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
             raise PlannerContractError(
-                f"Groq output failed canonical JSON schema validation: {errors[0].message}"
+                "Groq output failed canonical JSON schema validation",
+                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
             )
 
         response_id = getattr(response, "id", None)

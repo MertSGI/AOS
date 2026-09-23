@@ -11,6 +11,7 @@ from aos.autonomous_host import (
     load_bound_run_plan,
 )
 from aos.planner import PlannerContractError, PlannerTransientError
+from aos.provider_observation import ContractFailureSubtype
 from aos.provider_registry import ProviderRegistry, ProviderRouter
 from extensions.autonomy_fabric.execution_backend import ExecutionCapability, ExecutionRequest
 from extensions.autonomy_fabric.run_registry import AgentRunRegistry
@@ -128,6 +129,31 @@ def test_provider_contract_failure_routes_through_authorized_chain(tmp_path):
     assert calls == ["nemotron", "gemini", "groq", "ollama"]
     assert result.evidence_payload["failure_class"] == "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"
     assert result.evidence_payload["provider_attempts"][0]["status"] == ProviderAttemptStatus.NON_RETRYABLE_FAILED.value
+
+
+def test_contract_subtype_and_safe_detail_survive_attempt_journal(tmp_path):
+    class InvalidJsonProvider:
+        execution_provenance = "LOCAL_OFFLINE"
+
+        def generate_plan(self, prompt, schema):
+            raise PlannerContractError(
+                "invalid output",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail={"parser_class": "JSONDecodeError", "line": 2, "raw_content": "sk-forbidden"},
+            )
+
+    journal = tmp_path / "attempts.jsonl"
+    backend = ProviderFailoverReasoningBackend(
+        ProviderRouter(ProviderRegistry(_policy())),
+        provider_factory=lambda _provider_id, _model_id: InvalidJsonProvider(),
+        attempt_journal=journal,
+    )
+    result = backend.execute(_request(tmp_path))
+    attempt = result.evidence_payload["provider_attempts"][0]
+    assert attempt["contract_subtype"] == "INVALID_JSON"
+    assert attempt["safe_detail"] == {"parser_class": "JSONDecodeError", "line": 2}
+    assert attempt["message"] is None
+    assert "sk-forbidden" not in journal.read_text(encoding="utf-8")
 
 
 def test_stale_run_plan_is_rejected(tmp_path):

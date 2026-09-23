@@ -36,6 +36,7 @@ from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
 from aos.runtime_maintenance import PAUSED_SAFE, is_paused, persist_maintenance
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
+from aos.provider_observation import RateLimitObservation, TaskClass
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -424,6 +425,8 @@ class RuntimeEngine:
                             "latency_ms": row.get("latency_ms"),
                             "credential_available": row.get("credential_available"),
                             "local_service_available": row.get("local_service_available"),
+                            "model_id": row.get("model_id"),
+                            "task_class": row.get("task_class") or TaskClass.SMALL_REASONING.value,
                         }
                         if row.get("probe_status") == "PASS":
                             registry.record_success(
@@ -442,6 +445,10 @@ class RuntimeEngine:
                                     or
                                     "UNKNOWN"
                                 ),
+                                rate_limit_observation=(
+                                    RateLimitObservation.from_dict(row["rate_limit_observation"])
+                                    if isinstance(row.get("rate_limit_observation"), dict) else None
+                                ),
                                 **common,
                             )
                         else:
@@ -455,6 +462,8 @@ class RuntimeEngine:
                 for command_id in self.store.list_command_ids()[-200:]:
                     state = self.store.read_state(command_id)
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
+                        continue
+                    if str(state.get("required_task_class") or TaskClass.STRUCTURED_PLANNING.value) != TaskClass.SMALL_REASONING.value:
                         continue
                     self.store.write_state(command_id, retry_after_epoch=0)
                     self.store.append_event(command_id, "provider.healthy_alternate_wake", {
@@ -616,19 +625,21 @@ class RuntimeEngine:
             registries,
             enabled_providers=enabled,
         )
-        details = aggregate.per_provider_details(enabled)
-        healthy_details = [
-            row for row in details
-            if row.get("circuit_state") == CircuitState.CLOSED.value
-        ]
-        healthy = sorted(row["provider"] for row in healthy_details)
-        if not healthy:
-            return
         for command_id in self.store.list_command_ids()[-200:]:
             state = self.store.read_state(command_id)
             if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                 continue
             if float(state.get("retry_after_epoch", 0) or 0) <= 0:
+                continue
+            required_task_class = str(
+                state.get("required_task_class")
+                or TaskClass.STRUCTURED_PLANNING.value
+            )
+            healthy = aggregate.healthy_providers_for_task(
+                required_task_class,
+                enabled,
+            )
+            if not healthy:
                 continue
             # Copy the authoritative newest success into the waiting command's
             # own registry before waking it.  Otherwise the worker immediately
@@ -636,14 +647,22 @@ class RuntimeEngine:
             registry = ProviderCircuitBreakerRegistry(
                 self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
             )
-            for row in healthy_details:
+            for provider_id in healthy:
+                source = aggregate.get_circuit(provider_id)
+                candidates = [
+                    value for value in source.health_records.values()
+                    if value.get("task_class") == required_task_class
+                    and value.get("circuit_state") == CircuitState.CLOSED.value
+                ]
+                newest = max(
+                    candidates,
+                    key=lambda value: str(value.get("last_observed_at") or value.get("last_success_at") or ""),
+                )
                 registry.record_success(
-                    row["provider"],
-                    observed_at=row.get("last_success_at") or row.get("last_observed_at"),
-                    probe_status=str(row.get("probe_status") or "PASS"),
-                    latency_ms=row.get("latency_ms"),
-                    credential_available=row.get("credential_available"),
-                    local_service_available=row.get("local_service_available"),
+                    provider_id,
+                    observed_at=newest.get("last_success_at") or newest.get("last_observed_at"),
+                    model_id=newest.get("model_id"),
+                    task_class=required_task_class,
                 )
             self.store.write_state(command_id, retry_after_epoch=0)
             self.store.append_event(command_id, "provider.healthy_alternate_wake", {
@@ -651,6 +670,7 @@ class RuntimeEngine:
                 "command_id": command_id,
                 "healthy_providers": healthy,
                 "evidence_source": "NEWEST_COMMAND_LOCAL_OBSERVATION",
+                "required_task_class": required_task_class,
             })
 
     def _recovery_loop(self) -> None:

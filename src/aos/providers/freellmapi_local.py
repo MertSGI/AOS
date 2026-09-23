@@ -20,6 +20,12 @@ from urllib.parse import urlparse
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 from aos.providers.openai_compatible import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     default_max_output_tokens,
@@ -277,7 +283,7 @@ class FreeLLMAPILocalPlannerProvider:
             f"freellmapi_local LOCAL_GATEWAY_NO_UPSTREAM_ROUTE ({readiness.reason})"
         )
 
-    def _raise_http_error(self, status: int, body: Any) -> None:
+    def _raise_http_error(self, status: int, body: Any, headers: Optional[Mapping[str, Any]] = None) -> None:
         error = body.get("error") if isinstance(body, dict) else None
         error_type = error.get("type") if isinstance(error, dict) else None
         error_code = error.get("code") if isinstance(error, dict) else None
@@ -290,18 +296,37 @@ class FreeLLMAPILocalPlannerProvider:
         if status in (401, 403):
             raise PlannerCredentialError(f"freellmapi_local GATEWAY_CREDENTIAL_UNAVAILABLE{suffix}")
         if status == 429:
-            raise PlannerTransientError(f"freellmapi_local RATE_LIMITED{suffix}")
+            raise PlannerTransientError(
+                f"freellmapi_local RATE_LIMITED{suffix}",
+                failure_family=FailureFamily.SERVER_CAPACITY,
+                rate_limit_observation=extract_rate_limit_observation(
+                    provider_id="freellmapi_local", model_id=self.model,
+                    task_class="structured_planning", headers=headers,
+                    http_status=status, classification="RATE_LIMITED",
+                ),
+            )
         if status == 502:
-            raise PlannerTransientError(f"freellmapi_local UPSTREAM_ROUTE_UNAVAILABLE{suffix}")
+            raise PlannerTransientError(f"freellmapi_local UPSTREAM_ROUTE_UNAVAILABLE{suffix}", failure_family=FailureFamily.SERVER_CAPACITY)
         if status in (503, 504):
-            raise PlannerTransientError(f"freellmapi_local SERVER_CAPACITY{suffix}")
+            raise PlannerTransientError(f"freellmapi_local SERVER_CAPACITY{suffix}", failure_family=FailureFamily.SERVER_CAPACITY)
         if status == 413:
-            raise PlannerContractError(f"freellmapi_local request exceeded upstream context capacity{suffix}")
+            raise PlannerContractError(
+                f"freellmapi_local request exceeded upstream context capacity{suffix}",
+                subtype=ContractFailureSubtype.BAD_REQUEST,
+                safe_detail=safe_contract_detail(http_status=status, provider_code=error_code),
+            )
         if status in (400, 404, 422):
-            raise PlannerContractError(f"freellmapi_local rejected the planner request contract{suffix}")
+            raise PlannerContractError(
+                f"freellmapi_local rejected the planner request contract{suffix}",
+                subtype=ContractFailureSubtype.BAD_REQUEST,
+                safe_detail=safe_contract_detail(http_status=status, provider_code=error_code),
+            )
         if status >= 500:
-            raise PlannerTransientError(f"freellmapi_local UPSTREAM_ROUTE_UNAVAILABLE HTTP {status}")
-        raise PlannerContractError(f"freellmapi_local unexpected HTTP status {status}")
+            raise PlannerTransientError(f"freellmapi_local UPSTREAM_ROUTE_UNAVAILABLE HTTP {status}", failure_family=FailureFamily.SERVER_CAPACITY)
+        raise PlannerContractError(
+            f"freellmapi_local unexpected HTTP status {status}",
+            safe_detail=safe_contract_detail(http_status=status, provider_code=error_code),
+        )
 
     def generate_plan(
         self,
@@ -376,7 +401,7 @@ class FreeLLMAPILocalPlannerProvider:
                 body = _bounded_json_body(exc, MAX_RESPONSE_BYTES)
             except PlannerContractError:
                 body = None
-            self._raise_http_error(int(exc.code), body)
+            self._raise_http_error(int(exc.code), body, headers=exc.headers or {})
             raise AssertionError("unreachable")
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlannerTransientError("freellmapi_local LOCAL_GATEWAY_UNAVAILABLE") from exc
@@ -384,10 +409,18 @@ class FreeLLMAPILocalPlannerProvider:
         if status != 200:
             self._raise_http_error(status, body)
         if not isinstance(body, dict):
-            raise PlannerContractError("freellmapi_local success response is not an object")
+            raise PlannerContractError(
+                "freellmapi_local success response is not an object",
+                subtype=ContractFailureSubtype.PROVIDER_CONTRACT_ERROR,
+                safe_detail=safe_contract_detail(response_shape=type(body).__name__),
+            )
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise PlannerContractError("freellmapi_local returned no choices")
+            raise PlannerContractError(
+                "freellmapi_local returned no choices",
+                subtype=ContractFailureSubtype.NO_CHOICES,
+                safe_detail=safe_contract_detail(choice_count=0),
+            )
         choice = choices[0]
         finish_reason = choice.get("finish_reason")
         if finish_reason == "length":
@@ -396,27 +429,40 @@ class FreeLLMAPILocalPlannerProvider:
             )
         if finish_reason not in (None, "stop"):
             raise PlannerContractError(
-                "freellmapi_local response finished with an unacceptable reason"
+                "freellmapi_local response finished with an unacceptable reason",
+                subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                safe_detail=safe_contract_detail(finish_reason=finish_reason),
             )
         message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
-            raise PlannerContractError("freellmapi_local returned empty content")
+            raise PlannerContractError("freellmapi_local returned empty content", subtype=ContractFailureSubtype.EMPTY_CONTENT)
         try:
             parsed_decision = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise PlannerContractError("freellmapi_local output is not valid JSON") from exc
+            raise PlannerContractError(
+                "freellmapi_local output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(parser_class=exc.__class__.__name__, line=exc.lineno, column=exc.colno),
+            ) from exc
         if not isinstance(parsed_decision, dict):
-            raise PlannerContractError("freellmapi_local output is not a structured object")
+            raise PlannerContractError(
+                "freellmapi_local output is not a structured object",
+                subtype=ContractFailureSubtype.PROVIDER_CONTRACT_ERROR,
+                safe_detail=safe_contract_detail(response_shape=type(parsed_decision).__name__),
+            )
 
         parsed_decision = sanitize_planner_output(parsed_decision, schema)
         errors = list(
             Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision)
         )
         if errors:
+            error = errors[0]
+            pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
             raise PlannerContractError(
-                "freellmapi_local output failed canonical JSON schema validation: "
-                + errors[0].message
+                "freellmapi_local output failed canonical JSON schema validation",
+                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
             )
 
         usage_raw = body.get("usage")

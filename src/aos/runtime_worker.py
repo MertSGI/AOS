@@ -559,11 +559,17 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         worker_pid=None,
                         attempts=final_attempts,
                         retry_after_epoch=retry_at,
+                        required_task_class=receipt.get(
+                            "required_task_class", "structured_planning"
+                        ),
                     )
                     store.append_event(command_id, "run.waiting_for_reasoning_provider", {
                         "retry_after_epoch": retry_at,
                         "attempt": final_attempts,
                         "circuit_summary": circuit_reg.summarize(),
+                        "required_task_class": receipt.get(
+                            "required_task_class", "structured_planning"
+                        ),
                     })
                     result = RuntimeResult(
                         command_id=command_id,

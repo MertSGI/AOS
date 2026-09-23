@@ -10,6 +10,12 @@ from typing import Any, Dict, Tuple
 from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 from aos.providers.schema_utils import sanitize_planner_output as _sanitize_planner_output
 
 
@@ -54,35 +60,67 @@ class OllamaPlannerProvider:
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            observation = extract_rate_limit_observation(
+                provider_id="ollama", model_id=self.model,
+                task_class="structured_planning", exc=e,
+                headers=e.headers, http_status=e.code,
+            )
+            if e.code == 429 or e.code >= 500:
+                raise PlannerTransientError(
+                    f"Ollama HTTP transient error ({e.code})",
+                    failure_family=FailureFamily.SERVER_CAPACITY,
+                    rate_limit_observation=observation,
+                ) from e
+            raise PlannerContractError(
+                f"Ollama provider failure (HTTPError)",
+                subtype=ContractFailureSubtype.BAD_REQUEST if e.code == 400 else ContractFailureSubtype.PROVIDER_CONTRACT_ERROR,
+                safe_detail=safe_contract_detail(exception_class="HTTPError", http_status=e.code),
+            ) from e
         except urllib.error.URLError as e:
-            raise PlannerTransientError(f"Ollama connection error: {e}") from e
+            raise PlannerTransientError("Ollama connection error", failure_family=FailureFamily.LOCAL_SERVICE) from e
         except Exception as e:
             err_name = e.__class__.__name__
-            raise PlannerContractError(f"Ollama provider failure ({err_name}): {e}") from e
+            raise PlannerContractError(
+                f"Ollama provider failure ({err_name})",
+                safe_detail=safe_contract_detail(exception_class=err_name),
+            ) from e
 
         done_reason = data.get("done_reason")
         if done_reason == "length":
             raise PlannerTransientError("Ollama response reached configured output capacity before completing JSON")
         if data.get("done") is False:
-            raise PlannerContractError("Ollama returned an incomplete non-streaming response")
+            raise PlannerContractError(
+                "Ollama returned an incomplete non-streaming response",
+                subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                safe_detail=safe_contract_detail(finish_reason=done_reason or "incomplete"),
+            )
 
         # Extract message content
         message = data.get("message", {})
         content_str = message.get("content")
 
         if not content_str:
-            raise PlannerContractError("Ollama returned empty content")
+            raise PlannerContractError("Ollama returned empty content", subtype=ContractFailureSubtype.EMPTY_CONTENT)
 
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise PlannerContractError(f"Ollama output is not valid JSON: {e}") from e
+            raise PlannerContractError(
+                "Ollama output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(parser_class=e.__class__.__name__, line=getattr(e, "lineno", None), column=getattr(e, "colno", None)),
+            ) from e
 
         parsed_decision = _sanitize_planner_output(parsed_decision, schema)
         errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(parsed_decision))
         if errors:
+            error = errors[0]
+            pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
             raise PlannerContractError(
-                f"Ollama output failed canonical JSON schema validation: {errors[0].message}"
+                "Ollama output failed canonical JSON schema validation",
+                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
             )
 
         # Extract usage

@@ -28,6 +28,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from aos.process_utils import run_headless
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    RateLimitObservation,
+    TaskClass,
+    canonical_task_class,
+)
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
 from aos.providers import (
@@ -116,6 +122,10 @@ class ProviderAttempt:
     routed_model_id: Optional[str] = None
     fallback_attempts: Optional[int] = None
     fallback_trail: Optional[str] = None
+    task_class: str = TaskClass.UNKNOWN.value
+    contract_subtype: Optional[str] = None
+    safe_detail: Optional[Dict[str, Any]] = None
+    rate_limit_observation: Optional[RateLimitObservation] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -125,7 +135,14 @@ class ProviderAttempt:
             "error_class": self.error_class,
             "message": self.message,
             "timestamp": self.timestamp,
+            "task_class": self.task_class,
         }
+        if self.contract_subtype is not None:
+            payload["contract_subtype"] = self.contract_subtype
+        if self.safe_detail:
+            payload["safe_detail"] = dict(self.safe_detail)
+        if self.rate_limit_observation is not None:
+            payload["rate_limit_observation"] = self.rate_limit_observation.to_dict()
         for key in (
             "routed_via",
             "routed_provider_id",
@@ -263,6 +280,9 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         prompt = request.payload.get("prompt", "")
         schema = request.payload.get("schema", {})
         risk_class = request.payload.get("risk_class", "R0")
+        task_class = canonical_task_class(
+            request.payload.get("task_class", TaskClass.STRUCTURED_PLANNING.value)
+        )
         ignore_credentials = bool(request.payload.get("ignore_credentials", False))
         tried: List[str] = []
         attempts: List[ProviderAttempt] = []
@@ -285,12 +305,19 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
 
             half_open_probe = False
             if self.circuit_registry is not None:
-                if not self.circuit_registry.is_provider_available(provider_id):
+                if not self.circuit_registry.is_provider_available(
+                    provider_id,
+                    model_id=model_id,
+                    task_class=task_class,
+                ):
                     # Provider circuit is OPEN or already has a leased HALF_OPEN probe.
                     continue
                 half_open_probe = (
-                    self.circuit_registry.get_circuit(provider_id).circuit_state
-                    == CircuitState.HALF_OPEN.value
+                    self.circuit_registry.get_health_record(
+                        provider_id,
+                        model_id=model_id,
+                        task_class=task_class,
+                    )["circuit_state"] == CircuitState.HALF_OPEN.value
                 )
 
             provider: Any = None
@@ -311,6 +338,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     model_id=model_id,
                     status=ProviderAttemptStatus.SUCCESS,
                     timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    task_class=task_class,
                     **_routing_attempt_fields(provider),
                 )
                 attempts.append(attempt)
@@ -323,6 +351,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                             if provider_id == "freellmapi_local" else None
                         ),
                         local_service_available=True if provider_id == "freellmapi_local" else None,
+                        model_id=model_id,
+                        task_class=task_class,
                     )
                     if half_open_probe:
                         self.circuit_registry.record_probe(provider_id)
@@ -354,11 +384,17 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 error_class = "CONTRACT_FAILURE"
                 message = None
                 failure_class = "CONTRACT_FAILURE"
+                contract_subtype = exc.subtype
+                safe_detail = exc.safe_detail
+                rate_observation = None
             except PlannerCredentialError as exc:
                 status = ProviderAttemptStatus.UNAVAILABLE
                 error_class = "CREDENTIAL_UNAVAILABLE"
                 message = None
                 failure_class = "CREDENTIAL_UNAVAILABLE"
+                contract_subtype = None
+                safe_detail = None
+                rate_observation = None
             except PlannerTransientError as exc:
                 raw = str(exc).upper()
                 if "LOCAL_GATEWAY_UNAVAILABLE" in raw:
@@ -387,16 +423,25 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     failure_class = "NETWORK_UNAVAILABLE"
                 error_class = failure_class
                 message = None
+                contract_subtype = None
+                safe_detail = None
+                rate_observation = exc.rate_limit_observation
             except TimeoutError as exc:
                 status = ProviderAttemptStatus.TIMED_OUT
                 error_class = "TIMEOUT"
                 message = None
                 failure_class = "TIMEOUT"
+                contract_subtype = None
+                safe_detail = None
+                rate_observation = None
             except (ConnectionError, OSError) as exc:
                 status = ProviderAttemptStatus.UNAVAILABLE
                 failure_class = "LOCAL_MODEL_UNAVAILABLE" if provider_id == "ollama" else "NETWORK_UNAVAILABLE"
                 error_class = failure_class
                 message = None
+                contract_subtype = None
+                safe_detail = None
+                rate_observation = None
             except Exception as exc:
                 # Unknown errors are not safe to route around.
                 attempt = ProviderAttempt(
@@ -433,6 +478,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 error_class=error_class,
                 message=message,
                 timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                task_class=task_class,
+                contract_subtype=contract_subtype,
+                safe_detail=safe_detail,
+                rate_limit_observation=rate_observation,
                 **_routing_attempt_fields(provider),
             )
             attempts.append(attempt)
@@ -450,6 +499,9 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     failure_class,
                     credential_available=credential_available,
                     local_service_available=local_service_available,
+                    model_id=model_id,
+                    task_class=task_class,
+                    rate_limit_observation=rate_observation,
                 )
                 if half_open_probe:
                     self.circuit_registry.record_probe(provider_id)

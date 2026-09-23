@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Protocol, Tuple
+from typing import Any, Dict, Optional, Protocol, Tuple
+
+from aos.provider_observation import (
+    ContractFailureSubtype,
+    FailureFamily,
+    RateLimitObservation,
+    extract_rate_limit_observation,
+    safe_contract_detail,
+)
 
 class PlannerError(Exception):
     """Base internal planner exception."""
@@ -12,7 +20,20 @@ class PlannerError(Exception):
 
 class PlannerTransientError(PlannerError):
     """Transient network/API error eligible for retry."""
-    pass
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_family: FailureFamily | str = FailureFamily.UNKNOWN,
+        rate_limit_observation: Optional[RateLimitObservation] = None,
+    ) -> None:
+        super().__init__(message)
+        try:
+            self.failure_family = FailureFamily(failure_family).value
+        except ValueError:
+            self.failure_family = FailureFamily.UNKNOWN.value
+        self.rate_limit_observation = rate_limit_observation
 
 class PlannerCredentialError(PlannerError):
     """Missing or invalid credential error."""
@@ -20,7 +41,20 @@ class PlannerCredentialError(PlannerError):
 
 class PlannerContractError(PlannerError):
     """Schema, model refusal, incomplete response, or semantic contract failure."""
-    pass
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        subtype: ContractFailureSubtype | str = ContractFailureSubtype.PROVIDER_CONTRACT_ERROR,
+        safe_detail: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        try:
+            self.subtype = ContractFailureSubtype(subtype).value
+        except ValueError:
+            self.subtype = ContractFailureSubtype.PROVIDER_CONTRACT_ERROR.value
+        self.safe_detail = safe_contract_detail(**(safe_detail or {}))
 
 class PlannerProvider(Protocol):
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
@@ -68,19 +102,43 @@ class OpenAIPlannerProvider:
         except Exception as e:
             err_name = e.__class__.__name__
             if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError)):
-                raise PlannerTransientError(f"OpenAI transient error ({err_name}): {e}") from e
+                observation = extract_rate_limit_observation(
+                    provider_id="openai",
+                    model_id=self.model,
+                    task_class="structured_planning",
+                    exc=e,
+                )
+                family = FailureFamily.TIMEOUT if isinstance(e, openai.APITimeoutError) else FailureFamily.NETWORK
+                if isinstance(e, openai.RateLimitError):
+                    family = FailureFamily.SERVER_CAPACITY
+                raise PlannerTransientError(
+                    f"OpenAI transient error ({err_name})",
+                    failure_family=family,
+                    rate_limit_observation=observation,
+                ) from e
             elif isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
                 raise PlannerCredentialError(f"OpenAI auth/permission failure ({err_name}): {e}") from e
             elif isinstance(e, openai.BadRequestError):
-                raise PlannerContractError(f"OpenAI invalid request/schema ({err_name}): {e}") from e
+                raise PlannerContractError(
+                    f"OpenAI invalid request/schema ({err_name})",
+                    subtype=ContractFailureSubtype.BAD_REQUEST,
+                    safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                ) from e
             else:
-                raise PlannerContractError(f"OpenAI provider contract failure ({err_name}): {e}") from e
+                raise PlannerContractError(
+                    f"OpenAI provider contract failure ({err_name})",
+                    safe_detail=safe_contract_detail(exception_class=err_name, http_status=getattr(e, "status_code", None)),
+                ) from e
 
         # Inspect Responses API completion status
         status = getattr(response, "status", None)
         if status and status not in ("completed", "complete"):
             inc_details = getattr(response, "incomplete_details", None)
-            raise PlannerContractError(f"OpenAI response status '{status}' incomplete: {inc_details}")
+            raise PlannerContractError(
+                f"OpenAI response status '{status}' incomplete",
+                subtype=ContractFailureSubtype.BAD_FINISH_REASON,
+                safe_detail=safe_contract_detail(finish_reason=status),
+            )
 
         # Extract output text content and check refusal
         content_str = None
@@ -91,19 +149,33 @@ class OpenAIPlannerProvider:
                 if getattr(item, "type", None) == "message" and hasattr(item, "content"):
                     for part in item.content:
                         if getattr(part, "type", None) == "refusal":
-                            raise PlannerContractError(f"OpenAI model refused response: {getattr(part, 'refusal', '')}")
+                            raise PlannerContractError(
+                                "OpenAI model refused response",
+                                subtype=ContractFailureSubtype.REFUSAL,
+                            )
                         if getattr(part, "type", None) == "text":
                             content_str = getattr(part, "text", None)
                             if content_str:
                                 break
 
         if not content_str:
-            raise PlannerContractError("OpenAI Responses API returned empty content")
+            raise PlannerContractError(
+                "OpenAI Responses API returned empty content",
+                subtype=ContractFailureSubtype.EMPTY_CONTENT,
+            )
 
         try:
             parsed_decision = json.loads(content_str)
         except Exception as e:
-            raise PlannerContractError(f"OpenAI model output is not valid JSON: {e}") from e
+            raise PlannerContractError(
+                "OpenAI model output is not valid JSON",
+                subtype=ContractFailureSubtype.INVALID_JSON,
+                safe_detail=safe_contract_detail(
+                    parser_class=e.__class__.__name__,
+                    line=getattr(e, "lineno", None),
+                    column=getattr(e, "colno", None),
+                ),
+            ) from e
 
         response_id = getattr(response, "id", None)
 
