@@ -105,3 +105,41 @@ def test_runtime_worker_maps_exact_canonical_binding_failure_to_human_required(t
     assert result["state"] == "HUMAN_REQUIRED"
     assert result["receipt"]["failure_class"] == "CANONICAL_CONTRADICTION"
     assert store.read_state(command.command_id)["state"] == "HUMAN_REQUIRED"
+
+
+def test_continuous_validation_churn_escalates_once_then_holds(tmp_path, monkeypatch):
+    root = tmp_path / "runtime"
+    store = RuntimeStore(root)
+    base = _command(tmp_path)
+    command = ContinueProjectCommand.from_mapping(
+        {"goal": "continue", "continuous": True},
+        project=base.project,
+    )
+    store.create_command(command.to_dict())
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    calls = []
+
+    def bounded(**kwargs):
+        calls.append(kwargs)
+        return {
+            "disposition": "BOUNDED_RUN_EXHAUSTED",
+            "reason": "PLANNER_VALIDATION_REPAIR_EXHAUSTED",
+            "batch_number": 0,
+            "completed_batch_count": 0,
+            "total_completed_batch_count": 0,
+            "canonical_source_sha": "a" * 40,
+            "canonical_execution_base_sha": "b" * 40,
+        }
+
+    monkeypatch.setattr(runtime_worker, "run_autonomous_project", bounded)
+
+    result = runtime_worker.execute_command(root, command.command_id)
+
+    state = store.read_state(command.command_id)
+    assert result["state"] == "HUMAN_REQUIRED"
+    assert result["receipt"]["reason"] == "RECOVERY_CHURN_GUARD"
+    assert state["same_fingerprint_respawns"] == 3
+    assert state["strategy_generation"] == 1
+    assert len(calls) == 3
+    assert calls[0]["strategy_generation"] == 0
+    assert calls[2]["strategy_generation"] == 1

@@ -8,6 +8,7 @@ checkpoint before new reasoning is invoked.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import threading
@@ -34,6 +35,61 @@ from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
 from aos.provider_circuit import ProviderCircuitBreakerRegistry
 from aos.runtime_maintenance import is_paused
+from aos.provider_observation import canonical_failure_family
+from aos.read_identity import build_workspace_source_generation
+
+
+def recovery_failure_family(
+    state: Dict[str, Any], checkpoint: Dict[str, Any]
+) -> str:
+    raw = (
+        state.get("failure_class")
+        or checkpoint.get("failure_class")
+        or checkpoint.get("disposition")
+        or checkpoint.get("phase")
+        or checkpoint.get("reason")
+        or "UNKNOWN"
+    )
+    text = str(raw).upper()
+    if "VALIDATION" in text or "BOUNDED_RUN_EXHAUSTED" in text:
+        return "PLANNER_VALIDATION"
+    return canonical_failure_family(text)
+
+
+def build_recovery_fingerprint(
+    *,
+    project_id: str,
+    state: Dict[str, Any],
+    checkpoint: Dict[str, Any],
+) -> Dict[str, Any]:
+    batch_number = int(checkpoint.get("batch_number", 0) or 0)
+    completed = max(
+        int(state.get("completed_batch_count", 0) or 0),
+        cumulative_completed_batch_count(checkpoint),
+    )
+    source_sha = str(
+        checkpoint.get("canonical_source_sha")
+        or state.get("canonical_source_sha")
+        or "UNKNOWN"
+    )
+    execution_base = (
+        checkpoint.get("canonical_execution_base_sha")
+        or state.get("canonical_execution_base_sha")
+    )
+    generation = build_workspace_source_generation(
+        project_id=project_id,
+        canonical_source_sha=source_sha,
+        canonical_execution_base_sha=(str(execution_base) if execution_base else None),
+    )
+    fields = {
+        "batch_number": batch_number,
+        "completed_batch_count_baseline": completed,
+        "failure_family": recovery_failure_family(state, checkpoint),
+        "objective_id": checkpoint.get("objective_id") or None,
+        "workspace_source_generation": generation,
+    }
+    encoded = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**fields, "fingerprint_sha256": hashlib.sha256(encoded).hexdigest()}
 
 
 class PlanningArtifactWatcher(threading.Thread):
@@ -397,6 +453,11 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             previous = store.read_state(command_id)
             initial_attempts = int(previous.get("attempts", 0))
             attempts = initial_attempts + 1
+            strategy_generation = int(previous.get("strategy_generation", 0) or 0)
+            recovery_failure_context = (
+                dict(previous.get("recovery_fingerprint", {}))
+                if isinstance(previous.get("recovery_fingerprint"), dict) else {}
+            )
             recovered = str(previous.get("state")) in ("RUNNING", "RECOVERING") or attempts > 1
             store.write_state(
                 command_id,
@@ -465,6 +526,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     red_lines=command.red_lines or tuple(DEFAULT_RED_LINES),
                     max_batches=command.max_batches_per_cycle,
                     max_iterations_per_batch=command.max_iterations_per_batch,
+                    strategy_generation=strategy_generation,
+                    recovery_failure_context=recovery_failure_context,
                 )
                 disposition = str(receipt.get("disposition", ""))
                 completed = cumulative_completed_batch_count(receipt)
@@ -543,6 +606,89 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                             cycle=cycle,
                             receipt=receipt,
                         )
+
+                    checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json") or {}
+                    fingerprint = build_recovery_fingerprint(
+                        project_id=command.project.project_id,
+                        state={
+                            **store.read_state(command_id),
+                            "failure_class": "PLANNER_VALIDATION",
+                            "completed_batch_count": completed,
+                        },
+                        checkpoint={
+                            **checkpoint,
+                            "phase": "BOUNDED_RUN_EXHAUSTED",
+                        },
+                    )
+                    current_state = store.read_state(command_id)
+                    previous_fingerprint = str(
+                        current_state.get("recovery_fingerprint_sha256") or ""
+                    )
+                    repeats = (
+                        int(current_state.get("same_fingerprint_respawns", 0) or 0) + 1
+                        if previous_fingerprint == fingerprint["fingerprint_sha256"]
+                        else 1
+                    )
+                    if repeats >= 3:
+                        store.write_state(
+                            command_id,
+                            state="HUMAN_REQUIRED",
+                            disposition="HUMAN_REQUIRED",
+                            failure_class="RECOVERY_CHURN_GUARD",
+                            recovery_disposition="RECOVERY_CHURN_GUARD",
+                            recovery_fingerprint=fingerprint,
+                            recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                            completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                            same_fingerprint_respawns=repeats,
+                            strategy_generation=strategy_generation,
+                            last_worker_exit_code=0,
+                            last_recovery_at=utc_now(),
+                            worker_pid=None,
+                            retry_after_epoch=0,
+                        )
+                        store.append_event(command_id, "runtime.recovery_churn_held", {
+                            "reason": "RECOVERY_CHURN_GUARD",
+                            "fingerprint": fingerprint,
+                            "same_fingerprint_respawns": repeats,
+                            "lineage_preserved": True,
+                        })
+                        result = RuntimeResult(
+                            command_id=command_id,
+                            state="HUMAN_REQUIRED",
+                            disposition="HUMAN_REQUIRED",
+                            completed_batch_count=completed,
+                            canonical_source_sha=receipt.get("canonical_source_sha"),
+                            canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
+                            receipt={
+                                **receipt,
+                                "reason": "RECOVERY_CHURN_GUARD",
+                                "recovery_fingerprint": fingerprint,
+                            },
+                        ).to_dict()
+                        store.write_result(command_id, result)
+                        return result
+                    if repeats == 2:
+                        strategy_generation += 1
+                        recovery_failure_context = fingerprint
+                        recovery_disposition = "STRATEGY_ESCALATED"
+                        store.append_event(command_id, "runtime.recovery_strategy_escalated", {
+                            "fingerprint": fingerprint,
+                            "strategy_generation": strategy_generation,
+                            "same_fingerprint_respawns": repeats,
+                        })
+                    else:
+                        recovery_disposition = "NORMAL_RESUME"
+                    store.write_state(
+                        command_id,
+                        recovery_disposition=recovery_disposition,
+                        recovery_fingerprint=fingerprint,
+                        recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                        completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                        same_fingerprint_respawns=repeats,
+                        strategy_generation=strategy_generation,
+                        last_worker_exit_code=0,
+                        last_recovery_at=utc_now(),
+                    )
 
                     # No routine user prompt. Re-enter the planning kernel from its
                     # durable checkpoint; it fresh-reads canonical state and replans.

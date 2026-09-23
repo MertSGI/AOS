@@ -422,6 +422,50 @@ def test_legacy_read_receipt_is_unbound_and_does_not_ban_path(tmp_path):
     assert planning_kernel._completed_task_signatures(runtime, batches) == []
 
 
+def test_strategy_generation_change_forces_fresh_objective_and_context(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    (runtime / "situation-0000.json").write_text(
+        json.dumps(situation.to_dict()), encoding="utf-8"
+    )
+    (runtime / "objective-0000.json").write_text(
+        json.dumps(_objective()), encoding="utf-8"
+    )
+    (runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "phase": "WAITING_FOR_REASONING_PROVIDER",
+        "batch_number": 0,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "strategy_generation": 0,
+    }), encoding="utf-8")
+    backend = QueueBackend([_objective(), _plan()])
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: situation,
+        batch_executor=lambda **kwargs: {
+            "progress": 100.0,
+            "completed_task_ids": ["bounded-test"],
+            "failed_task_ids": [],
+            "production": "NO_GO",
+        },
+        max_batches=1,
+        strategy_generation=1,
+        recovery_failure_context={"failure_family": "PLANNER_VALIDATION"},
+    )
+
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert backend.requests[0].task_id == "objective-selection"
+    assert "RECOVERY_STRATEGY_ESCALATION:PLANNER_VALIDATION" in backend.requests[0].payload["prompt"]
+
+
 def test_plan_compiler_rejects_renamed_repeat_of_completed_action(tmp_path):
     repeated = _plan()
     repeated["tasks"][0].update({

@@ -1897,6 +1897,7 @@ def compile_execution_plan(
     forbidden_task_signatures: Sequence[str] = (),
     workspace: Optional[Path] = None,
     workspace_source_generation: Optional[str] = None,
+    allow_recovered_repair: bool = True,
     batch_number: Optional[int] = None,
 ) -> Dict[str, Any]:
     forbidden_ids = {str(item) for item in forbidden_task_ids if str(item).strip()}
@@ -1960,8 +1961,11 @@ def compile_execution_plan(
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    recovered_repair = _recover_waiting_plan_repair(
-        runtime_dir, batch_number, situation, objective, prompt_sha256,
+    recovered_repair = (
+        _recover_waiting_plan_repair(
+            runtime_dir, batch_number, situation, objective, prompt_sha256,
+        )
+        if allow_recovered_repair else None
     )
     proposal: Dict[str, Any] = recovered_repair[0] if recovered_repair else {}
     validation_error = recovered_repair[1] if recovered_repair else ""
@@ -2545,9 +2549,20 @@ def run_autonomous_project(
     backend_override: Optional[Any] = None,
     situation_factory: Optional[Callable[..., ProjectSituation]] = None,
     batch_executor: Optional[Callable[..., Mapping[str, Any]]] = None,
+    strategy_generation: int = 0,
+    recovery_failure_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = _read_json(_kernel_checkpoint_path(runtime_dir))
+    checkpoint_strategy_generation = int(checkpoint.get("strategy_generation", 0) or 0)
+    strategy_changed = strategy_generation > checkpoint_strategy_generation
+    if strategy_changed:
+        checkpoint = {
+            **checkpoint,
+            "strategy_generation": strategy_generation,
+            "recovery_failure_context": dict(recovery_failure_context or {}),
+        }
+        _write_kernel_checkpoint(runtime_dir, checkpoint)
     synth = situation_factory or synthesize_project_situation
 
     # Reconstruct durable batch execution history from disk
@@ -2576,6 +2591,9 @@ def run_autonomous_project(
     batch_number = max(durable_history.highest_batch_number + 1, ckpt_batch_number, len(completed_batches))
 
     replan_reason = checkpoint.get("replan_reason")
+    if strategy_changed:
+        family = str((recovery_failure_context or {}).get("failure_family") or "UNKNOWN")
+        replan_reason = f"RECOVERY_STRATEGY_ESCALATION:{family}"
 
     # Maintain cumulative sets from durable history
     cumulative_completed_task_ids = set(durable_history.completed_task_ids)
@@ -2653,7 +2671,7 @@ def run_autonomous_project(
             return result
 
         if recent_receipt:
-            completion = _recover_waiting_completion(
+            completion = None if strategy_changed else _recover_waiting_completion(
                 runtime_dir, batch_number, checkpoint, prior_situation, situation, recent_receipt,
             )
             if completion is None:
@@ -2700,7 +2718,7 @@ def run_autonomous_project(
 
         try:
             # If stagnated, do not recover prior waiting objective; select a fresh objective with stagnation context
-            if str(replan_reason or "").startswith("STAGNATION_NO_FORWARD_PROGRESS"):
+            if strategy_changed or str(replan_reason or "").startswith("STAGNATION_NO_FORWARD_PROGRESS"):
                 objective = None
             else:
                 objective = _recover_waiting_objective(
@@ -2755,6 +2773,8 @@ def run_autonomous_project(
                     "progress": recent_receipt.get("progress"),
                 },
                 "completed_read_context": completed_read_context,
+                "recovery_failure_context": dict(recovery_failure_context or {}),
+                "strategy_generation": strategy_generation,
             } if replan_reason or recent_receipt else {}
             plan = compile_execution_plan(
                 situation, objective, routing_policy_path, runtime_dir,
@@ -2765,6 +2785,7 @@ def run_autonomous_project(
                 forbidden_task_signatures=all_completed_signatures,
                 workspace=workspace,
                 workspace_source_generation=current_workspace_generation,
+                allow_recovered_repair=not strategy_changed,
                 batch_number=batch_number,
             )
         except WaitingForReasoningProvider as exc:

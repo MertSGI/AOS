@@ -57,3 +57,14 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused coordinator/host/planning suite: `71 passed in 30.45s` using `python -m pytest` so the worktree extension package is authoritative.
 - Python compileall: PASS. `git diff --check`: PASS.
 - Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### R1C — deterministic recovery churn guard
+
+- Added deterministic recovery fingerprints over batch, completed-count baseline, canonical failure family, objective id, and workspace source generation.
+- Command state persists fingerprint fields, same-fingerprint count, strategy generation, last exit code, last recovery time, and recovery disposition.
+- First identical recovery resumes normally; the second increments strategy generation and bypasses recovered objective/completion/repair artifacts; the third enters durable same-lineage `HUMAN_REQUIRED` with `RECOVERY_CHURN_GUARD` and no respawn.
+- The same bound applies to in-process continuous planner-validation exhaustion; completed batch history is preserved and no replacement command/lineage is created.
+- Focused churn/planning/worker suite: `66 passed in 37.37s`.
+- Pause-safe/provider-wait/recovery regression: `20 passed in 10.84s`.
+- Python compileall: PASS. `git diff --check`: PASS.
+- Live/provider/paid/production actions: none; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

@@ -37,6 +37,7 @@ from aos.runtime_maintenance import PAUSED_SAFE, is_paused, persist_maintenance
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
 from aos.provider_observation import RateLimitObservation, TaskClass
+from aos.runtime_worker import build_recovery_fingerprint
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -595,6 +596,75 @@ class RuntimeEngine:
                 return
         if pid_alive(state.get("worker_pid")):
             return
+        command = self.store.read_command(command_id) or {}
+        project = command.get("project", {}) if isinstance(command, dict) else {}
+        project_id = str(
+            project.get("project_id") if isinstance(project, dict) else ""
+        ) or str(command.get("project_id") or "unknown")
+        checkpoint = read_json(
+            self.store.command_dir(command_id)
+            / "project-runtime"
+            / "planning-kernel-checkpoint.json"
+        ) or {}
+        fingerprint = build_recovery_fingerprint(
+            project_id=project_id,
+            state=state,
+            checkpoint=checkpoint,
+        )
+        previous_fingerprint = str(state.get("recovery_fingerprint_sha256") or "")
+        same_fingerprint_respawns = (
+            int(state.get("same_fingerprint_respawns", 0) or 0) + 1
+            if previous_fingerprint == fingerprint["fingerprint_sha256"]
+            else 1
+        )
+        strategy_generation = int(state.get("strategy_generation", 0) or 0)
+        owned = self._worker_processes.get(command_id)
+        last_exit_code = owned.poll() if owned is not None else state.get("last_worker_exit_code")
+        recovery_disposition = "NORMAL_RESUME"
+        if same_fingerprint_respawns == 2:
+            strategy_generation += 1
+            recovery_disposition = "STRATEGY_ESCALATED"
+            self.store.append_event(command_id, "runtime.recovery_strategy_escalated", {
+                "fingerprint": fingerprint,
+                "strategy_generation": strategy_generation,
+                "same_fingerprint_respawns": same_fingerprint_respawns,
+            })
+        elif same_fingerprint_respawns >= 3:
+            recovery_disposition = "RECOVERY_CHURN_GUARD"
+            self.store.write_state(
+                command_id,
+                state="HUMAN_REQUIRED",
+                disposition="HUMAN_REQUIRED",
+                failure_class="RECOVERY_CHURN_GUARD",
+                recovery_disposition=recovery_disposition,
+                recovery_fingerprint=fingerprint,
+                recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                same_fingerprint_respawns=same_fingerprint_respawns,
+                strategy_generation=strategy_generation,
+                last_worker_exit_code=last_exit_code,
+                last_recovery_at=utc_now(),
+                worker_pid=None,
+                retry_after_epoch=0,
+            )
+            self.store.append_event(command_id, "runtime.recovery_churn_held", {
+                "reason": "RECOVERY_CHURN_GUARD",
+                "fingerprint": fingerprint,
+                "same_fingerprint_respawns": same_fingerprint_respawns,
+                "lineage_preserved": True,
+            })
+            return
+        self.store.write_state(
+            command_id,
+            recovery_disposition=recovery_disposition,
+            recovery_fingerprint=fingerprint,
+            recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+            completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+            same_fingerprint_respawns=same_fingerprint_respawns,
+            strategy_generation=strategy_generation,
+            last_worker_exit_code=last_exit_code,
+            last_recovery_at=utc_now(),
+        )
         self._spawn_worker(command_id, recovered=True)
 
     def recover_unfinished(self) -> None:
