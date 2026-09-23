@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "track_id": "AOS-RESOURCE-OS-MASTER-20260923-01",
+  "status": "IN_PROGRESS",
+  "repository": "MertSGI/AOS",
+  "resource_os_base_sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
+  "branch": "feature/aos-resource-os-master-20260923-01",
+  "worktree": "C:\\Projects\\AOS-resource-os-master-20260923-01",
+  "current_phase": "R1_PROVIDER_OBSERVATIONS_AND_HEALTH",
+  "completed_phases": [
+    "PHASE_0_CANONICAL_PROGRAM_PLAN"
+  ],
+  "last_good_commit": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
+  "authoritative_inputs": {
+    "freellmapi": {
+      "branch": "feature/aos-freellmapi-local-meta-provider-20260922-01",
+      "sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
+      "controller_review_ready": true
+    },
+    "resource_os_runtime_preflight": {
+      "branch": "audit/aos-resource-os-runtime-preflight-20260923-01",
+      "sha": "d0ea8064f2d349e0b63c1fe5009a4901981464a8",
+      "complete": true
+    },
+    "codex_cli_backend_preflight": {
+      "branch": "audit/aos-codex-cli-backend-preflight-20260923-01",
+      "sha": "66d38917f60d17eedc1fa370649db1ddf8045681",
+      "implementation_ready": true
+    }
+  },
+  "phase_status": {
+    "R1": "PENDING",
+    "R1B": "PENDING",
+    "R1C": "PENDING",
+    "R2": "PENDING",
+    "R3": "PENDING",
+    "AG_BACKEND": "PENDING",
+    "CODEX_BACKEND": "PENDING",
+    "QWEN": "PENDING",
+    "JEV": "OPTIONAL_NOT_AVAILABLE_ON_ORIGIN",
+    "ORCHESTRATOR": "PENDING",
+    "CONTINUITY_E2E": "PENDING",
+    "FULL_VALIDATION": "PENDING"
+  },
+  "protected_lineages": {
+    "lari": "continue-b181ddc574c25c2aa0f2a6b9",
+    "lari_ui_v2": "continue-61be4ab1af53cfa646d773ce"
+  },
+  "safety": {
+    "live_runtime_changed": false,
+    "protected_lineages_changed": false,
+    "protected_workspaces_changed": false,
+    "paid_execution_used": false,
+    "paid_api_fallback": "DISABLED",
+    "production": "NO_GO",
+    "council": "SHADOW_ONLY"
+  },
+  "controller_review_ready": false,
+  "ledger_sha_convention": "last_good_commit records the verified source checkpoint represented by the current ledger-carrier commit because a Git commit cannot embed its own content-derived SHA"
+}
