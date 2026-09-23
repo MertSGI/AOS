@@ -18,8 +18,8 @@ The source-only candidate uses:
 - explicit bind: `HOST=127.0.0.1` (the upstream source default is `::`)
 - explicit port: `PORT=3000` (the upstream source default is `3001`)
 - dedicated database: `%LOCALAPPDATA%\AOS\freellmapi-local\data\freeapi.db`
-- planned build command: `npm ci && npm run build:server`
-- planned foreground start command: `npm run start -w server`
+- bounded build command: `npm ci && npm run build:server`
+- foreground entrypoint: `node server/dist/index.js`
 
 No build, daemon, Windows Startup registration, service installation, live
 secret provisioning, inference call, or deployment is part of Phase 1.
@@ -100,8 +100,25 @@ appear in state/evidence files. The lifecycle implementation must scrub the
 temporary child-environment mapping after process creation and report only
 presence/count booleans.
 
-Startup remains an explicit operator action in this track. No unbounded daemon
-or Startup authority is created, and live AOS is not stopped or restarted.
+`aos.freellmapi_lifecycle` implements the bounded envelope. Before an explicit
+start it verifies the source checkout's exact Git revision and requires the
+built entrypoint. It then creates only the dedicated data directory and starts
+one foreground child in AOS's kill-on-close process owner. Stop and restart can
+act only on that owned child. An import, readiness probe, or normal provider
+selection never starts, installs, updates, or registers the service.
+
+The child receives approved free-provider credentials through a temporary
+environment mapping. Direct provider variables, the paid OpenAI credential,
+and AOS's `FREELLMAPI_LOCAL_API_KEY` are removed from the child environment;
+only the supported declarative JSON and the separate encryption key cross the
+process boundary. The temporary sensitive entries are scrubbed immediately
+after process creation. AOS continues to use its own unified gateway credential
+for authenticated `/v1` calls.
+
+Startup remains an explicit operator action in this track. No build was run, no
+unbounded daemon or Startup authority is created, and live AOS is not stopped
+or restarted. `NODE_ENV=production` is a local FreeLLMAPI encryption-hardening
+setting; it does not change AOS's `PRODUCTION=NO_GO` posture or deploy anything.
 
 ## Audited upstream evidence
 
@@ -117,4 +134,3 @@ or Startup authority is created, and live AOS is not stopped or restarted.
   configuration and encrypted key insertion.
 - `server/src/db/index.ts`: dedicated SQLite path support and filesystem
   permission hardening.
-

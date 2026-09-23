@@ -13,7 +13,7 @@
     "readiness_url": "http://127.0.0.1:3000/readyz",
     "database_path": "%LOCALAPPDATA%\\AOS\\freellmapi-local\\data\\freeapi.db",
     "build_command": "npm ci && npm run build:server",
-    "start_command": "npm run start -w server"
+    "start_command": "node server/dist/index.js"
   },
   "source_phase": {
     "installed": false,

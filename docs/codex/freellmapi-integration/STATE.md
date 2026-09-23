@@ -1,19 +1,19 @@
 # FreeLLMAPI Local Meta-Provider Integration State
 
 - `TRACK_ID`: `AOS-FREELLMAPI-INTEGRATION-20260922-01`
-- `STATUS`: `PHASE_3_COMPLETE`
+- `STATUS`: `PHASE_4_COMPLETE`
 - `AOS_BASE_SHA`: `a0cfc2e329b36dca1964ed427ab17d8c82cbacb6`
 - `FREELLMAPI_UPSTREAM_SHA`: `15c30081d2ce832bea16d804d9edac4ed87c7bc3`
 - `BRANCH`: `feature/aos-freellmapi-local-meta-provider-20260922-01`
 - `WORKTREE`: `C:\Projects\AOS-freellmapi-local-20260922-01`
-- `CURRENT_PHASE`: `PHASE_3_LOCAL_MOCK_GATEWAY_INTEGRATION`
-- `COMPLETED_PHASES`: `[PHASE_0, PHASE_1, PHASE_2]`
-- `LAST_GOOD_COMMIT`: `e9140a9dedd0ebac423b9503de0f85dfecb6edf9`
-- `FILES_CHANGED`: Phase 2 files plus `tests/test_freellmapi_local.py` and STATE files
-- `TESTS_LAST_RUN`: `pytest -q tests/test_freellmapi_local.py tests/test_providers.py tests/test_provider_fabric_v2.py tests/test_provider_circuit.py tests/test_provider_reliability_audit.py tests/test_secure_store.py tests/test_control_panel.py`; `git diff --check`
-- `TEST_RESULTS`: focused adapter/provider/runtime suite 114 passed; diff check PASS
+- `CURRENT_PHASE`: `PHASE_4_LOCAL_OPERATIONAL_ENVELOPE`
+- `COMPLETED_PHASES`: `[PHASE_0, PHASE_1, PHASE_2, PHASE_3]`
+- `LAST_GOOD_COMMIT`: `ca3d2e5fd40a692517dabbcfcb594e811729964b`
+- `FILES_CHANGED`: Phase 3 files plus `src/aos/freellmapi_lifecycle.py`, `tests/test_freellmapi_lifecycle.py`, lifecycle documentation, and STATE files
+- `TESTS_LAST_RUN`: `pytest -q tests/test_freellmapi_lifecycle.py tests/test_freellmapi_local.py tests/test_providers.py tests/test_provider_fabric_v2.py tests/test_provider_circuit.py tests/test_provider_reliability_audit.py tests/test_secure_store.py tests/test_control_panel.py`; `python -m json.tool docs/codex/freellmapi-integration/UPSTREAM_PIN.json`; `python -m py_compile src/aos/freellmapi_lifecycle.py`; `git diff --check`
+- `TEST_RESULTS`: focused adapter/lifecycle/provider/runtime suite 128 passed; upstream pin JSON PASS; compile PASS; diff check PASS
 - `BLOCKERS`: none
-- `NEXT_ACTION`: Implement source-only pinned process/data lifecycle helpers and an in-memory credential bridge into FreeLLMAPI declarative configuration; add deterministic tests proving no plaintext file/log/telemetry exposure and do not launch or register a live daemon.
+- `NEXT_ACTION`: Run Phase 5 routing-policy validation, the complete canonical pytest suite, and repository hygiene checks without starting FreeLLMAPI or changing live runtime state.
 - `LIVE_RUNTIME_CHANGED`: `false`
 - `PROTECTED_LINEAGES_CHANGED`: `false`
 - `PAID_FALLBACK`: `DISABLED`
@@ -35,5 +35,5 @@ Get-Content -Raw -LiteralPath 'docs\codex\freellmapi-integration\STATE.md'
 Get-Content -Raw -LiteralPath 'docs\codex\freellmapi-integration\STATE.json'
 git status --short --branch
 git rev-parse HEAD
-git merge-base --is-ancestor e9140a9dedd0ebac423b9503de0f85dfecb6edf9 HEAD
+git merge-base --is-ancestor ca3d2e5fd40a692517dabbcfcb594e811729964b HEAD
 ```

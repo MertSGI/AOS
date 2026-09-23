@@ -38,3 +38,19 @@ Accepted: `freellmapi_local` is classified `FREE` even though it can aggregate
 multiple upstreams. AOS does not provision paid upstream credentials into this
 route, and the route cannot bypass AOS's paid-fallback gate.
 
+## D-007 — explicit owned lifecycle only
+
+Accepted: lifecycle actions validate the exact pinned checkout and operate one
+foreground child owned by the caller. Import-time startup, detached daemons,
+Windows Startup registration, service installation, and broad process-name
+termination are rejected. The dedicated data directory is outside the source
+checkout so failed starts and upstream source maintenance do not destroy AOS
+project state.
+
+## D-008 — in-memory free-credential bridge
+
+Accepted: only the enumerated free-provider identities cross into
+`FREEAPI_CONFIG_JSON`. Paid OpenAI and the unified local gateway credential are
+never provisioned as upstream routes. The encryption key and declarative JSON
+exist in the child environment only; lifecycle telemetry contains counts and
+platform names, never values.
