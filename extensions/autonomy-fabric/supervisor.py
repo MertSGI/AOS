@@ -23,6 +23,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionResult,
     ExecutionCapability,
     EvidenceClass,
+    AgenticSessionIdentity,
 )
 
 
@@ -42,6 +43,8 @@ def derive_run_capabilities(run_type: str, payload: Optional[Dict[str, Any]] = N
         return [ExecutionCapability.BROWSER]
     if rt in ("CI", "CI_OBSERVE"):
         return [ExecutionCapability.CI_OBSERVE]
+    if rt in ("AGENTIC", "ANTIGRAVITY", "CODEX"):
+        return [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK]
     return [ExecutionCapability.PROCESS_EXEC]
 
 
@@ -116,6 +119,87 @@ class ParallelSupervisor:
         runs = self.registry.list_runs()
         return sum(1 for r in runs if r.status in active_statuses)
 
+    @staticmethod
+    def _agentic_identity(run: RunIdentity) -> Optional[AgenticSessionIdentity]:
+        if not all((
+            run.resource_id,
+            run.backend_id,
+            run.session_or_thread_id,
+            run.workspace_fingerprint,
+            run.source_sha,
+            run.checkpoint_id,
+        )):
+            return None
+        return AgenticSessionIdentity(
+            resource_id=str(run.resource_id),
+            backend_id=str(run.backend_id),
+            session_or_thread_id=str(run.session_or_thread_id),
+            workspace_fingerprint=str(run.workspace_fingerprint),
+            source_sha=str(run.source_sha),
+            checkpoint_id=str(run.checkpoint_id),
+            last_successful_turn=int(run.last_successful_turn),
+            last_successful_artifact=run.last_successful_artifact,
+            started_at=run.started_at or run.created_at,
+            updated_at=run.updated_at,
+            adapter_contract_version=run.adapter_contract_version or "1.0.0",
+            backend_version=run.backend_version,
+            executable_sha256=run.executable_sha256,
+            auth_mode=run.auth_mode,
+            objective_id=run.objective_id,
+            last_terminal_event=run.last_terminal_event,
+            completed_work_unit_ids=list(run.completed_work_unit_ids),
+            completed_work_unit_signatures=dict(run.completed_work_unit_signatures),
+            artifact_hashes=dict(run.artifact_hashes),
+            superseded_session_ids=list(run.superseded_session_ids),
+        )
+
+    def _accept_execution_result(
+        self, run: RunIdentity, result: ExecutionResult, phase: str
+    ) -> None:
+        if result.agentic_identity is not None and result.status == "SUCCESS":
+            identity = result.agentic_identity
+            self.registry.update_run_metadata(run.run_id, {
+                "resource_id": identity.resource_id,
+                "backend_id": identity.backend_id,
+                "adapter_contract_version": identity.adapter_contract_version,
+                "backend_version": identity.backend_version,
+                "executable_sha256": identity.executable_sha256,
+                "auth_mode": identity.auth_mode,
+                "objective_id": identity.objective_id,
+            })
+            self.registry.record_agentic_checkpoint(
+                run.run_id,
+                session_or_thread_id=str(identity.session_or_thread_id),
+                workspace_fingerprint=identity.workspace_fingerprint,
+                source_sha=identity.source_sha,
+                checkpoint_id=identity.checkpoint_id,
+                last_successful_turn=identity.last_successful_turn,
+                completed_work_unit_ids=identity.completed_work_unit_ids,
+                completed_work_unit_signatures=identity.completed_work_unit_signatures,
+                artifact_hashes=identity.artifact_hashes,
+                last_successful_artifact=identity.last_successful_artifact,
+                last_terminal_event=identity.last_terminal_event or "turn.completed",
+            )
+        if result.status == "SUCCESS":
+            self.registry.transition(run.run_id, RunStatus.COMPLETED, phase=phase)
+            return
+        if result.status in {"DEGRADED", "WAITING"}:
+            stale = any(
+                str(error).startswith("STALE_AGENT_SESSION:")
+                for error in result.sanitized_errors
+            )
+            if stale and run.session_or_thread_id:
+                self.registry.supersede_agentic_session(
+                    run.run_id,
+                    session_id=run.session_or_thread_id,
+                    reason="SUPERSEDED_STALE_WORKSPACE",
+                )
+            self.registry.transition(
+                run.run_id, RunStatus.WAITING_AGENT, phase=f"{phase}_REROUTE"
+            )
+            return
+        self.registry.transition(run.run_id, RunStatus.FAILED, phase=phase)
+
     def launch_run(
         self,
         project_id: str,
@@ -161,6 +245,9 @@ class ParallelSupervisor:
                 branch=branch,
                 parent_run_id=parent_run_id,
                 worker_id=worker_id,
+                source_sha=str((execution_payload or {}).get("source_sha") or "") or None,
+                checkpoint_id=str((execution_payload or {}).get("checkpoint_id") or "") or None,
+                objective_id=str((execution_payload or {}).get("objective_id") or "") or None,
             )
 
             # Acquire locks & lease
@@ -196,10 +283,10 @@ class ParallelSupervisor:
                         required_capabilities=caps,
                         authority_id=authority_id,
                         payload=payload,
+                        agentic_identity=self._agentic_identity(run),
                     )
                     exec_res = self.router.execute_with_failover(req)
-                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
-                    self.registry.transition(run.run_id, new_status, phase="EXECUTING_PROMPT")
+                    self._accept_execution_result(run, exec_res, "EXECUTING_PROMPT")
                 elif hasattr(self.adapter, "execute") and not hasattr(self.adapter, "execute_prompt"):
                     req = ExecutionRequest(
                         task_id=run.run_id,
@@ -209,10 +296,10 @@ class ParallelSupervisor:
                         required_capabilities=caps,
                         authority_id=authority_id,
                         payload=payload,
+                        agentic_identity=self._agentic_identity(run),
                     )
                     exec_res = self.adapter.execute(req)
-                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
-                    self.registry.transition(run.run_id, new_status, phase="EXECUTING_PROMPT")
+                    self._accept_execution_result(run, exec_res, "EXECUTING_PROMPT")
                 else:
                     resp = self.adapter.execute_prompt(
                         prompt=initial_prompt or "",
@@ -280,11 +367,11 @@ class ParallelSupervisor:
                         operation_class=run.run_type,
                         required_capabilities=caps,
                         authority_id=run.authority_id,
-                        payload={"prompt": prompt},
+                        payload={"prompt": prompt, "source_sha": run.source_sha or run.base_sha},
+                        agentic_identity=self._agentic_identity(run),
                     )
                     exec_res = self.router.execute_with_failover(req)
-                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
-                    self.registry.transition(run_id, new_status, phase="RESUMED_EXECUTION")
+                    self._accept_execution_result(run, exec_res, "RESUMED_EXECUTION")
                 elif hasattr(self.adapter, "execute") and not hasattr(self.adapter, "execute_prompt"):
                     req = ExecutionRequest(
                         task_id=run_id,
@@ -293,11 +380,11 @@ class ParallelSupervisor:
                         operation_class=run.run_type,
                         required_capabilities=caps,
                         authority_id=run.authority_id,
-                        payload={"prompt": prompt},
+                        payload={"prompt": prompt, "source_sha": run.source_sha or run.base_sha},
+                        agentic_identity=self._agentic_identity(run),
                     )
                     exec_res = self.adapter.execute(req)
-                    new_status = RunStatus.COMPLETED if exec_res.status == "SUCCESS" else RunStatus.FAILED
-                    self.registry.transition(run_id, new_status, phase="RESUMED_EXECUTION")
+                    self._accept_execution_result(run, exec_res, "RESUMED_EXECUTION")
                 else:
                     resp = self.adapter.execute_prompt(
                         prompt=prompt,

@@ -11,8 +11,10 @@ import json
 import time
 import os
 import shutil
+import subprocess
+import threading
 from extensions.autonomy_fabric.run_registry import RunStatus
-from aos.process_utils import run_headless
+from aos.process_utils import popen_headless
 
 
 class AntigravityStatus(str, Enum):
@@ -117,6 +119,14 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
 
     def __init__(self, cli_binary_path: Optional[str] = None):
         self.cli_binary_path = self.discover_cli_binary(cli_binary_path)
+        self._process_lock = threading.Lock()
+        self._active_process = None
+
+    def interrupt(self) -> None:
+        with self._process_lock:
+            process = self._active_process
+        if process is not None:
+            process.terminate_tree()
 
     @staticmethod
     def discover_cli_binary(cli_binary_path: Optional[str] = None) -> str:
@@ -226,6 +236,7 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         events = []
         terminal_event = None
         conv_id = None
+        malformed = False
 
         for line in lines:
             try:
@@ -233,17 +244,21 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
                 events.append(evt)
                 evt_type = evt.get("event") or evt.get("type")
                 if evt_type == "init":
-                    if evt.get("conversation_id"):
-                        conv_id = evt.get("conversation_id")
+                    init_payload = evt.get("init") if isinstance(evt.get("init"), dict) else evt
+                    if init_payload.get("conversation_id"):
+                        conv_id = init_payload.get("conversation_id")
                 elif evt_type == "result":
-                    terminal_event = evt
-                    if evt.get("conversation_id"):
-                        conv_id = evt.get("conversation_id")
+                    if terminal_event is not None:
+                        malformed = True
+                    result_payload = evt.get("result") if isinstance(evt.get("result"), dict) else evt
+                    terminal_event = result_payload
+                    if result_payload.get("conversation_id"):
+                        conv_id = result_payload.get("conversation_id")
             except json.JSONDecodeError:
-                continue
+                malformed = True
 
         # A stream-json execution is terminally successful ONLY when a valid terminal result event exists
-        if not terminal_event:
+        if not terminal_event or malformed or returncode != 0:
             status_enum = AntigravityStatus.INVALID
             mapped_aos_status = RunStatus.FAILED
             return AntigravityResponse(
@@ -255,7 +270,10 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
                 duration_seconds=0.0,
                 turn_count=len(events),
                 usage_metadata={},
-                error_message=stderr if returncode != 0 else "Missing terminal result event in stream-json output",
+                error_message=(
+                    stderr if returncode != 0
+                    else "Malformed or missing terminal result event in stream-json output"
+                ),
             )
 
         raw_status = terminal_event.get("status")
@@ -301,16 +319,33 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         t0 = time.time()
 
         try:
-            proc = run_headless(
+            proc = popen_headless(
                 cmd,
                 cwd=workspace_path,
-                check=False,
-                timeout=300,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
+            with self._process_lock:
+                self._active_process = proc
+            try:
+                stdout, stderr = proc.communicate(timeout=300)
+                returncode = int(proc.returncode or 0)
+            except subprocess.TimeoutExpired:
+                proc.terminate_tree()
+                stdout, stderr = proc.communicate()
+                returncode = 124
+            finally:
+                with self._process_lock:
+                    if self._active_process is proc:
+                        self._active_process = None
+                if proc.poll() is not None:
+                    proc.wait()
             if output_format == "stream-json":
-                resp = self.parse_cli_stream_json(proc.stdout, proc.stderr, proc.returncode)
+                resp = self.parse_cli_stream_json(stdout, stderr, returncode)
             else:
-                resp = self.parse_cli_json(proc.stdout, proc.stderr, proc.returncode)
+                resp = self.parse_cli_json(stdout, stderr, returncode)
             resp.duration_seconds = time.time() - t0
             return resp
         except Exception as ex:

@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "aos-resource-os-zero-cost-first",
+  "production": "NO_GO",
+  "paid_api_fallback": "DISABLED",
+  "resources": [
+    {
+      "resource_id": "local_antigravity_subscription",
+      "backend_id": "antigravity",
+      "backend_class": "AGENTIC_EXECUTION_BACKEND",
+      "enabled": true,
+      "cost_class": "SUBSCRIPTION_INCLUDED",
+      "api_key_fallback_enabled": false,
+      "trust_zone": "RESTRICTED_WORKSPACE",
+      "capabilities": [
+        "FILE_READ",
+        "FILE_WRITE",
+        "PATCH_APPLY",
+        "PROCESS_EXEC",
+        "GIT_READ",
+        "TEST_EXECUTION",
+        "LONG_HORIZON_AGENTIC_WORK"
+      ],
+      "scarcity_threshold": 0.1,
+      "production_allowed": false,
+      "sandbox": "managed-workspace",
+      "extensions": {
+        "requires_machine_local_capability_attestation": true,
+        "resume_policy": "EXACT_SESSION_AND_FINGERPRINT_ONLY"
+      }
+    }
+  ]
+}

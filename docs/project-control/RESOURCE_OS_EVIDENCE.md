@@ -112,3 +112,17 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused contract/schema/fingerprint/registry/coordinator restart suite: `109 passed in 29.48s`; focused host/planning/runtime/router/supervisor regression: `87 passed in 34.80s`.
 - Python compile/schema parse checks: PASS. `git diff --check`: PASS.
 - No external agent was invoked, no live runtime was changed, protected lineages/workspaces remain untouched, paid fallback remains disabled, and production remains `NO_GO`.
+
+### Antigravity first-class agentic backend
+
+- Added `AntigravityAgenticExecutionBackend` as a `SUBSCRIPTION_INCLUDED`, `RESTRICTED_WORKSPACE`, availability-gated execution resource. It reuses the existing executable identity, machine-local capability attestation, CLI adapter, stream terminal contract, and capability probe infrastructure.
+- The accepted `AntigravityWorkerAdapter` and probe were not rebuilt. Real execution remains prohibited unless the existing machine-local proof matches executable hash/version, adapter contract, and runtime environment; test doubles require explicit injection.
+- New and resumed turns bind exact conversation identity to canonical source SHA, content-sensitive workspace fingerprint, adapter/executable identity, subscription auth class, AOS checkpoint, and completed-work records. Changed workspaces return typed `STALE_AGENT_SESSION` without invoking the old conversation.
+- Successful turns verify post-run changed paths against AOS write scope, stream-hash artifacts, persist only sanitized terminal/usage evidence, and advance completed work only after terminal success. Raw responses, reasoning, tool parameters, prompts, and arbitrary errors are not persisted.
+- Quota loss maps to structured non-terminal `QUOTA_EXHAUSTED`; the router preserves the degraded result for reroute/wait rather than converting resource loss into project failure. Supervisor recovery archives stale sessions as `SUPERSEDED_STALE_WORKSPACE`.
+- The real CLI adapter now owns the full descendant process tree and exposes bounded interrupt; malformed/multiple/missing terminal events and nonzero exits fail closed.
+- Antigravity is registered in the autonomous execution router, never in planner-provider factories. The legacy runtime activation flag remains closed; registration is not production activation.
+- Execution-resource policy declares Antigravity enabled only as an attested subscription resource with API-key fallback false and production false.
+- Focused first-class backend/router/supervisor/schema/host/coordinator suite: `134 passed in 24.78s`; existing Antigravity capability/probe suite: `78 passed in 73.23s`.
+- Python compile/schema parse checks: PASS. `git diff --check`: PASS.
+- No Antigravity live invocation or probe was performed in this phase; protected lineages/workspaces remain untouched; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

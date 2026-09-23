@@ -90,6 +90,9 @@ from extensions.autonomy_fabric.execution_backend import (  # noqa: E402
     ExecutionTrustZone,
 )
 from extensions.autonomy_fabric.execution_router import ExecutionRouter  # noqa: E402
+from extensions.autonomy_fabric.antigravity_agentic_backend import (  # noqa: E402
+    AntigravityAgenticExecutionBackend,
+)
 from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     BrowserExecutionBackend,
     GitHubCIWorker,
@@ -866,7 +869,8 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
         provider_router=provider_router,
         attempt_journal=runtime_dir / "provider-attempts.jsonl",
     )
-    # Antigravity is deliberately absent. Host V1 proves Zero-AG continuity.
+    # Antigravity is registered as an availability-gated agentic resource. It
+    # cannot be selected without a matching task capability and local proof.
     return ExecutionRouter(
         backends=[
             NativeFileWorker(),
@@ -875,6 +879,7 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
             GitHubCIWorker(),
             BrowserExecutionBackend(),
             reasoning_backend,
+            AntigravityAgenticExecutionBackend(),
         ],
         ag_required=False,
     )
@@ -916,6 +921,7 @@ def run_host(
             canonical_source_sha=canonical_binding["source_sha"],
             canonical_execution_base_sha=canonical_binding.get("execution_base_sha"),
         ),
+        canonical_source_sha=canonical_binding["source_sha"],
     )
     state = coordinator.run_until_complete(max_iterations=max_iterations)
     receipt = {

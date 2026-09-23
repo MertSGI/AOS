@@ -19,6 +19,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionHealth,
     ExecutionCost,
     EvidenceClass,
+    ExecutionAvailabilityState,
 )
 from extensions.autonomy_fabric.authority_router import AuthorityRouter, DecisionCategory
 
@@ -89,6 +90,18 @@ class ExecutionRouter:
             health = backend.get_health()
             if health in (ExecutionHealth.UNAVAILABLE, ExecutionHealth.QUOTA_EXHAUSTED):
                 continue
+            availability_state = None
+            get_availability = getattr(backend, "get_availability", None)
+            if callable(get_availability):
+                availability_state = get_availability().state
+                if availability_state in {
+                    ExecutionAvailabilityState.QUOTA_EXHAUSTED,
+                    ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+                    ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+                    ExecutionAvailabilityState.CONTRACT_FAILURE,
+                    ExecutionAvailabilityState.UNKNOWN,
+                }:
+                    continue
 
             # Prioritization weight: lower number = higher priority
             cost_weight = 100
@@ -98,6 +111,11 @@ class ExecutionRouter:
                 cost_weight = 30
             elif backend.cost == ExecutionCost.QUOTA_LIMITED:
                 cost_weight = 90
+            elif backend.cost == ExecutionCost.SUBSCRIPTION_INCLUDED:
+                cost_weight = 50
+
+            if availability_state == ExecutionAvailabilityState.LOW_OR_SCARCE:
+                cost_weight += 20
 
             if "antigravity" in backend.backend_id.lower() and not self.ag_required:
                 cost_weight += 50
@@ -115,6 +133,7 @@ class ExecutionRouter:
         """Dispatches request to optimal backend, automatically falling over if quota/degraded."""
         attempts = 0
         tried_backend_ids: Set[str] = set()
+        last_degraded: Optional[ExecutionResult] = None
 
         while attempts < 3:
             attempts += 1
@@ -137,11 +156,17 @@ class ExecutionRouter:
 
             # If result is degraded or quota exhausted, fail over to next eligible backend
             if result.status == "DEGRADED":
+                last_degraded = result
                 continue
 
             return result
 
-        # No backend succeeded or all eligible backends degraded
+        # Preserve a structured non-terminal availability result when all
+        # compatible resources degraded. Project state must not become failure.
+        if last_degraded is not None:
+            return last_degraded
+
+        # No backend succeeded or all eligible backends were ineligible.
         return ExecutionResult(
             backend_id="router",
             worker_id="router",

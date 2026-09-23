@@ -36,6 +36,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionResult,
     ExecutionCapability,
     EvidenceClass,
+    AgenticSessionIdentity,
 )
 from extensions.autonomy_fabric.execution_router import ExecutionRouter
 from extensions.autonomy_fabric.evidence_aggregator import EvidenceAggregator, EvidenceType
@@ -57,6 +58,7 @@ class CoordinatorState:
     completed_task_ids: List[str] = field(default_factory=list)
     failed_task_ids: List[str] = field(default_factory=list)
     completed_read_observations: List[Dict[str, Any]] = field(default_factory=list)
+    agentic_execution_checkpoints: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     iteration_count: int = 0
     schema_version: str = "2.0.0"
     last_checkpoint: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -79,6 +81,7 @@ class PersistentCoordinator:
         completion_supervisor: Optional[CompletionSupervisor] = None,
         checkpoint_file: Optional[str] = None,
         workspace_source_generation: Optional[str] = None,
+        canonical_source_sha: Optional[str] = None,
     ):
         self.project_id = project_id
         self.workspace_path = workspace_path
@@ -91,6 +94,7 @@ class PersistentCoordinator:
         self.workspace_source_generation = workspace_source_generation or hashlib.sha256(
             f"legacy:{project_id}".encode("utf-8")
         ).hexdigest()
+        self.canonical_source_sha = canonical_source_sha
 
         self.state = CoordinatorState(
             coordinator_id=f"coord-{project_id}",
@@ -150,6 +154,10 @@ class PersistentCoordinator:
             self.state.failed_task_ids = data.get("failed_task_ids", [])
             observations = data.get("completed_read_observations", [])
             self.state.completed_read_observations = self._validated_read_observations(observations)
+            checkpoints = data.get("agentic_execution_checkpoints", {})
+            self.state.agentic_execution_checkpoints = (
+                dict(checkpoints) if isinstance(checkpoints, dict) else {}
+            )
             self.state.iteration_count = data.get("iteration_count", 0)
             self.state.last_checkpoint = data.get("last_checkpoint", "")
             self.state.schema_version = "2.0.0"
@@ -323,6 +331,18 @@ class PersistentCoordinator:
                 caps = [ExecutionCapability.PROCESS_EXEC]
                 if not payload:
                     payload = {"cmd": ["python", "-c", "pass"]}
+            elif node.run_type in ("AGENTIC", "ANTIGRAVITY", "CODEX"):
+                caps = [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK]
+
+            prior_identity = None
+            raw_identity = self.state.agentic_execution_checkpoints.get(node.node_id)
+            if isinstance(raw_identity, dict):
+                try:
+                    prior_identity = AgenticSessionIdentity(**raw_identity)
+                except (TypeError, ValueError):
+                    raise CheckpointCorruptionError(
+                        f"Invalid agentic identity for completed node {node.node_id}"
+                    )
 
             req = ExecutionRequest(
                 task_id=node.node_id,
@@ -333,7 +353,15 @@ class PersistentCoordinator:
                 authority_id=node.authority_id,
                 write_scope=list(node.write_scope),
                 expected_artifacts=list(node.expected_artifacts),
-                payload=payload,
+                payload={
+                    **payload,
+                    **(
+                        {"source_sha": self.canonical_source_sha}
+                        if self.canonical_source_sha and "source_sha" not in payload
+                        else {}
+                    ),
+                },
+                agentic_identity=prior_identity,
             )
 
             # 3. Route & execute with failover
@@ -355,12 +383,44 @@ class PersistentCoordinator:
 
             # 5. Update status
             if res.status == "SUCCESS":
+                if res.agentic_identity is not None:
+                    identity = res.agentic_identity
+                    self.registry.update_run_metadata(run.run_id, {
+                        "resource_id": identity.resource_id,
+                        "backend_id": identity.backend_id,
+                        "adapter_contract_version": identity.adapter_contract_version,
+                        "backend_version": identity.backend_version,
+                        "executable_sha256": identity.executable_sha256,
+                        "auth_mode": identity.auth_mode,
+                        "objective_id": identity.objective_id,
+                    })
+                    self.registry.record_agentic_checkpoint(
+                        run.run_id,
+                        session_or_thread_id=str(identity.session_or_thread_id),
+                        workspace_fingerprint=identity.workspace_fingerprint,
+                        source_sha=identity.source_sha,
+                        checkpoint_id=identity.checkpoint_id,
+                        last_successful_turn=identity.last_successful_turn,
+                        completed_work_unit_ids=identity.completed_work_unit_ids,
+                        completed_work_unit_signatures=identity.completed_work_unit_signatures,
+                        artifact_hashes=identity.artifact_hashes,
+                        last_successful_artifact=identity.last_successful_artifact,
+                        last_terminal_event=identity.last_terminal_event or "turn.completed",
+                    )
+                    self.state.agentic_execution_checkpoints[node.node_id] = identity.to_dict()
                 self.registry.transition(run.run_id, RunStatus.COMPLETED, phase="EXECUTION_SUCCESS")
                 if node.node_id not in self.state.completed_task_ids:
                     self.state.completed_task_ids.append(node.node_id)
                 self._record_completed_read(node, res)
                 if node.gate_type != NodeGateType.NONE:
                     self.dag.pass_gate(node.node_id)
+            elif res.status in ("DEGRADED", "WAITING"):
+                self.registry.transition(
+                    run.run_id,
+                    RunStatus.WAITING_AGENT,
+                    phase="AGENTIC_RESOURCE_REROUTE",
+                    payload={"errors": res.sanitized_errors},
+                )
             else:
                 self.registry.transition(
                     run.run_id, RunStatus.FAILED, phase="EXECUTION_FAILURE", payload={"errors": res.sanitized_errors}

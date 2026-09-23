@@ -1154,7 +1154,7 @@ class AntigravityExecutionBackend(ExecutionBackend):
             status=status,
             exit_code=0 if status == "SUCCESS" else 1,
             workspace=request.workspace,
-            stdout_digest=resp.raw_response[:500],
+            stdout_digest="Legacy Antigravity adapter returned a structured terminal response",
             evidence_payload={"conversation_id": resp.conversation_id, "turns": resp.turn_count},
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
         )

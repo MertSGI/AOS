@@ -83,6 +83,11 @@ class TestCanonicalProjectControlData:
         res, code = validate_file("project_descriptor", descriptor_file)
         assert code == 0, f"aos.descriptor.json failed validation: {[e.message for e in res.errors]}"
 
+    def test_resource_os_execution_policy_is_valid_and_paid_fallback_disabled(self):
+        descriptor = Path(__file__).resolve().parent.parent / "descriptors" / "resource-os.execution-resource-policy.json"
+        res, code = validate_file("execution_resource_policy", descriptor)
+        assert code == 0, [e.message for e in res.errors]
+
 
 class TestUnknownFieldRejection:
     """Core contract objects must reject unknown top-level and nested fields."""
