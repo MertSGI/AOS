@@ -27,7 +27,7 @@
     },
     "worker_adapter": {
       "type": "string",
-      "enum": ["antigravity"]
+      "enum": ["antigravity", "codex_cli"]
     },
     "adapter_contract_version": {
       "type": "string",

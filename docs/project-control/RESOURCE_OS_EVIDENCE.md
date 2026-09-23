@@ -126,3 +126,17 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused first-class backend/router/supervisor/schema/host/coordinator suite: `134 passed in 24.78s`; existing Antigravity capability/probe suite: `78 passed in 73.23s`.
 - Python compile/schema parse checks: PASS. `git diff --check`: PASS.
 - No Antigravity live invocation or probe was performed in this phase; protected lineages/workspaces remain untouched; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### Codex CLI ChatGPT-subscription agentic backend
+
+- Added `CodexCliExecutionBackend` as a separately registered `SUBSCRIPTION_INCLUDED`, `RESTRICTED_WORKSPACE` agentic resource. It is not an inference-provider factory and has no OpenAI API-key fallback.
+- Launch construction fixes approval and workspace sandbox flags before `exec`, supplies bounded prompt input only through stdin `-`, uses `--ignore-user-config --json`, and resumes only an exact validated UUID. `--last` and sandbox-bypass options are prohibited.
+- Success requires exit zero, exactly one valid `thread.started`, and exactly one `turn.completed`. Unknown/malformed/multiple/missing terminal streams, `turn.failed`, nonzero exit, timeout, or mismatched resume UUID fail closed with typed sanitized evidence.
+- Machine-local capability proof binds the executable path/hash/version, adapter contract, redacted `doctor --json` ChatGPT-token evidence, absence of stored API-key auth, and optional structured app-server quota evidence. Child processes strip OpenAI/Codex API credentials and access-token overrides.
+- Added a bounded owned app-server `account/rateLimits/read` client. Quota observations map to `AVAILABLE`, `LOW_OR_SCARCE`, `QUOTA_EXHAUSTED`, or `UNKNOWN` with reset timing; unavailable/unknown capability never invokes the CLI.
+- Start/resume binds exact thread identity to source SHA, content-sensitive workspace fingerprint, executable identity, ChatGPT auth class, AOS checkpoint, and completed-work ledger. Workspace drift and completed-work replay reject before invocation.
+- Post-turn scope and artifact verification run before checkpoint advancement. Raw prompts, agent messages, transcripts, reasoning, tool parameters, stderr, doctor details, and credentials are not persisted.
+- The zero-cost execution-resource policy declares Codex as subscription-included, API-key fallback disabled, production false, and exact UUID/fingerprint resume required.
+- Focused Codex backend/capability suite: `11 passed in 13.85s`; shared agentic/router/schema/fingerprint regression: `118 passed in 78.59s`.
+- Execution-resource policy schema validation and `git diff --check`: PASS.
+- A read-only redacted `codex doctor --json` diagnostic verified parser compatibility with the installed CLI; no Codex model turn, quota-consuming execution, paid API call, deployment, or production action occurred. Protected lineages/workspaces remain untouched; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

@@ -28,6 +28,33 @@
         "requires_machine_local_capability_attestation": true,
         "resume_policy": "EXACT_SESSION_AND_FINGERPRINT_ONLY"
       }
+    },
+    {
+      "resource_id": "local_codex_cli_chatgpt_subscription",
+      "backend_id": "codex_cli",
+      "backend_class": "AGENTIC_EXECUTION_BACKEND",
+      "enabled": true,
+      "cost_class": "SUBSCRIPTION_INCLUDED",
+      "api_key_fallback_enabled": false,
+      "trust_zone": "RESTRICTED_WORKSPACE",
+      "capabilities": [
+        "FILE_READ",
+        "FILE_WRITE",
+        "PATCH_APPLY",
+        "PROCESS_EXEC",
+        "GIT_READ",
+        "TEST_EXECUTION",
+        "LONG_HORIZON_AGENTIC_WORK"
+      ],
+      "scarcity_threshold": 0.1,
+      "production_allowed": false,
+      "sandbox": "workspace-write",
+      "extensions": {
+        "requires_machine_local_capability_attestation": true,
+        "required_auth_mode": "chatgpt",
+        "resume_policy": "EXACT_UUID_AND_FINGERPRINT_ONLY",
+        "paid_api_fallback": "DISABLED"
+      }
     }
   ]
 }
