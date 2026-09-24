@@ -61,6 +61,11 @@ def _command(engine: RuntimeEngine, tmp_path: Path, command_id: str = "paused-co
 def test_pause_blocks_new_goal_direct_spawn_and_recovery(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        # Establish the pause boundary before seeding the unfinished command.
+        # Otherwise the production recovery thread may legitimately acquire
+        # the spawn lock before pause-safe is requested, making this unit test
+        # observe work that began before the boundary it intends to verify.
+        engine.pause_safe()
         command = _command(engine, tmp_path)
         engine.store.write_state(command.command_id, state="RUNNING", worker_pid=None)
         spawned = []
@@ -69,7 +74,6 @@ def test_pause_blocks_new_goal_direct_spawn_and_recovery(tmp_path, monkeypatch):
             "popen_headless",
             lambda *args, **kwargs: spawned.append((args, kwargs)),
         )
-        engine.pause_safe()
 
         assert engine._spawn_worker(command.command_id, recovered=True) is None
         engine._recover_one(command.command_id)
