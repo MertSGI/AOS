@@ -193,7 +193,27 @@ class LlamaCppLifecycleManager:
                 return self._snapshot_locked(orphan_count=cleaned)
 
             # Build exact argv
-            from extensions.autonomy_fabric.llama_cpp_reasoning_backend import build_llama_server_argv
+            try:
+                from extensions.autonomy_fabric.llama_cpp_reasoning_backend import build_llama_server_argv
+            except ImportError:
+                import importlib.util
+                candidate_path = Path(__file__).resolve().parent.parent.parent.parent / "extensions" / "autonomy-fabric" / "llama_cpp_reasoning_backend.py"
+                if candidate_path.exists():
+                    spec = importlib.util.spec_from_file_location("llama_cpp_reasoning_backend", candidate_path)
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    build_llama_server_argv = mod.build_llama_server_argv
+                else:
+                    def build_llama_server_argv(executable: str, model_path: str, *, port: int = 8080) -> list[str]:
+                        return [
+                            executable, "--model", str(Path(model_path).resolve()),
+                            "--host", "127.0.0.1", "--port", str(port),
+                            "--ctx-size", "4096", "--n-predict", "512",
+                            "--threads", str(min(8, os.cpu_count() or 1)),
+                            "--n-gpu-layers", "0",
+                            "--parallel", "1", "--batch-size", "128", "--ubatch-size", "128",
+                            "--no-webui", "--jinja",
+                        ]
             argv = build_llama_server_argv(exe_identity["path"], model_identity["path"], port=self.port)
 
             try:
