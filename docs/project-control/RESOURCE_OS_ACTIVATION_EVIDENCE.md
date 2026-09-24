@@ -162,3 +162,17 @@ Phase G result: `PASS` on exact validated source `27e67c9db359df8ea3e512beac15db
   - pre-promotion: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-g\phase-g-27e67c9-pre-promotion.json`, SHA-256 `1ff7421c60cdc173191c4e6edf6d4cb5c2533a16eb2c04e02a2ac736fac1dfc0`;
   - post-promotion: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-g\phase-g-27e67c9-post-promotion.json`, SHA-256 `8a41714c85d46163e95f90e143945b924f86eb556a645ab75abca90508c379d2`.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, external watchdogs remained off, and `PRODUCTION=NO_GO`.
+
+## Phase H - native recovery and watchdog retirement
+
+Phase H result: `PASS` with the promoted runtime as the sole recovery authority.
+
+- The stable runtime remained exact source `27e67c9db359df8ea3e512beac15db25974d7ec8`, slot `candidate-runtime-v1.8-27e67c9db359`, tree `debc5004147f16136075a6a7f15e322a41c7fcb6d2a97923de1faf7ec88f7a43`, running under `PRODUCTION=NO_GO`.
+- The same protected LARI lineage advanced to completed batch `431` under native recovery. The bounded event snapshot contained `26,374` unique contiguous events, exactly one `command.accepted`, and `431` unique contiguous `batch.completed` identities.
+- Native recovery evidence included durable worker respawn/recovery events, two strategy escalations, and one deterministic recovery-churn hold. Current state reported `NORMAL_RESUME`, same-fingerprint respawn count `1`, and strategy generation `2`.
+- ResourceLedger replay independently verified all `158` events, their sequence, unique event identities, previous-hash links, and canonical hashes. It contained six recovery dispositions and zero actual paid cost. QuotaGovernor's persisted rate head matched the latest ledger rate observation.
+- Provider circuits retained `12` task-scoped health records and isolated `CONTRACT`, `NETWORK`, and `SERVER_CAPACITY` failure families. Since the promoted runtime start, the attempt journal recorded `14` observations across four providers, with at most six records in one minute; no retry storm was observed.
+- All four retained historical retry/watchdog scripts had zero matching processes. They remain on disk as historical evidence but are `RETIRED_NON_AUTHORITATIVE`; none was restarted or granted control authority.
+- No direct state-file or circuit-file rewrite was used. UI-V2 remained `OPERATOR_SUSPENDED` with no worker, and forbidden stale LARI remained `OPERATOR_CANCELLED_MISBOUND_GOAL` with no worker.
+- Proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-h\phase-h-native-recovery.json`, SHA-256 `f4a8b38d202ee676cc881b3bfa534d23ca5464a90b865bc81835d4f5a5f11d94`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, and `PRODUCTION=NO_GO`.

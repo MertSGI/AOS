@@ -8,7 +8,7 @@
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
   "validated_activation_source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
-  "current_phase": "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT",
+  "current_phase": "PHASE_I_QWEN_LOCAL_RESOURCE_REALIZATION",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
@@ -17,7 +17,8 @@
     "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
     "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
     "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
-    "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER"
+    "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER",
+    "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -28,8 +29,8 @@
     "PHASE_E": "PASS",
     "PHASE_F": "PASS",
     "PHASE_G": "PASS",
-    "PHASE_H": "IN_PROGRESS",
-    "PHASE_I": "PENDING",
+    "PHASE_H": "PASS",
+    "PHASE_I": "IN_PROGRESS",
     "PHASE_J": "PENDING",
     "PHASE_K": "PENDING",
     "PHASE_L": "PENDING"
@@ -205,6 +206,31 @@
     "pre_promotion_proof_sha256": "1ff7421c60cdc173191c4e6edf6d4cb5c2533a16eb2c04e02a2ac736fac1dfc0",
     "post_promotion_proof_sha256": "8a41714c85d46163e95f90e143945b924f86eb556a645ab75abca90508c379d2"
   },
+  "phase_h": {
+    "status": "PASS",
+    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "runtime_slot": "candidate-runtime-v1.8-27e67c9db359",
+    "lari_lineage": "continue-b181ddc574c25c2aa0f2a6b9",
+    "observed_completed_batch_count": 431,
+    "event_sequence_unique_contiguous": true,
+    "batch_numbers_unique_contiguous": true,
+    "command_accepted_count": 1,
+    "resource_ledger_hash_replay": "PASS",
+    "quota_ledger_rate_head_match": true,
+    "task_scoped_health_record_count": 12,
+    "failure_family_isolation_observed": [
+      "CONTRACT",
+      "NETWORK",
+      "SERVER_CAPACITY"
+    ],
+    "maximum_attempt_records_in_one_minute": 6,
+    "retry_storm_observed": false,
+    "retained_watchdog_script_count": 4,
+    "external_watchdog_process_count": 0,
+    "watchdog_authority": "RETIRED_NON_AUTHORITATIVE",
+    "direct_state_or_circuit_rewrite_used": false,
+    "proof_sha256": "f4a8b38d202ee676cc881b3bfa534d23ca5464a90b865bc81835d4f5a5f11d94"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -214,6 +240,7 @@
     "live_runtime_changed": true,
     "current_live_runtime_matches_stable": true,
     "current_live_runtime_mode": "STABLE_RUNNING_NO_GO",
+    "external_watchdogs": "RETIRED_NON_AUTHORITATIVE",
     "transient_candidate_runtime_observed_and_reverted": true,
     "protected_lineages_changed": false,
     "protected_workspaces_changed": false,
@@ -224,5 +251,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T11:10:00Z"
+  "updated_at": "2026-09-24T11:16:00Z"
 }
