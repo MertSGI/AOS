@@ -31,3 +31,25 @@ Safety posture at the Phase A boundary:
 - `PRODUCTION=NO_GO`
 
 Phase B may materialize a new immutable candidate slot from the validated activation source. It may not overwrite or activate the existing live slot.
+
+## Phase B - immutable candidate materialization
+
+- Deployment candidate slot: `candidate-runtime-v1.8-bc816eb37649`.
+- Candidate source: `bc816eb37649445d8562e5ac0fbfe3ea56dfab6f`.
+- Candidate path: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1\candidate\bc816eb37649445d8562e5ac0fbfe3ea56dfab6f`.
+- Candidate tree SHA-256: `a33d98e4fd16bd7db6b64826d33f4417a3c5ef8dc95bdbb6f517a7900f0c0ee2`.
+- Inventory: `196` files; exact-SHA provenance, file hashes, required roots, descriptor schemas, routing policy schema, secret exclusion, and isolated import origins all passed.
+- Existing stable slot remains `candidate-runtime-v1.8-a0cfc2e329b3` at source `a0cfc2e329b36dca1964ed427ab17d8c82cbacb6`.
+- The live slot pointer and live runtime configuration were not changed.
+
+The repository smoke contract refuses the live Runtime V1 home by design. A second exact-source candidate was therefore materialized under the isolated activation-proof home. Its launcher paths differ because launchers are bound to their runtime home; all source assets remain bound to the same exact source and CI run.
+
+- Isolated smoke ID: `2d06bd43065e48ff977a69b066db9b43`.
+- Isolated candidate tree SHA-256: `0493d4250d701a61b3fa2809527ddaf85a0f74fa1a7018583833ca7cc148b770`.
+- Real supervisor/runtime/panel process-tree smoke: `PASS`.
+- Loopback ports: runtime `53605`, panel `53606`.
+- Startup health maximum: `2.0552s`; steady health maximum: `0.0180s`.
+- Synthetic history: `550` historical commands, one active command, one provider-waiting command.
+- Shutdown: `QUIESCED`, no in-flight worker, `PAUSED_SAFE`.
+- Orphan processes: `0`; visible windows: `0`.
+- `PRODUCTION=NO_GO` throughout.

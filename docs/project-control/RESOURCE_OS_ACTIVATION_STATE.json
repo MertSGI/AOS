@@ -7,14 +7,15 @@
   "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-  "current_phase": "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
+  "current_phase": "PHASE_C_RUNTIME_SMOKE",
   "completed_phases": [
-    "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE"
+    "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
+    "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME"
   ],
   "phase_status": {
     "PHASE_A": "PASS",
-    "PHASE_B": "IN_PROGRESS",
-    "PHASE_C": "PENDING",
+    "PHASE_B": "PASS",
+    "PHASE_C": "IN_PROGRESS",
     "PHASE_D": "PENDING",
     "PHASE_E": "PENDING",
     "PHASE_F": "PENDING",
@@ -39,10 +40,23 @@
     "git_diff_check": "PASS"
   },
   "candidate_runtime": {
-    "slot": null,
-    "source_sha": null,
-    "tree_sha256": null,
-    "status": "NOT_MATERIALIZED"
+    "slot": "candidate-runtime-v1.8-bc816eb37649",
+    "source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+    "tree_sha256": "a33d98e4fd16bd7db6b64826d33f4417a3c5ef8dc95bdbb6f517a7900f0c0ee2",
+    "file_count": 196,
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+    "status": "MATERIALIZED_IMMUTABLE"
+  },
+  "isolated_runtime_proof": {
+    "smoke_id": "2d06bd43065e48ff977a69b066db9b43",
+    "source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+    "tree_sha256": "0493d4250d701a61b3fa2809527ddaf85a0f74fa1a7018583833ca7cc148b770",
+    "status": "PASS",
+    "runtime_port": 53605,
+    "panel_port": 53606,
+    "orphan_count": 0,
+    "visible_window_count": 0,
+    "production": "NO_GO"
   },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
@@ -60,5 +74,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T05:44:25Z"
+  "updated_at": "2026-09-24T05:47:29Z"
 }
