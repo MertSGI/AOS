@@ -184,3 +184,11 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Antigravity and Codex seed new-session checkpoints from the verified handoff pack, so completed work survives backend loss and cannot be silently duplicated.
 - Context/agentic/router/coordinator/restart suite: `27 passed in 32.88s`; focused cross-resource/coordinator suite after the explicit handoff case: `12 passed in 0.90s`.
 - Python compile checks and `git diff --check`: PASS. No external agent call, protected-lineage action, paid call, deployment, or production action occurred.
+
+### Failure, restart, and quota-injection E2E
+
+- Added a disposable end-to-end scenario spanning Antigravity quota loss, Codex fallback, durable identity serialization/restart, Codex quota loss, Antigravity re-entry, and completed-work replay rejection.
+- Quota-exhausted resources are not invoked. Cross-resource recovery starts a fresh session, preserves completed work/signatures/artifacts, and archives each lost backend session rather than resuming it blindly.
+- Reconstructed checkpoint identity after restart retains the same objective work ledger. A retry of an already completed work unit returns `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED` without redoing work.
+- Combined quota/circuit/Retry-After/task-class recovery/churn/ledger/router/restart/E2E injection suite: `36 passed in 5.29s`.
+- `git diff --check`: PASS. No live provider/agent/model call, paid access, protected-lineage mutation, deployment, or production action occurred.
