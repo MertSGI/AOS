@@ -238,7 +238,7 @@ def test_explicit_start_restart_stop_owns_only_spawned_process(tmp_path: Path) -
     assert data.is_dir()
     assert list(data.iterdir()) == []
     assert spawner.calls[0]["cwd"] == str(install.resolve())
-    assert spawner.calls[0]["command"][-1].endswith("server\\dist\\index.js")
+    assert Path(spawner.calls[0]["command"][-1]) == install.resolve() / "server" / "dist" / "index.js"
     assert json.loads(spawner.calls[0]["env"]["FREEAPI_CONFIG_JSON"])["keys"][0]["key"] == provider_key
 
     already_running = lifecycle.start()

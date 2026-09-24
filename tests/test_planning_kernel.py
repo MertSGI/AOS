@@ -273,6 +273,7 @@ def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_p
 
     assert context["status"] == "AVAILABLE"
     assert context["completed_read_paths"] == ["roadmap.md"]
+    assert context["files"][0]["path"] == "roadmap.md"
     assert context["files"][0]["redacted_excerpt"] == "Phase 2: implement the bounded API.\n"
     assert context["files"][0]["content_sha256"] == hashlib.sha256(roadmap.read_bytes()).hexdigest()
     assert "must-not-appear" not in json.dumps(context)

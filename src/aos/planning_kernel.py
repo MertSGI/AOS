@@ -18,7 +18,7 @@ import re
 import shutil
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from jsonschema import Draft202012Validator
@@ -846,8 +846,8 @@ def _bounded_completed_read_context(
                 parts = {part.casefold() for part in Path(normalized_path).parts}
                 if parts & _SENSITIVE_READ_CONTEXT_PARTS:
                     continue
-                target = (workspace_root / normalized_path).resolve()
-                if target != workspace_root and workspace_root not in target.parents:
+                target = _resolve_normalized_workspace_path(workspace_root, normalized_path)
+                if target is None:
                     continue
                 if target.suffix.casefold() not in _PLANNER_READ_CONTEXT_SUFFIXES or not target.is_file():
                     continue
@@ -911,6 +911,29 @@ def _bounded_completed_read_context(
         "completed_read_identities": [entry["read_identity"] for entry in files],
         "legacy_unbound_paths": sorted(legacy_unbound_paths),
     }
+
+
+def _resolve_normalized_workspace_path(workspace_root: Path, normalized_path: str) -> Optional[Path]:
+    """Resolve a case-folded read identity path without escaping the workspace.
+
+    Read identities are intentionally case-insensitive and therefore do not
+    preserve the spelling of a path such as ``ROADMAP.md``. Walk each component
+    and require exactly one case-insensitive match so those identities remain
+    portable to case-sensitive filesystems without accepting ambiguous paths.
+    """
+    try:
+        current = workspace_root.resolve()
+        for part in PurePosixPath(normalized_path).parts:
+            matches = [child for child in current.iterdir() if child.name.casefold() == part.casefold()]
+            if len(matches) != 1:
+                return None
+            current = matches[0]
+        target = current.resolve()
+    except OSError:
+        return None
+    if target != workspace_root and workspace_root not in target.parents:
+        return None
+    return target
 
 
 def _task_signature(task: Mapping[str, Any]) -> str:
