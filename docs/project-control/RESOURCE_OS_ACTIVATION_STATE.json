@@ -8,13 +8,14 @@
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
   "validated_activation_source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-  "current_phase": "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
+  "current_phase": "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
     "PHASE_C_RUNTIME_SMOKE",
     "PHASE_0_CURRENT_REALITY_RECONCILIATION",
-    "PHASE_D_RESOURCE_CAPABILITY_SMOKE"
+    "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
+    "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -22,8 +23,8 @@
     "PHASE_B": "PASS",
     "PHASE_C": "PASS",
     "PHASE_D": "PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS",
-    "PHASE_E": "IN_PROGRESS",
-    "PHASE_F": "PENDING",
+    "PHASE_E": "PASS",
+    "PHASE_F": "IN_PROGRESS",
     "PHASE_G": "PENDING",
     "PHASE_H": "PENDING",
     "PHASE_I": "PENDING",
@@ -125,6 +126,23 @@
     "paid_provider_eligible": false,
     "proof_sha256": "a0037d282b7c2617c436da4095897201868503048a2bfb1d85f4df028f8d6246"
   },
+  "phase_e": {
+    "status": "PASS",
+    "fault_injection_scope": "DISPOSABLE_RUNTIME_ONLY",
+    "actual_codex_checkpoint_seeded": "01a0d20b-faaf-75d0-8067-7e729b043e49",
+    "capacity_failure": "PASS",
+    "rate_limit": "PASS",
+    "quota_exhaustion": "PASS",
+    "credit_exhaustion": "PASS",
+    "resource_switch": "codex_cli -> antigravity fault-injection alternate",
+    "runtime_restart_replay": "PASS",
+    "resource_reentry": "antigravity fault-injection alternate -> codex_cli",
+    "completed_work_dedup": "PASS",
+    "stale_session_rejection": "PASS",
+    "failure_family_isolation": "PASS",
+    "paid_default_escape": false,
+    "proof_sha256": "a37c5af57b7cbcd7254a58a27da6abf38f40676f2388d2ce86cbd373e36f951e"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -143,5 +161,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T09:45:00Z"
+  "updated_at": "2026-09-24T09:52:00Z"
 }

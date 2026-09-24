@@ -105,3 +105,19 @@ Phase D result: `PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS`.
 - Jev: the advisor contract remains present, advisory-only, disabled, with zero paid budget and no paid fallback. Its current route has `zero_price_observed=false`; no Jev call was made.
 - Phase D proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-d\phase-d-resource-capability-smoke-39b7921.json`, SHA-256 `a0037d282b7c2617c436da4095897201868503048a2bfb1d85f4df028f8d6246`.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, protected workspaces unchanged, `PRODUCTION=NO_GO`.
+
+## Phase E - quota, failure, failover, restart, and re-entry
+
+Phase E result: `PASS` in a disposable fault-injection runtime using the exact candidate modules.
+
+- The starting checkpoint was the real successful Codex Phase D identity `01a0d20b-faaf-75d0-8067-7e729b043e49`, including its workspace fingerprint and completed work unit `phase-d-readonly-1`.
+- Typed observations exercised provider capacity failure, rate limiting, quota exhaustion, and credit exhaustion. Quota decisions were initially `EXHAUSTED` and ineligible with exact provider-metadata deadlines. Failure-family isolation retained independent `SERVER_CAPACITY`, `NETWORK`, and `CONTRACT` streaks of one.
+- Injected Codex quota loss caused the actual Resource Orchestrator and Execution Router to exclude Codex without invoking it and select a scarce alternate fault-injection backend. This alternate is not evidence that the currently unavailable Antigravity executable became available.
+- Cross-resource handoff preserved the same objective, completed work IDs, artifact map, and superseded the exact prior Codex session rather than resuming it on the wrong backend.
+- The agentic checkpoint was serialized, then a new ResourceLedger, QuotaGovernor, provider-circuit registry, router, and backend set were constructed from disk. Ledger hash replay, quota deadlines, circuit family state, and checkpoint identity all survived restart.
+- When Codex eligibility returned, the scheduler selected it over the scarce alternate and started fresh context from the handoff pack. It did not blindly resume the alternate session. Completed work became exactly `phase-d-readonly-1`, `phase-e-work-2`, and `phase-e-work-3`.
+- Re-submitting `phase-e-work-3` was rejected with `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED`. The real Codex workspace-change gate remained `STALE_AGENT_SESSION:WORKSPACE_CHANGED`.
+- Advancing the injected clock beyond all exact quota deadlines made the affected resources eligible with `WINDOW_EXPIRED`; provider success closed the capacity circuit.
+- Explicit invariant results: `BACKEND_CHANGE != PROJECT_CHANGE=PASS`, `QUOTA_LOSS != STATE_LOSS=PASS`, `PROVIDER_FAILURE != PROJECT_FAILURE=PASS`, `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED=PASS`, `STALE_AGENT_SESSION_MUST_NOT_BE_BLINDLY_RESUMED=PASS`, `PAID_API != DEFAULT_ESCAPE_HATCH=PASS`.
+- Proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-e\phase-e-continuity-proof.json`, SHA-256 `a37c5af57b7cbcd7254a58a27da6abf38f40676f2388d2ce86cbd373e36f951e`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, protected lineages/workspaces unchanged, `PRODUCTION=NO_GO`.
