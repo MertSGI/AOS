@@ -14,6 +14,7 @@ from extensions.autonomy_fabric.execution_backend import (
 
 
 THREAD_ID = "12345678-1234-4234-8234-123456789abc"
+THREAD_ID_V7 = "01a0d1fd-aa0c-7d60-a4e6-87dc0c58b92c"
 IDENTITY = {
     "path": "codex-test-double",
     "filename": "codex-test-double",
@@ -153,6 +154,7 @@ def test_quota_or_unproven_auth_is_nonterminal_and_never_invoked(tmp_path):
 
 def test_parser_requires_one_thread_and_one_success_terminal():
     assert parse_codex_exec_jsonl(_success_output(), returncode=0).valid
+    assert parse_codex_exec_jsonl(_success_output(THREAD_ID_V7), returncode=0).valid
     cases = [
         ("not json", 0, "CONTRACT_FAILURE"),
         (json.dumps({"type": "unknown.event"}), 0, "CONTRACT_FAILURE"),

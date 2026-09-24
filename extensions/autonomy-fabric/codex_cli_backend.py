@@ -40,7 +40,7 @@ from extensions.autonomy_fabric.execution_backend import (
 
 
 _UUID = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
 _ALLOWED_EVENTS = {
     "thread.started", "turn.started", "turn.completed", "turn.failed", "error",
