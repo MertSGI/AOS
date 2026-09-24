@@ -195,3 +195,14 @@ Phase I result: `PASS` with a real bounded CPU-only resource proof and on-demand
   - Qwen runtime: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-i\phase-i-qwen-local-proof.json`, SHA-256 `dbdc34a2b553b97bf62be102030adadce854a1837484f816a197962175c5499e`;
   - activation/continuity: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-i\phase-i-activation.json`, SHA-256 `8a9714110fdce93a7278f23ba1033c24ea7ffdd0cd055e357892fd5a043bf844`.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, and `PRODUCTION=NO_GO`.
+
+## Phase J - Jev zero-cost recheck
+
+Phase J result: `PASS_DISABLED_NO_DURABLE_ACCOUNT_ENTITLEMENT`.
+
+- A read-only recheck of Vercel's official Jev catalog and launch announcement on 2026-09-24 showed public promotional pricing of free input/output for `typesafe-ai/jev`, a 32K context ceiling, and a stated promotion end date of 2026-09-25.
+- That public, short-lived catalog observation is not account-specific entitlement evidence. No credential, account balance, durable post-promotion price, or authorized evaluation result was available, so it does not satisfy AOS's zero-cost activation gate.
+- The existing source policy remains unchanged and conservative: `enabled=false`, `advisory_only=true`, pinned source contract model `jev-1.13.0`, paid budget `0.0`, paid fallback false, production `NO_GO`, and explicit denial of production, destructive, payment, security-override, completion, and protected-lineage authority.
+- No Jev/Vercel/provider request was made. Jev remains optional, advisory, non-authoritative, and unnecessary for normal AOS operation.
+- Proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-j\phase-j-jev-zero-cost-recheck.json`, SHA-256 `804b0c0dfbd55f3f5c7170b1b16e084f13bacf7a5a895f87ff8d3e0c30d51fdc`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, and `PRODUCTION=NO_GO`.

@@ -8,7 +8,7 @@
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
   "validated_activation_source_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
-  "current_phase": "PHASE_J_JEV_ZERO_COST_RECHECK",
+  "current_phase": "PHASE_K_UI_V2_CONTINUITY",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
@@ -19,7 +19,8 @@
     "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
     "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER",
     "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT",
-    "PHASE_I_QWEN_LOCAL_RESOURCE_REALIZATION"
+    "PHASE_I_QWEN_LOCAL_RESOURCE_REALIZATION",
+    "PHASE_J_JEV_ZERO_COST_RECHECK"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -32,8 +33,8 @@
     "PHASE_G": "PASS",
     "PHASE_H": "PASS",
     "PHASE_I": "PASS",
-    "PHASE_J": "IN_PROGRESS",
-    "PHASE_K": "PENDING",
+    "PHASE_J": "PASS_DISABLED_NO_DURABLE_ACCOUNT_ENTITLEMENT",
+    "PHASE_K": "IN_PROGRESS",
     "PHASE_L": "PENDING"
   },
   "phase_a": {
@@ -263,6 +264,22 @@
     "qwen_proof_sha256": "dbdc34a2b553b97bf62be102030adadce854a1837484f816a197962175c5499e",
     "activation_proof_sha256": "8a9714110fdce93a7278f23ba1033c24ea7ffdd0cd055e357892fd5a043bf844"
   },
+  "phase_j": {
+    "status": "PASS_DISABLED_NO_DURABLE_ACCOUNT_ENTITLEMENT",
+    "model": "typesafe-ai/jev",
+    "source_contract_model": "jev-1.13.0",
+    "public_zero_price_observed": true,
+    "public_promotion_end_date": "2026-09-25",
+    "public_context_ceiling_tokens": 32000,
+    "account_zero_cost_entitlement_proven": false,
+    "evaluation_call_made": false,
+    "enabled": false,
+    "advisory_only": true,
+    "paid_budget_usd": 0.0,
+    "allow_paid_fallback": false,
+    "normal_aos_operation_dependency": false,
+    "proof_sha256": "804b0c0dfbd55f3f5c7170b1b16e084f13bacf7a5a895f87ff8d3e0c30d51fdc"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -278,10 +295,10 @@
     "protected_workspaces_changed": false,
     "paid_calls_made": 0,
     "paid_api_fallback": "DISABLED",
-    "jev": "DISABLED",
+    "jev": "OPTIONAL_ADVISORY_DISABLED_NO_DURABLE_ACCOUNT_ENTITLEMENT",
     "qwen": "LOCAL_RESOURCE_PROVEN / ON_DEMAND_SERVER_STOPPED",
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T11:52:00Z"
+  "updated_at": "2026-09-24T11:54:00Z"
 }
