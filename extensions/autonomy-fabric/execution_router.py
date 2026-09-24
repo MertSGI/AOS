@@ -22,6 +22,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionAvailabilityState,
 )
 from extensions.autonomy_fabric.authority_router import AuthorityRouter, DecisionCategory
+from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
 
 
 logger = logging.getLogger("aos.execution_router")
@@ -35,10 +36,12 @@ class ExecutionRouter:
         backends: Optional[List[ExecutionBackend]] = None,
         authority_router: Optional[AuthorityRouter] = None,
         ag_required: bool = False,
+        orchestrator: Optional[ResourceOrchestrator] = None,
     ):
         self._backends: Dict[str, ExecutionBackend] = {}
         self.authority_router = authority_router or AuthorityRouter()
         self.ag_required = ag_required
+        self.orchestrator = orchestrator or ResourceOrchestrator()
 
         if backends:
             for b in backends:
@@ -80,54 +83,8 @@ class ExecutionRouter:
             ):
                 return None
 
-        # Filter backends by required capabilities and non-exhausted health
-        eligible: List[Tuple[int, ExecutionBackend]] = []
-        for backend in self._backends.values():
-            # Check capability intersection / superset
-            if not required_caps.issubset(backend.supported_capabilities):
-                continue
-
-            health = backend.get_health()
-            if health in (ExecutionHealth.UNAVAILABLE, ExecutionHealth.QUOTA_EXHAUSTED):
-                continue
-            availability_state = None
-            get_availability = getattr(backend, "get_availability", None)
-            if callable(get_availability):
-                availability_state = get_availability().state
-                if availability_state in {
-                    ExecutionAvailabilityState.QUOTA_EXHAUSTED,
-                    ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
-                    ExecutionAvailabilityState.AUTH_UNAVAILABLE,
-                    ExecutionAvailabilityState.CONTRACT_FAILURE,
-                    ExecutionAvailabilityState.UNKNOWN,
-                }:
-                    continue
-
-            # Prioritization weight: lower number = higher priority
-            cost_weight = 100
-            if backend.cost == ExecutionCost.FREE_LOCAL:
-                cost_weight = 10
-            elif backend.cost == ExecutionCost.FREE_TIER_CLOUD:
-                cost_weight = 30
-            elif backend.cost == ExecutionCost.QUOTA_LIMITED:
-                cost_weight = 90
-            elif backend.cost == ExecutionCost.SUBSCRIPTION_INCLUDED:
-                cost_weight = 50
-
-            if availability_state == ExecutionAvailabilityState.LOW_OR_SCARCE:
-                cost_weight += 20
-
-            if "antigravity" in backend.backend_id.lower() and not self.ag_required:
-                cost_weight += 50
-
-            eligible.append((cost_weight, backend))
-
-        if not eligible:
-            return None
-
-        # Sort deterministically by weight, then backend_id
-        eligible.sort(key=lambda item: (item[0], item[1].backend_id))
-        return eligible[0][1]
+        selected_id = self.orchestrator.select(self._backends.values(), request)
+        return self._backends.get(selected_id) if selected_id else None
 
     def execute_with_failover(self, request: ExecutionRequest) -> ExecutionResult:
         """Dispatches request to optimal backend, automatically falling over if quota/degraded."""
@@ -145,6 +102,7 @@ class ExecutionRouter:
                 backends=available_backends,
                 authority_router=self.authority_router,
                 ag_required=self.ag_required,
+                orchestrator=self.orchestrator,
             )
             selected = temp_router.select_backend(request)
 

@@ -164,3 +164,13 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Raw decision state/questions, prompts, response bodies, headers, credentials, and provider errors never enter durable evidence. `ResourceLedger` records only typed request/result status, route/model IDs, numeric latency/cost, task class, objective, and advisory flag.
 - E0/offline Jev, policy, ledger, quota, schema, planning, recovery, and router suite: `183 passed in 35.45s`; decision-policy validation and `git diff --check`: PASS.
 - No credential was used and no Jev/Vercel/TypeSafe/OpenRouter/Cloudflare call occurred. E2/E3 remain correctly blocked; scheduler/canonical completion/human authority are unchanged; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.
+
+### Capability- and scarcity-aware Resource Orchestrator
+
+- Added a deterministic resource-ranking layer used by `ExecutionRouter` after the existing human authority gate.
+- Eligibility requires the full capability set plus healthy/eligible availability, sufficient context window, configured minimum quality, and latency adequacy. Unknown, contract-failed, auth-unavailable, temporary-unavailable, or quota-exhausted resources are excluded.
+- Ranking is zero-cost-first among adequate resources: free local, free cloud, subscription-included, then quota-limited. `PAID_CLOUD` is categorically ineligible as a default escape hatch.
+- `LOW_OR_SCARCE` resources receive a deterministic scarcity penalty; exact compatible agentic session locality is preferred, while cross-resource handoff remains eligible with a bounded penalty.
+- Ties resolve by stable backend ID, making ranking replay deterministic. Ranking itself never invokes a backend.
+- Focused orchestrator/router/Antigravity/Codex/Qwen suite: `32 passed in 29.22s`; `git diff --check`: PASS.
+- No external resource, protected workspace/lineage, paid endpoint, deployment, or production state was touched.
