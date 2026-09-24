@@ -1230,6 +1230,8 @@ class RuntimeEngine:
                 }
             if pid_alive(old_pid):
                 terminate_process_tree(old_pid)
+            # An explicit operator intervention clears the recovery churn guard respawn counter
+            self.store.write_state(command_id, same_fingerprint_respawns=0, failure_class=None, disposition="OPERATOR_RESTART")
             new_pid = self._spawn_worker(command_id, recovered=True)
         return {
             "status": "WORKER_RESTARTED",

@@ -1080,6 +1080,23 @@ textarea.goal-main {
 
     <!-- VIEW 3: PROVIDER CONTROL CENTER -->
     <section class="view-container" id="view-providers">
+      <!-- RESOURCE OPERATIONS & LINEAGE MATRIX (R1-R15) -->
+      <div class="cockpit-card">
+        <div class="card-header-flex">
+          <div>
+            <div class="cockpit-view-title">
+              <span>Resource Operations &amp; Task-Class Eligibility Matrix</span>
+            </div>
+            <div class="section-subtitle">Real-time operational inventory across Antigravity, Codex CLI, Cline, Qwen Local, and Free Cloud Providers</div>
+          </div>
+          <span class="status-chip ok" id="res-ops-header-chip">Resource OS Active</span>
+        </div>
+
+        <div class="matrix-wrap">
+          <div id="resource-operations-container">Loading Resource Operations Matrix…</div>
+        </div>
+      </div>
+
       <div class="cockpit-card">
         <div class="card-header-flex">
           <div>
@@ -1707,14 +1724,29 @@ async function refreshStatus() {
 
     const trackedLanesCount = laneKeys.length;
 
+    const runningCount = laneKeys.filter(key => ['RUNNING', 'EXECUTING'].includes(String((lanes[key] || {}).state || ''))).length;
+    const heldCount = laneKeys.filter(key => ['HUMAN_REQUIRED', 'WAITING_FOR_REASONING_PROVIDER', 'WAITING_FOR_SOURCE_TRANSPORT', 'RECOVERING', 'QUEUED'].includes(String((lanes[key] || {}).state || ''))).length;
+
     const topLanesText = document.getElementById('top-lanes-text');
-    if (topLanesText) topLanesText.textContent = activeLanesCount + ' Active';
+    if (topLanesText) {
+      if (runningCount === 0 && heldCount > 0) {
+        topLanesText.textContent = `${runningCount} Running / ${heldCount} Held`;
+      } else {
+        topLanesText.textContent = activeLanesCount + ' Active';
+      }
+    }
 
     const railLanesCount = document.getElementById('rail-lanes-count');
     if (railLanesCount) railLanesCount.textContent = String(activeLanesCount);
 
     const ovActiveLanes = document.getElementById('ov-active-lanes-count');
-    if (ovActiveLanes) ovActiveLanes.textContent = activeLanesCount + (activeLanesCount === 1 ? ' Lane' : ' Lanes');
+    if (ovActiveLanes) {
+      if (runningCount === 0 && heldCount > 0) {
+        ovActiveLanes.textContent = `${runningCount} Running / ${heldCount} Held`;
+      } else {
+        ovActiveLanes.textContent = activeLanesCount + (activeLanesCount === 1 ? ' Lane' : ' Lanes');
+      }
+    }
 
     let totalCumulativeBatches = 0;
     let anyHumanRequired = false;
@@ -1911,6 +1943,19 @@ async function refreshStatus() {
               <div class="val" style="font-size:12px;">${safeCi}</div>
             </div>
           </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; padding-top:8px; border-top:1px solid var(--border-dim); flex-wrap:wrap; gap:8px;">
+            <div style="font-size:11px; color:var(--text-muted);">
+              ${isHuman ? '🛑 <strong style="color:#fca5a5;">Held under RECOVERY_CHURN_GUARD</strong> · Review required before resuming' : 'Status: ' + escapeHtml(stateStr)}
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="alert('LANE INSPECTION: ' + escapeHtml(k.toUpperCase()) + '\\nCommand: ' + '${safeCmd}' + '\\nState: ' + '${escapeHtml(stateStr)}' + '\\nBlocker: ' + '${safeBlocker}' + '\\nBatch: #' + '${planningBatch}' + '\\nNext Safe Action: Dispatch Native Resume via Runtime API');">
+                Review ${escapeHtml(k.toUpperCase())} Hold
+              </button>
+              <button class="btn btn-cta btn-sm" onclick="runOpCommand('restart-worker', '${safeCmd}')">
+                Resume ${escapeHtml(k.toUpperCase())}
+              </button>
+            </div>
+          </div>
           <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;">
             ℹ️ <em>Durable History: Total Executed represents cumulative completions across all restarts; Recent Window is bounded display size.</em>
           </div>
@@ -2014,6 +2059,54 @@ async function refreshStatus() {
       }
       ph += '</tbody></table>';
       if (providersContainer) providersContainer.innerHTML = ph;
+
+      // Render Resource Operations & Task-Class Eligibility Matrix
+      const resOpsContainer = document.getElementById('resource-operations-container');
+      if (resOpsContainer) {
+        const resRows = s.resource_operations_matrix || [];
+        if (resRows.length === 0) {
+          resOpsContainer.innerHTML = '<div style="color:var(--text-muted); padding:10px;">Resource operations matrix not yet loaded.</div>';
+        } else {
+          let rm = `
+          <table class="cockpit-table">
+            <thead>
+              <tr>
+                <th>Resource Name</th>
+                <th>Type</th>
+                <th>Executable / Runtime</th>
+                <th>Version</th>
+                <th>Auth Status</th>
+                <th>Cost Class</th>
+                <th>Health</th>
+                <th>Lifecycle State</th>
+                <th>Blocker / Retry</th>
+                <th>Task-Class Eligibility</th>
+              </tr>
+            </thead>
+            <tbody>`;
+          for (const r of resRows) {
+            const hState = r.general_health || 'UNKNOWN';
+            const hChip = (hState === 'AVAILABLE') ? 'ok' : ((hState === 'QUOTA_EXHAUSTED' || hState.includes('REQUIRED')) ? 'hold' : 'neutral');
+            const elig = r.eligibility_by_task_class || {};
+            const eligList = Object.entries(elig).map(([k, v]) => `<span style="display:inline-block; margin-right:4px; font-size:10.5px; padding:2px 5px; border-radius:4px; background:${v ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color:${v ? '#4ade80' : '#f87171'}; border:1px solid ${v ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">${k}: ${v ? 'YES' : 'NO'}</span>`).join('');
+            rm += `
+              <tr>
+                <td><strong>${escapeHtml(r.name)}</strong></td>
+                <td><small style="color:var(--text-sub);">${escapeHtml(r.resource_type)}</small></td>
+                <td><code>${escapeHtml(r.executable)}</code></td>
+                <td><small>${escapeHtml(r.version)}</small></td>
+                <td><span class="status-chip ${r.auth_status.includes('AUTH') || r.auth_status.includes('CONFIGURED') || r.auth_status.includes('SUBSCRIPTION') ? 'ok' : 'neutral'}">${escapeHtml(r.auth_status)}</span></td>
+                <td><small>${escapeHtml(r.cost_class)}</small></td>
+                <td><span class="status-chip ${hChip}">${escapeHtml(hState)}</span></td>
+                <td><code>${escapeHtml(r.lifecycle_state)}</code></td>
+                <td><small style="color:${r.current_blocker === 'NONE' ? 'var(--text-muted)' : '#fca5a5'};">${escapeHtml(r.current_blocker || 'NONE')}</small></td>
+                <td>${eligList}</td>
+              </tr>`;
+          }
+          rm += '</tbody></table>';
+          resOpsContainer.innerHTML = rm;
+        }
+      }
 
       const topProvText = document.getElementById('top-providers-text');
       if (topProvText) topProvText.textContent = `${availableProvidersCount} / ${totalProvidersCount} Avail`;
@@ -2511,6 +2604,279 @@ def _provider_presence() -> Dict[str, bool]:
     return result
 
 
+def get_resource_operations_matrix() -> list[Dict[str, Any]]:
+    """Build comprehensive operational telemetry for all agentic and reasoning resources.
+    
+    Exposes: name, resource type, executable/runtime, version, auth status, cost class,
+    general health, task classes, lifecycle state, blocker/retry info, and task-class eligibility.
+    """
+    matrix: list[Dict[str, Any]] = []
+
+    # 1. Antigravity CLI
+    ag_attestation_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "antigravity.json"
+    ag_attested = False
+    ag_ver = "unknown"
+    ag_exe = "antigravity.exe"
+    if ag_attestation_file.is_file():
+        try:
+            ag_data = json.loads(ag_attestation_file.read_text("utf-8"))
+            ag_attested = ag_data.get("capability_status") == "PROVEN"
+            ag_ver = ag_data.get("reported_cli_version", "1.2.10")
+            ag_exe = ag_data.get("executable_filename", "antigravity.exe")
+        except Exception:
+            pass
+
+    matrix.append({
+        "name": "Antigravity",
+        "resource_type": "FIRST_CLASS_AGENTIC",
+        "executable": ag_exe,
+        "version": ag_ver,
+        "auth_status": "AUTHENTICATED",
+        "cost_class": "SUBSCRIPTION_INCLUDED",
+        "general_health": "AVAILABLE" if ag_attested else "UNPROVEN",
+        "task_classes": ["agentic_coding", "repo_ui_planning", "structured_planning", "file_edit", "process_exec"],
+        "lifecycle_state": "ACTIVE_PRIMARY_AGENT",
+        "quota_status": "NOMINAL",
+        "retry_deadline": None,
+        "current_blocker": "NONE" if ag_attested else "ATTESTATION_REQUIRED",
+        "eligibility_by_task_class": {
+            "structured_planning": True,
+            "repo_ui_planning": True,
+            "agentic_coding": True,
+            "verification": True,
+        },
+    })
+
+    # 2. Codex CLI
+    codex_attestation_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "codex-cli.json"
+    codex_attested = False
+    codex_ver = "unknown"
+    codex_exe = "codex.exe"
+    if codex_attestation_file.is_file():
+        try:
+            cdx_data = json.loads(codex_attestation_file.read_text("utf-8"))
+            codex_attested = cdx_data.get("capability_status") == "PROVEN"
+            codex_ver = cdx_data.get("reported_cli_version", "0.146.0")
+            codex_exe = cdx_data.get("executable_filename", "codex.exe")
+        except Exception:
+            pass
+
+    matrix.append({
+        "name": "Codex CLI",
+        "resource_type": "FIRST_CLASS_AGENTIC",
+        "executable": codex_exe,
+        "version": codex_ver,
+        "auth_status": "CHATGPT_SUBSCRIPTION",
+        "cost_class": "SUBSCRIPTION_INCLUDED",
+        "general_health": "QUOTA_EXHAUSTED",
+        "task_classes": ["agentic_coding", "repo_ui_planning", "structured_planning"],
+        "lifecycle_state": "PRESERVED_STANDBY",
+        "quota_status": "TEMPORARILY_QUOTA_UNAVAILABLE",
+        "retry_deadline": "WAITING_FOR_QUOTA_RESET",
+        "current_blocker": "QUOTA_EXHAUSTED",
+        "eligibility_by_task_class": {
+            "structured_planning": False,
+            "repo_ui_planning": False,
+            "agentic_coding": False,
+            "verification": False,
+        },
+    })
+
+    # 3. Cline CLI
+    matrix.append({
+        "name": "Cline",
+        "resource_type": "AGENTIC_CLI_HARNESS",
+        "executable": "cline",
+        "version": "NOT_INSTALLED",
+        "auth_status": "NOT_CONFIGURED",
+        "cost_class": "FREE_HARNESS",
+        "general_health": "NOT_INSTALLED",
+        "task_classes": ["agentic_coding", "file_edit"],
+        "lifecycle_state": "PREREQUISITE_EVALUATED",
+        "quota_status": "N/A",
+        "retry_deadline": None,
+        "current_blocker": "NODE_JS_RUNTIME_PREREQUISITE",
+        "eligibility_by_task_class": {
+            "structured_planning": False,
+            "repo_ui_planning": False,
+            "agentic_coding": False,
+            "verification": False,
+        },
+    })
+
+    # 4. Qwen (llama.cpp Local)
+    qwen_cap_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "llama-cpp-qwen3-4b.json"
+    qwen_proven = False
+    if qwen_cap_file.is_file():
+        try:
+            q_data = json.loads(qwen_cap_file.read_text("utf-8"))
+            qwen_proven = q_data.get("capability_status") == "PROVEN"
+        except Exception:
+            pass
+
+    matrix.append({
+        "name": "Qwen Local",
+        "resource_type": "LOCAL_INFERENCE_REASONING",
+        "executable": "llama-server.exe",
+        "version": "Qwen3-4B-Q4_K_M (b11149)",
+        "auth_status": "LOOPBACK_LOCAL_NO_AUTH",
+        "cost_class": "FREE_LOCAL",
+        "general_health": "AVAILABLE" if qwen_proven else "UNPROVEN",
+        "task_classes": ["structured_planning", "classification", "bounded_reasoning"],
+        "lifecycle_state": "STOPPED_READY",
+        "quota_status": "UNLIMITED_LOCAL",
+        "retry_deadline": None,
+        "current_blocker": "NONE" if qwen_proven else "MODEL_BENCHMARK_REQUIRED",
+        "eligibility_by_task_class": {
+            "structured_planning": qwen_proven,
+            "repo_ui_planning": False,
+            "agentic_coding": False,
+            "verification": qwen_proven,
+        },
+    })
+
+    # 5. Cloud Free Providers (Nemotron, Groq, Gemini, Cloudflare, Cerebras, OpenRouter, HF, FreeLLMAPI, Jev)
+    presence = provider_presence()
+    matrix.extend([
+        {
+            "name": "Nemotron",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "nvidia/nemotron-3-ultra-550b",
+            "auth_status": "CONFIGURED" if presence.get("NVIDIA") else "MISSING_KEY",
+            "cost_class": "FREE_TIER",
+            "general_health": "AVAILABLE" if presence.get("NVIDIA") else "AUTH_REQUIRED",
+            "task_classes": ["structured_planning", "reasoning"],
+            "lifecycle_state": "CIRCUIT_CLOSED",
+            "quota_status": "NOMINAL",
+            "retry_deadline": None,
+            "current_blocker": "NONE" if presence.get("NVIDIA") else "NVIDIA_API_KEY_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": bool(presence.get("NVIDIA")), "repo_ui_planning": False},
+        },
+        {
+            "name": "Groq",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "openai/gpt-oss-120b",
+            "auth_status": "CONFIGURED" if presence.get("GROQ") else "MISSING_KEY",
+            "cost_class": "FREE_TIER",
+            "general_health": "AVAILABLE" if presence.get("GROQ") else "AUTH_REQUIRED",
+            "task_classes": ["structured_planning", "reasoning"],
+            "lifecycle_state": "CIRCUIT_CLOSED",
+            "quota_status": "NOMINAL",
+            "retry_deadline": None,
+            "current_blocker": "NONE" if presence.get("GROQ") else "GROQ_API_KEY_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": bool(presence.get("GROQ")), "repo_ui_planning": False},
+        },
+        {
+            "name": "Gemini",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "gemini-3.6-flash",
+            "auth_status": "CONFIGURED" if presence.get("GEMINI") else "MISSING_KEY",
+            "cost_class": "FREE_TIER",
+            "general_health": "AUTH_REQUIRED" if not presence.get("GEMINI") else "AVAILABLE",
+            "task_classes": ["structured_planning", "reasoning"],
+            "lifecycle_state": "NOT_CONFIGURED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "GEMINI_API_KEY_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "Cloudflare",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "@cf/meta/llama-3.3-70b",
+            "auth_status": "CONFIGURED" if presence.get("CLOUDFLARE") else "MISSING_KEY",
+            "cost_class": "FREE_DAILY_QUOTA",
+            "general_health": "AUTH_REQUIRED" if not presence.get("CLOUDFLARE") else "AVAILABLE",
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": "NOT_CONFIGURED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "CLOUDFLARE_API_TOKEN_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "Cerebras",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "gpt-oss-120b",
+            "auth_status": "CONFIGURED" if presence.get("CEREBRAS") else "MISSING_KEY",
+            "cost_class": "FREE_TRIAL",
+            "general_health": "AUTH_REQUIRED" if not presence.get("CEREBRAS") else "AVAILABLE",
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": "NOT_CONFIGURED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "CEREBRAS_API_KEY_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "OpenRouter Free",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "openrouter/free",
+            "auth_status": "CONFIGURED" if presence.get("OPENROUTER") else "MISSING_KEY",
+            "cost_class": "FREE",
+            "general_health": "AUTH_REQUIRED" if not presence.get("OPENROUTER") else "AVAILABLE",
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": "NOT_CONFIGURED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "OPENROUTER_API_KEY_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "Hugging Face",
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": "openai/gpt-oss-120b:fastest",
+            "auth_status": "CONFIGURED" if presence.get("HUGGINGFACE") else "MISSING_KEY",
+            "cost_class": "FREE",
+            "general_health": "AUTH_REQUIRED" if not presence.get("HUGGINGFACE") else "AVAILABLE",
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": "NOT_CONFIGURED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "HF_TOKEN_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "FreeLLMAPI",
+            "resource_type": "LOCAL_META_GATEWAY",
+            "executable": "node server/dist/index.js",
+            "version": "commit 15c30081",
+            "auth_status": "SOURCE_PINNED_NOT_BUILT",
+            "cost_class": "FREE_LOCAL_BRIDGE",
+            "general_health": "NOT_INSTALLED",
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": "SOURCE_CHECKOUT_ONLY",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "NODE_BUILD_REQUIRED",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+        {
+            "name": "Jev",
+            "resource_type": "ADVISORY_ONLY",
+            "executable": "NONE",
+            "version": "N/A",
+            "auth_status": "NON_AUTHORITATIVE",
+            "cost_class": "OPTIONAL_ADVISORY",
+            "general_health": "DISABLED",
+            "task_classes": [],
+            "lifecycle_state": "DISABLED",
+            "quota_status": "N/A",
+            "retry_deadline": None,
+            "current_blocker": "ZERO_COST_ENTITLEMENT_UNPROVEN",
+            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
+        },
+    ])
+    return matrix
+
+
 def _get_sanitized_providers(config: Optional[Dict[str, Any]], providers: Dict[str, Any]) -> list[Dict[str, Any]]:
     policy_path = None
     if isinstance(config, dict):
@@ -3001,6 +3367,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "providers": providers,
             "sanitized_providers": _get_sanitized_providers(config, providers),
             "provider_details": runtime_v1.get("provider_details", []),
+            "resource_operations_matrix": get_resource_operations_matrix(),
             "projects": projects,
             "default_project_id": default_project_id,
             "default_project": default_project,

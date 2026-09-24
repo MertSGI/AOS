@@ -51,6 +51,7 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
         capability_status_provider: Optional[Callable[[], str]] = None,
         health_reader: Optional[Callable[[], bool]] = None,
         completion_transport: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
+        lifecycle_manager: Optional[Any] = None,
     ) -> None:
         base_url = base_url or os.environ.get(
             "AOS_LLAMA_CPP_BASE_URL", "http://127.0.0.1:8080"
@@ -64,6 +65,7 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
         self._status_provider = capability_status_provider
         self._health_reader = health_reader
         self._transport = completion_transport
+        self.lifecycle_manager = lifecycle_manager
 
     @staticmethod
     def _now() -> str:
@@ -133,6 +135,12 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
         return value
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        if self.lifecycle_manager is not None:
+            # Auto-start if stopped or idle
+            snap = self.lifecycle_manager.get_snapshot()
+            if snap.state.value in {"STOPPED_READY", "IDLE", "STOPPING"}:
+                self.lifecycle_manager.start()
+
         availability = self.get_availability()
         if availability.state != ExecutionAvailabilityState.AVAILABLE:
             return ExecutionResult(
@@ -167,6 +175,8 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
             "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {"type": "json_schema", "json_schema": {"name": "aos_bounded_decision", "strict": True, "schema": schema}},
         }
+        if self.lifecycle_manager is not None:
+            self.lifecycle_manager.mark_request_started()
         try:
             response = (self._transport or self._default_transport)(
                 payload, min(max(int(request.timeout_seconds), 1), 120)
@@ -188,12 +198,17 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
                 and isinstance(value, int) and value >= 0
             }
         except (OSError, ValueError, TypeError, urllib.error.URLError, json.JSONDecodeError, RuntimeError):
+            if self.lifecycle_manager is not None:
+                self.lifecycle_manager.mark_request_finished()
             failed = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.CONTRACT_FAILURE,
                 self._now(), source="QWEN_STRUCTURED_COMPLETION",
                 evidence={"reason": "SANITIZED_CONTRACT_FAILURE"},
             )
             return self._contract_failure(request, "QWEN_STRUCTURED_CONTRACT_FAILURE", failed)
+        finally:
+            if self.lifecycle_manager is not None:
+                self.lifecycle_manager.mark_request_finished()
         result = ExecutionResult(
             backend_id=self.backend_id, worker_id="llama_cpp_qwen3_4b",
             task_id=request.task_id, request_id=request.request_id,

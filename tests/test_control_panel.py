@@ -294,3 +294,37 @@ def test_mobile_lane_summary_wraps_long_blockers():
     assert 'class="overview-lane-detail"' in _HTML
     assert ".overview-lane-detail { grid-template-columns: minmax(0, 1fr) !important;" in _HTML
     assert "overflow-wrap: anywhere;" in _HTML
+
+
+def test_resource_operations_matrix_and_lane_hold_review_controls():
+    from aos.control_panel import get_resource_operations_matrix
+    matrix = get_resource_operations_matrix()
+    assert len(matrix) >= 5
+    by_name = {m["name"]: m for m in matrix}
+    assert "Antigravity" in by_name
+    assert "Codex CLI" in by_name
+    assert "Cline" in by_name
+    assert "Qwen Local" in by_name
+    assert "Nemotron" in by_name
+
+    # Check Antigravity first class attributes
+    ag = by_name["Antigravity"]
+    assert ag["resource_type"] == "FIRST_CLASS_AGENTIC"
+    assert ag["cost_class"] == "SUBSCRIPTION_INCLUDED"
+    assert ag["eligibility_by_task_class"]["agentic_coding"] is True
+
+    # Check Codex CLI quota exhaustion status
+    cdx = by_name["Codex CLI"]
+    assert cdx["resource_type"] == "FIRST_CLASS_AGENTIC"
+    assert cdx["general_health"] == "QUOTA_EXHAUSTED"
+    assert cdx["lifecycle_state"] == "PRESERVED_STANDBY"
+
+    # Check Cline prerequisite
+    cline = by_name["Cline"]
+    assert cline["current_blocker"] == "NODE_JS_RUNTIME_PREREQUISITE"
+
+    # HTML contains Resource Operations Matrix and Lane Hold/Resume controls
+    assert 'id="resource-operations-container"' in _HTML
+    assert "Review " in _HTML
+    assert "Resume " in _HTML
+    assert "Running / " in _HTML
