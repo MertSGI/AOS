@@ -8,14 +8,15 @@
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
   "validated_activation_source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-  "current_phase": "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
+  "current_phase": "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
     "PHASE_C_RUNTIME_SMOKE",
     "PHASE_0_CURRENT_REALITY_RECONCILIATION",
     "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
-    "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF"
+    "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
+    "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -24,8 +25,8 @@
     "PHASE_C": "PASS",
     "PHASE_D": "PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS",
     "PHASE_E": "PASS",
-    "PHASE_F": "IN_PROGRESS",
-    "PHASE_G": "PENDING",
+    "PHASE_F": "PASS",
+    "PHASE_G": "IN_PROGRESS",
     "PHASE_H": "PENDING",
     "PHASE_I": "PENDING",
     "PHASE_J": "PENDING",
@@ -143,14 +144,40 @@
     "paid_default_escape": false,
     "proof_sha256": "a37c5af57b7cbcd7254a58a27da6abf38f40676f2388d2ce86cbd373e36f951e"
   },
+  "phase_f": {
+    "status": "PASS",
+    "transaction_id": "activate-1790244152-a955abce",
+    "runtime_mode": "TRIAL_MAINTENANCE_PAUSED_SAFE",
+    "candidate_source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
+    "candidate_slot": "candidate-runtime-v1.8-39b7921bbe30",
+    "rollback_slot": "candidate-runtime-v1.8-a0cfc2e329b3",
+    "lari_lineage": "continue-b181ddc574c25c2aa0f2a6b9",
+    "pre_batch": 426,
+    "post_batch": 427,
+    "forward_progress": true,
+    "recovery_count_delta": 1,
+    "selected_provider": "nemotron",
+    "resource_ledger_replay": "PASS",
+    "quota_governor_replay": "PASS",
+    "workspace_head_unchanged": true,
+    "workspace_fingerprint_unchanged": true,
+    "duplicate_completed_work": false,
+    "command_recreated": false,
+    "rollback_transaction_complete": true,
+    "pre_canary_proof_sha256": "62419ca36b5ab403c40accc510e21d20817e3eedc8e2cfbc706c41c8a17d1f94",
+    "trial_activation_proof_sha256": "a5902d37ac89e6662e8e8e1a669947d3883e3e6fa87b60ba58b6baf92b8c7419",
+    "canary_observation_proof_sha256": "6caa425c14e65c8333108db20b4ef0b4396fabaf362bf195228350f8911ea0ac",
+    "post_canary_proof_sha256": "181a1ba6c4e4b15f3261efb6e103c822526fb7e301d65f5a33942205b1891eae"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
     "lari_ui_v2": "continue-61be4ab1af53cfa646d773ce"
   },
   "safety": {
-    "live_runtime_changed": false,
-    "current_live_runtime_matches_stable": true,
+    "live_runtime_changed": true,
+    "current_live_runtime_matches_stable": false,
+    "current_live_runtime_mode": "CANDIDATE_TRIAL_PAUSED_SAFE",
     "transient_candidate_runtime_observed_and_reverted": true,
     "protected_lineages_changed": false,
     "protected_workspaces_changed": false,
@@ -161,5 +188,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T09:52:00Z"
+  "updated_at": "2026-09-24T10:10:00Z"
 }

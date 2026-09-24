@@ -121,3 +121,23 @@ Phase E result: `PASS` in a disposable fault-injection runtime using the exact c
 - Explicit invariant results: `BACKEND_CHANGE != PROJECT_CHANGE=PASS`, `QUOTA_LOSS != STATE_LOSS=PASS`, `PROVIDER_FAILURE != PROJECT_FAILURE=PASS`, `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED=PASS`, `STALE_AGENT_SESSION_MUST_NOT_BE_BLINDLY_RESUMED=PASS`, `PAID_API != DEFAULT_ESCAPE_HATCH=PASS`.
 - Proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-e\phase-e-continuity-proof.json`, SHA-256 `a37c5af57b7cbcd7254a58a27da6abf38f40676f2388d2ce86cbd373e36f951e`.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, protected lineages/workspaces unchanged, `PRODUCTION=NO_GO`.
+
+## Phase F - protected LARI bounded canary
+
+Phase F result: `PASS` on the existing protected lineage only.
+
+- The stable runtime was authenticated-paused and then authenticated-quiesced before switching slots. The pre-canary durable checkpoint was batch `426`, event sequence `26,285`, workspace head `80ee72dbaa93d95a742995770c7bd80f69f0aaf2`, and workspace fingerprint `fff9c37d5e1f7fd0c8be24cc6b48531bb43b332feef952c1fb0bbafa01523571`. The existing 11 dirty Git entries were captured, not cleaned or reset.
+- Built-in transactional activation `activate-1790244152-a955abce` started exact candidate `39b7921bbe302e5ecb27a0aa35bd8535cb95f047` as `candidate-runtime-v1.8-39b7921bbe30` in `TRIAL_MAINTENANCE`, paused-safe. Runtime health proved tree `1b5770994856106359d187d03584e1fa8fafdf43d859565f1d97fe77c6aada2e`; the stable rollback slot remained `candidate-runtime-v1.8-a0cfc2e329b3`.
+- The transaction contains the previous runtime configuration, active-slot pointer, startup authority, and transaction metadata. Automatic rollback remains addressable by the exact transaction ID.
+- Candidate resume recovered the same command `continue-b181ddc574c25c2aa0f2a6b9`; it did not create a replacement command. The canary produced one durable increment, batch `426 -> 427`, then returned to paused-safe and quiesced with no in-flight worker.
+- Provider selection was `nemotron`; at least one healthy reasoning provider was present, all-provider-unavailable was false, and the runtime reported failover count `5`. Recovery count changed only once, `27 -> 28`, for the controlled slot handoff; no repeated recovery-churn sequence occurred during the canary window.
+- Post-canary event sequence remained unique and contiguous through `26,303`, `command.accepted` remained exactly one, and batch-completion identities remained unique and contiguous through `427`. No duplicate completed task ID was found in the bounded recent receipt window.
+- Workspace head and content-sensitive fingerprint remained exactly unchanged across the canary. Accepted state therefore advanced without a workspace identity violation.
+- Candidate ResourceLedger replayed without corruption: `37` events comprising attempt start/finish, quota decisions, rate observations, resource usage, and one recovery disposition. QuotaGovernor replayed three records without corruption. Paid fallback remained ineligible.
+- UI-V2 remained suspended, the forbidden stale lineage remained cancelled/inactive, and exact watchdog-script process count remained zero.
+- Proof artifacts:
+  - pre-canary: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-f\pre-canary.json`, SHA-256 `62419ca36b5ab403c40accc510e21d20817e3eedc8e2cfbc706c41c8a17d1f94`;
+  - trial activation: `...\phase-f\trial-activation.json`, SHA-256 `a5902d37ac89e6662e8e8e1a669947d3883e3e6fa87b60ba58b6baf92b8c7419`;
+  - canary observation: `...\phase-f\canary-observation.json`, SHA-256 `6caa425c14e65c8333108db20b4ef0b4396fabaf362bf195228350f8911ea0ac`;
+  - post-canary: `...\phase-f\post-canary.json`, SHA-256 `181a1ba6c4e4b15f3261efb6e103c822526fb7e301d65f5a33942205b1891eae`.
+- Current boundary after Phase F: candidate trial remains active but `PAUSED_SAFE`; it is not yet promoted. `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, `PRODUCTION=NO_GO`.
