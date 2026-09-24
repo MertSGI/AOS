@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import secrets
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -2461,6 +2462,41 @@ def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
         return default
 
 
+def _command_recency_key(
+    command_id: str,
+    state: Dict[str, Any],
+    command: Dict[str, Any],
+    *,
+    active_or_waiting: set[str],
+    latest_command_id: Optional[str],
+) -> tuple[int, float, str]:
+    """Order command projections by live authority, then durable recency.
+
+    Command identifiers are random and must never determine which project
+    lineage the cockpit presents. Runtime-reported active/waiting commands are
+    authoritative, followed by the runtime's latest command, then the newest
+    durable state for projects without a live command.
+    """
+
+    live_priority = 2 if command_id in active_or_waiting else 0
+    if command_id == latest_command_id:
+        live_priority = max(live_priority, 1)
+
+    raw_timestamp = state.get("updated_at") or command.get("created_at") or ""
+    try:
+        normalized = str(raw_timestamp).strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        timestamp = float("-inf")
+
+    return live_priority, timestamp, command_id
+
+
 def _provider_presence() -> Dict[str, bool]:
     result = provider_presence()
     result["OLLAMA"] = False
@@ -2657,6 +2693,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                     )[-20:]
                 )
             )
+            active_or_waiting = set(requested_cids)
+            latest_command_id = str(latest_cmd.get("command_id") or "") or None
 
             for root in store_roots:
                 if not (
@@ -2703,34 +2741,18 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                         "unknown"
                     )
 
-                    state_name = str(
-                        state_data.get(
-                            "state"
-                        )
-                        or
-                        "UNKNOWN"
-                    )
-
-                    nonterminal = state_name in (
-                        "QUEUED",
-                        "RUNNING",
-                        "RECOVERING",
-                        "EXECUTING",
-                        "WAITING_FOR_REASONING_PROVIDER",
-                        "WAITING_FOR_SOURCE_TRANSPORT",
-                    )
-
                     previous = (
                         preferred_by_project.get(
                             project_id
                         )
                     )
 
-                    score = (
-                        1
-                        if nonterminal
-                        else
-                        0
+                    score = _command_recency_key(
+                        cid,
+                        state_data,
+                        cmd_data,
+                        active_or_waiting=active_or_waiting,
+                        latest_command_id=latest_command_id,
                     )
 
                     if (
@@ -2738,10 +2760,6 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                         or
                         score
                         >
-                        previous[0]
-                        or
-                        score
-                        ==
                         previous[0]
                     ):
                         preferred_by_project[
@@ -2751,18 +2769,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                             cid,
                         )
 
-                cids_to_scan = list(
-                    requested_cids
-                )
-
-                for (
-                    _score,
-                    cid,
-                ) in preferred_by_project.values():
-                    if cid not in cids_to_scan:
-                        cids_to_scan.append(
-                            cid
-                        )
+                cids_to_scan = [
+                    cid
+                    for _score, cid in preferred_by_project.values()
+                ]
 
                 for cid in cids_to_scan:
                     cmd_data = store.read_command(cid)

@@ -157,6 +157,88 @@ def test_build_status_includes_deliberation_and_lane_telemetry(tmp_path, monkeyp
     assert status2["deliberation"]["trigger_reasons"]["MATERIAL_AMBIGUITY_OR_HIGH_IMPACT"] == 1
 
 
+def test_build_status_projects_newest_durable_lineage_not_lexicographic_id(tmp_path, monkeypatch):
+    state_root = tmp_path / "state"
+    commands_root = state_root / "commands"
+
+    def write_command(command_id, project_id, *, updated_at, completed, state, failure_class=None):
+        command_root = commands_root / command_id
+        command_root.mkdir(parents=True)
+        (command_root / "command.json").write_text(json.dumps({
+            "command_id": command_id,
+            "created_at": updated_at,
+            "goal": f"Continue {project_id}",
+            "project": {"project_id": project_id},
+        }), encoding="utf-8")
+        (command_root / "state.json").write_text(json.dumps({
+            "command_id": command_id,
+            "state": state,
+            "disposition": state,
+            "failure_class": failure_class,
+            "completed_batch_count": completed,
+            "attempts": 1,
+            "updated_at": updated_at,
+        }), encoding="utf-8")
+
+    write_command(
+        "continue-zzz-stale-lari",
+        "lari",
+        updated_at="2026-09-16T08:02:28+00:00",
+        completed=1,
+        state="FAILED",
+        failure_class="RUNTIME_EXECUTION_FAILURE",
+    )
+    write_command(
+        "continue-b181ddc574c25c2aa0f2a6b9",
+        "lari",
+        updated_at="2026-09-24T16:36:41+00:00",
+        completed=436,
+        state="HUMAN_REQUIRED",
+        failure_class="RECOVERY_CHURN_GUARD",
+    )
+    write_command(
+        "continue-zzz-stale-ui",
+        "lari-ui-v2",
+        updated_at="2026-09-17T12:09:45+00:00",
+        completed=0,
+        state="HUMAN_REQUIRED",
+    )
+    write_command(
+        "continue-61be4ab1af53cfa646d773ce",
+        "lari-ui-v2",
+        updated_at="2026-09-24T16:23:41+00:00",
+        completed=111,
+        state="HUMAN_REQUIRED",
+        failure_class="RECOVERY_CHURN_GUARD",
+    )
+
+    monkeypatch.setattr(control_panel, "runtime_configured", lambda _config: True)
+    monkeypatch.setattr(
+        control_panel,
+        "runtime_status",
+        lambda _config: {
+            "host_state": "HEALTHY",
+            "runtime_v1": {
+                "runtime_state": "HEALTHY",
+                "active_commands": [],
+                "waiting_commands": [],
+                "latest_command": {
+                    "command_id": "continue-b181ddc574c25c2aa0f2a6b9",
+                },
+            },
+        },
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "unrelated"))
+
+    status = build_status({"runtime_root": str(state_root)})
+
+    assert status["lanes"]["lari"]["command_id"] == "continue-b181ddc574c25c2aa0f2a6b9"
+    assert status["lanes"]["lari"]["completed_batches"] == 436
+    assert status["lanes"]["lari"]["current_blocker"] == "RECOVERY_CHURN_GUARD"
+    assert status["lanes"]["lari-ui-v2"]["command_id"] == "continue-61be4ab1af53cfa646d773ce"
+    assert status["lanes"]["lari-ui-v2"]["completed_batches"] == 111
+
+
 def test_provider_telemetry_uses_credential_identity_and_paid_remains_disabled(monkeypatch):
     repo_root = Path(__file__).resolve().parents[1]
     policy_path = repo_root / "descriptors" / "nemotron.planner-policy.json"
