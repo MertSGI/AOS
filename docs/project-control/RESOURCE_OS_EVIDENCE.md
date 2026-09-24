@@ -192,3 +192,17 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Reconstructed checkpoint identity after restart retains the same objective work ledger. A retry of an already completed work unit returns `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED` without redoing work.
 - Combined quota/circuit/Retry-After/task-class recovery/churn/ledger/router/restart/E2E injection suite: `36 passed in 5.29s`.
 - `git diff --check`: PASS. No live provider/agent/model call, paid access, protected-lineage mutation, deployment, or production action occurred.
+
+### Full validation and controller-review source checkpoint
+
+- Initial full run: `1051 passed, 8 skipped, 26 deselected`; three failures were classified rather than suppressed.
+- Two provider-wake failures exposed legacy states without `required_task_class`. The repair preserves historical any-healthy wake only for those legacy unscoped states; explicit modern task-class states remain strictly isolated.
+- The process-contract failure found four raw Git subprocess calls in workspace/agentic inspection. All now use the bounded, owned `run_headless` process utility.
+- Exact repair regression plus fingerprint/AG/Codex coverage: `23 passed in 82.93s`.
+- Consolidated Resource OS/autonomy validation: `298 passed`; its only failures were three existing real-browser proofs because Playwright/Chromium was absent from the configured AOS browser path. The local zero-cost dependency was installed into that exact path; the three unchanged real-browser/Zero-AG proofs then passed.
+- Final canonical suite: `1054 passed, 8 skipped, 26 deselected in 455.02s`.
+- Python compileall: PASS. Execution-resource and decision-policy schema validation: PASS. `git diff --check`: PASS.
+- Validated source checkpoint: `a91896faa0798ab95238d138be01b3bbdba9e571`; remote equality verified before the documentation-only final-report carrier.
+- Qwen status is honestly `SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING`: no llama.cpp binary/model benchmark exists locally and no proof was fabricated.
+- Jev remains `OPTIONAL / ADVISORY / DISABLED`; no Jev call was made and normal AOS operation has no Jev dependency.
+- `PAID_CALLS_MADE=0`; `PAID_API_FALLBACK=DISABLED`; `LIVE_RUNTIME_CHANGED=false`; `PROTECTED_LINEAGES_CHANGED=false`; `PRODUCTION=NO_GO`.

@@ -1,12 +1,17 @@
 {
   "schema_version": "1.0.0",
   "track_id": "AOS-RESOURCE-OS-MASTER-20260923-01",
-  "status": "IN_PROGRESS",
+  "status": "CONTROLLER_REVIEW_READY",
   "repository": "MertSGI/AOS",
   "resource_os_base_sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
   "branch": "feature/aos-resource-os-master-20260923-01",
   "worktree": "C:\\Projects\\AOS-resource-os-master-20260923-01",
-  "current_phase": "FULL_VALIDATION",
+  "base_sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
+  "final_head": "a91896faa0798ab95238d138be01b3bbdba9e571",
+  "remote_head": "a91896faa0798ab95238d138be01b3bbdba9e571",
+  "local_remote_equal": true,
+  "worktree_clean": true,
+  "current_phase": "CONTROLLER_REVIEW_READY",
   "completed_phases": [
     "PHASE_0_CANONICAL_PROGRAM_PLAN",
     "R1_PROVIDER_OBSERVATIONS_AND_HEALTH",
@@ -21,9 +26,10 @@
     "JEV_OPTIONAL_DECISION_MODEL",
     "CAPABILITY_SCARCITY_RESOURCE_ORCHESTRATOR",
     "BOUNDED_CONTEXT_PACK_AND_CROSS_RESOURCE_CONTINUITY",
-    "FAILURE_RESTART_QUOTA_INJECTION_E2E"
+    "FAILURE_RESTART_QUOTA_INJECTION_E2E",
+    "FULL_VALIDATION"
   ],
-  "last_good_commit": "0caf6b735e08e37aa6f7b45000351f7a30abe5a2",
+  "last_good_commit": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "authoritative_inputs": {
     "freellmapi": {
       "branch": "feature/aos-freellmapi-local-meta-provider-20260922-01",
@@ -57,11 +63,37 @@
     "SHARED_AGENTIC_CONTRACT": "COMPLETE",
     "AG_BACKEND": "COMPLETE",
     "CODEX_BACKEND": "COMPLETE",
-    "QWEN": "COMPLETE_SOURCE_UNPROVEN_LOCAL_RESOURCE",
-    "JEV": "COMPLETE_DISABLED_ADVISORY_ONLY",
+    "QWEN": "SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING",
+    "JEV": "OPTIONAL / ADVISORY / DISABLED",
     "ORCHESTRATOR": "COMPLETE",
     "CONTINUITY_E2E": "COMPLETE",
-    "FULL_VALIDATION": "PENDING"
+    "FULL_VALIDATION": "COMPLETE"
+  },
+  "full_test_result": "1054 passed, 8 skipped, 26 deselected in 455.02s",
+  "final_verification": {
+    "BASE_SHA": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
+    "FINAL_HEAD": "a91896faa0798ab95238d138be01b3bbdba9e571",
+    "REMOTE_HEAD": "a91896faa0798ab95238d138be01b3bbdba9e571",
+    "LOCAL_REMOTE_EQUAL": true,
+    "WORKTREE_CLEAN": true,
+    "R1_STATUS": "COMPLETE",
+    "R1B_STATUS": "COMPLETE",
+    "R1C_STATUS": "COMPLETE",
+    "R2_STATUS": "COMPLETE",
+    "R3_STATUS": "COMPLETE",
+    "AG_BACKEND_STATUS": "COMPLETE",
+    "CODEX_BACKEND_STATUS": "COMPLETE",
+    "QWEN_STATUS": "SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING",
+    "JEV_STATUS": "OPTIONAL / ADVISORY / DISABLED",
+    "ORCHESTRATOR_STATUS": "COMPLETE",
+    "CONTINUITY_E2E_STATUS": "COMPLETE",
+    "FULL_VALIDATION_STATUS": "COMPLETE",
+    "FULL_TEST_RESULT": "1054 passed, 8 skipped, 26 deselected in 455.02s",
+    "PAID_CALLS_MADE": 0,
+    "PAID_API_FALLBACK": "DISABLED",
+    "LIVE_RUNTIME_CHANGED": false,
+    "PROTECTED_LINEAGES_CHANGED": false,
+    "PRODUCTION": "NO_GO"
   },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
@@ -72,10 +104,11 @@
     "protected_lineages_changed": false,
     "protected_workspaces_changed": false,
     "paid_execution_used": false,
+    "paid_calls_made": 0,
     "paid_api_fallback": "DISABLED",
     "production": "NO_GO",
     "council": "SHADOW_ONLY"
   },
-  "controller_review_ready": false,
+  "controller_review_ready": true,
   "ledger_sha_convention": "last_good_commit records the verified source checkpoint represented by the current ledger-carrier commit because a Git commit cannot embed its own content-derived SHA"
 }
