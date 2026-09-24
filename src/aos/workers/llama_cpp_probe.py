@@ -49,14 +49,20 @@ def resolve_llama_cpp_identity(
         completed = runner([path, "--version"]) if runner else run_headless(
             [path, "--version"], timeout=10
         )
-        version = str(completed.stdout or completed.stderr or "").strip().splitlines()[0]
+        output = "\n".join(
+            part for part in (str(completed.stdout or ""), str(completed.stderr or ""))
+            if part
+        )
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        stable_lines = [line for line in lines if line.lower().startswith("version:")]
+        version = (stable_lines[0] if stable_lines else (lines[0] if lines else ""))[:200]
         if completed.returncode or not version:
             return None
         return {
             "path": str(Path(path).resolve()),
             "filename": Path(path).name,
             "sha256": file_sha256(path),
-            "version": version[:200],
+            "version": version,
         }
     except (OSError, subprocess.SubprocessError, IndexError):
         return None

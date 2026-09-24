@@ -24,6 +24,23 @@ def test_exact_binary_and_model_identity_are_hash_bound(tmp_path):
     assert resolve_qwen_model(tmp_path / "Qwen3-4B-Q8.gguf") is None
 
 
+def test_llama_identity_uses_stable_version_line_after_noisy_startup_prefix(tmp_path):
+    executable = tmp_path / "llama-server.exe"
+    executable.write_bytes(b"llama binary fixture")
+    identity = resolve_llama_cpp_identity(
+        str(executable),
+        runner=lambda argv: __import__("subprocess").CompletedProcess(
+            argv,
+            0,
+            "0.00.001 I srv llama_server: initializing ...\n"
+            "version: 0.5.0-dev (build 11149, commit d2e54583c)\n"
+            "built with Clang 20.1.8 for Windows x86_64\n",
+            "",
+        ),
+    )
+    assert identity["version"] == "version: 0.5.0-dev (build 11149, commit d2e54583c)"
+
+
 def test_attestation_requires_bounded_successful_benchmark_and_detects_drift(tmp_path):
     executable = {
         "path": "llama-test",
