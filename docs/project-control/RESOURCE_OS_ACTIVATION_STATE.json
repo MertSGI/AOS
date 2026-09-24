@@ -7,8 +7,8 @@
   "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-  "validated_activation_source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
-  "current_phase": "PHASE_I_QWEN_LOCAL_RESOURCE_REALIZATION",
+  "validated_activation_source_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
+  "current_phase": "PHASE_J_JEV_ZERO_COST_RECHECK",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
@@ -18,7 +18,8 @@
     "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
     "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
     "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER",
-    "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT"
+    "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT",
+    "PHASE_I_QWEN_LOCAL_RESOURCE_REALIZATION"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -30,8 +31,8 @@
     "PHASE_F": "PASS",
     "PHASE_G": "PASS",
     "PHASE_H": "PASS",
-    "PHASE_I": "IN_PROGRESS",
-    "PHASE_J": "PENDING",
+    "PHASE_I": "PASS",
+    "PHASE_J": "IN_PROGRESS",
     "PHASE_K": "PENDING",
     "PHASE_L": "PENDING"
   },
@@ -65,21 +66,28 @@
     "canonical_state_validation": "PASS",
     "canonical_evidence_validation": "PASS"
   },
+  "qwen_activation_repair_ci": {
+    "github_actions_run_id": 35994334139,
+    "github_actions_job_id": 107615596620,
+    "head_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
+    "conclusion": "success",
+    "local_full_test_result": "1057 passed, 8 skipped, 26 deselected in 258.24s"
+  },
   "candidate_runtime": {
-    "slot": "candidate-runtime-v1.8-27e67c9db359",
-    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
-    "tree_sha256": "debc5004147f16136075a6a7f15e322a41c7fcb6d2a97923de1faf7ec88f7a43",
+    "slot": "candidate-runtime-v1.8-820aa0b1f032",
+    "source_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
+    "tree_sha256": "32aa2235baaa88373e2c1c9eee3ea6a19b0cd5852c6ccbff5db034455b400cd6",
     "file_count": 196,
-    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\820aa0b1f0328ef2828a0df18771704cfb29b0ae",
     "status": "PROMOTED_STABLE"
   },
   "isolated_runtime_proof": {
-    "smoke_id": "e989fd99edad4386ad2ccacb9e1e982e",
-    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
-    "tree_sha256": "bd461b45b475196ede1eb3de48085f5b258b277f078e420dd93190c60052fa1b",
+    "smoke_id": "16c5e67dfa684f718727c043b3398182",
+    "source_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
+    "tree_sha256": "18f73ed63352114460064ad209eb695cc33e5fe09d71ef779bfdf8148e4298c7",
     "status": "PASS",
-    "runtime_port": 62835,
-    "panel_port": 62836,
+    "runtime_port": 55407,
+    "panel_port": 55408,
     "orphan_count": 0,
     "visible_window_count": 0,
     "production": "NO_GO"
@@ -231,6 +239,30 @@
     "direct_state_or_circuit_rewrite_used": false,
     "proof_sha256": "f4a8b38d202ee676cc881b3bfa534d23ca5464a90b865bc81835d4f5a5f11d94"
   },
+  "phase_i": {
+    "status": "PASS",
+    "source_sha": "820aa0b1f0328ef2828a0df18771704cfb29b0ae",
+    "runtime_slot": "candidate-runtime-v1.8-820aa0b1f032",
+    "transaction_id": "activate-1790250430-a9c33643",
+    "promotion_proof_id": "RESOURCE-OS-PHASE-I-820AA0B-QWEN-DBDC34A2B553",
+    "rollback_slot": "candidate-runtime-v1.8-27e67c9db359",
+    "llama_cpp_version": "0.5.0-dev build 11149 commit d2e54583c",
+    "llama_cpp_executable_sha256": "36e2803d3bc1c87ff21180dc1f1be1e53c6f04c515e91b46a480c1e1285471b4",
+    "model": "Qwen3-4B-Q4_K_M.gguf",
+    "model_sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "model_size_bytes": 2497280256,
+    "startup_ms": 2924.572,
+    "peak_rss_bytes": 4989345792,
+    "predicted_tokens_per_second": 11.345,
+    "structured_classification": "PASS",
+    "capability_status": "PROVEN",
+    "router_availability_during_proof": "AVAILABLE",
+    "routed_execution": "SUCCESS",
+    "server_lifecycle": "STOPPED_AFTER_BOUNDED_PROOF",
+    "auto_start": "NOT_CONFIGURED",
+    "qwen_proof_sha256": "dbdc34a2b553b97bf62be102030adadce854a1837484f816a197962175c5499e",
+    "activation_proof_sha256": "8a9714110fdce93a7278f23ba1033c24ea7ffdd0cd055e357892fd5a043bf844"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -247,9 +279,9 @@
     "paid_calls_made": 0,
     "paid_api_fallback": "DISABLED",
     "jev": "DISABLED",
-    "qwen": "SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING",
+    "qwen": "LOCAL_RESOURCE_PROVEN / ON_DEMAND_SERVER_STOPPED",
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T11:16:00Z"
+  "updated_at": "2026-09-24T11:52:00Z"
 }

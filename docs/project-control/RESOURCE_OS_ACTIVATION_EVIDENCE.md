@@ -176,3 +176,22 @@ Phase H result: `PASS` with the promoted runtime as the sole recovery authority.
 - No direct state-file or circuit-file rewrite was used. UI-V2 remained `OPERATOR_SUSPENDED` with no worker, and forbidden stale LARI remained `OPERATOR_CANCELLED_MISBOUND_GOAL` with no worker.
 - Proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-h\phase-h-native-recovery.json`, SHA-256 `f4a8b38d202ee676cc881b3bfa534d23ca5464a90b865bc81835d4f5a5f11d94`.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, and `PRODUCTION=NO_GO`.
+
+## Phase I - Qwen local resource realization
+
+Phase I result: `PASS` with a real bounded CPU-only resource proof and on-demand server lifecycle.
+
+- Installed the official `llama.cpp` Windows x64 CPU build `b11149` (`0.5.0-dev`, commit `d2e54583c`). The downloaded archive matched GitHub's published SHA-256 `d1cb5f9ef7bbb7068954b4c9767d5b5309e20bcefeb61d4aafc47f9581f38752`; the executing `llama-server.exe` SHA-256 is `36e2803d3bc1c87ff21180dc1f1be1e53c6f04c515e91b46a480c1e1285471b4`.
+- Downloaded the official Qwen `Qwen3-4B-Q4_K_M.gguf` artifact at upstream commit `bc640142c66e1fdd12af0bd68f40445458f3869b`. Its exact size is `2,497,280,256` bytes and its SHA-256 matched the upstream LFS OID `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`.
+- The source router initially had no supported way to consume realized executable/model paths, and the real server version probe initially selected a changing startup-timestamp line. Minimal repairs added explicit `AOS_LLAMA_CPP_*`/`AOS_QWEN_MODEL_PATH` configuration, forced zero GPU layers, disabled Qwen thinking for bounded structured output, and bound attestation identity to the stable `version:` line.
+- Exact repair source `820aa0b1f0328ef2828a0df18771704cfb29b0ae` passed local canonical validation (`1057 passed, 8 skipped, 26 deselected in 258.24s`) and hosted CI run `35994334139`, job `107615596620`, conclusion `success`.
+- Real loopback startup reached health in `2,924.572 ms` with eight threads, zero GPU layers, context `4096`, parallelism `1`, and a measured peak RSS of `4,989,345,792` bytes, below the 12 GiB contract bound.
+- The live structured benchmark correctly classified an HTTP 429 with intact project state as `provider_failure`, produced schema-valid JSON in `2,972.036 ms`, and measured `11.345` generated tokens/second from server timing. The machine-local capability status became `PROVEN`.
+- A second request through the actual `LlamaCppQwenReasoningBackend` reported router availability `AVAILABLE`, execution `SUCCESS`, and schema-valid output. The bounded proof then stopped the server and verified zero orphans; no always-on service or hidden resource consumption was introduced. The capability remains available for on-demand loopback start, while current health correctly degrades when the server is stopped.
+- The unified `llama.exe` benchmark launcher was blocked by Windows Defender as potentially unwanted before execution. No security control was bypassed; the separately packaged, hash-bound `llama-server.exe` provided the accepted runtime benchmark.
+- Exact source was staged into both candidate stores. Isolated smoke `16c5e67dfa684f718727c043b3398182` passed on ports `55407/55408` with zero orphans and zero visible windows.
+- Transaction `activate-1790250430-a9c33643` promoted slot `candidate-runtime-v1.8-820aa0b1f032` with proof `RESOURCE-OS-PHASE-I-820AA0B-QWEN-DBDC34A2B553`; rollback slot `candidate-runtime-v1.8-27e67c9db359` remains retained. After an exact-source supervisor restart, both runtime and panel reported `820aa0b1f0328ef2828a0df18771704cfb29b0ae`. The same LARI lineage resumed at batch `431`; UI-V2 and forbidden stale LARI remained workerless.
+- Proofs:
+  - Qwen runtime: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-i\phase-i-qwen-local-proof.json`, SHA-256 `dbdc34a2b553b97bf62be102030adadce854a1837484f816a197962175c5499e`;
+  - activation/continuity: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-i\phase-i-activation.json`, SHA-256 `8a9714110fdce93a7278f23ba1033c24ea7ffdd0cd055e357892fd5a043bf844`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, and `PRODUCTION=NO_GO`.
