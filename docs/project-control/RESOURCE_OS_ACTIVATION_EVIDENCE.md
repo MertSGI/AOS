@@ -68,3 +68,40 @@ The repository smoke contract refuses the live Runtime V1 home by design. A seco
 - Runtime proof artifact: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-c\phase-c-resource-smoke.json`, SHA-256 `1b84e2421634f60f8314fa4e368ee2052753bbdf9b497b1d89a2a5f363fdc8c9`.
 - The smoke relay generated two local heartbeat snapshots. Existing authenticated relay transport also refreshed controller issue `#6`; it did not create a lineage, execute project work, call a model, or change production.
 - `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, `PRODUCTION=NO_GO`.
+
+## Current-reality reconciliation - 2026-09-24
+
+- Branch and remote were both `39b7921bbe302e5ecb27a0aa35bd8535cb95f047`; the worktree was clean before evidence edits.
+- The live runtime is currently healthy and unpaused on the retained stable slot `candidate-runtime-v1.8-a0cfc2e329b3`, source `a0cfc2e329b36dca1964ed427ab17d8c82cbacb6`, tree `685a6a1b12a2515ac9674826faca93bbd87ff26bba2b73fc7edf0c87c4ac1203`, bound to `127.0.0.1`, with `PRODUCTION=NO_GO`.
+- A temporary live observation of `39b7921bbe302e5ecb27a0aa35bd8535cb95f047` was reported before this checkpoint. It is not present in the current runtime configuration or process command lines. No deployment backup records a committed slot-pointer replacement after the stable `a0cfc2e...` activation, so this is classified as a transient candidate execution rather than an accepted cutover.
+- The sole active command reported by the live runtime was the existing protected LARI lineage `continue-b181ddc574c25c2aa0f2a6b9`. Neither UI-V2 `continue-61be4ab1af53cfa646d773ce` nor forbidden stale LARI `continue-009df28644d7a108fbaa6014` was active.
+- The protected LARI event log had `26,238` events at the bounded snapshot, a unique contiguous sequence, and exactly one `command.accepted` event. It contained `421` `batch.completed` events with unique contiguous batch numbers `1..421`. Durable state and result both reported batch `421` at the reconciliation boundary. This continues beyond both the transient zero-batch relay reading and the later observed batch `408`.
+- The zero-batch reading is therefore classified as a relay/recovery snapshot artifact. Available evidence shows no command recreation, no completed-batch identity duplication, and no accepted-work loss. This statement is bounded to durable command/event/batch identity; it does not claim semantic equivalence beyond recorded receipts.
+- Exact-path process inspection found four retained historical watchdog scripts and zero processes executing any of them. They remain non-authoritative and were not restarted.
+- UI-V2 remains `OPERATOR_SUSPENDED`; the forbidden stale lineage remains `OPERATOR_CANCELLED_MISBOUND_GOAL`. Their durable timestamps were not advanced by this work.
+- Reconciliation proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-0-current-reality-20260924.json`, SHA-256 `f10c45f9bd9bd7a28c3e4e87f4d958a7d77d70e78c91c52221ab6c7fe94d4a43`. The event-file digest inside that artifact is explicitly a non-atomic observation of a running lineage.
+
+## Candidate supersession after activation-only Codex repair
+
+- The real Codex capability probe exposed an activation defect: current Codex CLI sessions use RFC 9562 UUIDv7 identifiers, while the adapter accepted only UUID versions 1-5. The minimum parser repair and UUIDv7 regression test were committed as `39b7921bbe302e5ecb27a0aa35bd8535cb95f047`.
+- Exact hosted CI run `35962472969`, job `107513807731`, matched that SHA and concluded `success`.
+- A new immutable live-store candidate was materialized without changing the live pointer: slot `candidate-runtime-v1.8-39b7921bbe30`, tree `1b5770994856106359d187d03584e1fa8fafdf43d859565f1d97fe77c6aada2e`, `196` files.
+- The isolated proof-store candidate tree is `55ad00080d4c2d16bc1f0b6079aa026e6b7501e4e6326e8ffc19c3b1a5f808f3`.
+- Superseding isolated smoke `54579b4c90744e679eeb2dc950cdc70e` passed on runtime port `61997` and panel port `61998`: exact provenance, health, paused restart, quiesced shutdown, zero orphans, and zero visible windows.
+- Older `bc816eb...` candidates remain immutable and available as historical evidence; they were not overwritten.
+
+## Phase D - resource capability smoke
+
+Phase D result: `PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS`.
+
+- Deterministic/native execution: `AVAILABLE`, `FREE_LOCAL`. A candidate-loaded `NativeFileWorker` performed one bounded write in a disposable proof repository, and the Resource Orchestrator ranked native execution first for its matching capability.
+- Zero-cost cloud reasoning: bounded sanitized probes succeeded for `groq`, `nemotron`, and `openrouter_free`. `gemini` and `cloudflare` were rate-limited; `cerebras` and `huggingface_router` reported credit exhaustion. These failures remained provider/resource failures, not project failures.
+- FreeLLMAPI: source adapter and clean pinned checkout `15c30081d2ce832bea16d804d9edac4ed87c7bc3` are present. The local checkout is not built and the actual readiness probe is unavailable, so runtime status is `UNAVAILABLE`; no success is inferred from source presence.
+- Antigravity: first-class source backend is present and classified `SUBSCRIPTION_INCLUDED`, but neither `agy` nor `antigravity` resolved to an executable and no current capability attestation could be proven. Runtime status is `UNAVAILABLE`.
+- Codex CLI: executable identity `codex-cli 0.146.0-alpha.3`, SHA-256 `6aeaca6a797ed7e5d8163d750e10947f098ceb0f1faff02fedaef487602c2fe2`; ChatGPT subscription auth is proven, API-key presence is false, and cost is `SUBSCRIPTION_INCLUDED`. The quota observation was available with primary usage `73%` and secondary usage `58%`.
+- A real candidate-loaded Codex backend read-only turn completed successfully with UUIDv7 session `01a0d20b-faaf-75d0-8067-7e729b043e49`, a durable checkpoint, a content-sensitive workspace fingerprint, and a clean Git workspace. Reusing the completed work ID was rejected with `COMPLETED_WORK_MUST_NOT_BE_DUPLICATED`; changing workspace content caused exact-session resume rejection with `STALE_AGENT_SESSION:WORKSPACE_CHANGED`; neither rejection invoked the CLI.
+- Safe Codex writes cannot be accepted in the current nested host: the outer Codex permission envelope forces child sessions to read-only even when the backend requests `workspace-write`. A single disposable, non-protected direct CLI diagnostic using sandbox bypass proved that the subscription CLI itself can write the exact artifact; this deliberately unsafe diagnostic is recorded as classification evidence only and is **not** accepted as backend or protected-canary proof. The production backend continues to prohibit bypass flags.
+- Qwen3-4B/llama.cpp: source adapter is present and `FREE_LOCAL`; no `llama-server`, model, benchmark, or capability attestation was found. Status remains `SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING`.
+- Jev: the advisor contract remains present, advisory-only, disabled, with zero paid budget and no paid fallback. Its current route has `zero_price_observed=false`; no Jev call was made.
+- Phase D proof: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-d\phase-d-resource-capability-smoke-39b7921.json`, SHA-256 `a0037d282b7c2617c436da4095897201868503048a2bfb1d85f4df028f8d6246`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, protected workspaces unchanged, `PRODUCTION=NO_GO`.

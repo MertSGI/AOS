@@ -6,19 +6,23 @@
   "branch": "feature/aos-resource-os-master-20260923-01",
   "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
-  "validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-  "current_phase": "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
+  "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+  "validated_activation_source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
+  "current_phase": "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
-    "PHASE_C_RUNTIME_SMOKE"
+    "PHASE_C_RUNTIME_SMOKE",
+    "PHASE_0_CURRENT_REALITY_RECONCILIATION",
+    "PHASE_D_RESOURCE_CAPABILITY_SMOKE"
   ],
   "phase_status": {
+    "PHASE_0_RECONCILIATION": "PASS",
     "PHASE_A": "PASS",
     "PHASE_B": "PASS",
     "PHASE_C": "PASS",
-    "PHASE_D": "IN_PROGRESS",
-    "PHASE_E": "PENDING",
+    "PHASE_D": "PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS",
+    "PHASE_E": "IN_PROGRESS",
     "PHASE_F": "PENDING",
     "PHASE_G": "PENDING",
     "PHASE_H": "PENDING",
@@ -40,21 +44,28 @@
     "local_test_result": "1054 passed, 8 skipped, 26 deselected in 374.34s",
     "git_diff_check": "PASS"
   },
+  "activation_repair_ci": {
+    "github_actions_run_id": 35962472969,
+    "github_actions_job_id": 107513807731,
+    "head_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
+    "conclusion": "success",
+    "repair": "Codex CLI RFC 9562 UUIDv7 session identity acceptance"
+  },
   "candidate_runtime": {
-    "slot": "candidate-runtime-v1.8-bc816eb37649",
-    "source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-    "tree_sha256": "a33d98e4fd16bd7db6b64826d33f4417a3c5ef8dc95bdbb6f517a7900f0c0ee2",
+    "slot": "candidate-runtime-v1.8-39b7921bbe30",
+    "source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
+    "tree_sha256": "1b5770994856106359d187d03584e1fa8fafdf43d859565f1d97fe77c6aada2e",
     "file_count": 196,
-    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
     "status": "MATERIALIZED_IMMUTABLE"
   },
   "isolated_runtime_proof": {
-    "smoke_id": "2d06bd43065e48ff977a69b066db9b43",
-    "source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-    "tree_sha256": "0493d4250d701a61b3fa2809527ddaf85a0f74fa1a7018583833ca7cc148b770",
+    "smoke_id": "54579b4c90744e679eeb2dc950cdc70e",
+    "source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
+    "tree_sha256": "55ad00080d4c2d16bc1f0b6079aa026e6b7501e4e6326e8ffc19c3b1a5f808f3",
     "status": "PASS",
-    "runtime_port": 53605,
-    "panel_port": 53606,
+    "runtime_port": 61997,
+    "panel_port": 61998,
     "orphan_count": 0,
     "visible_window_count": 0,
     "production": "NO_GO"
@@ -75,6 +86,45 @@
     "paid_resource_eligible": false,
     "proof_sha256": "1b84e2421634f60f8314fa4e368ee2052753bbdf9b497b1d89a2a5f363fdc8c9"
   },
+  "current_reality_reconciliation": {
+    "status": "PASS",
+    "current_live_runtime_sha": "a0cfc2e329b36dca1964ed427ab17d8c82cbacb6",
+    "current_live_slot": "candidate-runtime-v1.8-a0cfc2e329b3",
+    "current_live_health": "HEALTHY",
+    "transient_39b_live_observation": "USER_REPORTED; NOT PRESENT IN CURRENT RUNTIME CONFIGURATION",
+    "lari_command_id": "continue-b181ddc574c25c2aa0f2a6b9",
+    "lari_snapshot_completed_batch_count": 421,
+    "lari_event_count": 26238,
+    "lari_command_accepted_count": 1,
+    "lari_batch_numbers_unique_and_contiguous": true,
+    "accepted_work_loss_evidence": false,
+    "duplicate_completed_batch_evidence": false,
+    "zero_batch_snapshot_classification": "TRANSIENT_RELAY_OR_RECOVERY_SNAPSHOT_ARTIFACT",
+    "ui_v2_active": false,
+    "forbidden_stale_lineage_active": false,
+    "external_watchdog_process_count": 0,
+    "proof_sha256": "f10c45f9bd9bd7a28c3e4e87f4d958a7d77d70e78c91c52221ab6c7fe94d4a43"
+  },
+  "phase_d": {
+    "status": "PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS",
+    "deterministic_native": "AVAILABLE",
+    "free_cloud_reasoning_available": [
+      "groq",
+      "nemotron",
+      "openrouter_free"
+    ],
+    "freellmapi_local": "UNAVAILABLE",
+    "antigravity": "UNAVAILABLE",
+    "codex_cli": "AVAILABLE_READ_ONLY_BACKEND_PROOF",
+    "codex_cost_class": "SUBSCRIPTION_INCLUDED",
+    "codex_safe_write_in_current_host": "BLOCKED_BY_PARENT_READ_ONLY_ENVELOPE",
+    "codex_duplicate_guard": "PASS",
+    "codex_stale_session_guard": "PASS",
+    "qwen": "SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING",
+    "jev": "DISABLED",
+    "paid_provider_eligible": false,
+    "proof_sha256": "a0037d282b7c2617c436da4095897201868503048a2bfb1d85f4df028f8d6246"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -82,6 +132,8 @@
   },
   "safety": {
     "live_runtime_changed": false,
+    "current_live_runtime_matches_stable": true,
+    "transient_candidate_runtime_observed_and_reverted": true,
     "protected_lineages_changed": false,
     "protected_workspaces_changed": false,
     "paid_calls_made": 0,
@@ -91,5 +143,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T05:53:05Z"
+  "updated_at": "2026-09-24T09:45:00Z"
 }
