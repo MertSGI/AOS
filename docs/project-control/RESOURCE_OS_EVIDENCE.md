@@ -174,3 +174,13 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Ties resolve by stable backend ID, making ranking replay deterministic. Ranking itself never invokes a backend.
 - Focused orchestrator/router/Antigravity/Codex/Qwen suite: `32 passed in 29.22s`; `git diff --check`: PASS.
 - No external resource, protected workspace/lineage, paid endpoint, deployment, or production state was touched.
+
+### Bounded ContextPack and cross-resource continuity
+
+- Added a 32 KiB content-bound `ContextPack` containing only objective/authority, source SHA, workspace fingerprint, checkpoint, completed work IDs/signatures, verified artifact hashes, bounded redacted read observations, remaining work, typed availability, and explicit safety boundaries.
+- Forbidden prompt/transcript/reasoning/credential/cookie/token/raw-error/header/body fields are excluded. Mandatory content fails closed if it cannot fit; optional read context truncates deterministically; every pack has a content fingerprint.
+- The persistent coordinator builds the pack for agentic nodes from canonical AOS checkpoint state and the current content-sensitive workspace fingerprint.
+- Cross-backend fallback never forwards the prior AG/Codex session identity. It starts a fresh session, archives the prior session ID as superseded, and carries only AOS-owned completed-work signatures and artifact hashes.
+- Antigravity and Codex seed new-session checkpoints from the verified handoff pack, so completed work survives backend loss and cannot be silently duplicated.
+- Context/agentic/router/coordinator/restart suite: `27 passed in 32.88s`; focused cross-resource/coordinator suite after the explicit handoff case: `12 passed in 0.90s`.
+- Python compile checks and `git diff --check`: PASS. No external agent call, protected-lineage action, paid call, deployment, or production action occurred.

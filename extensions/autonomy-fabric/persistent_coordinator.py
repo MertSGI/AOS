@@ -43,6 +43,8 @@ from extensions.autonomy_fabric.evidence_aggregator import EvidenceAggregator, E
 from extensions.autonomy_fabric.completion_supervisor import CompletionSupervisor, ControllerReviewDisposition
 from extensions.autonomy_fabric.native_workers import redact_secrets
 from aos.read_identity import build_read_identity, normalize_read_path
+from aos.context_pack import build_context_pack
+from aos.workspace_fingerprint import compute_workspace_fingerprint
 
 
 class CheckpointCorruptionError(ValueError):
@@ -344,6 +346,40 @@ class PersistentCoordinator:
                         f"Invalid agentic identity for completed node {node.node_id}"
                     )
 
+            context_pack = None
+            if caps == [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK] and self.canonical_source_sha:
+                workspace_fingerprint = (
+                    prior_identity.workspace_fingerprint
+                    if prior_identity is not None
+                    else compute_workspace_fingerprint(
+                        self.workspace_path, source_sha=self.canonical_source_sha
+                    ).sha256
+                )
+                context_pack = build_context_pack(
+                    objective_id=str(payload.get("objective_id") or node.node_id),
+                    authority_id=node.authority_id,
+                    source_sha=self.canonical_source_sha,
+                    workspace_fingerprint=workspace_fingerprint,
+                    checkpoint_id=str(payload.get("checkpoint_id") or node.node_id),
+                    completed_work_unit_ids=(
+                        prior_identity.completed_work_unit_ids if prior_identity else self.state.completed_task_ids
+                    ),
+                    completed_work_unit_signatures=(
+                        prior_identity.completed_work_unit_signatures if prior_identity else {}
+                    ),
+                    artifact_hashes=(prior_identity.artifact_hashes if prior_identity else {}),
+                    remaining_work=[
+                        item.node_id for item in self.dag.nodes.values()
+                        if item.node_id not in self.state.completed_task_ids
+                    ],
+                    availability={},
+                    boundaries=[
+                        "PAID_API_FALLBACK_DISABLED", "PRODUCTION_NO_GO",
+                        "NO_PROTECTED_LINEAGE_MUTATION", "NO_DUPLICATE_COMPLETED_WORK",
+                    ],
+                    read_context=self.state.completed_read_observations,
+                )
+
             req = ExecutionRequest(
                 task_id=node.node_id,
                 project_id=self.project_id,
@@ -362,6 +398,7 @@ class PersistentCoordinator:
                     ),
                 },
                 agentic_identity=prior_identity,
+                context_pack=context_pack,
             )
 
             # 3. Route & execute with failover

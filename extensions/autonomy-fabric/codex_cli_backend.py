@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from aos.agentic_resume import evaluate_agentic_resume
+from aos.context_pack import handoff_seed
 from aos.process_utils import popen_headless
 from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
 from aos.workers.codex_cli_probe import (
@@ -505,10 +506,11 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
                 request, "CODEX_POST_EXECUTION_VERIFICATION_FAILED", availability, status="FAILED"
             )
 
-        ids = sorted(set((prior.completed_work_unit_ids if prior else []) + [request.task_id]))
-        signatures = dict(prior.completed_work_unit_signatures if prior else {})
+        seed = handoff_seed(context_pack) if prior is None else {}
+        ids = sorted(set((prior.completed_work_unit_ids if prior else seed.get("completed_work_unit_ids", [])) + [request.task_id]))
+        signatures = dict(prior.completed_work_unit_signatures if prior else seed.get("completed_work_unit_signatures", {}))
         signatures[request.task_id] = self._work_signature(request)
-        all_artifacts = dict(prior.artifact_hashes if prior else {})
+        all_artifacts = dict(prior.artifact_hashes if prior else seed.get("artifact_hashes", {}))
         all_artifacts.update(artifacts)
         last_artifact = prior.last_successful_artifact if prior else None
         if artifacts:
@@ -534,7 +536,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             completed_work_unit_ids=ids,
             completed_work_unit_signatures=signatures,
             artifact_hashes=all_artifacts,
-            superseded_session_ids=list(prior.superseded_session_ids if prior else []),
+            superseded_session_ids=list(prior.superseded_session_ids if prior else seed.get("superseded_session_ids", [])),
         )
         return ExecutionResult(
             backend_id=self.backend_id,

@@ -9,6 +9,7 @@ NATIVE > CI/GITHUB > MODEL+NATIVE > AG SPECIALIST
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Set, Tuple
+from dataclasses import replace
 import logging
 
 from extensions.autonomy_fabric.execution_backend import (
@@ -110,7 +111,25 @@ class ExecutionRouter:
                 break
 
             tried_backend_ids.add(selected.backend_id)
-            result = selected.execute(request)
+            dispatch_request = request
+            if (
+                request.agentic_identity is not None
+                and request.agentic_identity.backend_id != selected.backend_id
+            ):
+                prior = request.agentic_identity
+                pack = dict(request.context_pack or {})
+                pack.update({
+                    "completed_work_unit_ids": list(prior.completed_work_unit_ids),
+                    "completed_work_unit_signatures": dict(prior.completed_work_unit_signatures),
+                    "artifact_hashes": dict(prior.artifact_hashes),
+                    "superseded_session_ids": list(dict.fromkeys([
+                        *prior.superseded_session_ids,
+                        *([prior.session_or_thread_id] if prior.session_or_thread_id else []),
+                    ])),
+                    "handoff_from_backend": prior.backend_id,
+                })
+                dispatch_request = replace(request, agentic_identity=None, context_pack=pack)
+            result = selected.execute(dispatch_request)
 
             # If result is degraded or quota exhausted, fail over to next eligible backend
             if result.status == "DEGRADED":
