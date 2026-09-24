@@ -141,3 +141,24 @@ Phase F result: `PASS` on the existing protected lineage only.
   - canary observation: `...\phase-f\canary-observation.json`, SHA-256 `6caa425c14e65c8333108db20b4ef0b4396fabaf362bf195228350f8911ea0ac`;
   - post-canary: `...\phase-f\post-canary.json`, SHA-256 `181a1ba6c4e4b15f3261efb6e103c822526fb7e301d65f5a33942205b1891eae`.
 - Current boundary after Phase F: candidate trial remains active but `PAUSED_SAFE`; it is not yet promoted. `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, `PRODUCTION=NO_GO`.
+
+## Phase G - controlled reversible cutover
+
+Phase G result: `PASS` on exact validated source `27e67c9db359df8ea3e512beac15db25974d7ec8`.
+
+- Two activation defects were found and repaired before final promotion. A repeated content-identical planning request reused a ResourceLedger attempt identity, so differing real usage collided with immutable accounting and terminalized LARI after batch 428. Actual provider invocations now receive distinct ledger attempt identities while the semantic request identity remains content-sensitive. The regression suite proved two repeated real calls produce two immutable accounting records.
+- The detailed status/relay path selected the lexicographically last command ID instead of the most recently active command and excluded a lineage held by `RECOVERY_CHURN_GUARD` from command-local resource evidence. Status now orders by durable `updated_at`, retains guarded resource context, and reports the protected LARI lineage rather than an unrelated historical failure.
+- The final source passed local canonical validation (`1056 passed, 8 skipped, 26 deselected in 288.66s`) and exact-SHA hosted CI run `35989481257`, job `107599873702`, conclusion `success`. Hosted full canonical pytest reported `1059 passed, 5 skipped, 26 deselected in 26.54s`; PostgreSQL integration and both canonical validators passed.
+- Exact-source isolated smoke `e989fd99edad4386ad2ccacb9e1e982e` passed on ports `62835/62836`, with tree `bd461b45b475196ede1eb3de48085f5b258b277f078e420dd93190c60052fa1b`, zero orphans, zero visible windows, and `PRODUCTION=NO_GO`.
+- Transaction `activate-1790247477-0dab9fd9` started slot `candidate-runtime-v1.8-27e67c9db359` in reversible trial maintenance. The retained rollback slot is `candidate-runtime-v1.8-39b7921bbe30`; transaction configuration, pointer, and startup-authority backups remain present.
+- Before recovery, LARI was truthfully held at batch 428 as `HUMAN_REQUIRED / RECOVERY_CHURN_GUARD`. Corrected candidate telemetry found zero healthy providers but five legitimate zero-cost `HALF_OPEN` resources. Exactly one authenticated bounded recovery was authorized; no state or circuit file was rewritten.
+- The same protected command `continue-b181ddc574c25c2aa0f2a6b9` advanced from batch 428 through batch 430. Authenticated pause-safe then reached `PAUSED_SAFE` with zero in-flight workers.
+- At the quiesced acceptance boundary, event sequence `1..26359` and `batch.completed` identities `1..430` were unique and contiguous, `command.accepted` remained exactly one, recent completed task IDs had no duplicates, and the original collision at event 26316 had not recurred.
+- ResourceLedger replay passed at 134 events with a valid hash chain and no corrupt/truncated state. QuotaGovernor replay was non-corrupt and bound to the current ledger rate head. Paid usage/cost remained zero.
+- The protected workspace path and Git head `80ee72dbaa93d95a742995770c7bd80f69f0aaf2` were preserved. Its content-sensitive fingerprint changed because the existing 11-entry working set advanced during accepted LARI work; this content change is recorded and was not reset or misrepresented as identity stability.
+- Promotion proof `RESOURCE-OS-PHASE-G-27E67C9-B430-1FF7421C60CD` atomically promoted the exact slot to `STABLE`. After authenticated resume, the same LARI lineage remained the sole active command. Relay sequence `64226` reported exact source/slot provenance `PROVEN`, LARI as Lane A at completed batch 430/current batch 431, and runtime health `HEALTHY`.
+- UI-V2 remained `OPERATOR_SUSPENDED`; forbidden stale LARI remained `OPERATOR_CANCELLED_MISBOUND_GOAL`; neither worker was started.
+- Proof artifacts:
+  - pre-promotion: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-g\phase-g-27e67c9-pre-promotion.json`, SHA-256 `1ff7421c60cdc173191c4e6edf6d4cb5c2533a16eb2c04e02a2ac736fac1dfc0`;
+  - post-promotion: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-g\phase-g-27e67c9-post-promotion.json`, SHA-256 `8a41714c85d46163e95f90e143945b924f86eb556a645ab75abca90508c379d2`.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, external watchdogs remained off, and `PRODUCTION=NO_GO`.

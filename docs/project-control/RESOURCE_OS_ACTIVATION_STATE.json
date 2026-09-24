@@ -7,8 +7,8 @@
   "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "prior_validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-  "validated_activation_source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-  "current_phase": "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER",
+  "validated_activation_source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+  "current_phase": "PHASE_H_NATIVE_RECOVERY_WATCHDOG_RETIREMENT",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
     "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
@@ -16,7 +16,8 @@
     "PHASE_0_CURRENT_REALITY_RECONCILIATION",
     "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
     "PHASE_E_QUOTA_FAILURE_FAILOVER_REENTRY_PROOF",
-    "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY"
+    "PHASE_F_PROTECTED_LARI_BOUNDED_CANARY",
+    "PHASE_G_CONTROLLED_REVERSIBLE_CUTOVER"
   ],
   "phase_status": {
     "PHASE_0_RECONCILIATION": "PASS",
@@ -26,8 +27,8 @@
     "PHASE_D": "PASS_WITH_TRUTHFUL_RESOURCE_CONSTRAINTS",
     "PHASE_E": "PASS",
     "PHASE_F": "PASS",
-    "PHASE_G": "IN_PROGRESS",
-    "PHASE_H": "PENDING",
+    "PHASE_G": "PASS",
+    "PHASE_H": "IN_PROGRESS",
     "PHASE_I": "PENDING",
     "PHASE_J": "PENDING",
     "PHASE_K": "PENDING",
@@ -53,21 +54,31 @@
     "conclusion": "success",
     "repair": "Codex CLI RFC 9562 UUIDv7 session identity acceptance"
   },
+  "final_activation_ci": {
+    "github_actions_run_id": 35989481257,
+    "github_actions_job_id": 107599873702,
+    "head_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "conclusion": "success",
+    "hosted_full_test_result": "1059 passed, 5 skipped, 26 deselected in 26.54s",
+    "local_full_test_result": "1056 passed, 8 skipped, 26 deselected in 288.66s",
+    "canonical_state_validation": "PASS",
+    "canonical_evidence_validation": "PASS"
+  },
   "candidate_runtime": {
-    "slot": "candidate-runtime-v1.8-39b7921bbe30",
-    "source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-    "tree_sha256": "1b5770994856106359d187d03584e1fa8fafdf43d859565f1d97fe77c6aada2e",
+    "slot": "candidate-runtime-v1.8-27e67c9db359",
+    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "tree_sha256": "debc5004147f16136075a6a7f15e322a41c7fcb6d2a97923de1faf7ec88f7a43",
     "file_count": 196,
-    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-    "status": "MATERIALIZED_IMMUTABLE"
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\runtime-v1\\candidate\\27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "status": "PROMOTED_STABLE"
   },
   "isolated_runtime_proof": {
-    "smoke_id": "54579b4c90744e679eeb2dc950cdc70e",
-    "source_sha": "39b7921bbe302e5ecb27a0aa35bd8535cb95f047",
-    "tree_sha256": "55ad00080d4c2d16bc1f0b6079aa026e6b7501e4e6326e8ffc19c3b1a5f808f3",
+    "smoke_id": "e989fd99edad4386ad2ccacb9e1e982e",
+    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "tree_sha256": "bd461b45b475196ede1eb3de48085f5b258b277f078e420dd93190c60052fa1b",
     "status": "PASS",
-    "runtime_port": 61997,
-    "panel_port": 61998,
+    "runtime_port": 62835,
+    "panel_port": 62836,
     "orphan_count": 0,
     "visible_window_count": 0,
     "production": "NO_GO"
@@ -169,6 +180,31 @@
     "canary_observation_proof_sha256": "6caa425c14e65c8333108db20b4ef0b4396fabaf362bf195228350f8911ea0ac",
     "post_canary_proof_sha256": "181a1ba6c4e4b15f3261efb6e103c822526fb7e301d65f5a33942205b1891eae"
   },
+  "phase_g": {
+    "status": "PASS",
+    "source_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+    "runtime_slot": "candidate-runtime-v1.8-27e67c9db359",
+    "runtime_tree_sha256": "debc5004147f16136075a6a7f15e322a41c7fcb6d2a97923de1faf7ec88f7a43",
+    "transaction_id": "activate-1790247477-0dab9fd9",
+    "promotion_proof_id": "RESOURCE-OS-PHASE-G-27E67C9-B430-1FF7421C60CD",
+    "rollback_slot": "candidate-runtime-v1.8-39b7921bbe30",
+    "lari_lineage": "continue-b181ddc574c25c2aa0f2a6b9",
+    "pre_recovery_batch": 428,
+    "accepted_batch": 430,
+    "same_lineage": true,
+    "event_sequence_unique_contiguous": true,
+    "batch_numbers_unique_contiguous": true,
+    "command_accepted_count": 1,
+    "ledger_collision_recurred": false,
+    "resource_ledger_replay": "PASS",
+    "quota_governor_replay": "PASS",
+    "recent_completed_work_duplicates": 0,
+    "workspace_path_and_git_head_preserved": true,
+    "workspace_content_change_recorded": true,
+    "relay_provenance": "PROVEN",
+    "pre_promotion_proof_sha256": "1ff7421c60cdc173191c4e6edf6d4cb5c2533a16eb2c04e02a2ac736fac1dfc0",
+    "post_promotion_proof_sha256": "8a41714c85d46163e95f90e143945b924f86eb556a645ab75abca90508c379d2"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -176,8 +212,8 @@
   },
   "safety": {
     "live_runtime_changed": true,
-    "current_live_runtime_matches_stable": false,
-    "current_live_runtime_mode": "CANDIDATE_TRIAL_PAUSED_SAFE",
+    "current_live_runtime_matches_stable": true,
+    "current_live_runtime_mode": "STABLE_RUNNING_NO_GO",
     "transient_candidate_runtime_observed_and_reverted": true,
     "protected_lineages_changed": false,
     "protected_workspaces_changed": false,
@@ -188,5 +224,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T10:10:00Z"
+  "updated_at": "2026-09-24T11:10:00Z"
 }
