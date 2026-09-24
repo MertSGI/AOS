@@ -152,3 +152,15 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Focused Qwen adapter/capability suite: `14 passed in 1.48s`; focused router/host/schema regression: `118 passed in 6.00s`.
 - A broader native-worker run produced `125 passed, 1 failed`; the isolated failure is the unchanged browser test and reports `Playwright is not installed or accessible in current Python environment`. It is unrelated to Qwen and the complete affected routing/host/schema set passed.
 - Execution-resource policy validation, Python compile checks, and `git diff --check`: PASS. No model inference, paid call, download, deployment, protected-lineage mutation, or production action occurred.
+
+### Optional Jev decision model
+
+- Re-fetched and verified `origin/audit/aos-jev-decision-layer-preflight-20260923-01` at `d28a1350ecf270b94eb3f48014201cc53ab9b517`; its durable state remains `COMPLETE`, `READY_FOR_INTEGRATION=YES`, zero source mutation/paid calls, and production `NO_GO`.
+- Read the authoritative `ARCHITECTURE.md`, `ACCESS_AND_COST.md`, `EVALUATION_PLAN.md`, and `IMPLEMENTATION_MAP.md` completely from that exact remote head before source work.
+- Added provider-neutral typed decision request/result, primitive, confidence, availability, and cost contracts plus a null advisor. Jev is neither a planner provider nor execution backend and has no authority.
+- Added a closed policy schema and initial descriptor: disabled, advisory-only, pinned `jev-1.13.0`, portable 32k ceiling, zero paid budget, no paid fallback, `R0/R1` only, six forbidden authority classes, production `NO_GO`, and a single promotional route whose public observation is deliberately not treated as account proof.
+- Cost policy blocks disabled, missing-credential, unknown/metered, unproven-free, and expired routes before transport. No route can auto-top-up or become a paid escape hatch.
+- The Jev adapter translates provider-neutral boolean probability to Vercel `boolean`, validates exact answer sets/model identity/options/score bounds/probability distributions, rejects out-of-set recommendations and model aliases, and converts low confidence to abstention.
+- Raw decision state/questions, prompts, response bodies, headers, credentials, and provider errors never enter durable evidence. `ResourceLedger` records only typed request/result status, route/model IDs, numeric latency/cost, task class, objective, and advisory flag.
+- E0/offline Jev, policy, ledger, quota, schema, planning, recovery, and router suite: `183 passed in 35.45s`; decision-policy validation and `git diff --check`: PASS.
+- No credential was used and no Jev/Vercel/TypeSafe/OpenRouter/Cloudflare call occurred. E2/E3 remain correctly blocked; scheduler/canonical completion/human authority are unchanged; `PAID_API_FALLBACK=DISABLED`; `PRODUCTION=NO_GO`.

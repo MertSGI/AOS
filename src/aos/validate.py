@@ -34,6 +34,7 @@ TYPE_TO_SCHEMA = {
     "verification_result": "verification_result.schema.json",
     "agentic_execution_checkpoint": "agentic_execution_checkpoint.schema.json",
     "execution_resource_policy": "execution_resource_policy.schema.json",
+    "decision_advisor_policy": "decision_advisor_policy.schema.json",
 }
 
 

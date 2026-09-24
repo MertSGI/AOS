@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/decision_advisor_policy.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "enabled", "advisory_only", "model", "portable_context_limit_tokens", "paid_budget_usd", "allow_paid_fallback", "production", "allowed_risk_classes", "forbidden_authorities", "confidence_threshold", "routes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "enabled": {"const": false},
+    "advisory_only": {"const": true},
+    "model": {"const": "jev-1.13.0"},
+    "portable_context_limit_tokens": {"type": "integer", "minimum": 1, "maximum": 32000},
+    "paid_budget_usd": {"const": 0.0},
+    "allow_paid_fallback": {"const": false},
+    "production": {"const": "NO_GO"},
+    "allowed_risk_classes": {"type": "array", "items": {"enum": ["R0", "R1"]}, "uniqueItems": true},
+    "forbidden_authorities": {"type": "array", "items": {"enum": ["PRODUCTION", "DESTRUCTIVE", "PAYMENT", "SECURITY_OVERRIDE", "PROJECT_COMPLETION", "PROTECTED_LINEAGE"]}, "minItems": 6, "uniqueItems": true},
+    "confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+    "routes": {"type": "array", "maxItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["route_id", "cost_class", "not_after", "price_observed_at", "zero_price_observed"], "properties": {"route_id": {"const": "vercel_jev_promotional"}, "cost_class": {"const": "PROMOTIONAL_FREE"}, "not_after": {"type": "string", "format": "date-time"}, "price_observed_at": {"type": "string", "format": "date-time"}, "zero_price_observed": {"type": "boolean"}}}}
+  }
+}

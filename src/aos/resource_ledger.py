@@ -30,6 +30,8 @@ class ResourceEventType(str, Enum):
     RESERVATION_CREATED = "RESERVATION_CREATED"
     RESERVATION_RELEASED = "RESERVATION_RELEASED"
     RECOVERY_DISPOSITION = "RECOVERY_DISPOSITION"
+    DECISION_REQUESTED = "DECISION_REQUESTED"
+    DECISION_RESULT = "DECISION_RESULT"
 
 
 _SAFE_KEYS = {
@@ -43,6 +45,8 @@ _SAFE_KEYS = {
     "key", "same_fingerprint_respawns", "strategy_generation",
     "batch_number", "completed_batch_count_baseline", "objective_id",
     "workspace_source_generation", "fingerprint_sha256",
+    "route_id", "model_requested", "model_resolved", "decision_kind",
+    "latency_ms", "advisory_only", "zero_cost_eligible",
 }
 _SAFE_TEXT = re.compile(r"^[A-Za-z0-9_.:/|*-]{0,256}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:|-]{1,256}$")
@@ -75,7 +79,7 @@ def _sanitize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "same_fingerprint_respawns", "strategy_generation",
         "batch_number", "completed_batch_count_baseline",
     }
-    numeric_keys = integer_keys | {"cost_estimate_usd", "cost_actual_usd", "retry_at_epoch"}
+    numeric_keys = integer_keys | {"cost_estimate_usd", "cost_actual_usd", "retry_at_epoch", "latency_ms"}
     for key, value in payload.items():
         if key not in _SAFE_KEYS or value is None:
             continue
@@ -87,7 +91,7 @@ def _sanitize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
             number = _safe_number(value, integer=key in integer_keys)
             if number is not None:
                 safe[key] = number
-        elif key == "eligible" and isinstance(value, bool):
+        elif key in {"eligible", "advisory_only", "zero_cost_eligible"} and isinstance(value, bool):
             safe[key] = value
         elif key == "task_class":
             safe[key] = canonical_task_class(value)

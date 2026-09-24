@@ -6,7 +6,7 @@
   "resource_os_base_sha": "ccdebfd7b5bdc32f7e95634ef2c464293356c872",
   "branch": "feature/aos-resource-os-master-20260923-01",
   "worktree": "C:\\Projects\\AOS-resource-os-master-20260923-01",
-  "current_phase": "JEV_OPTIONAL_DECISION_MODEL",
+  "current_phase": "CAPABILITY_SCARCITY_RESOURCE_ORCHESTRATOR",
   "completed_phases": [
     "PHASE_0_CANONICAL_PROGRAM_PLAN",
     "R1_PROVIDER_OBSERVATIONS_AND_HEALTH",
@@ -17,9 +17,10 @@
     "SHARED_AGENTIC_CONTRACT_AND_WORKSPACE_FINGERPRINT",
     "ANTIGRAVITY_FIRST_CLASS_BACKEND",
     "CODEX_CLI_SUBSCRIPTION_BACKEND",
-    "QWEN3_4B_LOCAL_BOUNDED_REASONING"
+    "QWEN3_4B_LOCAL_BOUNDED_REASONING",
+    "JEV_OPTIONAL_DECISION_MODEL"
   ],
-  "last_good_commit": "7f27cde94ba3ae8c9cbab8ae3b990791e9a9deaa",
+  "last_good_commit": "6077224feabbc76a67f8a1c0417168e282b75cfd",
   "authoritative_inputs": {
     "freellmapi": {
       "branch": "feature/aos-freellmapi-local-meta-provider-20260922-01",
@@ -54,7 +55,7 @@
     "AG_BACKEND": "COMPLETE",
     "CODEX_BACKEND": "COMPLETE",
     "QWEN": "COMPLETE_SOURCE_UNPROVEN_LOCAL_RESOURCE",
-    "JEV": "OPTIONAL_READY_FOR_INTEGRATION",
+    "JEV": "COMPLETE_DISABLED_ADVISORY_ONLY",
     "ORCHESTRATOR": "PENDING",
     "CONTINUITY_E2E": "PENDING",
     "FULL_VALIDATION": "PENDING"
