@@ -21,6 +21,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -315,6 +316,15 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         model_id: str,
         task_class: str,
     ) -> str:
+        """Return an identity for one actual provider invocation.
+
+        ``request.request_id`` is deliberately content-sensitive and can recur
+        when a continuous lineage asks the same planning question again.  A
+        ResourceLedger attempt, however, represents an actual provider call.
+        Give each call its own suffix so repeated semantic requests are
+        accounted independently instead of colliding with the first call's
+        immutable usage event.
+        """
         material = "|".join((
             request.request_id,
             request.task_id,
@@ -322,7 +332,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             model_id,
             task_class,
         ))
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+        request_fingerprint = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        return f"{request_fingerprint}.{uuid.uuid4().hex}"
 
     def _ledger_append(
         self,

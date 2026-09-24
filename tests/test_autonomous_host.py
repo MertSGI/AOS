@@ -97,6 +97,47 @@ def test_post_invocation_transient_failure_advances_provider(tmp_path):
     assert result.evidence_payload["fallback_used"] is True
 
 
+def test_repeated_content_identical_request_gets_distinct_ledger_attempts(tmp_path):
+    class UsageChangesPerInvocation:
+        execution_provenance = "LOCAL_OFFLINE"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate_plan(self, prompt, schema):
+            self.calls += 1
+            return {"call": self.calls}, f"response-{self.calls}", {
+                "total_tokens": self.calls,
+            }
+
+    provider = UsageChangesPerInvocation()
+    backend = ProviderFailoverReasoningBackend(
+        ProviderRouter(ProviderRegistry(_policy())),
+        provider_factory=lambda _provider_id, _model_id: provider,
+        attempt_journal=tmp_path / "attempts.jsonl",
+    )
+    request = _request(tmp_path)
+
+    first = backend.execute(request)
+    second = backend.execute(request)
+
+    assert first.status == "SUCCESS"
+    assert second.status == "SUCCESS"
+    assert provider.calls == 2
+    ledger = backend.resource_ledger
+    assert ledger is not None
+    summary = ledger.summary()
+    assert summary["attempts_started"] == 2
+    assert summary["attempts_finished"] == 2
+    assert summary["request_count"] == 2
+    assert summary["total_tokens"] == 3
+    attempt_ids = {
+        event.payload["attempt_id"]
+        for event in ledger.events(["ATTEMPT_STARTED"])
+    }
+    assert len(attempt_ids) == 2
+
+
 def test_exhausted_transient_providers_preserve_waiting_failure_class(tmp_path):
     backend = ProviderFailoverReasoningBackend(
         ProviderRouter(ProviderRegistry(_policy())),
