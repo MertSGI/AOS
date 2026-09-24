@@ -206,3 +206,15 @@ Later phase checkpoint commits, focused commands/results, remote equality, and d
 - Qwen status is honestly `SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING`: no llama.cpp binary/model benchmark exists locally and no proof was fabricated.
 - Jev remains `OPTIONAL / ADVISORY / DISABLED`; no Jev call was made and normal AOS operation has no Jev dependency.
 - `PAID_CALLS_MADE=0`; `PAID_API_FALLBACK=DISABLED`; `LIVE_RUNTIME_CHANGED=false`; `PROTECTED_LINEAGES_CHANGED=false`; `PRODUCTION=NO_GO`.
+
+### Activation closure superseding the source-only snapshot
+
+The preceding full-validation section records the source-only checkpoint as it existed before activation. The durable activation record now supersedes only its machine-resource and live-runtime observations; it does not invalidate the accepted implementation phases.
+
+- Qwen3-4B Q4_K_M is now machine-locally proven with official llama.cpp build `11149`, executable SHA-256 `36e2803d3bc1c87ff21180dc1f1be1e53c6f04c515e91b46a480c1e1285471b4`, model SHA-256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`, peak RSS `4,989,345,792` bytes, and `11.345` generated tokens/second. It remains `FREE_LOCAL`, stopped, and on-demand with no auto-start.
+- Final validated runtime source `a958ca0451df7eb7f1aba7509adab1762115a064` passed focused validation (`23 passed`), full local canonical validation (`1059 passed, 8 skipped, 26 deselected in 356.30s`), isolated runtime/panel smoke, and exact-SHA GitHub Actions run `36031566022`, job `107741325358`, conclusion `success`.
+- The source is promoted stable as `candidate-runtime-v1.8-a958ca0451df`; rollback slot `candidate-runtime-v1.8-d00d0be32f37` remains retained. Runtime and panel are healthy and exact-source under `PRODUCTION=NO_GO`.
+- Protected LARI remained the same command and advanced from batch `431` to `436` before a deterministic `RECOVERY_CHURN_GUARD`. Protected UI-V2 remained the same command at batch `111` and also stopped at the guard after one bounded native zero-cost recovery attempt. Both event streams and batch identities are unique/contiguous, each retains exactly one `command.accepted`, and both ResourceLedgers replay without corruption or paid cost.
+- Real Chromium targeted checks passed for public/product routes at desktop and mobile viewports. The full canonical screenshot runner timed out after `604` seconds with `14/68` base screenshots and `0/12` interaction screenshots, so the remaining browser/server-backed gap is explicit and Phase K is not labeled `PASS`.
+- Cockpit projection now selects current durable project lineages and displays LARI batch `436` and UI batch `111`. Desktop/mobile browser proof has no page error or horizontal overflow.
+- External watchdogs remain retired with zero matching processes. No stale agent session was blindly resumed, no replacement lineage was created, no accepted work was lost or duplicated, paid calls remain `0`, paid fallback remains `DISABLED`, and production remains `NO_GO`.
