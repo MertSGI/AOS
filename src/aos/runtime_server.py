@@ -149,6 +149,21 @@ class RuntimeEngine:
         self.probe_thread.start()
 
     @staticmethod
+    def _has_live_resource_context(state: Dict[str, Any]) -> bool:
+        current = str(state.get("state") or "")
+        if current in (
+            "QUEUED",
+            "RUNNING",
+            "RECOVERING",
+            "WAITING_FOR_REASONING_PROVIDER",
+        ):
+            return True
+        return (
+            current == "HUMAN_REQUIRED"
+            and str(state.get("failure_class") or "") == "RECOVERY_CHURN_GUARD"
+        )
+
+    @staticmethod
     def _enabled_from_policy(policy_path: Path) -> list[str]:
         """Return enabled runtime providers, excluding unauthorized paid fallback."""
         try:
@@ -352,9 +367,7 @@ class RuntimeEngine:
         registries: list[ProviderCircuitBreakerRegistry] = []
         for command_id in self.store.list_command_ids()[-200:]:
             state = self.store.read_state(command_id)
-            if str(state.get("state") or "") not in (
-                "QUEUED", "RUNNING", "RECOVERING", "WAITING_FOR_REASONING_PROVIDER"
-            ):
+            if not self._has_live_resource_context(state):
                 continue
             command = self.store.read_command(command_id)
             policy_value = (command.get("project") or {}).get("routing_policy_path")
@@ -383,9 +396,7 @@ class RuntimeEngine:
             targets: Dict[str, Dict[str, Any]] = {}
             for command_id in self.store.list_command_ids()[-200:]:
                 state = self.store.read_state(command_id)
-                if str(state.get("state") or "") not in (
-                    "QUEUED", "RUNNING", "RECOVERING", "WAITING_FOR_REASONING_PROVIDER"
-                ):
+                if not self._has_live_resource_context(state):
                     continue
                 command = self.store.read_command(command_id)
                 policy_value = (command.get("project") or {}).get("routing_policy_path")
@@ -923,10 +934,12 @@ class RuntimeEngine:
         terminal = []
         active_by_project: Dict[str, List[str]] = {}
         command_ids = self.store.list_command_ids()[-200:]
+        states_by_command: Dict[str, Dict[str, Any]] = {}
         latest_summary = None
         latest_resource_ledger_summary = None
         for command_id in command_ids:
             state = self.store.read_state(command_id)
+            states_by_command[command_id] = state
             current = str(state.get("state") or "UNKNOWN")
             cmd = self.store.read_command(command_id)
             proj_id = (cmd.get("project") or {}).get("project_id") or self.config["default_project"]
@@ -943,8 +956,15 @@ class RuntimeEngine:
             else:
                 terminal.append(command_id)
         if command_ids:
-            latest_id = command_ids[-1]
-            latest_state = self.store.read_state(latest_id)
+            latest_id = max(
+                command_ids,
+                key=lambda command_id: (
+                    str(states_by_command[command_id].get("updated_at") or ""),
+                    str(states_by_command[command_id].get("created_at") or ""),
+                    command_id,
+                ),
+            )
+            latest_state = states_by_command[latest_id]
             latest_summary = {
                 "command_id": latest_id,
                 "state": latest_state.get("state"),

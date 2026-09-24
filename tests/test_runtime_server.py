@@ -63,6 +63,38 @@ def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypa
         engine.shutdown()
 
 
+def test_status_uses_most_recent_command_activity_not_lexical_id(tmp_path):
+    engine = RuntimeEngine(_config(tmp_path))
+    try:
+        engine.pause_safe()
+        for command_id in ("continue-z-older", "continue-a-newer"):
+            engine.store.create_command({
+                "command_id": command_id,
+                "project": {"project_id": "lari"},
+                "goal": "status ordering proof",
+            })
+        engine.store.write_state(
+            "continue-z-older",
+            state="FAILED",
+            disposition="FAILED",
+        )
+        engine.store.write_state(
+            "continue-a-newer",
+            state="HUMAN_REQUIRED",
+            disposition="HUMAN_REQUIRED",
+            failure_class="RECOVERY_CHURN_GUARD",
+        )
+
+        status = engine._collect_detailed_status()
+
+        assert status["latest_command"]["command_id"] == "continue-a-newer"
+        assert status["latest_command"]["failure_class"] == "RECOVERY_CHURN_GUARD"
+        assert len(status["provider_circuit_registry_paths"]) == 1
+        assert "continue-a-newer" in status["provider_circuit_registry_paths"][0]
+    finally:
+        engine.shutdown()
+
+
 def test_invalid_project_profile_fails_before_worker_execution(tmp_path, monkeypatch):
     cfg = _config(tmp_path)
     Path(cfg["projects"]["lari"]["descriptor_path"]).write_text("{}", encoding="utf-8")
