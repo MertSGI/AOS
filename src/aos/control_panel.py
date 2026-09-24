@@ -788,6 +788,14 @@ textarea.goal-main {
   .top-system-bar { position: static; }
   .ops-grid { grid-template-columns: 1fr; }
   .split-grid { grid-template-columns: 1fr; }
+  .overview-lane-detail { grid-template-columns: minmax(0, 1fr) !important; align-items: start !important; }
+  .overview-lane-detail .status-chip {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+    justify-self: start;
+  }
 }
 
 /* NOTIFICATION TOAST */
@@ -1797,7 +1805,7 @@ async function refreshStatus() {
               <span style="font-size:11.5px; font-family:var(--font-mono); color:var(--text-muted);">Batch #${planningBatch}</span>
             </div>
           </div>
-          <div style="display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center;">
+          <div class="overview-lane-detail" style="display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center;">
             <div style="font-size:12px; color:var(--text-sub);">
               <div>Task: <code style="color:var(--text-main);">${safeTask}</code></div>
               <div style="color:var(--text-muted); margin-top:2px;">Phase: <strong>${safePhase}</strong> · Next: ${safeNext}</div>

@@ -288,3 +288,9 @@ def test_dashboard_defines_tracked_lane_count_before_using_it():
     assert "const activeStates = new Set([" in _HTML
     assert "'WAITING_FOR_REASONING_PROVIDER'" in _HTML
     assert "'WAITING_FOR_SOURCE_TRANSPORT'" in _HTML
+
+
+def test_mobile_lane_summary_wraps_long_blockers():
+    assert 'class="overview-lane-detail"' in _HTML
+    assert ".overview-lane-detail { grid-template-columns: minmax(0, 1fr) !important;" in _HTML
+    assert "overflow-wrap: anywhere;" in _HTML
