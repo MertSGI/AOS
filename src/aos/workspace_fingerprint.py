@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+from aos.process_utils import run_headless
 
 
 class WorkspaceFingerprintError(RuntimeError):
@@ -30,12 +31,10 @@ class WorkspaceFingerprint:
 
 def _git(root: Path, *args: str) -> bytes:
     try:
-        completed = subprocess.run(
+        completed = run_headless(
             ["git", "-C", str(root), *args],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=30,
+            text=False,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:

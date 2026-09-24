@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
+from aos.process_utils import run_headless
 from aos.workspace_fingerprint import (
     WorkspaceFingerprintError,
     compute_workspace_fingerprint,
@@ -147,20 +148,16 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
 
     @staticmethod
     def _changed_paths(workspace: str) -> List[str]:
-        tracked = subprocess.run(
+        tracked = run_headless(
             ["git", "-C", workspace, "diff", "--name-only", "-z", "HEAD"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=30,
+            text=False,
             check=False,
         )
-        untracked = subprocess.run(
+        untracked = run_headless(
             ["git", "-C", workspace, "ls-files", "--others", "--exclude-standard", "-z"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=30,
+            text=False,
             check=False,
         )
         if tracked.returncode or untracked.returncode:

@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
-from aos.process_utils import popen_headless
+from aos.process_utils import popen_headless, run_headless
 from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
 from aos.workers.codex_cli_probe import (
     CODEX_ADAPTER_CONTRACT_VERSION,
@@ -320,7 +320,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
         )
         raw = b""
         for command in commands:
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            result = run_headless(command, timeout=30, text=False)
             if result.returncode:
                 raise WorkspaceFingerprintError("unable to inspect Codex workspace mutations")
             raw += result.stdout

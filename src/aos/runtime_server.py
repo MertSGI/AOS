@@ -476,7 +476,7 @@ class RuntimeEngine:
                     state = self.store.read_state(command_id)
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                         continue
-                    if str(state.get("required_task_class") or TaskClass.STRUCTURED_PLANNING.value) != TaskClass.SMALL_REASONING.value:
+                    if state.get("required_task_class") is not None and str(state["required_task_class"]) != TaskClass.SMALL_REASONING.value:
                         continue
                     governor = QuotaGovernor(
                         self.store.command_dir(command_id)
@@ -773,7 +773,7 @@ class RuntimeEngine:
                 continue
             required_task_class = str(
                 state.get("required_task_class")
-                or TaskClass.STRUCTURED_PLANNING.value
+                or TaskClass.UNKNOWN.value
             )
             healthy = aggregate.healthy_providers_for_task(
                 required_task_class,
