@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0.0",
+  "track_id": "AOS-RESOURCE-OS-ACTIVATION-20260924-01",
+  "status": "ACTIVATION_IN_PROGRESS",
+  "repository": "MertSGI/AOS",
+  "branch": "feature/aos-resource-os-master-20260923-01",
+  "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
+  "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
+  "validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+  "current_phase": "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
+  "completed_phases": [
+    "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE"
+  ],
+  "phase_status": {
+    "PHASE_A": "PASS",
+    "PHASE_B": "IN_PROGRESS",
+    "PHASE_C": "PENDING",
+    "PHASE_D": "PENDING",
+    "PHASE_E": "PENDING",
+    "PHASE_F": "PENDING",
+    "PHASE_G": "PENDING",
+    "PHASE_H": "PENDING",
+    "PHASE_I": "PENDING",
+    "PHASE_J": "PENDING",
+    "PHASE_K": "PENDING",
+    "PHASE_L": "PENDING"
+  },
+  "phase_a": {
+    "github_actions_run_id": 35961087026,
+    "github_actions_job_id": 107509612971,
+    "head_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
+    "conclusion": "success",
+    "offline_test_result": "1057 passed, 5 skipped, 26 deselected in 30.72s",
+    "postgres_test_result": "25 passed, 8 deselected in 2.66s",
+    "full_test_result": "1057 passed, 5 skipped, 26 deselected in 28.05s",
+    "canonical_state_validation": "PASS",
+    "canonical_evidence_validation": "PASS",
+    "local_test_result": "1054 passed, 8 skipped, 26 deselected in 374.34s",
+    "git_diff_check": "PASS"
+  },
+  "candidate_runtime": {
+    "slot": null,
+    "source_sha": null,
+    "tree_sha256": null,
+    "status": "NOT_MATERIALIZED"
+  },
+  "protected_lineages": {
+    "lari": "continue-b181ddc574c25c2aa0f2a6b9",
+    "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
+    "lari_ui_v2": "continue-61be4ab1af53cfa646d773ce"
+  },
+  "safety": {
+    "live_runtime_changed": false,
+    "protected_lineages_changed": false,
+    "protected_workspaces_changed": false,
+    "paid_calls_made": 0,
+    "paid_api_fallback": "DISABLED",
+    "jev": "DISABLED",
+    "qwen": "SOURCE_COMPLETE / LOCAL_RESOURCE_PROOF_PENDING",
+    "ui_v2": "NOT_WOKEN",
+    "production": "NO_GO"
+  },
+  "updated_at": "2026-09-24T05:44:25Z"
+}
