@@ -329,3 +329,16 @@ class LlamaCppLifecycleManager:
             last_health_status=self._last_health,
             error_message=self._error_message,
         )
+
+
+_GLOBAL_QWEN_MANAGER: Optional[LlamaCppLifecycleManager] = None
+_GLOBAL_QWEN_LOCK = threading.Lock()
+
+
+def get_qwen_lifecycle_manager() -> LlamaCppLifecycleManager:
+    global _GLOBAL_QWEN_MANAGER
+    with _GLOBAL_QWEN_LOCK:
+        if _GLOBAL_QWEN_MANAGER is None:
+            _GLOBAL_QWEN_MANAGER = LlamaCppLifecycleManager()
+        return _GLOBAL_QWEN_MANAGER
+

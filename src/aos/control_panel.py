@@ -2716,6 +2716,18 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         except Exception:
             pass
 
+    qwen_lifecycle = "STOPPED_READY"
+    qwen_blocker = "NONE" if qwen_proven else "MODEL_BENCHMARK_REQUIRED"
+    try:
+        from aos.workers.llama_cpp_lifecycle import get_qwen_lifecycle_manager
+        mgr = get_qwen_lifecycle_manager()
+        snap = mgr.get_snapshot()
+        qwen_lifecycle = snap.state.value
+        if snap.error_message:
+            qwen_blocker = snap.error_message
+    except Exception:
+        pass
+
     matrix.append({
         "name": "Qwen Local",
         "resource_type": "LOCAL_INFERENCE_REASONING",
@@ -2725,10 +2737,10 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         "cost_class": "FREE_LOCAL",
         "general_health": "AVAILABLE" if qwen_proven else "UNPROVEN",
         "task_classes": ["structured_planning", "classification", "bounded_reasoning"],
-        "lifecycle_state": "STOPPED_READY",
+        "lifecycle_state": qwen_lifecycle,
         "quota_status": "UNLIMITED_LOCAL",
         "retry_deadline": None,
-        "current_blocker": "NONE" if qwen_proven else "MODEL_BENCHMARK_REQUIRED",
+        "current_blocker": qwen_blocker,
         "eligibility_by_task_class": {
             "structured_planning": qwen_proven,
             "repo_ui_planning": False,
