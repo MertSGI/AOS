@@ -63,6 +63,7 @@ def test_bounded_structured_completion_is_transient_and_evidence_is_redacted(tmp
     assert seen["payload"]["seed"] == 1
     assert seen["payload"]["max_tokens"] == 512
     assert seen["payload"]["stream"] is False
+    assert seen["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
     serialized = json.dumps(result.to_dict())
     assert "Classify this bounded case" not in serialized
     assert '"class": "safe"' not in serialized
@@ -118,6 +119,7 @@ def test_server_argv_is_cpu_bounded_loopback_and_exact_model(tmp_path):
     assert argv[argv.index("--host") + 1] == "127.0.0.1"
     assert argv[argv.index("--ctx-size") + 1] == "4096"
     assert argv[argv.index("--n-predict") + 1] == "512"
+    assert argv[argv.index("--n-gpu-layers") + 1] == "0"
     assert argv[argv.index("--parallel") + 1] == "1"
     with pytest.raises(ValueError, match="exact Qwen"):
         build_llama_server_argv("llama-server", str(tmp_path / "missing.gguf"))
@@ -131,3 +133,23 @@ def test_host_registers_local_qwen_ahead_of_cloud_reasoning(tmp_path):
     backend = router.get_backend("qwen3_4b_llama_cpp")
     assert isinstance(backend, LlamaCppQwenReasoningBackend)
     assert backend.cost.value == "FREE_LOCAL"
+
+
+def test_host_router_consumes_explicit_machine_local_qwen_configuration(tmp_path, monkeypatch):
+    from aos.autonomous_host import build_execution_router
+
+    executable = tmp_path / "llama-server.exe"
+    model = tmp_path / "Qwen3-4B-Q4_K_M.gguf"
+    executable.write_bytes(b"llama")
+    model.write_bytes(b"model")
+    monkeypatch.setenv("AOS_LLAMA_CPP_BASE_URL", "http://127.0.0.1:18080")
+    monkeypatch.setenv("AOS_LLAMA_CPP_EXECUTABLE", str(executable))
+    monkeypatch.setenv("AOS_QWEN_MODEL_PATH", str(model))
+
+    policy = Path(__file__).resolve().parents[3] / "descriptors" / "nemotron.planner-policy.json"
+    router = build_execution_router(policy, tmp_path / "runtime")
+    backend = router.get_backend("qwen3_4b_llama_cpp")
+
+    assert backend.base_url == "http://127.0.0.1:18080"
+    assert backend.executable_path == str(executable)
+    assert backend.model_path == str(model)

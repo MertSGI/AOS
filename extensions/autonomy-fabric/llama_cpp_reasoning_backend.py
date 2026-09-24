@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,19 +45,22 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
     def __init__(
         self,
         *,
-        base_url: str = "http://127.0.0.1:8080",
+        base_url: Optional[str] = None,
         executable_path: Optional[str] = None,
         model_path: Optional[str] = None,
         capability_status_provider: Optional[Callable[[], str]] = None,
         health_reader: Optional[Callable[[], bool]] = None,
         completion_transport: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
     ) -> None:
+        base_url = base_url or os.environ.get(
+            "AOS_LLAMA_CPP_BASE_URL", "http://127.0.0.1:8080"
+        )
         parsed = urllib.parse.urlparse(base_url)
         if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("llama.cpp backend must use a loopback HTTP endpoint")
         self.base_url = base_url.rstrip("/")
-        self.executable_path = executable_path
-        self.model_path = model_path
+        self.executable_path = executable_path or os.environ.get("AOS_LLAMA_CPP_EXECUTABLE")
+        self.model_path = model_path or os.environ.get("AOS_QWEN_MODEL_PATH")
         self._status_provider = capability_status_provider
         self._health_reader = health_reader
         self._transport = completion_transport
@@ -160,6 +164,7 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
             "seed": 1,
             "max_tokens": max_tokens,
             "stream": False,
+            "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {"type": "json_schema", "json_schema": {"name": "aos_bounded_decision", "strict": True, "schema": schema}},
         }
         try:
@@ -233,6 +238,7 @@ def build_llama_server_argv(executable: str, model_path: str, *, port: int = 808
         "--host", "127.0.0.1", "--port", str(port),
         "--ctx-size", "4096", "--n-predict", "512",
         "--threads", str(min(8, __import__("os").cpu_count() or 1)),
+        "--n-gpu-layers", "0",
         "--parallel", "1", "--batch-size", "128", "--ubatch-size", "128",
         "--no-webui", "--jinja",
     ]
