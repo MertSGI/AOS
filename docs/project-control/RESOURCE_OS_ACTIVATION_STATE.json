@@ -7,16 +7,17 @@
   "original_validated_source_sha": "a91896faa0798ab95238d138be01b3bbdba9e571",
   "original_documentation_carrier_sha": "6bdc287e7f3091111f7f7a639e51833dda3076de",
   "validated_activation_source_sha": "bc816eb37649445d8562e5ac0fbfe3ea56dfab6f",
-  "current_phase": "PHASE_C_RUNTIME_SMOKE",
+  "current_phase": "PHASE_D_RESOURCE_CAPABILITY_SMOKE",
   "completed_phases": [
     "PHASE_A_EXACT_SHA_CI_PRE_ACTIVATION_GATE",
-    "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME"
+    "PHASE_B_MATERIALIZE_CANDIDATE_RUNTIME",
+    "PHASE_C_RUNTIME_SMOKE"
   ],
   "phase_status": {
     "PHASE_A": "PASS",
     "PHASE_B": "PASS",
-    "PHASE_C": "IN_PROGRESS",
-    "PHASE_D": "PENDING",
+    "PHASE_C": "PASS",
+    "PHASE_D": "IN_PROGRESS",
     "PHASE_E": "PENDING",
     "PHASE_F": "PENDING",
     "PHASE_G": "PENDING",
@@ -58,6 +59,22 @@
     "visible_window_count": 0,
     "production": "NO_GO"
   },
+  "phase_c": {
+    "health": "HEALTHY",
+    "status": "PAUSED",
+    "supervisor_liveness": "PASS",
+    "provenance": "PROVEN",
+    "resource_ledger_replay": "PASS",
+    "quota_governor_replay": "PASS",
+    "provider_circuit_replay": "PASS",
+    "resource_orchestrator": "PASS",
+    "context_pack": "PASS",
+    "workspace_fingerprint": "PASS",
+    "recovery_loop": "PASS",
+    "relay_generation": "PASS",
+    "paid_resource_eligible": false,
+    "proof_sha256": "1b84e2421634f60f8314fa4e368ee2052753bbdf9b497b1d89a2a5f363fdc8c9"
+  },
   "protected_lineages": {
     "lari": "continue-b181ddc574c25c2aa0f2a6b9",
     "forbidden_stale_lari": "continue-009df28644d7a108fbaa6014",
@@ -74,5 +91,5 @@
     "ui_v2": "NOT_WOKEN",
     "production": "NO_GO"
   },
-  "updated_at": "2026-09-24T05:47:29Z"
+  "updated_at": "2026-09-24T05:53:05Z"
 }

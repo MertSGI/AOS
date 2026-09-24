@@ -53,3 +53,18 @@ The repository smoke contract refuses the live Runtime V1 home by design. A seco
 - Shutdown: `QUIESCED`, no in-flight worker, `PAUSED_SAFE`.
 - Orphan processes: `0`; visible windows: `0`.
 - `PRODUCTION=NO_GO` throughout.
+
+## Phase C - isolated runtime smoke
+
+- `GET /v1/health`: `HEALTHY`, paused-safe, exact source `bc816eb37649445d8562e5ac0fbfe3ea56dfab6f`, slot `candidate-runtime-v1.8-bc816eb37649`, isolated tree `0493d4250d701a61b3fa2809527ddaf85a0f74fa1a7018583833ca7cc148b770`.
+- Authenticated `GET /v1/status`: reachable with `status_state=PAUSED` and `production=NO_GO`. Detailed telemetry intentionally remains paused rather than traversing runtime history while maintenance is active; provenance is carried by the constant-time health contract.
+- Candidate supervisor liveness, runtime restart while paused, panel health, recovery-loop startup, relay generation, and authenticated quiesced shutdown: `PASS`.
+- Candidate-loaded ResourceLedger append and replay: `PASS`, hash chain intact, corruption false.
+- Candidate-loaded QuotaGovernor persistence and replay: `PASS`; exact provider-metadata deadline and exhausted state survived restart.
+- Candidate-loaded provider circuit persistence and task-class-aware replay: `PASS`, state `CLOSED` for `structured_planning`.
+- Candidate-loaded Resource Orchestrator: `PASS`; `free-local` selected and the healthy paid-cloud candidate remained ineligible with `PAID_DEFAULT_DENIED`.
+- Candidate-loaded ContextPack: `PASS`, `649` bytes and content fingerprint `c2a8507fd9d74770306744e22cf97765eb8a4dd54abd4b6f0e06572409999911`.
+- Content-sensitive workspace fingerprint: `b09bae83b24ae34dc3a8a07401a58f0d8c0445c93db7cfaebc598f75d7977b0f`, exact clean source head `bc816eb37649445d8562e5ac0fbfe3ea56dfab6f`, `408` entries.
+- Runtime proof artifact: `C:\Users\mozcelikbas\AppData\Local\AOS\runtime-v1-resource-os-activation\proofs\phase-c\phase-c-resource-smoke.json`, SHA-256 `1b84e2421634f60f8314fa4e368ee2052753bbdf9b497b1d89a2a5f363fdc8c9`.
+- The smoke relay generated two local heartbeat snapshots. Existing authenticated relay transport also refreshed controller issue `#6`; it did not create a lineage, execute project work, call a model, or change production.
+- `PAID_CALLS_MADE=0`, `PAID_API_FALLBACK=DISABLED`, `PRODUCTION=NO_GO`.
