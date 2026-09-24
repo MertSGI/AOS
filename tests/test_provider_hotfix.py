@@ -156,6 +156,14 @@ def test_healthy_alternate_wakes_same_command_lineage(tmp_path, monkeypatch):
     policy = _policy(tmp_path / "policy.json")
     engine = RuntimeEngine(_config(tmp_path, policy))
     try:
+        # This is a synchronous unit proof of one probe cycle. Stop the
+        # constructor-started workers so a warm runner cannot consume the due
+        # probe or recover the command before the controlled invocation below.
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
         command_id = "continue-b181ddc574c25c2aa0f2a6b9"
         _command(engine, command_id, policy)
         monkeypatch.setattr(runtime_server, "probe_enabled_providers", lambda _path, _providers: {

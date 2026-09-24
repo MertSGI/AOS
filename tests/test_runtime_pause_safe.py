@@ -110,6 +110,14 @@ def test_pause_preserves_existing_worker_and_blocks_restart(tmp_path, monkeypatc
 def test_pause_blocks_provider_wake_and_resume_recovers_deterministically(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        # Exercise the pause/recovery methods synchronously. The production
+        # background loop is covered separately and must not race this unit
+        # test between command creation and pause persistence.
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
         command = _command(engine, tmp_path)
         engine.store.write_state(
             command.command_id,
