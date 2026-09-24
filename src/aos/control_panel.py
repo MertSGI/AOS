@@ -2604,13 +2604,15 @@ def _provider_presence() -> Dict[str, bool]:
     return result
 
 
-def get_resource_operations_matrix() -> list[Dict[str, Any]]:
+def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) -> list[Dict[str, Any]]:
     """Build comprehensive operational telemetry for all agentic and reasoning resources.
     
     Exposes: name, resource type, executable/runtime, version, auth status, cost class,
     general health, task classes, lifecycle state, blocker/retry info, and task-class eligibility.
     """
     matrix: list[Dict[str, Any]] = []
+    runtime_v1 = runtime_v1 or {}
+    prov_details = {str(p.get("provider_id")): p for p in runtime_v1.get("provider_details", [])}
 
     # 1. Antigravity CLI
     ag_attestation_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "antigravity.json"
@@ -2737,112 +2739,38 @@ def get_resource_operations_matrix() -> list[Dict[str, Any]]:
 
     # 5. Cloud Free Providers (Nemotron, Groq, Gemini, Cloudflare, Cerebras, OpenRouter, HF, FreeLLMAPI, Jev)
     presence = provider_presence()
+
+    def _prov_row(p_id: str, display: str, model_id: str, key_env: str, b_class: str, default_health: str, default_blocker: str):
+        detail = prov_details.get(p_id, {})
+        c_state = detail.get("circuit_state", "CIRCUIT_CLOSED" if presence.get(key_env) else "NOT_CONFIGURED")
+        fail_cls = detail.get("failure_class")
+        is_conf = bool(presence.get(key_env))
+        blocker = fail_cls if fail_cls else (default_blocker if not is_conf else "NONE")
+        g_health = detail.get("probe_status", default_health if is_conf else "AUTH_REQUIRED")
+        return {
+            "name": display,
+            "resource_type": "CLOUD_REASONING_PROVIDER",
+            "executable": "HTTP_API",
+            "version": model_id,
+            "auth_status": "CONFIGURED" if is_conf else "MISSING_KEY",
+            "cost_class": b_class,
+            "general_health": g_health,
+            "task_classes": ["structured_planning"],
+            "lifecycle_state": c_state,
+            "quota_status": detail.get("failure_class", "NOMINAL"),
+            "retry_deadline": detail.get("next_probe_at"),
+            "current_blocker": blocker,
+            "eligibility_by_task_class": {"structured_planning": is_conf and c_state != "OPEN", "repo_ui_planning": False},
+        }
+
     matrix.extend([
-        {
-            "name": "Nemotron",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "nvidia/nemotron-3-ultra-550b",
-            "auth_status": "CONFIGURED" if presence.get("NVIDIA") else "MISSING_KEY",
-            "cost_class": "FREE_TIER",
-            "general_health": "AVAILABLE" if presence.get("NVIDIA") else "AUTH_REQUIRED",
-            "task_classes": ["structured_planning", "reasoning"],
-            "lifecycle_state": "CIRCUIT_CLOSED",
-            "quota_status": "NOMINAL",
-            "retry_deadline": None,
-            "current_blocker": "NONE" if presence.get("NVIDIA") else "NVIDIA_API_KEY_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": bool(presence.get("NVIDIA")), "repo_ui_planning": False},
-        },
-        {
-            "name": "Groq",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "openai/gpt-oss-120b",
-            "auth_status": "CONFIGURED" if presence.get("GROQ") else "MISSING_KEY",
-            "cost_class": "FREE_TIER",
-            "general_health": "AVAILABLE" if presence.get("GROQ") else "AUTH_REQUIRED",
-            "task_classes": ["structured_planning", "reasoning"],
-            "lifecycle_state": "CIRCUIT_CLOSED",
-            "quota_status": "NOMINAL",
-            "retry_deadline": None,
-            "current_blocker": "NONE" if presence.get("GROQ") else "GROQ_API_KEY_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": bool(presence.get("GROQ")), "repo_ui_planning": False},
-        },
-        {
-            "name": "Gemini",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "gemini-3.6-flash",
-            "auth_status": "CONFIGURED" if presence.get("GEMINI") else "MISSING_KEY",
-            "cost_class": "FREE_TIER",
-            "general_health": "AUTH_REQUIRED" if not presence.get("GEMINI") else "AVAILABLE",
-            "task_classes": ["structured_planning", "reasoning"],
-            "lifecycle_state": "NOT_CONFIGURED",
-            "quota_status": "N/A",
-            "retry_deadline": None,
-            "current_blocker": "GEMINI_API_KEY_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
-        },
-        {
-            "name": "Cloudflare",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "@cf/meta/llama-3.3-70b",
-            "auth_status": "CONFIGURED" if presence.get("CLOUDFLARE") else "MISSING_KEY",
-            "cost_class": "FREE_DAILY_QUOTA",
-            "general_health": "AUTH_REQUIRED" if not presence.get("CLOUDFLARE") else "AVAILABLE",
-            "task_classes": ["structured_planning"],
-            "lifecycle_state": "NOT_CONFIGURED",
-            "quota_status": "N/A",
-            "retry_deadline": None,
-            "current_blocker": "CLOUDFLARE_API_TOKEN_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
-        },
-        {
-            "name": "Cerebras",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "gpt-oss-120b",
-            "auth_status": "CONFIGURED" if presence.get("CEREBRAS") else "MISSING_KEY",
-            "cost_class": "FREE_TRIAL",
-            "general_health": "AUTH_REQUIRED" if not presence.get("CEREBRAS") else "AVAILABLE",
-            "task_classes": ["structured_planning"],
-            "lifecycle_state": "NOT_CONFIGURED",
-            "quota_status": "N/A",
-            "retry_deadline": None,
-            "current_blocker": "CEREBRAS_API_KEY_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
-        },
-        {
-            "name": "OpenRouter Free",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "openrouter/free",
-            "auth_status": "CONFIGURED" if presence.get("OPENROUTER") else "MISSING_KEY",
-            "cost_class": "FREE",
-            "general_health": "AUTH_REQUIRED" if not presence.get("OPENROUTER") else "AVAILABLE",
-            "task_classes": ["structured_planning"],
-            "lifecycle_state": "NOT_CONFIGURED",
-            "quota_status": "N/A",
-            "retry_deadline": None,
-            "current_blocker": "OPENROUTER_API_KEY_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
-        },
-        {
-            "name": "Hugging Face",
-            "resource_type": "CLOUD_REASONING_PROVIDER",
-            "executable": "HTTP_API",
-            "version": "openai/gpt-oss-120b:fastest",
-            "auth_status": "CONFIGURED" if presence.get("HUGGINGFACE") else "MISSING_KEY",
-            "cost_class": "FREE",
-            "general_health": "AUTH_REQUIRED" if not presence.get("HUGGINGFACE") else "AVAILABLE",
-            "task_classes": ["structured_planning"],
-            "lifecycle_state": "NOT_CONFIGURED",
-            "quota_status": "N/A",
-            "retry_deadline": None,
-            "current_blocker": "HF_TOKEN_REQUIRED",
-            "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
-        },
+        _prov_row("nemotron", "Nemotron", "nvidia/nemotron-3-ultra-550b", "NVIDIA", "FREE_TIER", "AVAILABLE", "NVIDIA_API_KEY_REQUIRED"),
+        _prov_row("groq", "Groq", "openai/gpt-oss-120b", "GROQ", "FREE_TIER", "AVAILABLE", "GROQ_API_KEY_REQUIRED"),
+        _prov_row("gemini", "Gemini", "gemini-3.6-flash", "GEMINI", "FREE_TIER", "RATE_LIMITED", "GEMINI_API_KEY_REQUIRED"),
+        _prov_row("cloudflare", "Cloudflare", "@cf/meta/llama-3.3-70b", "CLOUDFLARE", "FREE_DAILY_QUOTA", "RATE_LIMITED", "CLOUDFLARE_API_TOKEN_REQUIRED"),
+        _prov_row("cerebras", "Cerebras", "gpt-oss-120b", "CEREBRAS", "FREE_TRIAL", "CREDIT_EXHAUSTED", "CEREBRAS_API_KEY_REQUIRED"),
+        _prov_row("openrouter_free", "OpenRouter Free", "openrouter/free", "OPENROUTER", "FREE", "AVAILABLE", "OPENROUTER_API_KEY_REQUIRED"),
+        _prov_row("huggingface_router", "Hugging Face", "openai/gpt-oss-120b:fastest", "HUGGINGFACE", "FREE", "CREDIT_EXHAUSTED", "HF_TOKEN_REQUIRED"),
         {
             "name": "FreeLLMAPI",
             "resource_type": "LOCAL_META_GATEWAY",
@@ -3367,7 +3295,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "providers": providers,
             "sanitized_providers": _get_sanitized_providers(config, providers),
             "provider_details": runtime_v1.get("provider_details", []),
-            "resource_operations_matrix": get_resource_operations_matrix(),
+            "resource_operations_matrix": get_resource_operations_matrix(runtime_v1=runtime_v1),
             "projects": projects,
             "default_project_id": default_project_id,
             "default_project": default_project,
