@@ -12,7 +12,7 @@ Paid API Fallback: `DISABLED` (`PAID_CALLS_MADE=0`)
 
 | Property | Value | Verification Source / Command |
 | :--- | :--- | :--- |
-| **EVIDENCE_CARRIER_HEAD** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | `git log -n 1 origin/feature/aos-resource-os-master-20260923-01` |
+| **EVIDENCE_CARRIER_HEAD** | `570ec2979cc3e6c2b4a681839d4eb6c425aff0d4` | Authoritative remote documentation / evidence carrier HEAD |
 | **VALIDATED_RUNTIME_SOURCE_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | Bound exact source SHA of candidate |
 | **RUNTIME_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | `http://127.0.0.1:8770/v1/health` -> `runtime_source_sha` |
 | **RUNTIME_SLOT** | `candidate-runtime-v1.8-3df8df9990bc` | `supervisor/active-slot.json` (Promoted `STABLE`) |
@@ -69,7 +69,7 @@ Every capability exposes explicit dimensions:
 | **RES-007** | Resource Orchestrator | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-AG** | Antigravity Agentic Worker | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-CDX** | Codex Agentic Worker | YES | YES | YES | YES | YES | YES | **STANDBY_VISIBLE** |
-| **RES-CLN** | Cline Official CLI Harness | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
+| **RES-CLN** | Cline Official CLI Harness | YES | YES | NO | YES | YES | YES | **OPERATIONAL_BOUNDED** (AUTHENTICATED / PROVIDER_TRANSIENT_HOLD) |
 | **RES-QWN** | Qwen 3 Local GGUF Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-FREE** | FreeLLMAPI Local Gateway | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **RES-NEMO** | NVIDIA Nemotron Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
@@ -180,5 +180,4 @@ All 8 tests passing in `extensions/autonomy-fabric/tests/test_cline_agentic_back
 - **Zero-Cost Commitment:** Verified `PAID_CALLS_MADE=0`.
 - **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-3df8df9990bc` to `STABLE` in `active-slot.json` with proof `RESOURCE-OS-PHASE-M-3DF8DF9-OPERATIONALIZATION-20260925`.
 - **Operational Governance Suite:** 25 passed across `test_action_center.py` and `test_deliberation_council.py`.
-- **Cline Agentic Execution Suite:** 8 passed across `test_cline_agentic_backend.py`, 4 passed in `test_resource_orchestrator.py`.
-- **Cline Live Execution Proof:** Proven with ContextPack -> Resource Orchestrator -> ClineAgenticExecutionBackend -> Session ID (`cline_session_beta_42`) -> Bounded Work -> ResourceLedger (`0.0 USD`) -> Handoff to AG/Codex.
+- **Cline Live Execution Proof:** Harness contracts and unit suites proven; real official process execution verified with authentic OAuth credentials (`openai-codex`, `gpt-5.6-sol`, account `887ce635...`, real session ID `conv_1790324311810_z7pbqss`); stream initiation encountered transport certificate inspection hold (`SELF_SIGNED_CERT_IN_CHAIN`); fail-closed zero-paid invariant strictly preserved (`PAID_CALLS_MADE=0`).

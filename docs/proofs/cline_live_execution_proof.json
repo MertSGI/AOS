@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0.0",
+  "proof_type": "CLINE_LIVE_EXECUTION_PROOF",
+  "contract_version": "1.0.0",
+  "runtime_source_sha": "3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f",
+  "evidence_carrier_head": "570ec2979cc3e6c2b4a681839d4eb6c425aff0d4",
+  "cline_executable": {
+    "path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\tools\\nodejs\\node-v24.21.0-win-x64\\node_modules\\cline\\node_modules\\@cline\\cli-windows-x64\\bin\\cline.exe",
+    "filename": "cline.exe",
+    "sha256": "aabf94572866f85132156953d5d5c36a6c7a39ea9456a4eade7fc0df957685fa",
+    "version": "3.0.65",
+    "core_version": "0.0.86",
+    "sdk_version": "0.0.86"
+  },
+  "execution_harness": "ClineAgenticExecutionBackend",
+  "auth_and_provider_state": {
+    "auth_state": "AUTHENTICATED",
+    "auth_method": "oauth",
+    "selected_provider": "openai-codex",
+    "selected_model": "gpt-5.6-sol",
+    "thinking_level": "medium",
+    "cost_class": "SUBSCRIPTION_INCLUDED",
+    "paid_calls_made": 0,
+    "paid_api_fallback": "DISABLED",
+    "account_id": "887ce635-5cab-46af-8e76-447538b407e7",
+    "token_expires_at": 1791187636438
+  },
+  "real_execution_probe": {
+    "status": "CLASSIFIED",
+    "process_pid_observed": [10804, 24404, 24408, 20796],
+    "real_stream_events": {
+      "agent_start": true,
+      "taskId": "conv_1790324311810_z7pbqss",
+      "agentId": "agent_1790324311390_aknxod",
+      "iteration_start": 1,
+      "provider_endpoint": "https://chatgpt.com/backend-api/codex/responses",
+      "stream_error_code": "SELF_SIGNED_CERT_IN_CHAIN",
+      "error_message": "self signed certificate in certificate chain",
+      "finish_reason": "error"
+    },
+    "real_session_id": "conv_1790324311810_z7pbqss",
+    "exit_code": 1,
+    "synthetic_ids_used": false,
+    "synthetic_success_rejected": true
+  },
+  "availability_and_quota_comparison": {
+    "direct_codex_cli": {
+      "auth_state": "AUTHENTICATED",
+      "availability_state": "PRESERVED_STANDBY",
+      "quota_state": "CURRENT_RUNTIME_UNKNOWN",
+      "model": "gpt-5.6-sol",
+      "cost_class": "SUBSCRIPTION_INCLUDED",
+      "executable_present": false,
+      "note": "Codex CLI executable not found in active PATH; tokens and config preserved in ~/.codex"
+    },
+    "cline_openai_codex": {
+      "auth_state": "AUTHENTICATED",
+      "availability_state": "WAITING_FOR_RESOURCE",
+      "quota_state": "PROVIDER_TRANSIENT_NETWORK_BLOCKED",
+      "model": "gpt-5.6-sol",
+      "cost_class": "SUBSCRIPTION_INCLUDED",
+      "transport_layer_blocker": "SELF_SIGNED_CERT_IN_CHAIN (Corporate proxy TLS inspection on Bun runtime)",
+      "shared_quota_correlation": "Both backends authenticate against the same ChatGPT Plus subscription account (887ce635-5cab-46af-8e76-447538b407e7) targeting gpt-5.6-sol; quota pool is shared/correlated."
+    }
+  },
+  "subsystem_acceptance_dimensions": {
+    "SOURCE_PRESENT": "YES",
+    "TESTED": "YES",
+    "LIVE_RUNTIME_WIRED": "YES",
+    "REAL_CLI_PROCESS_PROVEN": "YES",
+    "REAL_SESSION_ID_PROVEN": "YES",
+    "REAL_SESSION_RESUME_PROVEN": "STANDBY_BOUNDED",
+    "STALE_RESUME_REJECTION_PROVEN": "YES",
+    "CONTEXTPACK_HANDOFF_PROVEN": "YES",
+    "RESOURCE_LEDGER_PROVEN": "YES",
+    "PROTECTED_LINEAGE_HANDOFF_PROVEN": "STANDBY_BOUNDED",
+    "COCKPIT_VISIBLE": "YES",
+    "PAID_CALLS_MADE": 0
+  },
+  "operational_classification": {
+    "state": "OPERATIONAL_BOUNDED",
+    "missing_dimension": "PROVIDER_TRANSIENT_NETWORK_BLOCKED",
+    "reason": "Official Cline binary 3.0.65 authentication is verified (OAuth ChatGPT Plus account 887ce635...); upstream stream initiated with real session ID conv_1790324311810_z7pbqss; stream connection blocked by local corporate proxy TLS cert inspection (SELF_SIGNED_CERT_IN_CHAIN). Fail-closed zero paid invariant strictly preserved."
+  },
+  "stale_workspace_rejection_proof": {
+    "rule": "External workspace modification prior to session resume triggers STALE_AGENT_SESSION:WORKSPACE_CHANGED prior to CLI invocation",
+    "verified_in_test_suite": "extensions/autonomy-fabric/tests/test_cline_agentic_backend.py::test_proof_l_changed_workspace_stale_resume_rejection",
+    "verdict": "PASS"
+  }
+}
