@@ -681,16 +681,18 @@ class DeliberationCouncilV1:
         current_total = self.primary_provider_call_count + self.council_provider_call_count
         anticipated_share = (self.council_provider_call_count + anticipated_council_calls) / max(1, current_total + anticipated_council_calls)
 
+        share_limit_exceeded = (self.primary_provider_call_count > 0 and anticipated_share > self.max_reasoning_share)
         budget_exceeded = (
             (self.council_provider_call_count + anticipated_council_calls > self.max_council_calls)
             or (self.council_provider_token_estimate >= self.max_council_token_estimate)
-            or (self.primary_provider_call_count > 0 and anticipated_share > self.max_reasoning_share)
+            or share_limit_exceeded
             or (self.last_deliberation_time > 0 and (now_ts - self.last_deliberation_time) < self.cooldown_seconds and self.council_provider_call_count > 0)
         )
 
         if budget_exceeded:
             self.skipped_budget_count += 1
             decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
+            status_text = "SKIPPED_DUE_TO_BUDGET_SHARE_LIMIT" if share_limit_exceeded else "SKIPPED_DUE_TO_BUDGET_LIMIT"
             budget_skip_record = {
                 "decision_id": decision_id,
                 "project_id": project_id,
@@ -699,7 +701,7 @@ class DeliberationCouncilV1:
                 "timestamp": now_ts,
                 "primary_decision_fingerprint": primary_fingerprint,
                 "primary_confidence": assessment.primary_confidence,
-                "council_trigger_reason": "SKIPPED_DUE_TO_BUDGET_LIMIT",
+                "council_trigger_reason": status_text,
                 "primary_proposal_count": primary_proposal_count,
                 "council_alternate_proposal_count": alternate_proposal_count,
                 "total_blinded_proposal_count": 0,
@@ -709,7 +711,7 @@ class DeliberationCouncilV1:
                 "distinct_reviewer_count": 0,
                 "reviewed_proposal_coverage": 0,
                 "quorum_obtained": False,
-                "council_status": "SKIPPED_DUE_TO_BUDGET_LIMIT",
+                "council_status": status_text,
                 "council_result_fingerprint": None,
                 "council_agreement": True,
                 "council_confidence": 0.0,
