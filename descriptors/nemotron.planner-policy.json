@@ -18,7 +18,6 @@
         "cerebras",
         "huggingface_router",
         "freellmapi_local",
-        "ollama",
         "openai_paid_safety"
       ]
     }
@@ -137,21 +136,7 @@
         "PUBLIC"
       ]
     },
-    "ollama": {
-      "provider_id": "ollama",
-      "display_name": "Ollama (Local)",
-      "model_id": "llama3.3:70b",
-      "credential_env_var": null,
-      "billing_class": "LOCAL",
-      "structured_output": true,
-      "cloud_local": "LOCAL",
-      "enabled": true,
-      "allowed_data_classifications": [
-        "PUBLIC",
-        "INTERNAL",
-        "CONFIDENTIAL"
-      ]
-    },
+
     "freellmapi_local": {
       "provider_id": "freellmapi_local",
       "display_name": "FreeLLMAPI (Local Meta-Provider)",

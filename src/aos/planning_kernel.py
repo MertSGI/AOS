@@ -1250,11 +1250,9 @@ def _reason(
 ) -> Dict[str, Any]:
     _hydrate_credentials()
     if backend_override is None:
-        from aos.autonomous_host import ProviderFailoverReasoningBackend
-        backend = ProviderFailoverReasoningBackend(
-            ProviderRouter(load_routing_policy(str(routing_policy_path))),
-            attempt_journal=runtime_dir / "provider-attempts.jsonl",
-        )
+        from aos.autonomous_host import build_execution_router
+        router = build_execution_router(routing_policy_path, runtime_dir)
+        backend = router
     else:
         backend = backend_override
     request_identity = hashlib.sha256(json.dumps({
@@ -1281,7 +1279,10 @@ def _reason(
             "task_class": canonical_task_class(task_class),
         },
     )
-    result = backend.execute(request)
+    if hasattr(backend, "execute_with_failover"):
+        result = backend.execute_with_failover(request)
+    else:
+        result = backend.execute(request)
     if result.status != "SUCCESS":
         failure = str(result.evidence_payload.get("failure_class", result.status))
         if result.status in ("DEGRADED", "WAITING_FOR_REASONING_PROVIDER") or "UNAVAILABLE" in failure.upper():
@@ -1300,6 +1301,8 @@ def _reason(
             )
         raise PlanningKernelError(f"Reasoning failed: {failure}")
     proposal = result.evidence_payload.get("proposal")
+    if not isinstance(proposal, dict):
+        proposal = getattr(result, "transient_structured_output", None)
     if not isinstance(proposal, dict):
         raise PlanningKernelError("Reasoning backend returned no structured proposal")
     return proposal
@@ -2012,6 +2015,7 @@ def compile_execution_plan(
         "python -m; Python may only receive an existing workspace-relative script path.\n"
         f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
+        f"DESIGN_INTELLIGENCE_POLICY={'MANDATORY_FOR_UI_LANE: UI tasks must execute or incorporate Design Intelligence pipeline (reference intelligence, design DNA, critic ensemble R13, browser QA R14, taste-memory R15, convergence R17) with explicit receipts and evidence.' if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value else 'NOT_REQUIRED'}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()

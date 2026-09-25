@@ -252,27 +252,31 @@ class BoundedSelfRepairEngine:
 
         # Safe technical defect handling: e.g. provider backoff reset, state reconciliation, telemetry repair
         if f_class in ("PROVIDER_TRANSIENT_FAILURE", "PROVIDER_ALL_UNAVAILABLE"):
-            # Autonomous remediation: clear circuit backoff for half-open probe if eligible
             val_status = "CIRCUIT_PROBE_SCHEDULED"
             smoke_status = "VERIFIED"
             stage = STAGE_ACTIVATED
+            res_status = "APPLIED"
+            post_evidence = "CIRCUIT_PROBE_SCHEDULED"
 
         elif f_class == "NO_FORWARD_PROGRESS":
-            # Autonomous remediation: touch telemetry and request fresh checkpoint
             val_status = "TELEMETRY_REFRESHED"
             smoke_status = "VERIFIED"
             stage = STAGE_ACTIVATED
+            res_status = "APPLIED"
+            post_evidence = "TELEMETRY_REFRESHED"
 
         else:
             val_status = "FOCUSED_VALIDATION_PASSED"
             smoke_status = "VERIFIED"
             stage = STAGE_ACTIVATED
+            res_status = "APPLIED"
+            post_evidence = "STATE_CONSISTENT"
 
-        # Record Successful Completion
+        # Record Completion
         res_data = {
-            "status": "APPLIED",
+            "status": res_status,
             "remediation": proposed.get("minimal_change", "Safe technical adjustment applied"),
-            "post_repair_evidence": "STATE_CONSISTENT",
+            "post_repair_evidence": post_evidence,
             "applied_at": utc_now(),
         }
 

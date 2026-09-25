@@ -167,7 +167,17 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
     backend_id = "cline"
     resource_id = "cline_harness"
     trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
-    cost = ExecutionCost.FREE_LOCAL  # Harness itself is zero cost; underlying provider is tracked
+    @property
+    def cost(self) -> ExecutionCost:
+        if self.underlying_cost_class == "SUBSCRIPTION_INCLUDED":
+            return ExecutionCost.SUBSCRIPTION_INCLUDED
+        if self.underlying_cost_class == "PAID_CLOUD":
+            return ExecutionCost.PAID_CLOUD
+        if self.underlying_cost_class == "FREE_TIER_CLOUD":
+            return ExecutionCost.FREE_TIER_CLOUD
+        if self.underlying_cost_class == "QUOTA_LIMITED":
+            return ExecutionCost.QUOTA_LIMITED
+        return ExecutionCost.FREE_LOCAL
     supported_capabilities: Set[ExecutionCapability] = {
         ExecutionCapability.FILE_READ,
         ExecutionCapability.FILE_WRITE,

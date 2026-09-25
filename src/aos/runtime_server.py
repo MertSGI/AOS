@@ -833,7 +833,31 @@ class RuntimeEngine:
                 required_task_class,
                 enabled,
             )
-            if not healthy:
+            qwen_available = False
+            try:
+                from aos.workers.llama_cpp_lifecycle import get_qwen_lifecycle_manager
+                q_snap = get_qwen_lifecycle_manager().get_snapshot()
+                if q_snap.state.value in {"STOPPED_READY", "IDLE", "AVAILABLE"}:
+                    from aos.workers.llama_cpp_probe import capability_store_path, resolve_capability_status, resolve_llama_cpp_identity, resolve_qwen_model
+                    exe_id = resolve_llama_cpp_identity("llama-server")
+                    model_id = resolve_qwen_model()
+                    if exe_id and model_id and resolve_capability_status(executable=exe_id, model=model_id, store_path=capability_store_path()) == "PROVEN":
+                        qwen_available = True
+            except Exception:
+                qwen_available = False
+
+            if not healthy and not qwen_available:
+                continue
+
+            if not healthy and qwen_available:
+                self.store.write_state(command_id, retry_after_epoch=0)
+                self.store.append_event(command_id, "provider.healthy_alternate_wake", {
+                    "lineage_preserved": True,
+                    "command_id": command_id,
+                    "healthy_providers": ["qwen3_4b_llama_cpp"],
+                    "evidence_source": "LOCAL_QWEN_LIFECYCLE_READY",
+                    "required_task_class": required_task_class,
+                })
                 continue
             # Copy the authoritative newest success into the waiting command's
             # own registry before waking it.  Otherwise the worker immediately

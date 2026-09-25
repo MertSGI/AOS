@@ -100,6 +100,10 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
                 evidence={"capability_status": "UNPROVEN"},
             )
         healthy = self._health_reader() if self._health_reader is not None else self._default_health()
+        if not healthy and self.lifecycle_manager is not None:
+            snap = self.lifecycle_manager.get_snapshot()
+            if snap.state.value in {"STOPPED_READY", "IDLE", "AVAILABLE", "STARTING", "BUSY"}:
+                healthy = True
         state = (
             ExecutionAvailabilityState.AVAILABLE
             if healthy else ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE
