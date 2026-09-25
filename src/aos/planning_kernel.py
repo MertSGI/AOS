@@ -1236,6 +1236,65 @@ def _hydrate_credentials() -> None:
         return
 
 
+def build_planning_resource_requirements(
+    task_class: str,
+    prompt: str,
+    schema: Dict[str, Any],
+    situation: Optional[ProjectSituation] = None,
+) -> Dict[str, Any]:
+    """Derive truthful planning capability envelope from task class, prompt, and schema complexity."""
+    c_task_class = canonical_task_class(task_class)
+    estimated_tokens = max(100, (len(prompt) + len(json.dumps(schema or {}))) // 4)
+
+    # Architectural / long context / high complexity markers
+    prompt_lower = prompt.lower()
+    is_high_complexity = (
+        c_task_class in (TaskClass.REPO_UI_PLANNING.value, TaskClass.LARGE_CONTEXT.value, TaskClass.AGENTIC_EXECUTION.value)
+        or "architecture" in prompt_lower
+        or "refactor" in prompt_lower
+        or "design intelligence" in prompt_lower
+        or estimated_tokens > 4000
+    )
+    is_small_reasoning = (
+        c_task_class == TaskClass.SMALL_REASONING.value
+        or (estimated_tokens <= 1500 and not is_high_complexity)
+    )
+
+    if is_small_reasoning:
+        return {
+            "task_class": c_task_class,
+            "context_tokens": estimated_tokens,
+            "minimum_quality": 1,
+            "complexity_class": "LOW",
+            "local_qwen_allowed": True,
+            "agentic_planning_allowed": True,
+            "maximum_latency_ms": 10000,
+            "scarcity_policy": "ALLOW_SCARCE",
+        }
+    elif is_high_complexity:
+        return {
+            "task_class": c_task_class,
+            "context_tokens": estimated_tokens,
+            "minimum_quality": 3,
+            "complexity_class": "HIGH",
+            "local_qwen_allowed": False,
+            "agentic_planning_allowed": True,
+            "maximum_latency_ms": 30000,
+            "scarcity_policy": "ALLOW_SCARCE",
+        }
+    else:  # GENERAL / MEDIUM
+        return {
+            "task_class": c_task_class,
+            "context_tokens": estimated_tokens,
+            "minimum_quality": 2,
+            "complexity_class": "MEDIUM",
+            "local_qwen_allowed": estimated_tokens <= 3000,
+            "agentic_planning_allowed": True,
+            "maximum_latency_ms": 15000,
+            "scarcity_policy": "ALLOW_SCARCE",
+        }
+
+
 def _reason(
     situation: ProjectSituation,
     routing_policy_path: Path,
@@ -1255,6 +1314,7 @@ def _reason(
         backend = router
     else:
         backend = backend_override
+    resource_reqs = build_planning_resource_requirements(task_class, prompt, schema, situation)
     request_identity = hashlib.sha256(json.dumps({
         "project_id": situation.project_id,
         "control_sha": situation.control_sha,
@@ -1263,6 +1323,7 @@ def _reason(
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "schema": schema,
         "task_class": canonical_task_class(task_class),
+        "resource_requirements": resource_reqs,
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     request = ExecutionRequest(
         task_id=task_id,
@@ -1277,6 +1338,7 @@ def _reason(
             "schema": schema,
             "risk_class": "R0",
             "task_class": canonical_task_class(task_class),
+            "resource_requirements": resource_reqs,
         },
     )
     if hasattr(backend, "execute_with_failover"):
@@ -1985,6 +2047,100 @@ def compile_execution_plan(
     else:
         python_workspace_rule = ""
 
+    # Pre-Implementation Design Intelligence Stage (R10-R15) for UI Planning
+    di_pre_evidence: Optional[Dict[str, Any]] = None
+    di_remediation_findings: List[str] = []
+    if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value and workspace is not None:
+        try:
+            from extensions.design_intelligence.contracts import DesignProjectBrief
+            from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
+            from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
+            from extensions.design_intelligence.critics import DesignCriticEnsemble, VisualCriticAdapter
+
+            ws_root = workspace.resolve()
+            index_html_path = ws_root / "index.html"
+            if not index_html_path.is_file():
+                di_pre_evidence = {
+                    "outcome": "DESIGN_EVIDENCE_UNAVAILABLE",
+                    "reason": f"Required UI render entrypoint not found: {index_html_path}",
+                }
+            else:
+                real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
+                index_css_path = ws_root / "index.css"
+                real_css = index_css_path.read_text(encoding="utf-8", errors="replace") if index_css_path.is_file() else ""
+
+                # Real browser capture of current workspace index.html across all 6 viewports
+                evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-pre"
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                capture_adapter = RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
+                visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"pre-{int(batch_number or 0):04d}")
+
+                brief = DesignProjectBrief(
+                    brief_id=f"brief-{situation.project_id}",
+                    project_id=situation.project_id,
+                    tenant_name=situation.project_id,
+                    industry="Software & Healthcare",
+                    target_audience="Clinical & Operations Users",
+                    core_job_to_be_done=objective.title,
+                    brand_posture="Clinical Precision",
+                )
+                from extensions.design_intelligence.visual_provider import RealVisualCriticAdapter
+
+                visual_adapter = None
+                if os.environ.get("GEMINI_API_KEY", "").strip():
+                    visual_adapter = RealVisualCriticAdapter()
+                critic_ensemble = DesignCriticEnsemble(visual_adapter=visual_adapter)
+                pipeline = AutonomousDesignLoopPipeline(critic_ensemble=critic_ensemble, max_design_review_cycles=2)
+                di_res = pipeline.run_pipeline(
+                    brief=brief,
+                    initial_html=real_html,
+                    initial_css=real_css,
+                    evidence_manifest=visual_manifest,
+                )
+
+                passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
+                failing_findings = [f"{f.critic_name}: {f.details}" for f in di_res.final_scorecard.critic_findings if f.verdict.value == "FAIL"]
+                di_remediation_findings = list(failing_findings)
+                if di_res.blockers:
+                    di_remediation_findings.extend(di_res.blockers)
+
+                outcome = "DESIGN_INTELLIGENCE_SUCCESS" if di_res.overall_verdict.value == "PASS" else "DESIGN_REMEDIATION_REQUIRED"
+                di_pre_evidence = {
+                    "schema_version": "1.0.0",
+                    "design_intelligence_execution_id": di_res.pipeline_id,
+                    "stage": "PRE_IMPLEMENTATION",
+                    "project_id": situation.project_id,
+                    "batch_number": batch_number,
+                    "outcome": outcome,
+                    "overall_verdict": di_res.overall_verdict.value,
+                    "cycles_completed": di_res.cycles_completed,
+                    "human_review_state": di_res.human_review_state.value,
+                    "executed_rules": ["R10", "R11", "R12", "R13", "R14", "R15", "R17"],
+                    "critics_passed": passed_critics,
+                    "remediation_findings": di_remediation_findings,
+                    "visual_manifest_id": visual_manifest.manifest_id,
+                    "viewports_captured": visual_manifest.viewports_captured,
+                    "file_hashes": visual_manifest.file_hashes,
+                }
+                di_artifact_path = runtime_dir / f"design-intelligence-pre-{int(batch_number or 0):04d}.json"
+                _atomic_json(di_artifact_path, di_pre_evidence)
+        except Exception as exc:
+            di_pre_evidence = {
+                "outcome": "DESIGN_RUNTIME_FAILURE",
+                "error": str(exc),
+            }
+
+    design_intelligence_guidance = ""
+    if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value:
+        design_intelligence_guidance = (
+            f"\nDESIGN_INTELLIGENCE_POLICY=MANDATORY_FOR_UI_LANE\n"
+            f"DESIGN_PRE_OUTCOME={di_pre_evidence.get('outcome') if di_pre_evidence else 'NONE'}\n"
+            f"DESIGN_REMEDIATION_FINDINGS={json.dumps(di_remediation_findings, ensure_ascii=False)}\n"
+            "UI_PLANNING_RULE: The execution plan MUST explicitly address and remediate all failing design critic findings "
+            "and visual issues identified in DESIGN_REMEDIATION_FINDINGS. Ensure visual elements, responsiveness across all 6 viewports, "
+            "and brand posture are strictly advanced."
+        )
+
     prompt = (
         "You are the AOS Planner->DAG compiler. Produce a bounded non-production execution plan for the selected objective. "
         "The plan is advisory until validated. Use only worker payload formats proven by the worker source below. "
@@ -2015,7 +2171,7 @@ def compile_execution_plan(
         "python -m; Python may only receive an existing workspace-relative script path.\n"
         f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
-        f"DESIGN_INTELLIGENCE_POLICY={'MANDATORY_FOR_UI_LANE: UI tasks must execute or incorporate Design Intelligence pipeline (reference intelligence, design DNA, critic ensemble R13, browser QA R14, taste-memory R15, convergence R17) with explicit receipts and evidence.' if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value else 'NOT_REQUIRED'}\n"
+        f"{design_intelligence_guidance}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -2332,46 +2488,11 @@ def compile_execution_plan(
         schema=PLAN_SCHEMA,
     )
 
-    # Executable Design Intelligence Stage (R10-R17) for UI-V2 protected lineage
-    if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value:
-        try:
-            from extensions.design_intelligence.contracts import DesignProjectBrief
-            from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
-            brief = DesignProjectBrief(
-                brief_id=f"brief-{situation.project_id}",
-                project_id=situation.project_id,
-                tenant_name=situation.project_id,
-                industry="Software & Healthcare",
-                target_audience="Clinical & Operations Users",
-                core_job_to_be_done=objective.title,
-                brand_posture="Clinical Precision",
-            )
-            pipeline = AutonomousDesignLoopPipeline(max_design_review_cycles=2)
-            di_res = pipeline.run_pipeline(
-                brief=brief,
-                initial_html="<html><body><main><h1>LARI Commercial Demo</h1><button class='btn btn-primary'>View Demo</button></main></body></html>",
-                initial_css="h1 { font-family: sans-serif; } .btn-primary { display: inline-block; padding: 8px 16px; }",
-            )
-            di_artifact_path = runtime_dir / f"design-intelligence-{int(batch_number or 0):04d}.json"
-            passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
-            executed_rules = ["R10", "R11", "R12", "R13", "R14", "R15", "R17"]
-            di_evidence = {
-                "schema_version": "1.0.0",
-                "design_intelligence_execution_id": di_res.pipeline_id,
-                "project_id": situation.project_id,
-                "batch_number": batch_number,
-                "overall_verdict": di_res.overall_verdict.value,
-                "cycles_completed": di_res.cycles_completed,
-                "human_review_state": di_res.human_review_state.value,
-                "executed_rules": executed_rules,
-                "critics_passed": passed_critics,
-                "recommendation_concept": di_res.recommendation.recommended_concept if di_res.recommendation else "NONE",
-            }
-            _atomic_json(di_artifact_path, di_evidence)
-            normalized["design_intelligence_execution_id"] = di_res.pipeline_id
-            normalized["design_intelligence_evidence"] = di_evidence
-        except Exception:
-            pass
+    # Attach pre-implementation Design Intelligence evidence to plan if present
+    if di_pre_evidence:
+        normalized["design_intelligence_execution_id"] = di_pre_evidence.get("design_intelligence_execution_id")
+        normalized["design_intelligence_evidence"] = di_pre_evidence
+        normalized["design_intelligence_outcome"] = di_pre_evidence.get("outcome")
 
     return normalized
 
@@ -2982,10 +3103,85 @@ def run_autonomous_project(
         for t_id in recent_receipt.get("completed_task_ids", []):
             cumulative_completed_task_ids.add(str(t_id).strip())
 
+        # Post-Implementation Visual Stage (R13-R17) for UI Planning Lineage
+        di_post_blockers: List[str] = []
+        if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value and workspace is not None:
+            try:
+                from extensions.design_intelligence.contracts import DesignProjectBrief
+                from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
+                from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
+                from extensions.design_intelligence.critics import DesignCriticEnsemble, VisualCriticAdapter
+
+                ws_root = workspace.resolve()
+                index_html_path = ws_root / "index.html"
+                if index_html_path.is_file():
+                    real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
+                    index_css_path = ws_root / "index.css"
+                    real_css = index_css_path.read_text(encoding="utf-8", errors="replace") if index_css_path.is_file() else ""
+
+                    evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-post"
+                    evidence_dir.mkdir(parents=True, exist_ok=True)
+                    capture_adapter = RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
+                    visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"post-{int(batch_number or 0):04d}")
+
+                    brief = DesignProjectBrief(
+                        brief_id=f"brief-{situation.project_id}",
+                        project_id=situation.project_id,
+                        tenant_name=situation.project_id,
+                        industry="Software & Healthcare",
+                        target_audience="Clinical & Operations Users",
+                        core_job_to_be_done=objective.title,
+                        brand_posture="Clinical Precision",
+                    )
+                    from extensions.design_intelligence.visual_provider import RealVisualCriticAdapter
+
+                    visual_adapter = None
+                    if os.environ.get("GEMINI_API_KEY", "").strip():
+                        visual_adapter = RealVisualCriticAdapter()
+                    critic_ensemble = DesignCriticEnsemble(visual_adapter=visual_adapter)
+                    pipeline = AutonomousDesignLoopPipeline(critic_ensemble=critic_ensemble, max_design_review_cycles=2)
+                    di_res = pipeline.run_pipeline(
+                        brief=brief,
+                        initial_html=real_html,
+                        initial_css=real_css,
+                        evidence_manifest=visual_manifest,
+                    )
+                    passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
+                    failing_findings = [f"{f.critic_name}: {f.details}" for f in di_res.final_scorecard.critic_findings if f.verdict.value == "FAIL"]
+                    if di_res.overall_verdict.value != "PASS":
+                        di_post_blockers = list(failing_findings)
+                    if di_res.blockers:
+                        di_post_blockers.extend(di_res.blockers)
+
+                    di_post_evidence = {
+                        "schema_version": "1.0.0",
+                        "design_intelligence_execution_id": di_res.pipeline_id,
+                        "stage": "POST_IMPLEMENTATION",
+                        "project_id": situation.project_id,
+                        "batch_number": batch_number,
+                        "overall_verdict": di_res.overall_verdict.value,
+                        "cycles_completed": di_res.cycles_completed,
+                        "human_review_state": di_res.human_review_state.value,
+                        "critics_passed": passed_critics,
+                        "failing_findings": failing_findings,
+                        "blockers": di_post_blockers,
+                        "visual_manifest_id": visual_manifest.manifest_id,
+                        "viewports_captured": visual_manifest.viewports_captured,
+                        "file_hashes": visual_manifest.file_hashes,
+                    }
+                    di_post_artifact_path = runtime_dir / f"design-intelligence-post-{int(batch_number or 0):04d}.json"
+                    _atomic_json(di_post_artifact_path, di_post_evidence)
+                    recent_receipt["design_intelligence_post_evidence"] = di_post_evidence
+            except Exception as exc:
+                di_post_blockers.append(f"DESIGN_POST_STAGE_FAILURE: {str(exc)}")
+
         consecutive_failures = int(checkpoint.get("consecutive_failures", 0))
-        if recent_receipt.get("failed_task_ids") or float(recent_receipt.get("progress", 0.0)) < 100.0:
+        if recent_receipt.get("failed_task_ids") or float(recent_receipt.get("progress", 0.0)) < 100.0 or di_post_blockers:
             failed_batch_count += 1
-            failure_class = classify_batch_failure(recent_receipt, batch_runtime)
+            if di_post_blockers and not recent_receipt.get("failed_task_ids"):
+                failure_class = "DESIGN_REMEDIATION_REQUIRED"
+            else:
+                failure_class = classify_batch_failure(recent_receipt, batch_runtime)
             if failure_class in ("AUTHORITY_FAILURE", "SECURITY_FAILURE", "SCHEMA_CONTRACT_FAILURE", "CANONICAL_DRIFT"):
                 result = _final_result(
                     situation, batch_number, completed_batches, "HUMAN_REQUIRED", failure_class,

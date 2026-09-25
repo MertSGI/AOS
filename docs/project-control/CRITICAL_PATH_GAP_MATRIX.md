@@ -25,13 +25,13 @@
 | Resource Class | CRITICAL_PATH_WIRED | PLANNER_INGRESS_WIRED | EXECUTION_ROUTER_WIRED | AUTO_LIFECYCLE_WIRED | PROTECTED_LANE_ELIGIBLE | PROTECTED_LANE_SELECTED | REAL_PROTECTED_WORK_PROVEN | Current Status & Implementation |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **1. Deterministic / Native AOS** | **YES** | **YES** | **YES** | **N/A** (In-proc) | **YES** | **YES** | **YES** | Fully operational on file, git, test, build, and process execution tasks. |
-| **2. Qwen Local (llama.cpp 3-4B)** | **YES** | **YES** | **YES** | **YES** | **YES** | **YES** (auto-selected on fallback) | **READY** | Wired directly into unified `planning_kernel._reason` via `ExecutionRouter`. Auto-starts from `STOPPED_READY` on demand and shuts down after idle timeout. |
-| **3. Direct Zero-Cost Cloud Providers** (Nemotron, Groq, etc.) | **YES** | **YES** | **YES** | **N/A** (Cloud API) | **YES** (when healthy) | **YES** (when closed) | **YES** | Fully operational with failover. When circuits are open/rate-limited, request smoothly falls over to local Qwen instead of freezing in waiting state. |
+| **2. Qwen Local (llama.cpp 3-4B)** | **YES** | **YES** | **YES** | **YES** | **BOUNDED** (Task-Aware: Low/Medium bounded only) | **YES** (auto-selected for bounded requests) | **CANDIDATE_READY** | Wired directly into unified `planning_kernel._reason` via `ExecutionRouter`. Truthful capability envelope: quality tier 1, context window 4096 tokens. Automatically disallowed on high complexity/architecture tasks, preferred on simple bounded tasks. Auto-starts from `STOPPED_READY` on demand and shuts down after idle timeout. |
+| **3. Direct Zero-Cost Cloud Providers** (Nemotron, Groq, etc.) | **YES** | **YES** | **YES** | **N/A** (Cloud API) | **YES** (when healthy) | **YES** (when closed) | **YES** | Fully operational with failover. Quality tier 2, context window 32768 tokens. Outranks local Qwen on medium tasks requiring quality >= 2. |
 | **4. FreeLLMAPI (Local Gateway)** | **PARTIAL** | **YES** (via ExecutionRouter) | **YES** | **STANDBY** (Source checkout unbuilt) | **NO** (Unbuilt binary) | **NO** | **NO** | Lifecycle manager and OpenAI provider adapter implemented; checkout requires npm build before activation. |
-| **5. Antigravity (Subscription)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness `MODEL_REASONING` mismatch) / **YES** (via `antigravity_planning_bridge`) | **YES** | **YES** | Registered and proven for complex multi-turn execution tasks; eligible for planning requests exclusively through bounded `AgenticStructuredPlanningBridge`. |
+| **5. Antigravity (Subscription)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness `MODEL_REASONING` mismatch) / **YES** (via `antigravity_planning_bridge`) | **YES** | **YES** | Registered and proven for complex multi-turn execution tasks; eligible for planning requests exclusively through bounded `AgenticStructuredPlanningBridge`. Quality tier 3, context window 128000 tokens. |
 | **6. Direct Codex CLI (Subscription)** | **STANDBY** | **STANDBY** | **YES** | **N/A** (CLI) | **NO** (Harness mismatch) / **STANDBY** (via `codex_cli_planning_bridge`) | **STANDBY** | **STANDBY** | Registered in router; shares ChatGPT Plus quota pool. Planning requests bridged via `AgenticStructuredPlanningBridge`. |
-| **7. Cline CLI (Harness + ChatGPT Plus)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness mismatch) / **YES** (via `cline_planning_bridge`) | **YES** (Agentic / Planning Bridge) | **PROVEN** | Registered in `build_execution_router`; dynamically ranked as `SUBSCRIPTION_INCLUDED`. Never falsifies raw harness capability: planner eligibility is strictly mediated via `AgenticStructuredPlanningBridge(cline)`. |
-| **8. Design Intelligence** | **YES** | **YES** (Executable Pipeline) | **YES** | **N/A** | **YES** (UI tasks) | **YES** (UI-V2 lane) | **PROVEN** | Real executable `AutonomousDesignLoopPipeline.run_pipeline()` (R10–R15, R17) executed directly in `compile_execution_plan()` for `REPO_UI_PLANNING` tasks; binds `design_intelligence_execution_id` and scorecard into plan and batch receipt. |
+| **7. Cline CLI (Harness + ChatGPT Plus)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness mismatch) / **YES** (via `cline_planning_bridge`) | **YES** (Agentic / Planning Bridge) | **CANDIDATE_PROVEN** | Registered in `build_execution_router`; dynamically ranked as `SUBSCRIPTION_INCLUDED`. Never falsifies raw harness capability: planner eligibility is strictly mediated via `AgenticStructuredPlanningBridge(cline)`. Quality tier 3, context window 128000 tokens. Outranks Qwen and cloud on high-complexity tasks. |
+| **8. Design Intelligence** | **YES** | **YES** (Closed-Loop Pre/Post Stage) | **YES** | **N/A** | **YES** (UI tasks) | **YES** (UI-V2 lane) | **CANDIDATE_PROVEN** | True closed-loop Design Intelligence: Pre-implementation stage captures real workspace `index.html` via `RealBrowserCaptureAdapter` across all 6 viewports, runs critic ensemble (R10–R15, R17), feeds explicit remediation findings into DAG compiler prompt; post-implementation stage verifies rendered DOM, triggering replan if blockers remain. |
 
 ---
 
@@ -53,10 +53,12 @@
 1. **Unify Reasoning Admission (Eliminate Split-Brain)**: [RESOLVED]
    - `planning_kernel._reason()` routes through `build_execution_router(routing_policy_path, runtime_dir)` and `ExecutionRouter.execute_with_failover()`.
    - Reasoning proposals are extracted from both `result.evidence_payload["proposal"]` and `result.transient_structured_output`.
-2. **Qwen Survival Planner Integration**: [RESOLVED]
-   - Wired `LlamaCppQwenReasoningBackend` with `lifecycle_manager=get_qwen_lifecycle_manager()`.
-   - `get_availability()` and `get_health()` return `AVAILABLE` / `HEALTHY` when capability is `PROVEN` and lifecycle snapshot is `STOPPED_READY`, `IDLE`, or `AVAILABLE`.
-   - On request dispatch, Qwen auto-starts, validates schema, produces structured decision, and safely shuts down after idle timeout.
+2. **Task-Aware Planning Resource Profiles & Capability Envelopes**: [RESOLVED]
+   - `planning_kernel.build_planning_resource_requirements()` inspects task class, token count, and complexity markers.
+   - Resource requirements specify `task_class`, `context_tokens`, `minimum_quality`, `complexity_class`, `local_qwen_allowed`, `agentic_planning_allowed`, `maximum_latency_ms`, and `scarcity_policy`.
+   - Simple bounded tasks: quality tier 1, Qwen preferred.
+   - Medium tasks: quality tier 2, cloud providers outrank Qwen.
+   - High complexity / UI planning: quality tier 3, local Qwen disallowed, agentic planning bridge preferred.
 3. **Structured Planning Bridge (Eliminating Capability Falsification)**: [RESOLVED]
    - `AgenticStructuredPlanningBridge` implemented in `extensions/autonomy-fabric/agentic_planning_bridge.py`.
    - Agentic harnesses (`antigravity`, `codex_cli`, `cline`) maintain their truthful agentic capability contracts (`FILE_READ/WRITE`, `PROCESS_EXEC`, `TEST_EXECUTION`, `LONG_HORIZON_AGENTIC_WORK`) and never falsely claim `MODEL_REASONING`.
@@ -65,10 +67,10 @@
    - In `runtime_server._wake_waiting_from_observed_provider_health()`, watchdog inspects local Qwen lifecycle and auto-wakes waiting commands (`retry_after_epoch = 0`) emitting `provider.healthy_alternate_wake`.
 5. **FreeLLMAPI Managed Daemon Service**: [BOUNDED STANDBY]
    - Pinned source checkout is preserved; OpenAI compatible adapter wired into router.
-6. **Executable UI-V2 Design Intelligence Pipeline (Not Policy Text)**: [RESOLVED]
-   - Controller review rejected static policy text injection. In `src/aos/planning_kernel.py`, `compile_execution_plan` executes `AutonomousDesignLoopPipeline(max_design_review_cycles=2).run_pipeline()`.
-   - Records durable `design-intelligence-{batch_number:04d}.json` containing R10, R11, R12, R13, R14, R15, R17 execution proof.
-   - Binds `design_intelligence_execution_id` (`loop-...`) and scorecard into `generated-run-plan.json` and propagates directly into batch receipt.
+6. **Executable UI-V2 Closed-Loop Design Intelligence**: [RESOLVED]
+   - Pre-implementation stage: binds to real workspace `index.html` (no synthetic demo markup), captures real 6-viewport screenshots via `RealBrowserCaptureAdapter`, executes critic ensemble (R10–R15, R17), and injects remediation findings directly into the DAG compiler prompt.
+   - Post-implementation visual stage: inspects newly rendered DOM/file across all 6 viewports; if material blockers remain, triggers automatic replan with failure class `DESIGN_REMEDIATION_REQUIRED`.
+   - Removed all silent `except Exception: pass` swallows in mandatory DI execution; typed outcomes emitted (`DESIGN_INTELLIGENCE_SUCCESS`, `DESIGN_EVIDENCE_UNAVAILABLE`, `DESIGN_RUNTIME_FAILURE`, `DESIGN_REMEDIATION_REQUIRED`).
 7. **Telemetry & Self-Repair Reconciliation**: [RESOLVED]
    - Self-repair actions for non-mutating technical events report truthful `post_repair_evidence` and `smoke_status`.
    - Obsolete `"ollama"` (`llama3.3:70b`) completely removed from planner policies.

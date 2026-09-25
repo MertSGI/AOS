@@ -1728,10 +1728,15 @@ def test_design_intelligence_execution_for_ui_planning_lane(tmp_path):
     runtime_dir.mkdir(parents=True)
     workspace.mkdir(parents=True)
     (workspace / "script.py").write_text("print('ok')\n", encoding="utf-8")
+    (workspace / "index.html").write_text("<!DOCTYPE html><html><body><h1>Clinical Dashboard</h1><button class='btn btn-primary'>Open</button></body></html>", encoding="utf-8")
+    (workspace / "index.css").write_text("h1 { color: #0f172a; }", encoding="utf-8")
+
+    captured_prompt = []
 
     class FakeBackend:
         def execute(self, request):
             from extensions.autonomy_fabric.execution_backend import ExecutionResult, EvidenceClass
+            captured_prompt.append(str(request.payload.get("prompt", "")))
             plan = {
                 "schema_version": "1.0.0",
                 "objective_id": "UI-1",
@@ -1794,7 +1799,89 @@ def test_design_intelligence_execution_for_ui_planning_lane(tmp_path):
     assert plan["design_intelligence_execution_id"].startswith("loop-")
     di_evidence = plan.get("design_intelligence_evidence")
     assert di_evidence is not None
-    assert set(di_evidence["executed_rules"]).issuperset({"R10", "R11", "R12", "R13", "R14", "R15", "R17"})
+    assert di_evidence["stage"] == "PRE_IMPLEMENTATION"
+    assert di_evidence["outcome"] in ("DESIGN_INTELLIGENCE_SUCCESS", "DESIGN_REMEDIATION_REQUIRED")
     assert di_evidence["batch_number"] == 1
-    assert (runtime_dir / "design-intelligence-0001.json").exists()
+    assert (runtime_dir / "design-intelligence-pre-0001.json").exists()
+
+    # Verify that Design Intelligence findings were fed into the planner prompt
+    assert len(captured_prompt) > 0
+    assert "DESIGN_INTELLIGENCE_POLICY=MANDATORY_FOR_UI_LANE" in captured_prompt[0]
+    assert "DESIGN_PRE_OUTCOME=" in captured_prompt[0]
+    assert "DESIGN_REMEDIATION_FINDINGS=" in captured_prompt[0]
+
+
+def test_design_intelligence_missing_entrypoint_reports_typed_unavailable(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    workspace = tmp_path / "workspace"
+    runtime_dir.mkdir(parents=True)
+    workspace.mkdir(parents=True)
+    (workspace / "script.py").write_text("print('ok')\n", encoding="utf-8")
+    # Deliberately omit index.html
+
+    class FakeBackend:
+        def execute(self, request):
+            from extensions.autonomy_fabric.execution_backend import ExecutionResult, EvidenceClass
+            plan = {
+                "schema_version": "1.0.0",
+                "objective_id": "UI-1",
+                "tasks": [
+                    {
+                        "node_id": "ui-task-1",
+                        "run_type": "PROCESS",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": False,
+                        "dependencies": [],
+                        "scope_tags": ["ui"],
+                        "write_scope": [],
+                        "payload": {"cmd": ["python", "script.py"]},
+                        "expected_artifacts": [],
+                        "tests": ["test ui"],
+                        "evidence_requirements": ["evidence"],
+                        "completion_criteria": ["done"],
+                    }
+                ],
+                "parallel_safe_groups": [["ui-task-1"]],
+                "rollback_strategy": "none",
+            }
+            res = ExecutionResult(
+                backend_id="fake",
+                worker_id="model_reasoner",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="SUCCESS",
+                exit_code=0,
+                workspace=request.workspace,
+                evidence_payload={"proposal": plan},
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+            setattr(res, "transient_structured_output", plan)
+            return res
+
+    obj = Objective(
+        objective_id="UI-1",
+        title="Implement UI frontend component",
+        description="Design and build UI frontend",
+        authority_id="DECISION-020",
+        risk_class="R0",
+        rationale="UI enhancement",
+        scope_tags=("ui", "frontend"),
+        completion_criteria=("Component renders cleanly",),
+        parallel_candidates=(),
+    )
+    sit = _situation()
+    policy_path = Path("descriptors/lari.planner-policy.json")
+
+    plan = compile_execution_plan(
+        sit, obj, policy_path, runtime_dir,
+        backend_override=FakeBackend(),
+        workspace=workspace,
+        batch_number=2,
+    )
+
+    di_evidence = plan.get("design_intelligence_evidence")
+    assert di_evidence is not None
+    assert di_evidence["outcome"] == "DESIGN_EVIDENCE_UNAVAILABLE"
+    assert "Required UI render entrypoint not found" in di_evidence["reason"]
 

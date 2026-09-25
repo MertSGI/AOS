@@ -41,6 +41,9 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
     trust_zone = ExecutionTrustZone.SANDBOXED_LOCAL
     cost = ExecutionCost.FREE_LOCAL
     supported_capabilities: Set[ExecutionCapability] = {ExecutionCapability.MODEL_REASONING}
+    quality_tier: int = 1
+    context_window_tokens: int = 4096
+    expected_latency_ms: int = 3000
 
     def __init__(
         self,

@@ -88,3 +88,90 @@ def test_agentic_failover_to_cline_when_codex_quota_exhausted():
     assert "AVAILABILITY_QUOTA_EXHAUSTED" in codex_rank.reasons
     assert cline_rank.eligible is True
     assert orch.select([codex, cline], req) == "cline"
+
+
+def test_task_aware_profiles_simple_bounded_qwen_can_win():
+    qwen = Backend("qwen3_4b_llama_cpp", ExecutionCost.FREE_LOCAL, context=4096, quality=1, latency=3000)
+    free_cloud = Backend("provider_failover", ExecutionCost.FREE_TIER_CLOUD, context=32768, quality=2, latency=1500)
+    bridge = Backend("codex_planning_bridge", ExecutionCost.SUBSCRIPTION_INCLUDED, context=128000, quality=3, latency=5000)
+
+    # Simple bounded: low quality, low context, local_qwen_allowed=True
+    req = request(
+        task_class="small_reasoning",
+        context_tokens=1200,
+        minimum_quality=1,
+        complexity_class="LOW",
+        local_qwen_allowed=True,
+        agentic_planning_allowed=True,
+    )
+    orch = ResourceOrchestrator()
+    ranks = orch.rank([bridge, free_cloud, qwen], req)
+    qwen_rank = next(r for r in ranks if r.backend_id == "qwen3_4b_llama_cpp")
+    assert qwen_rank.eligible is True
+    assert orch.select([bridge, free_cloud, qwen], req) == "qwen3_4b_llama_cpp"
+
+
+def test_task_aware_profiles_medium_task_stronger_free_backend_outranks_qwen():
+    qwen = Backend("qwen3_4b_llama_cpp", ExecutionCost.FREE_LOCAL, context=4096, quality=1, latency=3000)
+    free_cloud = Backend("provider_failover", ExecutionCost.FREE_TIER_CLOUD, context=32768, quality=2, latency=1500)
+    bridge = Backend("codex_planning_bridge", ExecutionCost.SUBSCRIPTION_INCLUDED, context=128000, quality=3, latency=5000)
+
+    # Medium task requires quality >= 2
+    req = request(
+        task_class="structured_planning",
+        context_tokens=2500,
+        minimum_quality=2,
+        complexity_class="MEDIUM",
+        local_qwen_allowed=True,
+        agentic_planning_allowed=True,
+    )
+    orch = ResourceOrchestrator()
+    ranks = orch.rank([bridge, free_cloud, qwen], req)
+    qwen_rank = next(r for r in ranks if r.backend_id == "qwen3_4b_llama_cpp")
+    cloud_rank = next(r for r in ranks if r.backend_id == "provider_failover")
+    assert qwen_rank.eligible is False
+    assert "QUALITY_INADEQUATE" in qwen_rank.reasons
+    assert cloud_rank.eligible is True
+    assert orch.select([bridge, free_cloud, qwen], req) == "provider_failover"
+
+
+def test_task_aware_profiles_high_complexity_qwen_ineligible_and_agentic_bridge_wins():
+    qwen = Backend("qwen3_4b_llama_cpp", ExecutionCost.FREE_LOCAL, context=4096, quality=1, latency=3000)
+    free_cloud = Backend("provider_failover", ExecutionCost.FREE_TIER_CLOUD, context=32768, quality=2, latency=1500)
+    bridge = Backend("codex_planning_bridge", ExecutionCost.SUBSCRIPTION_INCLUDED, context=128000, quality=3, latency=5000)
+
+    # High complexity: quality >= 3, local_qwen_allowed=False
+    req = request(
+        task_class="repo_ui_planning",
+        context_tokens=5000,
+        minimum_quality=3,
+        complexity_class="HIGH",
+        local_qwen_allowed=False,
+        agentic_planning_allowed=True,
+    )
+    orch = ResourceOrchestrator()
+    ranks = orch.rank([bridge, free_cloud, qwen], req)
+    qwen_rank = next(r for r in ranks if r.backend_id == "qwen3_4b_llama_cpp")
+    cloud_rank = next(r for r in ranks if r.backend_id == "provider_failover")
+    bridge_rank = next(r for r in ranks if r.backend_id == "codex_planning_bridge")
+
+    assert qwen_rank.eligible is False
+    assert "LOCAL_QWEN_DISALLOWED" in qwen_rank.reasons
+    assert "QUALITY_INADEQUATE" in qwen_rank.reasons
+    assert cloud_rank.eligible is False
+    assert "QUALITY_INADEQUATE" in cloud_rank.reasons
+    assert bridge_rank.eligible is True
+    assert orch.select([bridge, free_cloud, qwen], req) == "codex_planning_bridge"
+
+
+def test_task_aware_profiles_no_adequate_backend_returns_none():
+    qwen = Backend("qwen3_4b_llama_cpp", ExecutionCost.FREE_LOCAL, context=4096, quality=1)
+    req = request(
+        task_class="repo_ui_planning",
+        minimum_quality=3,
+        local_qwen_allowed=False,
+    )
+    orch = ResourceOrchestrator()
+    assert orch.select([qwen], req) is None
+    ranks = orch.rank([qwen], req)
+    assert not any(r.eligible for r in ranks)

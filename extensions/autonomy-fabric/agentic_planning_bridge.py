@@ -79,6 +79,9 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
     backend_class = BackendClass.REASONING_BACKEND
     trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
     supported_capabilities: Set[ExecutionCapability] = {ExecutionCapability.MODEL_REASONING}
+    quality_tier: int = 3
+    context_window_tokens: int = 128000
+    expected_latency_ms: int = 5000
 
     def __init__(self, underlying_backend: AgenticExecutionBackend, *, bridge_id: Optional[str] = None):
         self.underlying_backend = underlying_backend

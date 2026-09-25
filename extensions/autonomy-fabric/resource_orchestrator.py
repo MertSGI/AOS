@@ -36,6 +36,11 @@ class ResourceOrchestrator:
         context_tokens = int(requirements.get("context_tokens", 0) or 0)
         minimum_quality = int(requirements.get("minimum_quality", 0) or 0)
         maximum_latency = int(requirements.get("maximum_latency_ms", 0) or 0)
+        complexity_class = str(requirements.get("complexity_class", "")).upper()
+        local_qwen_allowed = requirements.get("local_qwen_allowed")
+        agentic_planning_allowed = requirements.get("agentic_planning_allowed")
+        scarcity_policy = str(requirements.get("scarcity_policy", "ALLOW_SCARCE")).upper()
+
         ranked: List[ResourceRank] = []
         for backend in backends:
             reasons: list[str] = []
@@ -59,6 +64,22 @@ class ResourceOrchestrator:
                 }:
                     eligible = False
                     reasons.append(f"AVAILABILITY_{availability.state.value}")
+                elif availability.state == ExecutionAvailabilityState.LOW_OR_SCARCE and scarcity_policy == "AVOID_SCARCE":
+                    eligible = False
+                    reasons.append("SCARCITY_POLICY_AVOIDED")
+
+            # Local Qwen envelope check
+            is_local_qwen = "qwen" in backend.backend_id.lower() or backend.cost == ExecutionCost.FREE_LOCAL
+            if is_local_qwen and local_qwen_allowed is False:
+                eligible = False
+                reasons.append("LOCAL_QWEN_DISALLOWED")
+
+            # Agentic planning bridge envelope check
+            is_agentic_bridge = "planning_bridge" in backend.backend_id.lower() or hasattr(backend, "underlying_backend")
+            if is_agentic_bridge and agentic_planning_allowed is False:
+                eligible = False
+                reasons.append("AGENTIC_PLANNING_DISALLOWED")
+
             capacity = int(getattr(backend, "context_window_tokens", 0) or 0)
             if context_tokens and capacity and context_tokens > capacity:
                 eligible = False

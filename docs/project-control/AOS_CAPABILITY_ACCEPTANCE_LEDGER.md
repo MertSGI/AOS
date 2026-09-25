@@ -28,11 +28,11 @@ Paid API Fallback: `DISABLED` (`PAID_CALLS_MADE=0`)
 | **LARI_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
 | **UI_V2_LAST_COMPLETED_BATCH** | `131` (Preserved Lineage `continue-61be4ab1af53cfa646d773ce`) | Protected lineage CAS preserved |
 | **UI_V2_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
-| **DESIGN_INTELLIGENCE_STAGE** | Executable R10–R17 Pipeline Active | Direct execution in `compile_execution_plan()` -> `design-intelligence-{batch}.json` |
-| **FREELLMAPI_ROUTE** | Bounded Route Proven (Zero-Cost Backing) | ResourceOrchestrator -> FreeLLMAPI -> ZeroCost -> ResourceLedger (`OPERATIONAL_BOUNDED`) |
-| **QWEN_LIFECYCLE** | Live Managed Lifecycle Proven | `STOPPED_READY` -> `AVAILABLE` -> `BUSY` -> `IDLE_SHUTDOWN` -> `STOPPED_READY` |
-| **AGENTIC_PLANNING_BRIDGE** | `OPERATIONAL_BOUNDED` (`LIVE_PROMOTED`) | Bounded JSON planning adapter wrapping agentic harnesses (`antigravity`, `codex_cli`, `cline`) |
-| **CLINE_DISPOSITION** | `OPERATIONAL_BOUNDED` (`LIVE_PROMOTED`) | Official npm CLI `3.0.65` attested, live proof & bidirectional handoff proven |
+| **DESIGN_INTELLIGENCE_STAGE** | Executable R10–R17 Closed-Loop (Pre-Activation Candidate) | Bound to real workspace `index.html`, real 6-viewport screenshots, pre/post feedback loops |
+| **FREELLMAPI_ROUTE** | Bounded Route Proven (Standby Unbuilt, Pre-Activation) | Adapter exists; local gateway checkout unbuilt (`STANDBY_UNBUILT`) |
+| **QWEN_LIFECYCLE** | Candidate Managed Lifecycle Proven (Pre-Activation) | `STOPPED_READY` -> `AVAILABLE` -> `BUSY` -> `IDLE_SHUTDOWN` -> `STOPPED_READY` |
+| **AGENTIC_PLANNING_BRIDGE** | `CANDIDATE_TESTED` (`PRE_ACTIVATION`) | Bounded JSON planning adapter wrapping agentic harnesses (`antigravity`, `codex_cli`, `cline`) |
+| **CLINE_DISPOSITION** | `CANDIDATE_TESTED` (`PRE_ACTIVATION`) | Official npm CLI `3.0.65` attested, live proof & bidirectional handoff proven |
 | **PAID_CALLS_MADE** | `0` | Verified ResourceLedger & QuotaGovernor invariants |
 | **PRODUCTION** | `NO_GO` | Fail-closed runtime safety gate |
 
@@ -73,10 +73,10 @@ Every capability exposes explicit dimensions:
 | **RES-007** | Resource Orchestrator | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-AG** | Antigravity Agentic Worker | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-CDX** | Codex Agentic Worker | YES | YES | YES | YES | YES | YES | **STANDBY_VISIBLE** |
-| **RES-CLN** | Cline Official CLI Harness | YES | YES | NO | YES | YES | YES | **OPERATIONAL_BOUNDED** (AUTHENTICATED / PROVIDER_TRANSIENT_HOLD) |
-| **RES-BRG** | Agentic Structured Planning Bridge | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
-| **RES-QWN** | Qwen 3 Local GGUF Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
-| **RES-FREE** | FreeLLMAPI Local Gateway | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
+| **RES-CLN** | Cline Official CLI Harness | YES | YES | NO | YES | NO | YES | **CANDIDATE_TESTED** (AUTHENTICATED / PROVIDER_TRANSIENT_HOLD) |
+| **RES-BRG** | Agentic Structured Planning Bridge | YES | YES | YES | YES | NO | YES | **CANDIDATE_TESTED** (PRE_ACTIVATION) |
+| **RES-QWN** | Qwen 3 Local GGUF Reasoning | YES | YES | YES | YES | NO | YES | **CANDIDATE_BOUNDED** (PRE_ACTIVATION) |
+| **RES-FREE** | FreeLLMAPI Local Gateway | YES | YES | YES | YES | NO | YES | **STANDBY_UNBUILT** (PRE_ACTIVATION) |
 | **RES-NEMO** | NVIDIA Nemotron Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-GROQ** | Groq Cloud Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-GEM** | Google Gemini Flash | YES | YES | YES | YES | YES | YES | **STANDBY_VISIBLE** |
@@ -91,7 +91,7 @@ Every capability exposes explicit dimensions:
 | **DES-R14** | Multi-Viewport Browser Visual QA | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **DES-R15** | Taste Memory & Feedback | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **DES-R16** | Tenant Media & Factual Engine | YES | YES | NO | YES | YES | YES | **TESTED_RUNTIME_WIRED** |
-| **DES-R17** | Autonomous Design Loop Pipeline | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
+| **DES-R17** | Autonomous Design Loop Pipeline | YES | YES | YES | YES | NO | YES | **CANDIDATE_TESTED** (PRE_ACTIVATION) |
 | **GOV-001** | Council Deliberation (Shadow) | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **GOV-002** | System Self-Diagnosis | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **GOV-003** | Autonomous Self-Repair (Shadow) | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
