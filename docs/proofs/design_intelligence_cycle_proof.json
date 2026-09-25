@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0.0",
+  "proof_type": "DESIGN_INTELLIGENCE_R10_R17_CYCLE",
+  "source_sha": "cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f",
+  "protected_lineage": "continue-61be4ab1af53cfa646d773ce",
+  "brief_id": "brief-lari-ui-v2",
+  "project_id": "lari-ui-v2",
+  "captured_viewports": [
+    375,
+    390,
+    768,
+    1024,
+    1440,
+    1920
+  ],
+  "screenshot_sha256": {
+    "375": "76e124326b7869465f1fbaecaaa78f9db038d521d48688009168a951c2e4809e",
+    "390": "8287da5140832497ccb92fec033fad768c5ea9bf2f86b0890971f779ee0a78ca",
+    "768": "2568a3dce233e33cb393281dd85d106a155d73d005e7630bc2931ad03f4fa4e6",
+    "1024": "822680a32cebc00b6e7064987166a7a9bf0d66f32339b9ade8f5abba7c4a76af",
+    "1440": "324232400d77f40a47751e3c93c547842fc6c28d22cfe1b6fc74001e901135e6",
+    "1920": "24d99b3ad60aef799a93c942ef48ab4b38bcc6c108822400decc4fc442c7ed99"
+  },
+  "cycles_completed": 1,
+  "overall_verdict": "PASS",
+  "human_review_state": "DESIGN_DISCOVERY_COMPLETE",
+  "critic_findings": [
+    {
+      "critic_name": "GroundingIntegrityCritic",
+      "dimension": "grounding_integrity",
+      "verdict": "PASS",
+      "title": "Grounding & Factual Copy Integrity"
+    },
+    {
+      "critic_name": "AntiGenericDesignCritic",
+      "dimension": "anti_generic_design",
+      "verdict": "PASS",
+      "title": "Anti-Generic Design Quality (Static Heuristic)"
+    },
+    {
+      "critic_name": "ConversionCritic",
+      "dimension": "conversion_focus",
+      "verdict": "PASS",
+      "title": "Conversion & CTA Hierarchy"
+    },
+    {
+      "critic_name": "VisualHierarchyCritic",
+      "dimension": "visual_hierarchy",
+      "verdict": "PASS",
+      "title": "Visual Hierarchy & Typography Pacing"
+    },
+    {
+      "critic_name": "EvidenceIntegrityCritic",
+      "dimension": "evidence_integrity",
+      "verdict": "PASS",
+      "title": "Evidence & Claim Integrity"
+    },
+    {
+      "critic_name": "AccessibilityHeuristicCritic",
+      "dimension": "accessibility_heuristics",
+      "verdict": "PASS",
+      "title": "Accessibility Heuristics"
+    },
+    {
+      "critic_name": "DesignCoherenceCritic",
+      "dimension": "design_coherence",
+      "verdict": "PASS",
+      "title": "Design Coherence & Consistency"
+    },
+    {
+      "critic_name": "ProductSemanticsCritic",
+      "dimension": "product_semantics",
+      "verdict": "PASS",
+      "title": "Product & Tenant Semantics Integrity"
+    }
+  ],
+  "human_acceptance_boundary": "NO_UNAUTHORIZED_PRODUCT_MUTATION_HUMAN_VISUAL_REVIEW_READY"
+}

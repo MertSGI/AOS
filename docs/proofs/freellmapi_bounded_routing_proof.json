@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "proof_type": "FREELLMAPI_BOUNDED_RESOURCE_OS_ROUTING",
+  "source_sha": "cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f",
+  "command_lineage": "continue-61be4ab1af53cfa646d773ce",
+  "route": "ResourceOrchestrator -> FreeLLMAPI -> ZeroCost Backing (groq/openai/gpt-oss-120b)",
+  "execution_status": "SUCCESS",
+  "proposal_decision": "SHADOW_ACCEPT",
+  "routed_provider_id": "groq",
+  "routed_model_id": "openai/gpt-oss-120b",
+  "fallback_attempts": 1,
+  "ledger_summary": {
+    "schema_version": "1.0.0",
+    "fail_closed": false,
+    "truncated_tail_ignored": false,
+    "event_count": 4,
+    "last_sequence": 4,
+    "head_hash": "dc23ef5cf23cd8eeeb63c4092e1c4953b39694af69ee08f3f5a6bfa7433314a6",
+    "attempts_started": 2,
+    "attempts_finished": 2,
+    "request_count": 0,
+    "input_tokens": 0,
+    "cached_input_tokens": 0,
+    "output_tokens": 0,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 0,
+    "cost_estimate_usd": 0.0,
+    "cost_actual_usd": 0.0
+  },
+  "typed_failure_handling": {
+    "failure_family": "SERVICE_UNAVAILABLE",
+    "status": "RETRYABLE_FAILED",
+    "paid_calls_made": 0
+  }
+}
