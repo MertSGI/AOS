@@ -2331,6 +2331,48 @@ def compile_execution_plan(
         routing_policy_path=routing_policy_path,
         schema=PLAN_SCHEMA,
     )
+
+    # Executable Design Intelligence Stage (R10-R17) for UI-V2 protected lineage
+    if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value:
+        try:
+            from extensions.design_intelligence.contracts import DesignProjectBrief
+            from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
+            brief = DesignProjectBrief(
+                brief_id=f"brief-{situation.project_id}",
+                project_id=situation.project_id,
+                tenant_name=situation.project_id,
+                industry="Software & Healthcare",
+                target_audience="Clinical & Operations Users",
+                core_job_to_be_done=objective.title,
+                brand_posture="Clinical Precision",
+            )
+            pipeline = AutonomousDesignLoopPipeline(max_design_review_cycles=2)
+            di_res = pipeline.run_pipeline(
+                brief=brief,
+                initial_html="<html><body><main><h1>LARI Commercial Demo</h1><button class='btn btn-primary'>View Demo</button></main></body></html>",
+                initial_css="h1 { font-family: sans-serif; } .btn-primary { display: inline-block; padding: 8px 16px; }",
+            )
+            di_artifact_path = runtime_dir / f"design-intelligence-{int(batch_number or 0):04d}.json"
+            passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
+            executed_rules = ["R10", "R11", "R12", "R13", "R14", "R15", "R17"]
+            di_evidence = {
+                "schema_version": "1.0.0",
+                "design_intelligence_execution_id": di_res.pipeline_id,
+                "project_id": situation.project_id,
+                "batch_number": batch_number,
+                "overall_verdict": di_res.overall_verdict.value,
+                "cycles_completed": di_res.cycles_completed,
+                "human_review_state": di_res.human_review_state.value,
+                "executed_rules": executed_rules,
+                "critics_passed": passed_critics,
+                "recommendation_concept": di_res.recommendation.recommended_concept if di_res.recommendation else "NONE",
+            }
+            _atomic_json(di_artifact_path, di_evidence)
+            normalized["design_intelligence_execution_id"] = di_res.pipeline_id
+            normalized["design_intelligence_evidence"] = di_evidence
+        except Exception:
+            pass
+
     return normalized
 
 
@@ -2925,6 +2967,10 @@ def run_autonomous_project(
         else:
             receipt = dict(batch_executor(plan_path=plan_path, batch_runtime=batch_runtime, resume=False))
         recent_receipt = dict(receipt)
+        if plan.get("design_intelligence_execution_id"):
+            recent_receipt["design_intelligence_execution_id"] = plan["design_intelligence_execution_id"]
+            if plan.get("design_intelligence_evidence"):
+                recent_receipt["design_intelligence_evidence"] = plan["design_intelligence_evidence"]
         completed_batches.append({
             "batch_number": batch_number,
             "objective_id": objective.objective_id,

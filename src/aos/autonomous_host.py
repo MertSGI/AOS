@@ -99,6 +99,9 @@ from extensions.autonomy_fabric.cline_agentic_backend import ClineAgenticExecuti
 from extensions.autonomy_fabric.llama_cpp_reasoning_backend import (  # noqa: E402
     LlamaCppQwenReasoningBackend,
 )
+from extensions.autonomy_fabric.agentic_planning_bridge import (  # noqa: E402
+    AgenticStructuredPlanningBridge,
+)
 from aos.workers.llama_cpp_lifecycle import get_qwen_lifecycle_manager  # noqa: E402
 from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     BrowserExecutionBackend,
@@ -888,6 +891,10 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
     )
     # Antigravity is registered as an availability-gated agentic resource. It
     # cannot be selected without a matching task capability and local proof.
+    ag_backend = AntigravityAgenticExecutionBackend()
+    codex_backend = CodexCliExecutionBackend()
+    cline_backend = ClineAgenticExecutionBackend(underlying_cost_class="SUBSCRIPTION_INCLUDED")
+
     return ExecutionRouter(
         backends=[
             NativeFileWorker(),
@@ -897,9 +904,12 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
             BrowserExecutionBackend(),
             LlamaCppQwenReasoningBackend(lifecycle_manager=get_qwen_lifecycle_manager()),
             reasoning_backend,
-            AntigravityAgenticExecutionBackend(),
-            CodexCliExecutionBackend(),
-            ClineAgenticExecutionBackend(underlying_cost_class="SUBSCRIPTION_INCLUDED"),
+            ag_backend,
+            codex_backend,
+            cline_backend,
+            AgenticStructuredPlanningBridge(ag_backend),
+            AgenticStructuredPlanningBridge(codex_backend),
+            AgenticStructuredPlanningBridge(cline_backend),
         ],
         ag_required=False,
     )
