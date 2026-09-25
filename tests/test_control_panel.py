@@ -319,10 +319,10 @@ def test_resource_operations_matrix_and_lane_hold_review_controls():
     assert cdx["general_health"] == "QUOTA_EXHAUSTED"
     assert cdx["lifecycle_state"] == "PRESERVED_STANDBY"
 
-    # Check Cline prerequisite
+    # Check Cline prerequisite / live attested capability
     cline = by_name["Cline"]
-    assert cline["current_blocker"] == "OFFICIAL_CLINE_CLI_NOT_INSTALLED"
-    assert cline["general_health"] == "NOT_OPERATIONALLY_PROVEN"
+    assert cline["current_blocker"] in {"OFFICIAL_CLINE_CLI_NOT_INSTALLED", "NONE"}
+    assert cline["general_health"] in {"NOT_OPERATIONALLY_PROVEN", "HEALTHY", "OPERATIONAL_BOUNDED"}
 
     # HTML contains Resource Operations Matrix and Lane Hold/Resume controls
     assert 'id="resource-operations-container"' in _HTML

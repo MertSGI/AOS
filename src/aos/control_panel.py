@@ -3188,25 +3188,41 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     })
 
     # 3. Cline CLI
+    cline_attestation_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "cline-cli.json"
+    cline_attested = False
+    cline_ver = "unknown"
+    cline_exe = "cline.cmd"
+    cline_status = "NOT_OPERATIONALLY_PROVEN"
+    if cline_attestation_file.is_file():
+        try:
+            cln_data = json.loads(cline_attestation_file.read_text("utf-8"))
+            cline_status = cln_data.get("capability_status", "NOT_OPERATIONALLY_PROVEN")
+            cline_attested = cline_status in {"OPERATIONAL", "OPERATIONAL_BOUNDED"}
+            exec_id = cln_data.get("executable_identity") or {}
+            cline_ver = exec_id.get("version", "3.0.65")
+            cline_exe = exec_id.get("filename", "cline.cmd")
+        except Exception:
+            pass
+
     matrix.append({
         "name": "Cline",
         "resource_type": "AGENTIC_CLI_HARNESS",
         "operational_tier": "CORE",
-        "usefulness_classification": "STANDBY_VISIBLE",
-        "executable": "NONE (node located: playwright v24.21.0)",
-        "version": "PACKAGE_NOT_INSTALLED",
-        "auth_status": "NOT_CONFIGURED",
+        "usefulness_classification": "ACTIVE_VISIBLE" if cline_attested else "STANDBY_VISIBLE",
+        "executable": cline_exe,
+        "version": cline_ver,
+        "auth_status": "PROVIDER_BOUNDED",
         "cost_class": "FREE_HARNESS",
-        "general_health": "NOT_OPERATIONALLY_PROVEN",
-        "task_classes": ["agentic_coding", "file_edit"],
-        "lifecycle_state": "EVALUATION_PREREQUISITE_BOUNDED",
-        "quota_status": "N/A",
+        "general_health": "HEALTHY" if cline_attested else cline_status,
+        "task_classes": ["agentic_coding", "file_edit", "bounded_execution"],
+        "lifecycle_state": cline_status,
+        "quota_status": "PROVIDER_DEPENDENT",
         "retry_deadline": None,
-        "current_blocker": "OFFICIAL_CLINE_CLI_NOT_INSTALLED",
+        "current_blocker": "NONE" if cline_attested else "OFFICIAL_CLINE_CLI_NOT_INSTALLED",
         "eligibility_by_task_class": {
             "structured_planning": False,
             "repo_ui_planning": False,
-            "agentic_coding": False,
+            "agentic_coding": cline_attested,
             "verification": False,
         },
     })

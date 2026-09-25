@@ -52,3 +52,39 @@ def test_ranking_is_deterministic_by_backend_id_on_tie():
     a = Backend("a", ExecutionCost.FREE_LOCAL)
     b = Backend("b", ExecutionCost.FREE_LOCAL)
     assert ResourceOrchestrator().select([b, a], request()) == "a"
+
+
+def test_agentic_failover_to_cline_when_codex_quota_exhausted():
+    from extensions.autonomy_fabric.codex_cli_backend import CodexCliExecutionBackend
+    from extensions.autonomy_fabric.cline_agentic_backend import ClineAgenticExecutionBackend
+
+    codex = CodexCliExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "PROVEN",
+        quota_snapshot_provider=lambda: {"state": "QUOTA_EXHAUSTED"},
+        executable_identity={"path": "c", "filename": "c", "sha256": "0" * 64, "version": "1"},
+    )
+    cline = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "OPERATIONAL_BOUNDED",
+        executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        underlying_provider="openai-compatible",
+        underlying_model="qwen-local",
+        underlying_cost_class="FREE_LOCAL",
+    )
+    req = ExecutionRequest(
+        task_id="t1",
+        project_id="p1",
+        workspace=".",
+        operation_class="AGENTIC",
+        required_capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK],
+        authority_id="a1",
+    )
+    orch = ResourceOrchestrator()
+    ranks = orch.rank([codex, cline], req)
+    codex_rank = next(r for r in ranks if r.backend_id == "codex_cli")
+    cline_rank = next(r for r in ranks if r.backend_id == "cline")
+    assert codex_rank.eligible is False
+    assert "AVAILABILITY_QUOTA_EXHAUSTED" in codex_rank.reasons
+    assert cline_rank.eligible is True
+    assert orch.select([codex, cline], req) == "cline"

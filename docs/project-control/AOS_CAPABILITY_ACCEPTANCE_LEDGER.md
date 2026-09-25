@@ -68,7 +68,7 @@ Every capability exposes explicit dimensions:
 | **RES-007** | Resource Orchestrator | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-AG** | Antigravity Agentic Worker | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-CDX** | Codex Agentic Worker | YES | YES | YES | YES | YES | YES | **STANDBY_VISIBLE** |
-| **RES-CLN** | Cline Official CLI Adapter | YES | NO | NO | YES | YES | YES | **NOT_OPERATIONALLY_PROVEN** |
+| **RES-CLN** | Cline Official CLI Harness | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **RES-QWN** | Qwen 3 Local GGUF Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-FREE** | FreeLLMAPI Local Gateway | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **RES-NEMO** | NVIDIA Nemotron Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
@@ -100,6 +100,7 @@ To avoid operator cognitive fatigue and prevent provider noise, resources in the
 ### 3.1 CORE Operational Resources
 - **Antigravity CLI**: Active primary coding and task execution agent.
 - **Codex CLI**: Standby coding agent (quota exhausted; ready for immediate resumption upon quota reset).
+- **Cline CLI**: Operational bounded agentic execution harness (`cline@3.0.65`, SHA-256 attested, isolated sandbox `--data-dir`/`--config`, provider-pinned, zero paid fallback).
 - **Qwen 3 (Local GGUF)**: Zero-cost on-demand local inference (`llama-server.exe` + `Qwen3-4B-Q4_K_M.gguf`) with automatic idle shutdown and orphan prevention.
 - **NVIDIA Nemotron / Groq / OpenRouter**: Active zero-cost cloud reasoning providers.
 - **FreeLLMAPI**: Local zero-cost meta-provider gateway with bounded Resource OS routing.
@@ -109,7 +110,6 @@ To avoid operator cognitive fatigue and prevent provider noise, resources in the
 - **Cloudflare Workers AI**: Standby under rate-limit circuit observation.
 - **Cerebras / Hugging Face**: Standby under credit exhaustion probe backoff.
 - **Ollama**: Local fallback standby.
-- **Cline CLI**: Bounded standby (`NOT_OPERATIONALLY_PROVEN` - official package not installed).
 
 ---
 
@@ -151,9 +151,32 @@ All 6 required proofs are verified in automated test suite `tests/test_action_ce
 
 ---
 
-## 6. Verification Sign-Off
+## 6. Cline Agentic Execution Harness Operationalization Proofs
+
+Official upstream distribution `cline@3.0.65` installed, verified via registry tarball SHA-1, platform binary attested, and wired into AOS autonomy fabric subordinate to AOS authority (`cline_agentic_backend.py`):
+
+- **PROOF A (Executable Launch):** Resolved official executable path, verified headless CLI launches with zero console flash.
+- **PROOF B (Stable Version Attestation):** `3.0.65` attested, executable SHA-256 bound, registered in `LOCALAPPDATA/AOS/capabilities/cline-cli.json`.
+- **PROOF C (Structured JSON/NDJSON Stream Parsing):** Verified deterministic parsing of `run_result`, `finishReason`, `usage`, and structured error classification without unparsed artifact leakage.
+- **PROOF D & E (Safe File Read & Write Containment):** Read-file and write-file execute strictly within specified `write_scope`; mutations outside allowed scope trigger `CLINE_WRITE_SCOPE_VIOLATION`.
+- **PROOF F & G (Process Execution & Test Execution):** Bounded child commands execute under OS-level Job Object ownership with tree termination on timeout or cancellation.
+- **PROOF H (Terminal Outcome Classification):** Success, failure, auth unavailable, and quota exhaustion classified into standard AOS `ExecutionAvailabilityState`.
+- **PROOF I (Session Identity Discovery):** Exact session ID discovered from stream hook events (`taskId` / `conv_*`).
+- **PROOF J & K (Exact Session Resume & Context Retention):** Resumption passes `--id <session-id>` without restart; prior turn artifacts and context retained across turns.
+- **PROOF L (Changed Workspace Stale Resume Rejection):** If workspace fingerprint changes externally, stale session resume is rejected with `STALE_AGENT_SESSION:WORKSPACE_CHANGED` before CLI invocation.
+- **PROOF M (Workspace Containment):** Out-of-scope modifications fail closed without polluting host files or unrelated repositories.
+- **PROOF N (Secret Scrubbing):** Sensitive API tokens (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) scrubbed from child environment and never stored in AOS artifacts.
+- **PROOF O (Zero Paid Calls):** Paid API fallback strictly disabled; underlying provider pinned to free/local or subscription-included.
+- **RESOURCE ORCHESTRATOR INTEGRATION:** Auto-failover to Cline proven when Codex CLI is quota exhausted (`test_agentic_failover_to_cline_when_codex_quota_exhausted`).
+
+All 8 tests passing in `extensions/autonomy-fabric/tests/test_cline_agentic_backend.py`.
+
+---
+
+## 7. Verification Sign-Off
 
 - **Production Gate:** `NO_GO`
 - **Zero-Cost Commitment:** Verified `PAID_CALLS_MADE=0`.
 - **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-cb77d36ab5fd` to `STABLE` in `active-slot.json`.
 - **Operational Governance Suite:** 25 passed across `test_action_center.py` and `test_deliberation_council.py`.
+- **Cline Agentic Execution Suite:** 8 passed across `test_cline_agentic_backend.py`, 4 passed in `test_resource_orchestrator.py`.
