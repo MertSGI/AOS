@@ -118,14 +118,28 @@ Respond with EXACT JSON format matching this schema:
                 response_mime_type="application/json",
             )
 
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=config,
-            )
+            response = None
+            models_to_try = [self.model_name]
+            if "3.6" not in self.model_name:
+                models_to_try.append("gemini-3.6-flash")
+
+            last_gen_err = None
+            for m_candidate in models_to_try:
+                try:
+                    response = client.models.generate_content(
+                        model=m_candidate,
+                        contents=contents,
+                        config=config,
+                    )
+                    if response and getattr(response, "text", None):
+                        break
+                except Exception as gen_err:
+                    last_gen_err = gen_err
 
             # Check for blocked/refused/empty response
             if not response or not getattr(response, "text", None):
+                if last_gen_err:
+                    raise last_gen_err
                 raise ValueError("Provider response was empty or blocked/refused")
 
             output_text = response.text.strip()

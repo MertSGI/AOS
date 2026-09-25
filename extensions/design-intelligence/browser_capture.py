@@ -77,11 +77,17 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                     for vp in REQUIRED_VIEWPORTS:
                         await page.set_viewport_size({"width": vp, "height": 900})
 
+                        target_dest = None
                         if url.startswith("data:text/html") or url.startswith("http") or url.startswith("file:"):
-                            await page.goto(url, wait_until="networkidle", timeout=10000)
+                            target_dest = url
                         elif os.path.exists(url):
-                            file_url = Path(url).absolute().as_uri()
-                            await page.goto(file_url, wait_until="networkidle", timeout=10000)
+                            target_dest = Path(url).absolute().as_uri()
+
+                        if target_dest:
+                            try:
+                                await page.goto(target_dest, wait_until="networkidle", timeout=10000)
+                            except Exception:
+                                await page.goto(target_dest, wait_until="load", timeout=10000)
                         else:
                             await page.set_content(url)
 
