@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 
 from extensions.autonomy_fabric.execution_backend import (
-    ExecutionAvailabilityState, ExecutionBackend, ExecutionCost, ExecutionHealth,
+    BackendClass, ExecutionAvailabilityState, ExecutionBackend, ExecutionCost, ExecutionHealth,
     ExecutionRequest,
 )
 
@@ -69,7 +69,10 @@ class ResourceOrchestrator:
                     reasons.append("SCARCITY_POLICY_AVOIDED")
 
             # Local Qwen envelope check
-            is_local_qwen = "qwen" in backend.backend_id.lower() or backend.cost == ExecutionCost.FREE_LOCAL
+            is_local_qwen = "qwen" in backend.backend_id.lower() or (
+                backend.cost == ExecutionCost.FREE_LOCAL
+                and getattr(backend, "backend_class", None) == BackendClass.REASONING_BACKEND
+            )
             if is_local_qwen and local_qwen_allowed is False:
                 eligible = False
                 reasons.append("LOCAL_QWEN_DISALLOWED")

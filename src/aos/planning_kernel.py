@@ -1306,6 +1306,7 @@ def _reason(
     *,
     backend_override: Optional[Any] = None,
     task_class: str = TaskClass.STRUCTURED_PLANNING.value,
+    workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     _hydrate_credentials()
     if backend_override is None:
@@ -1325,7 +1326,12 @@ def _reason(
         "task_class": canonical_task_class(task_class),
         "resource_requirements": resource_reqs,
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-    planning_workspace = str(situation.repository) if situation and situation.repository and Path(situation.repository).is_dir() else str(runtime_dir)
+    if workspace is not None and Path(workspace).is_dir():
+        planning_workspace = str(Path(workspace).resolve())
+    elif situation and situation.repository and Path(situation.repository).is_dir():
+        planning_workspace = str(Path(situation.repository).resolve())
+    else:
+        planning_workspace = str(runtime_dir)
     request = ExecutionRequest(
         task_id=task_id,
         project_id=situation.project_id,
@@ -1587,6 +1593,7 @@ def select_objective(
     *,
     backend_override: Optional[Any] = None,
     replan_reason: Optional[str] = None,
+    workspace: Optional[Path] = None,
 ) -> Objective:
     if situation.ambiguity_reasons:
         raise HumanRequired("CANONICAL_CONTRADICTION", {"ambiguity_reasons": list(situation.ambiguity_reasons)})
@@ -1607,7 +1614,7 @@ def select_objective(
     )
     proposal = _reason(
         situation, routing_policy_path, runtime_dir, "objective-selection", prompt, OBJECTIVE_SCHEMA,
-        authority_hint, backend_override=backend_override,
+        authority_hint, backend_override=backend_override, workspace=workspace,
     )
     _shadow_deliberate(
         runtime_dir,
@@ -2258,6 +2265,7 @@ def compile_execution_plan(
             objective.authority_id,
             backend_override=backend_override,
             task_class=_objective_task_class(objective),
+            workspace=workspace,
         )
         try:
             repair_pruned: Dict[str, str] = {}
@@ -2559,6 +2567,7 @@ def detect_completion(
     recent_receipt: Mapping[str, Any],
     *,
     backend_override: Optional[Any] = None,
+    workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     if recent_receipt.get("failed_task_ids"):
         return {"disposition": "REPLAN", "rationale": "Recent batch has failed tasks", "satisfied_criteria": [], "unsatisfied_criteria": list(situation.completion_criteria)}
@@ -2573,7 +2582,7 @@ def detect_completion(
     authority_hint = next(iter(sorted(situation.authority_records)), "NONE")
     proposal = _reason(
         situation, routing_policy_path, runtime_dir, "completion-detection", prompt, COMPLETION_SCHEMA,
-        authority_hint, backend_override=backend_override,
+        authority_hint, backend_override=backend_override, workspace=workspace,
     )
     disposition = proposal.get("disposition")
     if disposition not in ("PROJECT_COMPLETE", "REPLAN", "HUMAN_REQUIRED"):
@@ -2935,6 +2944,7 @@ def run_autonomous_project(
                     completion = detect_completion(
                         situation, routing_policy_path, runtime_dir, recent_receipt,
                         backend_override=backend_override,
+                        workspace=workspace,
                     )
                 except WaitingForReasoningProvider as exc:
                     result = _final_result(
@@ -2986,6 +2996,7 @@ def run_autonomous_project(
                 objective = select_objective(
                     situation, routing_policy_path, runtime_dir,
                     backend_override=backend_override, replan_reason=replan_reason,
+                    workspace=workspace,
                 )
             _atomic_json(runtime_dir / f"objective-{batch_number:04d}.json", dataclasses.asdict(objective))
 

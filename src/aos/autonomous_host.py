@@ -238,8 +238,8 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
     trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
     supported_capabilities = {ExecutionCapability.MODEL_REASONING}
     cost = ExecutionCost.FREE_TIER_CLOUD
-    quality_tier: int = 2
-    context_window_tokens: int = 32768
+    quality_tier: int = 3
+    context_window_tokens: int = 128000
     expected_latency_ms: int = 1500
 
     def __init__(

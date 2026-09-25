@@ -82,7 +82,7 @@ def resolve_cline_executable_identity(
             return None
         return {
             "path": str(Path(path).resolve()),
-            "filename": Path(path).name,
+            "filename": Path(path).name.lower(),
             "sha256": compute_file_sha256(path),
             "version": version,
         }
