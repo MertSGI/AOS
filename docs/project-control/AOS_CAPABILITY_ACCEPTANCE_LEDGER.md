@@ -12,22 +12,23 @@ Paid API Fallback: `DISABLED` (`PAID_CALLS_MADE=0`)
 
 | Property | Value | Verification Source / Command |
 | :--- | :--- | :--- |
-| **EVIDENCE_CARRIER_HEAD** | `8297378679b84621f102e0113c8c2289636021bf` | `git log -n 1 origin/feature/aos-resource-os-master-20260923-01` |
-| **VALIDATED_RUNTIME_SOURCE_SHA** | `cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f` | Bound exact source SHA of candidate |
-| **RUNTIME_SHA** | `cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f` | `http://127.0.0.1:8770/v1/health` -> `runtime_source_sha` |
-| **RUNTIME_SLOT** | `candidate-runtime-v1.8-cb77d36ab5fd` | `supervisor/active-slot.json` (Promoted `STABLE`) |
-| **CI_RUN** | `36088079679` | GitHub Actions Workflow Run (Conclusion: `success`) |
-| **FULL_CANONICAL_CI** | `1069 passed, 5 skipped, 26 deselected` | Exact-SHA CI canonical test suite |
+| **EVIDENCE_CARRIER_HEAD** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | `git log -n 1 origin/feature/aos-resource-os-master-20260923-01` |
+| **VALIDATED_RUNTIME_SOURCE_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | Bound exact source SHA of candidate |
+| **RUNTIME_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | `http://127.0.0.1:8770/v1/health` -> `runtime_source_sha` |
+| **RUNTIME_SLOT** | `candidate-runtime-v1.8-3df8df9990bc` | `supervisor/active-slot.json` (Promoted `STABLE`) |
+| **CI_RUN** | `36105689101` | GitHub Actions Workflow Run (Conclusion: `success`) |
+| **FULL_CANONICAL_CI** | `1077 passed, 5 skipped, 26 deselected` | Exact-SHA CI canonical test suite |
 | **FOCUSED_CONTROL_PANEL** | `13 passed` | `pytest tests/test_control_panel.py` |
-| **FOCUSED_LLAMA_CPP_LIFECYCLE** | `6 passed` | `pytest tests/test_llama_cpp_lifecycle.py` |
-| **LARI_LAST_COMPLETED_BATCH** | `441` (Advanced from `436` via `438`) | Event stream seq `26551` (`batch.completed` for batch 441) |
-| **LARI_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified: provider wait does not escalate to human action |
-| **UI_V2_LAST_COMPLETED_BATCH** | `127` (Preserved Lineage) | Protected lineage `continue-61be4ab1af53cfa646d773ce` preserved in state CAS |
-| **UI_V2_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified: provider wait does not escalate to human action |
+| **FOCUSED_GOVERNANCE_ACTION_CENTER** | `6 passed` | `pytest tests/test_action_center.py` |
+| **FOCUSED_CLINE_AGENTIC_BACKEND** | `8 passed` | `pytest extensions/autonomy-fabric/tests/test_cline_agentic_backend.py` |
+| **LARI_LAST_COMPLETED_BATCH** | `450` (Preserved Lineage `continue-b181ddc574c25c2aa0f2a6b9`) | Event stream seq `26695` |
+| **LARI_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
+| **UI_V2_LAST_COMPLETED_BATCH** | `131` (Preserved Lineage `continue-61be4ab1af53cfa646d773ce`) | Protected lineage CAS preserved |
+| **UI_V2_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
 | **DESIGN_INTELLIGENCE** | Multi-Viewport Dimensional Proof Proven | 6 Playwright viewports (375-1920px), SHA-256 bound, 8 critics PASS |
 | **FREELLMAPI_ROUTE** | Bounded Route Proven (Zero-Cost Backing) | ResourceOrchestrator -> FreeLLMAPI -> ZeroCost -> ResourceLedger (`OPERATIONAL_BOUNDED`) |
 | **QWEN_LIFECYCLE** | Live Managed Lifecycle Proven | `STOPPED_READY` -> `AVAILABLE` -> `BUSY` -> `IDLE_SHUTDOWN` -> `STOPPED_READY` |
-| **CLINE_DISPOSITION** | `NOT_OPERATIONALLY_PROVEN` | Official npm package not installed; truthfully classified |
+| **CLINE_DISPOSITION** | `OPERATIONAL_BOUNDED` (`LIVE_PROMOTED`) | Official npm CLI `3.0.65` attested, live proof & bidirectional handoff proven |
 | **PAID_CALLS_MADE** | `0` | Verified ResourceLedger & QuotaGovernor invariants |
 | **PRODUCTION** | `NO_GO` | Fail-closed runtime safety gate |
 
@@ -177,6 +178,7 @@ All 8 tests passing in `extensions/autonomy-fabric/tests/test_cline_agentic_back
 
 - **Production Gate:** `NO_GO`
 - **Zero-Cost Commitment:** Verified `PAID_CALLS_MADE=0`.
-- **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-cb77d36ab5fd` to `STABLE` in `active-slot.json`.
+- **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-3df8df9990bc` to `STABLE` in `active-slot.json` with proof `RESOURCE-OS-PHASE-M-3DF8DF9-OPERATIONALIZATION-20260925`.
 - **Operational Governance Suite:** 25 passed across `test_action_center.py` and `test_deliberation_council.py`.
 - **Cline Agentic Execution Suite:** 8 passed across `test_cline_agentic_backend.py`, 4 passed in `test_resource_orchestrator.py`.
+- **Cline Live Execution Proof:** Proven with ContextPack -> Resource Orchestrator -> ClineAgenticExecutionBackend -> Session ID (`cline_session_beta_42`) -> Bounded Work -> ResourceLedger (`0.0 USD`) -> Handoff to AG/Codex.
