@@ -91,6 +91,15 @@ def test_pause_blocks_new_goal_direct_spawn_and_recovery(tmp_path, monkeypatch):
 def test_pause_preserves_existing_worker_and_blocks_restart(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        # Exercise pause_safe and restart_worker synchronously. Stop and join
+        # autonomous background threads before seeding synthetic worker state
+        # so background recovery does not race the test fixture setup.
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
+
         command = _command(engine, tmp_path)
         engine.store.write_state(command.command_id, state="RUNNING", worker_pid=424242)
         killed = []
