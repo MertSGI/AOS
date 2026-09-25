@@ -1,78 +1,88 @@
 {
   "schema_version": "1.0.0",
-  "proof_type": "DESIGN_INTELLIGENCE_R10_R17_CYCLE",
+  "proof_type": "DESIGN_INTELLIGENCE_R10_R17_DIMENSIONAL_PROOF",
   "source_sha": "cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f",
+  "evidence_carrier_head": "8297378679b84621f102e0113c8c2289636021bf",
   "protected_lineage": "continue-61be4ab1af53cfa646d773ce",
   "brief_id": "brief-lari-ui-v2",
   "project_id": "lari-ui-v2",
-  "captured_viewports": [
-    375,
-    390,
-    768,
-    1024,
-    1440,
-    1920
-  ],
-  "screenshot_sha256": {
-    "375": "76e124326b7869465f1fbaecaaa78f9db038d521d48688009168a951c2e4809e",
-    "390": "8287da5140832497ccb92fec033fad768c5ea9bf2f86b0890971f779ee0a78ca",
-    "768": "2568a3dce233e33cb393281dd85d106a155d73d005e7630bc2931ad03f4fa4e6",
-    "1024": "822680a32cebc00b6e7064987166a7a9bf0d66f32339b9ade8f5abba7c4a76af",
-    "1440": "324232400d77f40a47751e3c93c547842fc6c28d22cfe1b6fc74001e901135e6",
-    "1920": "24d99b3ad60aef799a93c942ef48ab4b38bcc6c108822400decc4fc442c7ed99"
-  },
-  "cycles_completed": 1,
-  "overall_verdict": "PASS",
-  "human_review_state": "DESIGN_DISCOVERY_COMPLETE",
-  "critic_findings": [
-    {
-      "critic_name": "GroundingIntegrityCritic",
-      "dimension": "grounding_integrity",
-      "verdict": "PASS",
-      "title": "Grounding & Factual Copy Integrity"
+  "dimensional_evidence": {
+    "R10_VERSIONED_CONTRACTS": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "artifact": "DesignProjectBrief, GroundedFactLedger, GroundedContentManifest",
+      "fact_ids": [
+        "fact-tenant-name",
+        "fact-claim-1"
+      ]
     },
-    {
-      "critic_name": "AntiGenericDesignCritic",
-      "dimension": "anti_generic_design",
-      "verdict": "PASS",
-      "title": "Anti-Generic Design Quality (Static Heuristic)"
+    "R11_REFERENCE_INTELLIGENCE": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "registered_source": "https://reference.lari.internal/clinic-hero",
+      "extracted_signals": [
+        "hero_hierarchy"
+      ]
     },
-    {
-      "critic_name": "ConversionCritic",
-      "dimension": "conversion_focus",
-      "verdict": "PASS",
-      "title": "Conversion & CTA Hierarchy"
+    "R12_DESIGN_DNA": {
+      "exercised": true,
+      "status": "TESTED_RUNTIME_WIRED",
+      "details": "Deterministic palette tokens tested; static layout evaluated in loop"
     },
-    {
-      "critic_name": "VisualHierarchyCritic",
-      "dimension": "visual_hierarchy",
-      "verdict": "PASS",
-      "title": "Visual Hierarchy & Typography Pacing"
+    "R13_CRITIC_ENSEMBLE": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "critic_count": 8,
+      "critics_passed": [
+        "GroundingIntegrityCritic",
+        "AntiGenericDesignCritic",
+        "ConversionCritic",
+        "VisualHierarchyCritic",
+        "EvidenceIntegrityCritic",
+        "AccessibilityHeuristicCritic",
+        "DesignCoherenceCritic",
+        "ProductSemanticsCritic"
+      ]
     },
-    {
-      "critic_name": "EvidenceIntegrityCritic",
-      "dimension": "evidence_integrity",
-      "verdict": "PASS",
-      "title": "Evidence & Claim Integrity"
+    "R14_BROWSER_VISUAL_QA": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "adapter": "RealBrowserCaptureAdapter (Playwright headless)",
+      "viewports": [
+        375,
+        390,
+        768,
+        1024,
+        1440,
+        1920
+      ],
+      "screenshot_sha256": {
+        "375": "76e124326b7869465f1fbaecaaa78f9db038d521d48688009168a951c2e4809e",
+        "390": "8287da5140832497ccb92fec033fad768c5ea9bf2f86b0890971f779ee0a78ca",
+        "768": "2568a3dce233e33cb393281dd85d106a155d73d005e7630bc2931ad03f4fa4e6",
+        "1024": "822680a32cebc00b6e7064987166a7a9bf0d66f32339b9ade8f5abba7c4a76af",
+        "1440": "324232400d77f40a47751e3c93c547842fc6c28d22cfe1b6fc74001e901135e6",
+        "1920": "24d99b3ad60aef799a93c942ef48ab4b38bcc6c108822400decc4fc442c7ed99"
+      }
     },
-    {
-      "critic_name": "AccessibilityHeuristicCritic",
-      "dimension": "accessibility_heuristics",
-      "verdict": "PASS",
-      "title": "Accessibility Heuristics"
+    "R15_TASTE_MEMORY": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "details": "Critic findings recorded into final scorecard to prevent rejected regression"
     },
-    {
-      "critic_name": "DesignCoherenceCritic",
-      "dimension": "design_coherence",
-      "verdict": "PASS",
-      "title": "Design Coherence & Consistency"
+    "R16_MEDIA_FACTUAL_ENGINE": {
+      "exercised": false,
+      "status": "TESTED_RUNTIME_WIRED",
+      "details": "Tenant media & programmatic video rendering engine verified by test suite; not invoked in HTML static hero proof"
     },
-    {
-      "critic_name": "ProductSemanticsCritic",
-      "dimension": "product_semantics",
-      "verdict": "PASS",
-      "title": "Product & Tenant Semantics Integrity"
+    "R17_AUTONOMOUS_DESIGN_LOOP": {
+      "exercised": true,
+      "status": "REAL_EXECUTION_PROVEN",
+      "pipeline": "AutonomousDesignLoopPipeline",
+      "cycles_completed": 1,
+      "overall_verdict": "PASS",
+      "human_review_state": "DESIGN_DISCOVERY_COMPLETE"
     }
-  ],
+  },
   "human_acceptance_boundary": "NO_UNAUTHORIZED_PRODUCT_MUTATION_HUMAN_VISUAL_REVIEW_READY"
 }

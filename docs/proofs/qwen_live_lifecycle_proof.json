@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0.0",
+  "proof_type": "QWEN_LIVE_LIFECYCLE_PROOF",
+  "runtime_sha": "cb77d36ab5fdb690e6eb5e76b12a9bd2a95e753f",
+  "evidence_carrier_head": "8297378679b84621f102e0113c8c2289636021bf",
+  "llama_server_sha256": "36e2803d3bc1c87ff21180dc1f1be1e53c6f04c515e91b46a480c1e1285471b4",
+  "model_sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+  "model_path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\resource-os\\models\\Qwen3-4B-GGUF\\bc640142c66e1fdd12af0bd68f40445458f3869b\\Qwen3-4B-Q4_K_M.gguf",
+  "executable_path": "C:\\Users\\mozcelikbas\\AppData\\Local\\AOS\\resource-os\\llama.cpp\\b11149\\llama-server.exe",
+  "lifecycle_sequence": [
+    {
+      "phase": "STOPPED_READY",
+      "pid": null,
+      "state": "STOPPED_READY"
+    },
+    {
+      "phase": "AVAILABLE",
+      "pid": 23944,
+      "state": "AVAILABLE"
+    },
+    {
+      "phase": "BUSY",
+      "pid": 23944,
+      "state": "BUSY"
+    },
+    {
+      "phase": "AVAILABLE",
+      "pid": 23944,
+      "state": "AVAILABLE"
+    },
+    {
+      "phase": "IDLE_SHUTDOWN",
+      "pid": null,
+      "state": "STOPPED_READY"
+    }
+  ],
+  "loopback_only": true,
+  "orphan_count": 0,
+  "paid_calls_made": 0,
+  "resource_ledger_accounting": {
+    "event_count": 2,
+    "total_tokens": 0,
+    "cost_actual_usd": 0.0
+  }
+}
