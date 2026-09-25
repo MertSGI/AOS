@@ -76,6 +76,12 @@ def test_runtime_health_reads_exact_command_local_registry(tmp_path, monkeypatch
     policy = _policy(tmp_path / "policy.json")
     engine = RuntimeEngine(_config(tmp_path, policy))
     try:
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
+
         circuit_path = _command(engine, "continue-lineage", policy)
         registry = ProviderCircuitBreakerRegistry(circuit_path)
         registry.record_success("gemini", observed_at="2026-09-19T10:00:00+00:00")
@@ -187,13 +193,26 @@ def test_newer_success_in_active_lineage_wakes_waiting_lineage(tmp_path):
     policy = _policy(tmp_path / "policy.json")
     engine = RuntimeEngine(_config(tmp_path, policy))
     try:
+        # Stop constructor-started workers so background recovery/probes cannot
+        # mutate state or race fixture initialization.
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
+
         waiting = "continue-waiting-lineage"
         active = "continue-active-lineage"
         waiting_circuits = _command(engine, waiting, policy)
         active_circuits = _command(engine, active, policy, state="RUNNING")
         engine.store.write_state(waiting, retry_after_epoch=time.time() + 900)
         registry = ProviderCircuitBreakerRegistry(active_circuits)
-        registry.record_success("nemotron", observed_at="2026-09-19T10:01:00+00:00")
+        registry.record_success(
+            "nemotron",
+            observed_at="2026-09-19T10:01:00+00:00",
+            model_id="nemotron-model",
+            task_class="UNKNOWN",
+        )
 
         engine._wake_waiting_from_observed_provider_health()
 
