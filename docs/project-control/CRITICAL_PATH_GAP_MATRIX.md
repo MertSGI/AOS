@@ -28,10 +28,10 @@
 | **2. Qwen Local (llama.cpp 3-4B)** | **YES** | **YES** | **YES** | **YES** | **YES** | **YES** (auto-selected on fallback) | **READY** | Wired directly into unified `planning_kernel._reason` via `ExecutionRouter`. Auto-starts from `STOPPED_READY` on demand and shuts down after idle timeout. |
 | **3. Direct Zero-Cost Cloud Providers** (Nemotron, Groq, etc.) | **YES** | **YES** | **YES** | **N/A** (Cloud API) | **YES** (when healthy) | **YES** (when closed) | **YES** | Fully operational with failover. When circuits are open/rate-limited, request smoothly falls over to local Qwen instead of freezing in waiting state. |
 | **4. FreeLLMAPI (Local Gateway)** | **PARTIAL** | **YES** (via ExecutionRouter) | **YES** | **STANDBY** (Source checkout unbuilt) | **NO** (Unbuilt binary) | **NO** | **NO** | Lifecycle manager and OpenAI provider adapter implemented; checkout requires npm build before activation. |
-| **5. Antigravity (Subscription)** | **YES** | **YES** (Agentic DAG) | **YES** | **N/A** (CLI) | **YES** | **YES** | **YES** | Registered and proven for complex multi-turn execution tasks; separated from free local tier. |
-| **6. Direct Codex CLI (Subscription)** | **STANDBY** | **STANDBY** | **YES** | **N/A** (CLI) | **STANDBY** | **STANDBY** | **STANDBY** | Registered in router; shares ChatGPT Plus quota pool. Binary preserved in standby. |
-| **7. Cline CLI (Harness + ChatGPT Plus)** | **YES** | **YES** (Agentic DAG) | **YES** | **N/A** (CLI) | **YES** | **YES** (Agentic) | **PROVEN** | Registered in `build_execution_router`; dynamically ranked as `SUBSCRIPTION_INCLUDED` to properly distinguish harness from model tier. |
-| **8. Design Intelligence** | **YES** | **YES** (UI policy) | **YES** | **N/A** | **YES** (UI tasks) | **YES** (UI-V2 lane) | **PROVEN** | Mandatory Design Intelligence policy integrated into `compile_execution_plan` for `REPO_UI_PLANNING` tasks. |
+| **5. Antigravity (Subscription)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness `MODEL_REASONING` mismatch) / **YES** (via `antigravity_planning_bridge`) | **YES** | **YES** | Registered and proven for complex multi-turn execution tasks; eligible for planning requests exclusively through bounded `AgenticStructuredPlanningBridge`. |
+| **6. Direct Codex CLI (Subscription)** | **STANDBY** | **STANDBY** | **YES** | **N/A** (CLI) | **NO** (Harness mismatch) / **STANDBY** (via `codex_cli_planning_bridge`) | **STANDBY** | **STANDBY** | Registered in router; shares ChatGPT Plus quota pool. Planning requests bridged via `AgenticStructuredPlanningBridge`. |
+| **7. Cline CLI (Harness + ChatGPT Plus)** | **YES** | **YES** (via Planning Bridge) | **YES** | **N/A** (CLI) | **NO** (Harness mismatch) / **YES** (via `cline_planning_bridge`) | **YES** (Agentic / Planning Bridge) | **PROVEN** | Registered in `build_execution_router`; dynamically ranked as `SUBSCRIPTION_INCLUDED`. Never falsifies raw harness capability: planner eligibility is strictly mediated via `AgenticStructuredPlanningBridge(cline)`. |
+| **8. Design Intelligence** | **YES** | **YES** (Executable Pipeline) | **YES** | **N/A** | **YES** (UI tasks) | **YES** (UI-V2 lane) | **PROVEN** | Real executable `AutonomousDesignLoopPipeline.run_pipeline()` (R10–R15, R17) executed directly in `compile_execution_plan()` for `REPO_UI_PLANNING` tasks; binds `design_intelligence_execution_id` and scorecard into plan and batch receipt. |
 
 ---
 
@@ -40,25 +40,11 @@
 - **Verified Code Location**: `src/aos/planning_kernel.py` lines 1252–1257:
   ```python
   if backend_override is None:
-      from aos.autonomous_host import ProviderFailoverReasoningBackend
-      backend = ProviderFailoverReasoningBackend(
-          ProviderRouter(load_routing_policy(str(routing_policy_path))),
-          attempt_journal=runtime_dir / "provider-attempts.jsonl",
-      )
+      from aos.autonomous_host import build_execution_router
+      router = build_execution_router(routing_policy_path, runtime_dir)
+      backend = router
   ```
-- **Consequence**: Objective selection, plan compilation, plan repair, and completion detection call `_reason()`, which directly instantiates `ProviderRouter`.
-  `ProviderRouter` evaluates only the static provider list in `nemotron.planner-policy.json`:
-  1. `nemotron` (HALF_OPEN / SERVER_CAPACITY)
-  2. `gemini` (HALF_OPEN / RATE_LIMITED)
-  3. `groq` (HALF_OPEN / RATE_LIMITED)
-  4. `cloudflare` (HALF_OPEN / SERVER_CAPACITY)
-  5. `openrouter_free` (HALF_OPEN / CONTRACT_FAILURE)
-  6. `cerebras` (OPEN / CREDIT_EXHAUSTED)
-  7. `huggingface_router` (OPEN / CREDIT_EXHAUSTED)
-  8. `freellmapi_local` (LOCAL_GATEWAY_UNAVAILABLE)
-  9. `ollama` (HALF_OPEN / NETWORK_UNAVAILABLE - obsolete `llama3.3:70b`)
-  10. `openai_paid_safety` (PAID_DEFAULT_DENIED)
-- **Result**: Even though local Qwen3-4B is in `STOPPED_READY` and ready to boot in < 5 seconds, and Antigravity is active, the planner throws `WaitingForReasoningProvider("ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE")`, leaving both LARI and UI-V2 stranded in `WAITING_FOR_RESOURCE`.
+- **Consequence**: Unified routing through `ExecutionRouter` resolves the split-brain issue. When cloud providers are degraded or rate-limited, local Qwen and bounded agentic planning bridges (`cline_planning_bridge`) are actively ranked and eligible.
 
 ---
 
@@ -71,15 +57,19 @@
    - Wired `LlamaCppQwenReasoningBackend` with `lifecycle_manager=get_qwen_lifecycle_manager()`.
    - `get_availability()` and `get_health()` return `AVAILABLE` / `HEALTHY` when capability is `PROVEN` and lifecycle snapshot is `STOPPED_READY`, `IDLE`, or `AVAILABLE`.
    - On request dispatch, Qwen auto-starts, validates schema, produces structured decision, and safely shuts down after idle timeout.
-3. **Structured Planning Adapter & Cline Registration**: [RESOLVED]
-   - `ClineAgenticExecutionBackend` registered in `build_execution_router()`.
-   - Cost class dynamically computes `SUBSCRIPTION_INCLUDED` for ChatGPT Plus subscriptions, strictly separating harness from model costs.
+3. **Structured Planning Bridge (Eliminating Capability Falsification)**: [RESOLVED]
+   - `AgenticStructuredPlanningBridge` implemented in `extensions/autonomy-fabric/agentic_planning_bridge.py`.
+   - Agentic harnesses (`antigravity`, `codex_cli`, `cline`) maintain their truthful agentic capability contracts (`FILE_READ/WRITE`, `PROCESS_EXEC`, `TEST_EXECUTION`, `LONG_HORIZON_AGENTIC_WORK`) and never falsely claim `MODEL_REASONING`.
+   - `AgenticStructuredPlanningBridge(backend)` wraps the harness, exposes `MODEL_REASONING`, injects strict read-only bounded planning prompts, verifies zero file mutation, validates JSON against `Draft202012Validator`, and fails closed on defect.
 4. **Bounded Resource Availability Watchdog**: [RESOLVED]
    - In `runtime_server._wake_waiting_from_observed_provider_health()`, watchdog inspects local Qwen lifecycle and auto-wakes waiting commands (`retry_after_epoch = 0`) emitting `provider.healthy_alternate_wake`.
 5. **FreeLLMAPI Managed Daemon Service**: [BOUNDED STANDBY]
    - Pinned source checkout is preserved; OpenAI compatible adapter wired into router.
-6. **UI-V2 Design Intelligence Lane Policy**: [RESOLVED]
-   - Injected mandatory Design Intelligence pipeline execution policy into `compile_execution_plan()` for `REPO_UI_PLANNING` tasks.
+6. **Executable UI-V2 Design Intelligence Pipeline (Not Policy Text)**: [RESOLVED]
+   - Controller review rejected static policy text injection. In `src/aos/planning_kernel.py`, `compile_execution_plan` executes `AutonomousDesignLoopPipeline(max_design_review_cycles=2).run_pipeline()`.
+   - Records durable `design-intelligence-{batch_number:04d}.json` containing R10, R11, R12, R13, R14, R15, R17 execution proof.
+   - Binds `design_intelligence_execution_id` (`loop-...`) and scorecard into `generated-run-plan.json` and propagates directly into batch receipt.
 7. **Telemetry & Self-Repair Reconciliation**: [RESOLVED]
    - Self-repair actions for non-mutating technical events report truthful `post_repair_evidence` and `smoke_status`.
    - Obsolete `"ollama"` (`llama3.3:70b`) completely removed from planner policies.
+
