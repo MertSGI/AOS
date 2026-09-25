@@ -15,6 +15,22 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+        ]
+else:
+    PROCESSENTRY32W = None  # type: ignore[misc,assignment]
+
+
 def background_python_executable(executable: Optional[str] = None) -> str:
     """Return the console-less interpreter for long-lived Windows daemons.
 
