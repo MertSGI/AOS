@@ -321,7 +321,8 @@ def test_resource_operations_matrix_and_lane_hold_review_controls():
 
     # Check Cline prerequisite
     cline = by_name["Cline"]
-    assert cline["current_blocker"] == "NODE_JS_RUNTIME_PREREQUISITE"
+    assert cline["current_blocker"] == "OFFICIAL_CLINE_CLI_NOT_INSTALLED"
+    assert cline["general_health"] == "NOT_OPERATIONALLY_PROVEN"
 
     # HTML contains Resource Operations Matrix and Lane Hold/Resume controls
     assert 'id="resource-operations-container"' in _HTML

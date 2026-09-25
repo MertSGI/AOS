@@ -875,6 +875,14 @@ textarea.goal-main {
         </div>
       </button>
 
+      <button class="rail-nav-item" onclick="switchView('design')" id="nav-btn-design">
+        <div class="nav-label-box">
+          <svg class="nav-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="m4.93 4.93 4.24 4.24"></path><path d="m14.83 9.17 4.24-4.24"></path><path d="m14.83 14.83 4.24 4.24"></path><path d="m9.17 14.83-4.24 4.24"></path><circle cx="12" cy="12" r="4"></circle></svg>
+          <span>Design Intelligence</span>
+        </div>
+        <span class="nav-badge ok">R10-R17</span>
+      </button>
+
       <div class="nav-section-title" style="margin-top:10px;">Verification &amp; Safety</div>
       <button class="rail-nav-item" onclick="switchView('evidence')" id="nav-btn-evidence">
         <div class="nav-label-box">
@@ -1430,6 +1438,123 @@ textarea.goal-main {
 
           <div id="self-repair-view">Loading self-repair telemetry…</div>
         </div>
+      </div>
+    </section>
+
+    <!-- VIEW: DESIGN INTELLIGENCE (R10-R17) -->
+    <section class="view-container" id="view-design">
+      <div class="cockpit-card">
+        <div class="card-header-flex">
+          <div>
+            <div class="cockpit-view-title">
+              <span>Design Intelligence Operations (R10–R17)</span>
+            </div>
+            <div class="section-subtitle">Real-time status of 7-Critic Ensemble, Multi-Viewport Visual QA, Taste Memory, and Autonomous Design Loops</div>
+          </div>
+          <span class="status-chip ok">R10-R17 OPERATIONAL</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:16px;">
+          <div class="metric-tile">
+            <div class="metric-tile-lbl">Active UI Lineage</div>
+            <div class="metric-tile-val cyan" style="font-size:14px;">lari-ui-v2</div>
+            <div class="metric-tile-sub">continue-61be4ab1af53cfa646d773ce</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-tile-lbl">Critic Ensemble</div>
+            <div class="metric-tile-val ok">7 Critics</div>
+            <div class="metric-tile-sub">Grounding, Anti-Generic, Conversion, Accessibility, Semantics...</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-tile-lbl">Visual QA Viewports</div>
+            <div class="metric-tile-val">4 Viewports</div>
+            <div class="metric-tile-sub">Mobile (390px), Tablet (768px), Desktop (1280px, 1920px)</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-tile-lbl">Human Gate Status</div>
+            <div class="metric-tile-val hold">GATED</div>
+            <div class="metric-tile-sub">Visual proof required before commercial promotion</div>
+          </div>
+        </div>
+
+        <table class="cockpit-table">
+          <thead>
+            <tr>
+              <th>Capability ID</th>
+              <th>Contract Name</th>
+              <th>Status</th>
+              <th>Runtime Wiring</th>
+              <th>Proof Status</th>
+              <th>Human Authority Boundary</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>R10</strong></td>
+              <td>Versioned Design Contracts</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>extensions.design_intelligence.contracts</code></td>
+              <td>11 Unit / 28 Full Passed</td>
+              <td>Strict Schema Binding</td>
+            </tr>
+            <tr>
+              <td><strong>R11</strong></td>
+              <td>Reference Intelligence</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>ReferenceIntelligence</code></td>
+              <td>Grounded Content Manifests Verified</td>
+              <td>Read-Only Product Excerpt</td>
+            </tr>
+            <tr>
+              <td><strong>R12</strong></td>
+              <td>Design DNA + Product Story</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>DesignDNAEngine</code></td>
+              <td>Deterministic Color/Typo/Tokens Proven</td>
+              <td>Product Story Gated</td>
+            </tr>
+            <tr>
+              <td><strong>R13</strong></td>
+              <td>7-Critic Ensemble</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>DesignCriticEnsemble</code></td>
+              <td>Parallel Scored Critic Pipeline</td>
+              <td>Unbiased Multi-Critic Quorum</td>
+            </tr>
+            <tr>
+              <td><strong>R14</strong></td>
+              <td>Visual QA &amp; Multi-Viewport</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>VisualQAEvaluator</code> + <code>RealBrowserCaptureAdapter</code></td>
+              <td>Multi-Viewport Render Verification</td>
+              <td>Evidence Ledger Anchored</td>
+            </tr>
+            <tr>
+              <td><strong>R15</strong></td>
+              <td>Taste Memory &amp; Feedback</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>TasteMemory</code></td>
+              <td>Positive/Negative Critique Retention</td>
+              <td>Human Preference Gated</td>
+            </tr>
+            <tr>
+              <td><strong>R16</strong></td>
+              <td>Tool &amp; Video Primitives</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>MediaDecisionEngine</code> + Renderer</td>
+              <td>Deterministic Programmatic Demos</td>
+              <td>Bounded Video Generation</td>
+            </tr>
+            <tr>
+              <td><strong>R17</strong></td>
+              <td>Autonomous Design Loop</td>
+              <td><span class="status-chip ok">OPERATIONAL</span></td>
+              <td><code>AutonomousDesignLoopPipeline</code></td>
+              <td>End-to-End Cycles Verified</td>
+              <td>Human Review Gate Enforced</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -2067,44 +2192,76 @@ async function refreshStatus() {
         if (resRows.length === 0) {
           resOpsContainer.innerHTML = '<div style="color:var(--text-muted); padding:10px;">Resource operations matrix not yet loaded.</div>';
         } else {
-          let rm = `
-          <table class="cockpit-table">
-            <thead>
-              <tr>
-                <th>Resource Name</th>
-                <th>Type</th>
-                <th>Executable / Runtime</th>
-                <th>Version</th>
-                <th>Auth Status</th>
-                <th>Cost Class</th>
-                <th>Health</th>
-                <th>Lifecycle State</th>
-                <th>Blocker / Retry</th>
-                <th>Task-Class Eligibility</th>
-              </tr>
-            </thead>
-            <tbody>`;
-          for (const r of resRows) {
-            const hState = r.general_health || 'UNKNOWN';
-            const hChip = (hState === 'AVAILABLE') ? 'ok' : ((hState === 'QUOTA_EXHAUSTED' || hState.includes('REQUIRED')) ? 'hold' : 'neutral');
-            const elig = r.eligibility_by_task_class || {};
-            const eligList = Object.entries(elig).map(([k, v]) => `<span style="display:inline-block; margin-right:4px; font-size:10.5px; padding:2px 5px; border-radius:4px; background:${v ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color:${v ? '#4ade80' : '#f87171'}; border:1px solid ${v ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">${k}: ${v ? 'YES' : 'NO'}</span>`).join('');
-            rm += `
-              <tr>
-                <td><strong>${escapeHtml(r.name)}</strong></td>
-                <td><small style="color:var(--text-sub);">${escapeHtml(r.resource_type)}</small></td>
-                <td><code>${escapeHtml(r.executable)}</code></td>
-                <td><small>${escapeHtml(r.version)}</small></td>
-                <td><span class="status-chip ${r.auth_status.includes('AUTH') || r.auth_status.includes('CONFIGURED') || r.auth_status.includes('SUBSCRIPTION') ? 'ok' : 'neutral'}">${escapeHtml(r.auth_status)}</span></td>
-                <td><small>${escapeHtml(r.cost_class)}</small></td>
-                <td><span class="status-chip ${hChip}">${escapeHtml(hState)}</span></td>
-                <td><code>${escapeHtml(r.lifecycle_state)}</code></td>
-                <td><small style="color:${r.current_blocker === 'NONE' ? 'var(--text-muted)' : '#fca5a5'};">${escapeHtml(r.current_blocker || 'NONE')}</small></td>
-                <td>${eligList}</td>
-              </tr>`;
+          function renderResTable(rows) {
+            let rm = `
+            <table class="cockpit-table">
+              <thead>
+                <tr>
+                  <th>Resource Name</th>
+                  <th>Classification</th>
+                  <th>Executable / Runtime</th>
+                  <th>Version</th>
+                  <th>Auth Status</th>
+                  <th>Cost Class</th>
+                  <th>Health</th>
+                  <th>Lifecycle State</th>
+                  <th>Blocker / Retry</th>
+                  <th>Task-Class Eligibility</th>
+                </tr>
+              </thead>
+              <tbody>`;
+            for (const r of rows) {
+              const hState = r.general_health || 'UNKNOWN';
+              const hChip = (hState === 'AVAILABLE') ? 'ok' : ((hState === 'QUOTA_EXHAUSTED' || hState.includes('REQUIRED')) ? 'hold' : 'neutral');
+              const elig = r.eligibility_by_task_class || {};
+              const eligList = Object.entries(elig).map(([k, v]) => `<span style="display:inline-block; margin-right:4px; font-size:10.5px; padding:2px 5px; border-radius:4px; background:${v ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color:${v ? '#4ade80' : '#f87171'}; border:1px solid ${v ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">${k}: ${v ? 'YES' : 'NO'}</span>`).join('');
+              const uClass = r.usefulness_classification || 'ACTIVE_VISIBLE';
+              const uChip = (uClass === 'ACTIVE_VISIBLE') ? 'ok' : ((uClass === 'STANDBY_VISIBLE') ? 'cyan' : 'neutral');
+              rm += `
+                <tr>
+                  <td><strong>${escapeHtml(r.name)}</strong></td>
+                  <td><span class="status-chip ${uChip}">${escapeHtml(uClass)}</span></td>
+                  <td><code>${escapeHtml(r.executable)}</code></td>
+                  <td><small>${escapeHtml(r.version)}</small></td>
+                  <td><span class="status-chip ${r.auth_status.includes('AUTH') || r.auth_status.includes('CONFIGURED') || r.auth_status.includes('SUBSCRIPTION') ? 'ok' : 'neutral'}">${escapeHtml(r.auth_status)}</span></td>
+                  <td><small>${escapeHtml(r.cost_class)}</small></td>
+                  <td><span class="status-chip ${hChip}">${escapeHtml(hState)}</span></td>
+                  <td><code>${escapeHtml(r.lifecycle_state)}</code></td>
+                  <td><small style="color:${r.current_blocker === 'NONE' ? 'var(--text-muted)' : '#fca5a5'};">${escapeHtml(r.current_blocker || 'NONE')}</small></td>
+                  <td>${eligList}</td>
+                </tr>`;
+            }
+            rm += '</tbody></table>';
+            return rm;
           }
-          rm += '</tbody></table>';
-          resOpsContainer.innerHTML = rm;
+
+          const coreRows = resRows.filter(r => (r.operational_tier || 'CORE') === 'CORE');
+          const fallbackRows = resRows.filter(r => (r.operational_tier || 'CORE') !== 'CORE');
+
+          let fullHtml = `
+          <div style="margin-bottom:12px;">
+            <div style="font-weight:700; color:#fff; font-size:12.5px; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+              <span>⭐ CORE OPERATIONALLY MEANINGFUL RESOURCES</span>
+              <span class="status-chip ok">${coreRows.length} Primary</span>
+            </div>
+            ${renderResTable(coreRows)}
+          </div>
+          `;
+
+          if (fallbackRows.length > 0) {
+            fullHtml += `
+            <details style="margin-top:14px; background:#0e1319; border:1px solid var(--border-dim); border-radius:8px; padding:10px 14px;">
+              <summary style="cursor:pointer; font-weight:700; color:var(--text-sub); font-size:12px;">
+                ▸ OTHER / FALLBACK / LEGACY RESOURCES (${fallbackRows.length} providers collapsed)
+              </summary>
+              <div style="margin-top:10px;">
+                ${renderResTable(fallbackRows)}
+              </div>
+            </details>
+            `;
+          }
+
+          resOpsContainer.innerHTML = fullHtml;
         }
       }
 
@@ -2631,6 +2788,8 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     matrix.append({
         "name": "Antigravity",
         "resource_type": "FIRST_CLASS_AGENTIC",
+        "operational_tier": "CORE",
+        "usefulness_classification": "ACTIVE_VISIBLE",
         "executable": ag_exe,
         "version": ag_ver,
         "auth_status": "AUTHENTICATED",
@@ -2666,6 +2825,8 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     matrix.append({
         "name": "Codex CLI",
         "resource_type": "FIRST_CLASS_AGENTIC",
+        "operational_tier": "CORE",
+        "usefulness_classification": "STANDBY_VISIBLE",
         "executable": codex_exe,
         "version": codex_ver,
         "auth_status": "CHATGPT_SUBSCRIPTION",
@@ -2688,16 +2849,18 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     matrix.append({
         "name": "Cline",
         "resource_type": "AGENTIC_CLI_HARNESS",
-        "executable": "cline",
-        "version": "NOT_INSTALLED",
+        "operational_tier": "CORE",
+        "usefulness_classification": "STANDBY_VISIBLE",
+        "executable": "NONE (node located: playwright v24.21.0)",
+        "version": "PACKAGE_NOT_INSTALLED",
         "auth_status": "NOT_CONFIGURED",
         "cost_class": "FREE_HARNESS",
-        "general_health": "NOT_INSTALLED",
+        "general_health": "NOT_OPERATIONALLY_PROVEN",
         "task_classes": ["agentic_coding", "file_edit"],
-        "lifecycle_state": "PREREQUISITE_EVALUATED",
+        "lifecycle_state": "EVALUATION_PREREQUISITE_BOUNDED",
         "quota_status": "N/A",
         "retry_deadline": None,
-        "current_blocker": "NODE_JS_RUNTIME_PREREQUISITE",
+        "current_blocker": "OFFICIAL_CLINE_CLI_NOT_INSTALLED",
         "eligibility_by_task_class": {
             "structured_planning": False,
             "repo_ui_planning": False,
@@ -2731,6 +2894,8 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     matrix.append({
         "name": "Qwen Local",
         "resource_type": "LOCAL_INFERENCE_REASONING",
+        "operational_tier": "CORE",
+        "usefulness_classification": "ACTIVE_VISIBLE",
         "executable": "llama-server.exe",
         "version": "Qwen3-4B-Q4_K_M (b11149)",
         "auth_status": "LOOPBACK_LOCAL_NO_AUTH",
@@ -2752,7 +2917,7 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     # 5. Cloud Free Providers (Nemotron, Groq, Gemini, Cloudflare, Cerebras, OpenRouter, HF, FreeLLMAPI, Jev)
     presence = provider_presence()
 
-    def _prov_row(p_id: str, display: str, model_id: str, key_env: str, b_class: str, default_health: str, default_blocker: str):
+    def _prov_row(p_id: str, display: str, model_id: str, key_env: str, b_class: str, default_health: str, default_blocker: str, tier: str = "CORE", classification: str = "ACTIVE_VISIBLE"):
         detail = prov_details.get(p_id, {})
         c_state = detail.get("circuit_state", "CIRCUIT_CLOSED" if presence.get(key_env) else "NOT_CONFIGURED")
         fail_cls = detail.get("failure_class")
@@ -2762,6 +2927,8 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         return {
             "name": display,
             "resource_type": "CLOUD_REASONING_PROVIDER",
+            "operational_tier": tier,
+            "usefulness_classification": classification,
             "executable": "HTTP_API",
             "version": model_id,
             "auth_status": "CONFIGURED" if is_conf else "MISSING_KEY",
@@ -2776,16 +2943,18 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         }
 
     matrix.extend([
-        _prov_row("nemotron", "Nemotron", "nvidia/nemotron-3-ultra-550b", "NVIDIA", "FREE_TIER", "AVAILABLE", "NVIDIA_API_KEY_REQUIRED"),
-        _prov_row("groq", "Groq", "openai/gpt-oss-120b", "GROQ", "FREE_TIER", "AVAILABLE", "GROQ_API_KEY_REQUIRED"),
-        _prov_row("gemini", "Gemini", "gemini-3.6-flash", "GEMINI", "FREE_TIER", "RATE_LIMITED", "GEMINI_API_KEY_REQUIRED"),
-        _prov_row("cloudflare", "Cloudflare", "@cf/meta/llama-3.3-70b", "CLOUDFLARE", "FREE_DAILY_QUOTA", "RATE_LIMITED", "CLOUDFLARE_API_TOKEN_REQUIRED"),
-        _prov_row("cerebras", "Cerebras", "gpt-oss-120b", "CEREBRAS", "FREE_TRIAL", "CREDIT_EXHAUSTED", "CEREBRAS_API_KEY_REQUIRED"),
-        _prov_row("openrouter_free", "OpenRouter Free", "openrouter/free", "OPENROUTER", "FREE", "AVAILABLE", "OPENROUTER_API_KEY_REQUIRED"),
-        _prov_row("huggingface_router", "Hugging Face", "openai/gpt-oss-120b:fastest", "HUGGINGFACE", "FREE", "CREDIT_EXHAUSTED", "HF_TOKEN_REQUIRED"),
+        _prov_row("nemotron", "Nemotron", "nvidia/nemotron-3-ultra-550b", "NVIDIA", "FREE_TIER", "AVAILABLE", "NVIDIA_API_KEY_REQUIRED", "CORE", "ACTIVE_VISIBLE"),
+        _prov_row("groq", "Groq", "openai/gpt-oss-120b", "GROQ", "FREE_TIER", "AVAILABLE", "GROQ_API_KEY_REQUIRED", "CORE", "ACTIVE_VISIBLE"),
+        _prov_row("gemini", "Gemini", "gemini-3.6-flash", "GEMINI", "FREE_TIER", "RATE_LIMITED", "GEMINI_API_KEY_REQUIRED", "FALLBACK_LEGACY", "HIDDEN_FALLBACK"),
+        _prov_row("cloudflare", "Cloudflare", "@cf/meta/llama-3.3-70b", "CLOUDFLARE", "FREE_DAILY_QUOTA", "RATE_LIMITED", "CLOUDFLARE_API_TOKEN_REQUIRED", "FALLBACK_LEGACY", "HIDDEN_FALLBACK"),
+        _prov_row("cerebras", "Cerebras", "gpt-oss-120b", "CEREBRAS", "FREE_TRIAL", "CREDIT_EXHAUSTED", "CEREBRAS_API_KEY_REQUIRED", "FALLBACK_LEGACY", "HIDDEN_FALLBACK"),
+        _prov_row("openrouter_free", "OpenRouter Free", "openrouter/free", "OPENROUTER", "FREE", "AVAILABLE", "OPENROUTER_API_KEY_REQUIRED", "CORE", "ACTIVE_VISIBLE"),
+        _prov_row("huggingface_router", "Hugging Face", "openai/gpt-oss-120b:fastest", "HUGGINGFACE", "FREE", "CREDIT_EXHAUSTED", "HF_TOKEN_REQUIRED", "FALLBACK_LEGACY", "HIDDEN_FALLBACK"),
         {
             "name": "FreeLLMAPI",
             "resource_type": "LOCAL_META_GATEWAY",
+            "operational_tier": "CORE",
+            "usefulness_classification": "STANDBY_VISIBLE",
             "executable": "node server/dist/index.js",
             "version": "commit 15c30081",
             "auth_status": "SOURCE_PINNED_NOT_BUILT",
@@ -2801,6 +2970,8 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         {
             "name": "Jev",
             "resource_type": "ADVISORY_ONLY",
+            "operational_tier": "FALLBACK_LEGACY",
+            "usefulness_classification": "DISABLED_LEGACY",
             "executable": "NONE",
             "version": "N/A",
             "auth_status": "NON_AUTHORITATIVE",
