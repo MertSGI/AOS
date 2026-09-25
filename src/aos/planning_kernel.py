@@ -1231,7 +1231,7 @@ def _bounded_prompt_excerpt(
 def _hydrate_credentials() -> None:
     try:
         from aos.secure_store import hydrate_environment
-        hydrate_environment(overwrite=False)
+        hydrate_environment(overwrite=True)
     except Exception:
         return
 
@@ -1252,8 +1252,8 @@ def build_planning_resource_requirements(
         c_task_class in (TaskClass.REPO_UI_PLANNING.value, TaskClass.LARGE_CONTEXT.value, TaskClass.AGENTIC_EXECUTION.value)
         or "architecture" in prompt_lower
         or "refactor" in prompt_lower
-        or "design intelligence" in prompt_lower
-        or estimated_tokens > 4000
+        or (c_task_class != TaskClass.STRUCTURED_PLANNING.value and "design intelligence" in prompt_lower)
+        or (c_task_class != TaskClass.STRUCTURED_PLANNING.value and estimated_tokens > 4000)
     )
     is_small_reasoning = (
         c_task_class == TaskClass.SMALL_REASONING.value
@@ -1325,10 +1325,11 @@ def _reason(
         "task_class": canonical_task_class(task_class),
         "resource_requirements": resource_reqs,
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    planning_workspace = str(situation.repository) if situation and situation.repository and Path(situation.repository).is_dir() else str(runtime_dir)
     request = ExecutionRequest(
         task_id=task_id,
         project_id=situation.project_id,
-        workspace=str(runtime_dir),
+        workspace=planning_workspace,
         operation_class="MODEL_REASONING",
         required_capabilities=[ExecutionCapability.MODEL_REASONING],
         authority_id=authority_id,
@@ -1339,6 +1340,7 @@ def _reason(
             "risk_class": "R0",
             "task_class": canonical_task_class(task_class),
             "resource_requirements": resource_reqs,
+            "source_sha": situation.control_sha,
         },
     )
     if hasattr(backend, "execute_with_failover"):
@@ -2806,6 +2808,7 @@ def run_autonomous_project(
     recovery_failure_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     runtime_dir.mkdir(parents=True, exist_ok=True)
+    _hydrate_credentials()
     checkpoint = _read_json(_kernel_checkpoint_path(runtime_dir))
     checkpoint_strategy_generation = int(checkpoint.get("strategy_generation", 0) or 0)
     strategy_changed = strategy_generation > checkpoint_strategy_generation
