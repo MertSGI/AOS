@@ -12,22 +12,26 @@ Paid API Fallback: `DISABLED` (`PAID_CALLS_MADE=0`)
 
 | Property | Value | Verification Source / Command |
 | :--- | :--- | :--- |
-| **EVIDENCE_CARRIER_HEAD** | `570ec2979cc3e6c2b4a681839d4eb6c425aff0d4` | Authoritative remote documentation / evidence carrier HEAD |
-| **VALIDATED_RUNTIME_SOURCE_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | Bound exact source SHA of candidate |
+| **EVIDENCE_CARRIER_HEAD** | `15460123533ec5fa143c08f4c546e166986adbc8` | Authoritative remote documentation / evidence carrier HEAD |
+| **VALIDATED_RUNTIME_SOURCE_SHA** | `15460123533ec5fa143c08f4c546e166986adbc8` | Bound exact source SHA of candidate |
 | **RUNTIME_SHA** | `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f` | `http://127.0.0.1:8770/v1/health` -> `runtime_source_sha` |
 | **RUNTIME_SLOT** | `candidate-runtime-v1.8-3df8df9990bc` | `supervisor/active-slot.json` (Promoted `STABLE`) |
 | **CI_RUN** | `36105689101` | GitHub Actions Workflow Run (Conclusion: `success`) |
 | **FULL_CANONICAL_CI** | `1077 passed, 5 skipped, 26 deselected` | Exact-SHA CI canonical test suite |
+| **FOCUSED_AGENTIC_PLANNING_BRIDGE** | `5 passed` | `pytest extensions/autonomy-fabric/tests/test_agentic_planning_bridge.py` |
+| **FOCUSED_DESIGN_INTELLIGENCE** | `28 passed` | `pytest extensions/design-intelligence/tests/` |
+| **FOCUSED_PLANNING_KERNEL** | `58 passed` | `pytest tests/test_planning_kernel.py` |
 | **FOCUSED_CONTROL_PANEL** | `13 passed` | `pytest tests/test_control_panel.py` |
 | **FOCUSED_GOVERNANCE_ACTION_CENTER** | `6 passed` | `pytest tests/test_action_center.py` |
 | **FOCUSED_CLINE_AGENTIC_BACKEND** | `8 passed` | `pytest extensions/autonomy-fabric/tests/test_cline_agentic_backend.py` |
-| **LARI_LAST_COMPLETED_BATCH** | `450` (Preserved Lineage `continue-b181ddc574c25c2aa0f2a6b9`) | Event stream seq `26695` |
+| **LARI_LAST_COMPLETED_BATCH** | `454` (Preserved Lineage `continue-b181ddc574c25c2aa0f2a6b9`) | Event stream seq `26695` |
 | **LARI_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
 | **UI_V2_LAST_COMPLETED_BATCH** | `131` (Preserved Lineage `continue-61be4ab1af53cfa646d773ce`) | Protected lineage CAS preserved |
 | **UI_V2_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified via Action Center: provider wait does not escalate to human action |
-| **DESIGN_INTELLIGENCE** | Multi-Viewport Dimensional Proof Proven | 6 Playwright viewports (375-1920px), SHA-256 bound, 8 critics PASS |
+| **DESIGN_INTELLIGENCE_STAGE** | Executable R10–R17 Pipeline Active | Direct execution in `compile_execution_plan()` -> `design-intelligence-{batch}.json` |
 | **FREELLMAPI_ROUTE** | Bounded Route Proven (Zero-Cost Backing) | ResourceOrchestrator -> FreeLLMAPI -> ZeroCost -> ResourceLedger (`OPERATIONAL_BOUNDED`) |
 | **QWEN_LIFECYCLE** | Live Managed Lifecycle Proven | `STOPPED_READY` -> `AVAILABLE` -> `BUSY` -> `IDLE_SHUTDOWN` -> `STOPPED_READY` |
+| **AGENTIC_PLANNING_BRIDGE** | `OPERATIONAL_BOUNDED` (`LIVE_PROMOTED`) | Bounded JSON planning adapter wrapping agentic harnesses (`antigravity`, `codex_cli`, `cline`) |
 | **CLINE_DISPOSITION** | `OPERATIONAL_BOUNDED` (`LIVE_PROMOTED`) | Official npm CLI `3.0.65` attested, live proof & bidirectional handoff proven |
 | **PAID_CALLS_MADE** | `0` | Verified ResourceLedger & QuotaGovernor invariants |
 | **PRODUCTION** | `NO_GO` | Fail-closed runtime safety gate |
@@ -70,6 +74,7 @@ Every capability exposes explicit dimensions:
 | **RES-AG** | Antigravity Agentic Worker | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-CDX** | Codex Agentic Worker | YES | YES | YES | YES | YES | YES | **STANDBY_VISIBLE** |
 | **RES-CLN** | Cline Official CLI Harness | YES | YES | NO | YES | YES | YES | **OPERATIONAL_BOUNDED** (AUTHENTICATED / PROVIDER_TRANSIENT_HOLD) |
+| **RES-BRG** | Agentic Structured Planning Bridge | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **RES-QWN** | Qwen 3 Local GGUF Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
 | **RES-FREE** | FreeLLMAPI Local Gateway | YES | YES | YES | YES | YES | YES | **OPERATIONAL_BOUNDED** |
 | **RES-NEMO** | NVIDIA Nemotron Reasoning | YES | YES | YES | YES | YES | YES | **OPERATIONAL** |
@@ -174,10 +179,34 @@ All 8 tests passing in `extensions/autonomy-fabric/tests/test_cline_agentic_back
 
 ---
 
-## 7. Verification Sign-Off
+## 7. Agentic Structured Planning Bridge & Executable UI Design Intelligence Proofs
+
+### 7.1 Agentic Structured Planning Bridge (`AgenticStructuredPlanningBridge`)
+- **Truthful Capability Advertising:** Agentic harnesses (`antigravity`, `codex_cli`, `cline`) advertise ONLY their accepted agentic capabilities (`FILE_READ/WRITE`, `PROCESS_EXEC`, `TEST_EXECUTION`, `LONG_HORIZON_AGENTIC_WORK`). `MODEL_REASONING` is never falsely attributed to harness classes.
+- **ResourceOrchestrator Planner Ranking Matrix:**
+  | BACKEND | REQUIRED_CAPABILITIES | SUPPORTED_CAPABILITIES | ELIGIBLE | REASON |
+  | :--- | :--- | :--- | :--- | :--- |
+  | **Qwen** (`qwen3_4b_llama_cpp`) | `['MODEL_REASONING']` | `['MODEL_REASONING']` | **True** | None |
+  | **ProviderFailover** (`provider_failover_reasoning_backend`) | `['MODEL_REASONING']` | `['MODEL_REASONING']` | **True** | None |
+  | **Antigravity** (`antigravity`) | `['MODEL_REASONING']` | `['ANTIGRAVITY', 'FILE_READ', 'FILE_WRITE', 'GIT_READ', 'LONG_HORIZON_AGENTIC_WORK', 'PATCH_APPLY', 'PROCESS_EXEC', 'TEST_EXECUTION']` | **False** | `CAPABILITY_MISMATCH`, `HEALTH_UNAVAILABLE`, `AVAILABILITY_CONTRACT_FAILURE` |
+  | **Codex** (`codex_cli`) | `['MODEL_REASONING']` | `['FILE_READ', 'FILE_WRITE', 'GIT_READ', 'LONG_HORIZON_AGENTIC_WORK', 'PATCH_APPLY', 'PROCESS_EXEC', 'TEST_EXECUTION']` | **False** | `CAPABILITY_MISMATCH`, `HEALTH_UNAVAILABLE`, `AVAILABILITY_AUTH_UNAVAILABLE` |
+  | **Cline** (`cline`) | `['MODEL_REASONING']` | `['FILE_READ', 'FILE_WRITE', 'GIT_READ', 'LONG_HORIZON_AGENTIC_WORK', 'PATCH_APPLY', 'PROCESS_EXEC', 'TEST_EXECUTION']` | **False** | `CAPABILITY_MISMATCH` |
+  | **Cline Bridge** (`cline_planning_bridge`) | `['MODEL_REASONING']` | `['MODEL_REASONING']` | **True** | None |
+- **Fail-Closed Safety Contract:** Bridge strictly enforces `write_scope = []`, extracts bounded JSON from candidate output, validates with `Draft202012Validator`, rejects any workspace mutations (`PLANNING_MUTATION_DETECTED`), and attaches `transient_structured_output`.
+
+### 7.2 Executable UI-V2 Design Intelligence Pipeline
+- **Controller Review Acceptance:** Injected policy text was rejected by Controller review as insufficient. In `src/aos/planning_kernel.py`, `compile_execution_plan()` directly invokes `AutonomousDesignLoopPipeline(max_design_review_cycles=2).run_pipeline()`.
+- **Durable Artifact Generation:** Produces `runtime_dir / f"design-intelligence-{batch_number:04d}.json"` containing explicit evaluations across all 7 design rules: R10 (Contracts), R11 (Reference Intelligence), R12 (Design DNA), R13 (8-Critic Ensemble), R14 (Multi-Viewport Visual QA), R15 (Taste Memory), and R17 (Autonomous Design Loop).
+- **Plan & Receipt Lineage Binding:** Directly binds `design_intelligence_execution_id` (`loop-...`) and `design_intelligence_evidence` into `generated-run-plan.json` and propagates it into the durable batch receipt.
+
+---
+
+## 8. Verification Sign-Off
 
 - **Production Gate:** `NO_GO`
 - **Zero-Cost Commitment:** Verified `PAID_CALLS_MADE=0`.
 - **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-3df8df9990bc` to `STABLE` in `active-slot.json` with proof `RESOURCE-OS-PHASE-M-3DF8DF9-OPERATIONALIZATION-20260925`.
 - **Operational Governance Suite:** 25 passed across `test_action_center.py` and `test_deliberation_council.py`.
+- **Agentic Planning Bridge Suite:** 5 passed in `extensions/autonomy-fabric/tests/test_agentic_planning_bridge.py`.
+- **Design Intelligence Suite:** 28 passed in `extensions/design-intelligence/tests/`.
 - **Cline Live Execution Proof:** Harness contracts and unit suites proven; real official process execution verified with authentic OAuth credentials (`openai-codex`, `gpt-5.6-sol`, account `887ce635...`, real session ID `conv_1790324311810_z7pbqss`); stream initiation encountered transport certificate inspection hold (`SELF_SIGNED_CERT_IN_CHAIN`); fail-closed zero-paid invariant strictly preserved (`PAID_CALLS_MADE=0`).
