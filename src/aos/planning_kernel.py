@@ -2010,6 +2010,7 @@ def compile_execution_plan(
     runtime_dir: Path,
     *,
     backend_override: Optional[Any] = None,
+    capture_adapter_override: Optional[Any] = None,
     repair_context: Optional[Mapping[str, Any]] = None,
     forbidden_task_ids: Sequence[str] = (),
     forbidden_read_paths: Sequence[str] = (),
@@ -2061,6 +2062,10 @@ def compile_execution_plan(
             index_html_path = ws_root / "index.html"
             if not index_html_path.is_file():
                 di_pre_evidence = {
+                    "schema_version": "1.0.0",
+                    "stage": "PRE_IMPLEMENTATION",
+                    "project_id": situation.project_id,
+                    "batch_number": batch_number,
                     "outcome": "DESIGN_EVIDENCE_UNAVAILABLE",
                     "reason": f"Required UI render entrypoint not found: {index_html_path}",
                 }
@@ -2069,66 +2074,93 @@ def compile_execution_plan(
                 index_css_path = ws_root / "index.css"
                 real_css = index_css_path.read_text(encoding="utf-8", errors="replace") if index_css_path.is_file() else ""
 
-                # Real browser capture of current workspace index.html across all 6 viewports
                 evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-pre"
                 evidence_dir.mkdir(parents=True, exist_ok=True)
-                capture_adapter = RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
-                visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"pre-{int(batch_number or 0):04d}")
+                capture_adapter = capture_adapter_override or RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
 
-                brief = DesignProjectBrief(
-                    brief_id=f"brief-{situation.project_id}",
-                    project_id=situation.project_id,
-                    tenant_name=situation.project_id,
-                    industry="Software & Healthcare",
-                    target_audience="Clinical & Operations Users",
-                    core_job_to_be_done=objective.title,
-                    brand_posture="Clinical Precision",
-                )
-                from extensions.design_intelligence.visual_provider import RealVisualCriticAdapter
+                try:
+                    visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"pre-{int(batch_number or 0):04d}")
+                except Exception as capture_exc:
+                    exc_msg = str(capture_exc)
+                    unavail_tokens = ("not installed", "executable doesn't exist", "please run", "browser", "playwright")
+                    if any(t in exc_msg.lower() for t in unavail_tokens):
+                        outcome_type = "DESIGN_EVIDENCE_UNAVAILABLE"
+                    else:
+                        outcome_type = "DESIGN_RUNTIME_FAILURE"
+                    di_pre_evidence = {
+                        "schema_version": "1.0.0",
+                        "stage": "PRE_IMPLEMENTATION",
+                        "project_id": situation.project_id,
+                        "batch_number": batch_number,
+                        "outcome": outcome_type,
+                        "error": exc_msg,
+                        "reason": f"Visual screenshot capture unavailable: {exc_msg}",
+                    }
+                    visual_manifest = None
 
-                visual_adapter = None
-                if os.environ.get("GEMINI_API_KEY", "").strip():
-                    visual_adapter = RealVisualCriticAdapter()
-                critic_ensemble = DesignCriticEnsemble(visual_adapter=visual_adapter)
-                pipeline = AutonomousDesignLoopPipeline(critic_ensemble=critic_ensemble, max_design_review_cycles=2)
-                di_res = pipeline.run_pipeline(
-                    brief=brief,
-                    initial_html=real_html,
-                    initial_css=real_css,
-                    evidence_manifest=visual_manifest,
-                )
+                if visual_manifest is not None:
+                    brief = DesignProjectBrief(
+                        brief_id=f"brief-{situation.project_id}",
+                        project_id=situation.project_id,
+                        tenant_name=situation.project_id,
+                        industry="Software & Healthcare",
+                        target_audience="Clinical & Operations Users",
+                        core_job_to_be_done=objective.title,
+                        brand_posture="Clinical Precision",
+                    )
+                    from extensions.design_intelligence.visual_provider import RealVisualCriticAdapter
 
-                passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
-                failing_findings = [f"{f.critic_name}: {f.details}" for f in di_res.final_scorecard.critic_findings if f.verdict.value == "FAIL"]
-                di_remediation_findings = list(failing_findings)
-                if di_res.blockers:
-                    di_remediation_findings.extend(di_res.blockers)
+                    visual_adapter = None
+                    if os.environ.get("GEMINI_API_KEY", "").strip():
+                        visual_adapter = RealVisualCriticAdapter()
+                    critic_ensemble = DesignCriticEnsemble(visual_adapter=visual_adapter)
+                    pipeline = AutonomousDesignLoopPipeline(critic_ensemble=critic_ensemble, max_design_review_cycles=2)
+                    di_res = pipeline.run_pipeline(
+                        brief=brief,
+                        initial_html=real_html,
+                        initial_css=real_css,
+                        evidence_manifest=visual_manifest,
+                    )
 
-                outcome = "DESIGN_INTELLIGENCE_SUCCESS" if di_res.overall_verdict.value == "PASS" else "DESIGN_REMEDIATION_REQUIRED"
-                di_pre_evidence = {
-                    "schema_version": "1.0.0",
-                    "design_intelligence_execution_id": di_res.pipeline_id,
-                    "stage": "PRE_IMPLEMENTATION",
-                    "project_id": situation.project_id,
-                    "batch_number": batch_number,
-                    "outcome": outcome,
-                    "overall_verdict": di_res.overall_verdict.value,
-                    "cycles_completed": di_res.cycles_completed,
-                    "human_review_state": di_res.human_review_state.value,
-                    "executed_rules": ["R10", "R11", "R12", "R13", "R14", "R15", "R17"],
-                    "critics_passed": passed_critics,
-                    "remediation_findings": di_remediation_findings,
-                    "visual_manifest_id": visual_manifest.manifest_id,
-                    "viewports_captured": visual_manifest.viewports_captured,
-                    "file_hashes": visual_manifest.file_hashes,
-                }
+                    passed_critics = [f.critic_name for f in di_res.final_scorecard.critic_findings if f.verdict.value == "PASS"]
+                    failing_findings = [f"{f.critic_name}: {f.details}" for f in di_res.final_scorecard.critic_findings if f.verdict.value == "FAIL"]
+                    di_remediation_findings = list(failing_findings)
+                    if di_res.blockers:
+                        di_remediation_findings.extend(di_res.blockers)
+
+                    outcome = "DESIGN_INTELLIGENCE_SUCCESS" if di_res.overall_verdict.value == "PASS" else "DESIGN_REMEDIATION_REQUIRED"
+                    di_pre_evidence = {
+                        "schema_version": "1.0.0",
+                        "design_intelligence_execution_id": di_res.pipeline_id,
+                        "stage": "PRE_IMPLEMENTATION",
+                        "project_id": situation.project_id,
+                        "batch_number": batch_number,
+                        "outcome": outcome,
+                        "overall_verdict": di_res.overall_verdict.value,
+                        "cycles_completed": di_res.cycles_completed,
+                        "human_review_state": di_res.human_review_state.value,
+                        "executed_rules": ["R10", "R11", "R12", "R13", "R14", "R15", "R17"],
+                        "critics_passed": passed_critics,
+                        "remediation_findings": di_remediation_findings,
+                        "visual_manifest_id": visual_manifest.manifest_id,
+                        "viewports_captured": visual_manifest.viewports_captured,
+                        "file_hashes": visual_manifest.file_hashes,
+                    }
+
+            if di_pre_evidence:
                 di_artifact_path = runtime_dir / f"design-intelligence-pre-{int(batch_number or 0):04d}.json"
                 _atomic_json(di_artifact_path, di_pre_evidence)
         except Exception as exc:
             di_pre_evidence = {
+                "schema_version": "1.0.0",
+                "stage": "PRE_IMPLEMENTATION",
+                "project_id": situation.project_id,
+                "batch_number": batch_number,
                 "outcome": "DESIGN_RUNTIME_FAILURE",
                 "error": str(exc),
             }
+            di_artifact_path = runtime_dir / f"design-intelligence-pre-{int(batch_number or 0):04d}.json"
+            _atomic_json(di_artifact_path, di_pre_evidence)
 
     design_intelligence_guidance = ""
     if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value:

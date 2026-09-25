@@ -1788,9 +1788,13 @@ def test_design_intelligence_execution_for_ui_planning_lane(tmp_path):
     sit = _situation()
     policy_path = Path("descriptors/lari.planner-policy.json")
 
+    from extensions.design_intelligence.visual_qa import FakeBrowserScreenshotAdapter
+    capture_adapter = FakeBrowserScreenshotAdapter()
+
     plan = compile_execution_plan(
         sit, obj, policy_path, runtime_dir,
         backend_override=FakeBackend(),
+        capture_adapter_override=capture_adapter,
         workspace=workspace,
         batch_number=1,
     )
@@ -1880,8 +1884,92 @@ def test_design_intelligence_missing_entrypoint_reports_typed_unavailable(tmp_pa
         batch_number=2,
     )
 
+    assert plan.get("design_intelligence_execution_id") is None
     di_evidence = plan.get("design_intelligence_evidence")
     assert di_evidence is not None
     assert di_evidence["outcome"] == "DESIGN_EVIDENCE_UNAVAILABLE"
     assert "Required UI render entrypoint not found" in di_evidence["reason"]
+    assert (runtime_dir / "design-intelligence-pre-0002.json").exists()
 
+
+def test_design_intelligence_browser_capture_failure_reports_typed_disposition(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    workspace = tmp_path / "workspace"
+    runtime_dir.mkdir(parents=True)
+    workspace.mkdir(parents=True)
+    (workspace / "script.py").write_text("print('ok')\n", encoding="utf-8")
+    (workspace / "index.html").write_text("<html><body><h1>App</h1></body></html>", encoding="utf-8")
+
+    class FailingCaptureAdapter:
+        def capture_manifest(self, url: str, run_id: str):
+            raise RuntimeError("Playwright is not installed or accessible in current Python environment.")
+
+    class FakeBackend:
+        def execute(self, request):
+            from extensions.autonomy_fabric.execution_backend import ExecutionResult, EvidenceClass
+            plan = {
+                "schema_version": "1.0.0",
+                "objective_id": "UI-1",
+                "tasks": [
+                    {
+                        "node_id": "ui-task-1",
+                        "run_type": "PROCESS",
+                        "authority_id": "DECISION-020",
+                        "risk_class": "R0",
+                        "mutating": False,
+                        "dependencies": [],
+                        "scope_tags": ["ui"],
+                        "write_scope": [],
+                        "payload": {"cmd": ["python", "script.py"]},
+                        "expected_artifacts": [],
+                        "tests": ["test ui"],
+                        "evidence_requirements": ["evidence"],
+                        "completion_criteria": ["done"],
+                    }
+                ],
+                "parallel_safe_groups": [["ui-task-1"]],
+                "rollback_strategy": "none",
+            }
+            res = ExecutionResult(
+                backend_id="fake",
+                worker_id="model_reasoner",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="SUCCESS",
+                exit_code=0,
+                workspace=request.workspace,
+                evidence_payload={"proposal": plan},
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+            setattr(res, "transient_structured_output", plan)
+            return res
+
+    obj = Objective(
+        objective_id="UI-1",
+        title="Implement UI frontend component",
+        description="Design and build UI frontend",
+        authority_id="DECISION-020",
+        risk_class="R0",
+        rationale="UI enhancement",
+        scope_tags=("ui", "frontend"),
+        completion_criteria=("Component renders cleanly",),
+        parallel_candidates=(),
+    )
+    sit = _situation()
+    policy_path = Path("descriptors/lari.planner-policy.json")
+
+    plan = compile_execution_plan(
+        sit, obj, policy_path, runtime_dir,
+        backend_override=FakeBackend(),
+        capture_adapter_override=FailingCaptureAdapter(),
+        workspace=workspace,
+        batch_number=3,
+    )
+
+    assert plan.get("design_intelligence_execution_id") is None
+    di_evidence = plan.get("design_intelligence_evidence")
+    assert di_evidence is not None
+    assert di_evidence["outcome"] == "DESIGN_EVIDENCE_UNAVAILABLE"
+    assert "Playwright is not installed" in di_evidence["error"]
+    assert plan.get("design_intelligence_outcome") == "DESIGN_EVIDENCE_UNAVAILABLE"
+    assert (runtime_dir / "design-intelligence-pre-0003.json").exists()
