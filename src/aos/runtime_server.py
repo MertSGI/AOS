@@ -670,6 +670,49 @@ class RuntimeEngine:
                 "same_fingerprint_respawns": same_fingerprint_respawns,
             })
         elif same_fingerprint_respawns >= 3:
+            is_provider_wait = (
+                fingerprint.get("failure_family") == "PROVIDER_OUTAGE"
+                or "WAITING_FOR_REASONING_PROVIDER" in str(checkpoint.get("phase") or checkpoint.get("disposition") or "").upper()
+                or "WAITING_FOR_REASONING_PROVIDER" in str(state.get("disposition") or state.get("state") or "").upper()
+            )
+            if is_provider_wait:
+                # Quota / rate-limit / provider unavailability alone must not require human decision.
+                # Hold safely in WAITING_FOR_REASONING_PROVIDER with bounded backoff and preserve automatic re-entry.
+                recovery_disposition = "WAITING_FOR_RESOURCE"
+                retry_at = time.time() + 60.0
+                self.store.write_state(
+                    command_id,
+                    state="WAITING_FOR_REASONING_PROVIDER",
+                    disposition="WAITING_FOR_RESOURCE",
+                    failure_class="PROVIDER_RESOURCE_WAIT",
+                    recovery_disposition=recovery_disposition,
+                    recovery_fingerprint=fingerprint,
+                    recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                    completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                    same_fingerprint_respawns=same_fingerprint_respawns,
+                    strategy_generation=strategy_generation,
+                    last_worker_exit_code=last_exit_code,
+                    last_recovery_at=utc_now(),
+                    worker_pid=None,
+                    retry_after_epoch=retry_at,
+                )
+                self.store.append_event(command_id, "runtime.resource_wait_held", {
+                    "reason": "WAITING_FOR_RESOURCE",
+                    "fingerprint": fingerprint,
+                    "same_fingerprint_respawns": same_fingerprint_respawns,
+                    "lineage_preserved": True,
+                    "retry_after_epoch": retry_at,
+                    "human_action_required": False,
+                })
+                self._record_recovery_disposition(
+                    command_id,
+                    fingerprint,
+                    recovery_disposition,
+                    same_fingerprint_respawns,
+                    strategy_generation,
+                )
+                return
+
             recovery_disposition = "RECOVERY_CHURN_GUARD"
             self.store.write_state(
                 command_id,

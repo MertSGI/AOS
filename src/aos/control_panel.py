@@ -41,6 +41,16 @@ from aos.provenance import (
     ProvenanceError,
 )
 from aos.self_diagnosis import SelfDiagnosisEngine
+from aos.action_center import (
+    ActionCenterEngine,
+    classify_lane_hold,
+    validate_and_process_control_request,
+    HUMAN_ACTIONABLE_CLASSES,
+)
+from aos.self_repair import (
+    BoundedSelfRepairEngine,
+    classify_defect_repair_authority,
+)
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -852,6 +862,14 @@ textarea.goal-main {
         <span class="nav-badge" id="rail-attention-badge">UNKNOWN</span>
       </button>
 
+      <button class="rail-nav-item" onclick="switchView('actions')" id="nav-btn-actions">
+        <div class="nav-label-box">
+          <svg class="nav-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          <span>Action Center</span>
+        </div>
+        <span class="nav-badge alert" id="rail-actions-badge" style="display:none;">0</span>
+      </button>
+
       <button class="rail-nav-item" onclick="switchView('lanes')" id="nav-btn-lanes">
         <div class="nav-label-box">
           <svg class="nav-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
@@ -961,6 +979,12 @@ textarea.goal-main {
           <strong id="top-prov-text">UNKNOWN</strong>
         </div>
 
+        <div class="top-pill" id="top-actions-pill" style="display:none; border-color:var(--hold-border); background:var(--hold-dim); cursor:pointer;" onclick="switchView('actions')">
+          <span class="dot hold"></span>
+          <span style="color:#fde68a;">Human Action Required:</span>
+          <strong id="top-actions-count" style="color:#f59e0b;">0</strong>
+        </div>
+
         <div class="status-chip danger" style="padding:4px 9px;" title="Production safety constraint">
           ⛔ PRODUCTION: NO_GO
         </div>
@@ -1062,6 +1086,38 @@ textarea.goal-main {
             <button class="btn btn-secondary btn-sm" onclick="runOpCommand('checkpoint-now')">💾 Checkpoint Now</button>
             <button class="btn btn-secondary btn-sm" onclick="runOpCommand('heartbeat-now')">💓 Heartbeat Now</button>
             <button class="btn btn-secondary btn-sm" onclick="switchView('operations')">Full Operations Center ↗</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW: HUMAN ACTION CENTER & DECISION INBOX -->
+    <section class="view-container" id="view-actions">
+      <div class="cockpit-card">
+        <div class="card-header-flex">
+          <div>
+            <div class="cockpit-view-title">
+              <span>Human Action Center &amp; Decision Inbox</span>
+            </div>
+            <div class="section-subtitle">Authoritative Operator Decision Inbox · Structured Bounded Controls · Versioned Control Requests</div>
+          </div>
+          <span class="status-chip ok" id="actions-summary-chip">NO PENDING ACTIONS</span>
+        </div>
+
+        <div class="attention-box nominal" id="actions-intro-box" style="margin-bottom:16px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <div>
+            <strong>Authority Guarantee:</strong> Human UI actions never directly command raw execution workers. Every decision is submitted as a versioned, cryptographically bound Control Request (schema v0.1) validating standing authority and pinned canonical control revisions.
+          </div>
+        </div>
+
+        <div id="actions-inbox-container">
+          <div style="color:var(--text-muted); padding:20px; text-align:center;">
+            <em>Loading Human Action Center…</em>
           </div>
         </div>
       </div>
@@ -1418,21 +1474,21 @@ textarea.goal-main {
           <div id="deliberation-view">Loading deliberation metrics…</div>
         </div>
 
-        <!-- AUTONOMOUS SELF-REPAIR (SHADOW / GOVERNED) -->
+        <!-- AUTONOMOUS SELF-REPAIR COCKPIT (BOUNDED SAFE / GOVERNED) -->
         <div class="cockpit-card">
           <div class="card-header-flex">
             <div>
               <div class="cockpit-view-title">
-                <span>Autonomous Self-Repair Observability</span>
+                <span>Autonomous Self-Repair Cockpit</span>
               </div>
-              <div class="section-subtitle">System self-diagnosis and shadow proposal inspection</div>
+              <div class="section-subtitle">Real-Time Progression · Exact Finding &amp; Authority Classification · Immutable Candidate CI · Smoke &amp; Reversible Activation</div>
             </div>
-            <span class="status-chip hold">SHADOW / GOVERNED</span>
+            <span class="status-chip hold" id="sr-mode-chip">SHADOW / GOVERNED</span>
           </div>
 
-          <div class="attention-box nominal" style="margin-bottom:14px; background:rgba(245,158,11,0.08); border-color:rgba(245,158,11,0.3); color:#fde68a;">
+          <div class="attention-box nominal" id="sr-attention-box" style="margin-bottom:14px; background:rgba(245,158,11,0.08); border-color:rgba(245,158,11,0.3); color:#fde68a;">
             <div>
-              <strong>Observation Only:</strong> Live autonomous mutation is inactive. All findings and repair proposals remain governed under shadow observability.
+              <strong>Self-Repair Contract:</strong> Live autonomous repair is permitted strictly for bounded technical defects classified as <code>AUTO_REPAIR_ELIGIBLE</code>. All defects touching scope, roadmap, production, security, or billing generate actionable Human Action cards.
             </div>
           </div>
 
@@ -2317,12 +2373,162 @@ async function refreshStatus() {
       }
     }
 
-    // 5. OPERATOR ATTENTION VS SYSTEM ATTENTION
+    // 5. OPERATOR ATTENTION VS SYSTEM ATTENTION & HUMAN ACTION CENTER
     const alerts = s.alerts || [];
     const attentionBox = document.getElementById('overview-operator-attention');
     const attentionHead = document.getElementById('attention-headline');
     const attentionSub = document.getElementById('attention-subtext');
     const railAttention = document.getElementById('rail-attention-badge');
+
+    // Human Action Required Metric & Cards
+    const humanActions = s.human_actions || [];
+    const humanActionCount = s.human_action_required_count ?? humanActions.length;
+
+    // Top Bar Action Required Badge: Only shown when humanActionCount > 0
+    const topActionsPill = document.getElementById('top-actions-pill');
+    const topActionsCount = document.getElementById('top-actions-count');
+    if (topActionsPill && topActionsCount) {
+      if (humanActionCount > 0) {
+        topActionsPill.style.display = 'inline-flex';
+        topActionsCount.textContent = String(humanActionCount);
+      } else {
+        topActionsPill.style.display = 'none';
+      }
+    }
+
+    // Rail Action Center Badge
+    const railActionsBadge = document.getElementById('rail-actions-badge');
+    if (railActionsBadge) {
+      if (humanActionCount > 0) {
+        railActionsBadge.style.display = 'inline-block';
+        railActionsBadge.textContent = String(humanActionCount);
+      } else {
+        railActionsBadge.style.display = 'none';
+      }
+    }
+
+    // Action Center Inbox View Rendering
+    const actionsInbox = document.getElementById('actions-inbox-container');
+    const actionsChip = document.getElementById('actions-summary-chip');
+    if (actionsChip) {
+      if (humanActionCount > 0) {
+        actionsChip.textContent = `${humanActionCount} ACTION${humanActionCount === 1 ? '' : 'S'} PENDING`;
+        actionsChip.className = 'status-chip danger';
+      } else {
+        actionsChip.textContent = 'NO PENDING ACTIONS';
+        actionsChip.className = 'status-chip ok';
+      }
+    }
+
+    if (actionsInbox) {
+      if (humanActions.length === 0) {
+        actionsInbox.innerHTML = `
+          <div style="background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:8px; padding:24px; text-align:center;">
+            <div style="font-size:18px; margin-bottom:6px;">✨</div>
+            <div style="font-weight:700; color:#fff; font-size:14px; margin-bottom:4px;">No Human Action Required</div>
+            <div style="color:var(--text-sub); font-size:12px; max-width:540px; margin:0 auto;">
+              All active projects and resources are executing autonomously or waiting on external resources with automatic re-entry. You will only be alerted here when an authoritative operator decision, authentication, or review is genuinely necessary.
+            </div>
+          </div>`;
+      } else {
+        let cardsHtml = '';
+        for (const act of humanActions) {
+          const actId = escapeHtml(act.action_id || 'NONE');
+          const proj = escapeHtml(act.project || 'unknown');
+          const cmdId = escapeHtml(act.command_id || 'NONE');
+          const batch = act.current_batch ?? 0;
+          const actClass = escapeHtml(act.action_class || 'HUMAN_REQUIRED');
+          const riskClass = escapeHtml(act.risk_class || 'MEDIUM');
+          const whyStopped = escapeHtml(act.why_stopped || 'Halted');
+          const expState = escapeHtml(act.expected_state || 'RUNNING');
+          const obsState = escapeHtml(act.observed_state || 'HOLD');
+          const blocker = escapeHtml(act.exact_blocker || 'N/A');
+          const whyCannot = escapeHtml(act.why_automation_cannot_continue || 'Authority boundary');
+          const canonSha = escapeHtml(act.canonical_revision || 'UNKNOWN');
+          const decReq = escapeHtml(act.decision_required || 'Review required');
+          const authBound = escapeHtml(act.authority_boundary || 'CHARTER_AUTHORITY');
+
+          const options = act.available_options || [];
+
+          cardsHtml += `
+          <div class="cockpit-card" style="border-color:${actClass.includes('APPROVAL') ? 'var(--danger-border)' : 'var(--hold-border)'}; background:linear-gradient(180deg, rgba(245,158,11,0.03) 0%, rgba(22,28,40,0.9) 100%); margin-bottom:16px;">
+            <div class="card-header-flex">
+              <div>
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                  <span class="status-chip ${actClass.includes('APPROVAL') ? 'danger' : 'hold'}">${actClass}</span>
+                  <span style="font-weight:800; font-size:15px; color:#fff;">Lane: ${proj.toUpperCase()} (Batch #${batch})</span>
+                </div>
+                <div class="section-subtitle">Action ID: <code>${actId}</code> · Command: <code>${cmdId}</code></div>
+              </div>
+              <span class="status-chip ${riskClass === 'HIGH' ? 'danger' : 'hold'}">RISK: ${riskClass}</span>
+            </div>
+
+            <!-- Structured 4-Part Action Breakdown -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:10px; margin-bottom:14px; font-size:12px;">
+              <div style="background:#090d14; border:1px solid var(--border-dim); border-radius:6px; padding:10px;">
+                <div style="font-weight:700; color:#ef4444; margin-bottom:3px;">1. WHAT HAPPENED</div>
+                <div>${whyStopped}</div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:4px;">Observed: <code>${obsState}</code> (Expected: <code>${expState}</code>)</div>
+              </div>
+              <div style="background:#090d14; border:1px solid var(--border-dim); border-radius:6px; padding:10px;">
+                <div style="font-weight:700; color:#f59e0b; margin-bottom:3px;">2. WHY AOS STOPPED</div>
+                <div>${whyCannot}</div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:4px;">Exact Blocker: <strong>${blocker}</strong></div>
+              </div>
+              <div style="background:#090d14; border:1px solid var(--border-dim); border-radius:6px; padding:10px;">
+                <div style="font-weight:700; color:#60a5fa; margin-bottom:3px;">3. WHAT EXACTLY I NEED FROM YOU</div>
+                <div>${decReq}</div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:4px;">Authority Boundary: <code>${authBound}</code></div>
+              </div>
+              <div style="background:#090d14; border:1px solid var(--border-dim); border-radius:6px; padding:10px;">
+                <div style="font-weight:700; color:#10b981; margin-bottom:3px;">4. CANONICAL BASELINE</div>
+                <div>Pinned SHA: <code>${canonSha.slice(0, 16)}…</code></div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:4px;">Fingerprint: <code>${escapeHtml((act.workspace_fingerprint || '').slice(0, 12))}</code></div>
+              </div>
+            </div>
+
+            <!-- Bounded Choices & Options -->
+            <div style="background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:6px; padding:12px;">
+              <div style="font-weight:700; font-size:12.5px; color:#fff; margin-bottom:8px;">
+                ★ AUTHORITATIVE CONTROL OPTIONS (Submitted via Versioned Control Request):
+              </div>
+              <div style="display:flex; flex-direction:column; gap:8px;">`;
+
+          for (const opt of options) {
+            const optId = escapeHtml(opt.option_id);
+            const optLabel = escapeHtml(opt.label);
+            const optDesc = escapeHtml(opt.description);
+            const optConseq = escapeHtml(opt.consequences);
+            const optRev = escapeHtml(opt.reversibility);
+            const reqType = escapeHtml(opt.control_request_type || 'RESUME');
+            const reqChange = escapeHtml(opt.requested_change || optLabel);
+            const isSafe = Boolean(opt.is_safe_default);
+
+            cardsHtml += `
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; background:#0c1017; border:1px solid var(--border-dim); border-radius:6px; padding:10px 12px;">
+                  <div style="flex:1; min-width:240px;">
+                    <div style="font-weight:700; color:#fff; font-size:12px; display:flex; align-items:center; gap:6px;">
+                      <span>${optLabel}</span>
+                      ${isSafe ? '<span class="status-chip ok" style="font-size:9.5px; padding:1px 5px;">SAFE DEFAULT</span>' : ''}
+                      <span class="status-chip neutral" style="font-size:9.5px; padding:1px 5px;">${optRev}</span>
+                    </div>
+                    <div style="color:var(--text-sub); font-size:11.5px; margin-top:2px;">${optDesc}</div>
+                    <div style="color:var(--text-muted); font-size:11px; margin-top:2px;">Consequences: ${optConseq}</div>
+                  </div>
+                  <button class="btn ${isSafe ? 'btn-cta' : 'btn-secondary'} btn-sm" onclick="dispatchControlRequest('${actId}', '${proj}', '${cmdId}', '${canonSha}', '${reqType}', '${reqChange}')">
+                    Execute Choice
+                  </button>
+                </div>`;
+          }
+
+          cardsHtml += `
+              </div>
+            </div>
+          </div>`;
+        }
+        actionsInbox.innerHTML = cardsHtml;
+      }
+    }
 
     // Populate Detailed Active Alerts Panel
     const alertsBadge = document.getElementById('alerts-count-badge');
@@ -2337,15 +2543,15 @@ async function refreshStatus() {
     }
 
     // Distinguish Operator Attention from System Wait / Attention
-    if (anyHumanRequired || isFail) {
+    if (humanActionCount > 0 || isFail) {
       if (attentionBox) attentionBox.className = 'attention-box critical';
       if (railAttention) {
         railAttention.textContent = 'ACTION';
         railAttention.className = 'nav-badge alert';
       }
-      if (attentionHead) attentionHead.textContent = 'Operator Action Required';
-      if (attentionSub) attentionSub.textContent = anyHumanRequired
-        ? 'A lane has entered HUMAN_REQUIRED state. Operator review or approval is required.'
+      if (attentionHead) attentionHead.textContent = `Operator Action Required (${humanActionCount} Item${humanActionCount === 1 ? '' : 's'})`;
+      if (attentionSub) attentionSub.textContent = humanActionCount > 0
+        ? `${humanActionCount} actionable item(s) in Human Action Center require operator decision or authentication.`
         : `Host system entered ${hostVal} state. Immediate inspection recommended.`;
     } else if (anyWaiting || activeBlockerList.length > 0 || isHold || alerts.length > 0) {
       if (attentionBox) attentionBox.className = 'attention-box system-wait';
@@ -2407,42 +2613,106 @@ async function refreshStatus() {
         <div style="margin-top:8px; color:var(--text-muted); font-size:11.5px;">Trigger Reasons: ${reasonEntries || 'None recorded'}</div>`;
     }
 
-    // Self-Repair Telemetry & Finding Drill-Down
+    // Self-Repair Cockpit Telemetry & Live Progression
     const sr = s.self_repair || {};
     const srView = document.getElementById('self-repair-view');
+    const srModeChip = document.getElementById('sr-mode-chip');
+    if (srModeChip) {
+      const isLive = Boolean(sr.self_repair_live_active || sr.live_active);
+      srModeChip.textContent = isLive ? 'BOUNDED LIVE REPAIR' : 'SHADOW / GOVERNED';
+      srModeChip.className = isLive ? 'status-chip ok' : 'status-chip hold';
+    }
+
     if (srView) {
+      const modeStr = sr.self_repair_mode || (sr.live_active ? 'BOUNDED_LIVE' : 'SHADOW_GOVERNED');
+      const diagStatus = sr.self_diagnosis || sr.self_diagnosis_status || 'HEALTHY_NO_ACTION';
+      const curFinding = sr.current_finding || sr.self_repair_last_finding || 'NONE';
+      const repAuth = sr.repair_authority || 'NO_ACTION_REQUIRED';
+      const repStage = sr.current_repair_stage || 'IDLE';
+      const repVal = sr.validation || 'NOMINAL';
+      const repCi = sr.ci || 'EXACT_SHA_CI_REQUIRED';
+      const repCand = sr.candidate || 'IMMUTABLE_CANDIDATE_READY';
+      const repRollback = sr.rollback || 'RETAINED';
+
+      const authChipClass = repAuth === 'AUTO_REPAIR_ELIGIBLE' ? 'ok' : (repAuth === 'HUMAN_APPROVAL_REQUIRED' ? 'hold' : 'danger');
+
       let srHtml = `
-        <div style="display:flex; flex-direction:column; gap:8px; font-size:12.5px;">
-          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:6px;">
-            <span style="color:var(--text-muted)">Diagnosis Status:</span>
-            <strong>${escapeHtml(sr.self_diagnosis_status || 'HEALTHY_NO_ACTION')}</strong>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin-bottom:12px;">
+          <div class="history-metric-box">
+            <div class="label">Self-Diagnosis</div>
+            <div class="val ${diagStatus.includes('HEALTHY') ? 'ok' : 'hold'}" style="font-size:12px;">${escapeHtml(diagStatus)}</div>
           </div>
-          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:6px;">
-            <span style="color:var(--text-muted)">Active Findings:</span>
-            <span>${sr.active_finding_count ?? 0} (Blocking: <strong style="color:${(sr.blocking_finding_count || 0) > 0 ? '#e06c75' : '#74d99f'}">${sr.blocking_finding_count ?? 0}</strong>)</span>
+          <div class="history-metric-box">
+            <div class="label">Self-Repair Mode</div>
+            <div class="val ${modeStr.includes('LIVE') ? 'ok' : 'hold'}" style="font-size:12px;">${escapeHtml(modeStr)}</div>
           </div>
-          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:6px;">
-            <span style="color:var(--text-muted)">Last Finding:</span>
-            <span>${escapeHtml(sr.self_repair_last_finding || 'NONE')} (Class: <code>${escapeHtml(sr.last_failure_class || 'NONE')}</code>)</span>
+          <div class="history-metric-box">
+            <div class="label">Repair Authority</div>
+            <div class="val" style="font-size:11.5px;"><span class="status-chip ${authChipClass}">${escapeHtml(repAuth)}</span></div>
           </div>
-          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:6px;">
-            <span style="color:var(--text-muted)">Severity / Autonomy Impact:</span>
-            <span>${escapeHtml(sr.last_finding_severity || 'NONE')} / ${escapeHtml(sr.last_autonomy_impact || 'NONE')}</span>
+          <div class="history-metric-box">
+            <div class="label">Current Stage</div>
+            <div class="val" style="font-size:12px;">${escapeHtml(repStage)}</div>
           </div>
-          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:6px;">
-            <span style="color:var(--text-muted)">Shadow Proposal Status:</span>
-            <span>${escapeHtml(sr.shadow_repair_proposal_status || 'NONE')} (Live Active: NO)</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:6px; padding:10px 12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:4px;">
+            <span style="color:var(--text-muted)">Current Finding:</span>
+            <code>${escapeHtml(curFinding)}</code>
+          </div>
+          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:4px;">
+            <span style="color:var(--text-muted)">Validation / Smoke:</span>
+            <span><strong>${escapeHtml(repVal)}</strong> · Smoke: ${escapeHtml(sr.smoke_status || 'VERIFIED')}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:4px;">
+            <span style="color:var(--text-muted)">CI Requirement:</span>
+            <code>${escapeHtml(repCi)}</code>
+          </div>
+          <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-dim); padding-bottom:4px;">
+            <span style="color:var(--text-muted)">Immutable Candidate:</span>
+            <small><code>${escapeHtml(repCand)}</code></small>
           </div>
           <div style="display:flex; justify-content:space-between;">
-            <span style="color:var(--text-muted)">Eligibility Gate:</span>
-            <span class="status-chip neutral">${escapeHtml(sr.self_repair_eligibility || 'PENDING_GATE')}</span>
+            <span style="color:var(--text-muted)">Rollback Snapshot:</span>
+            <span class="status-chip ok">${escapeHtml(repRollback)}</span>
           </div>
         </div>`;
 
+      // Live Repair Proposal Drill-Down
+      const prop = sr.proposed_repair;
+      if (prop) {
+        srHtml += `
+        <div style="background:#090d14; border:1px solid var(--border-dim); border-radius:6px; padding:10px; margin-bottom:10px; font-size:12px;">
+          <div style="font-weight:700; color:#60a5fa; margin-bottom:4px;">★ Proposed Safe Technical Repair:</div>
+          <div style="color:var(--text-main); margin-bottom:4px;">${escapeHtml(prop.minimal_change || 'None')}</div>
+          <div style="color:var(--text-muted); font-size:11px;">Root Cause: ${escapeHtml(prop.root_cause_hypothesis || 'N/A')}</div>
+        </div>`;
+      }
+
+      // Live Autonomous Self-Repair Execution Control
+      const isLiveActive = Boolean(sr.self_repair_live_active || sr.live_active);
+      srHtml += `
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; padding-top:8px; border-top:1px solid var(--border-dim); flex-wrap:wrap; gap:8px;">
+        <div style="font-size:11px; color:var(--text-muted);">
+          Repair Authority: <strong>${escapeHtml(repAuth)}</strong> · Live Execution: <strong>${isLiveActive ? 'ACTIVE' : 'STANDBY'}</strong>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-sm" onclick="toggleSelfRepairMode(${!isLiveActive})">
+            ${isLiveActive ? 'Switch to Shadow' : 'Enable Bounded Live'}
+          </button>
+          ${(curFinding !== 'NONE' && repAuth === 'AUTO_REPAIR_ELIGIBLE') ? `
+            <button class="btn btn-cta btn-sm" onclick="triggerAutonomousRepair('${escapeHtml(curFinding)}')">
+              Apply Auto-Repair Now
+            </button>
+          ` : ''}
+        </div>
+      </div>`;
+
       const findingsList = sr.findings || [];
       if (findingsList.length > 0) {
-        srHtml += `<div style="margin-top:10px; border-top:1px solid var(--border-dim); padding-top:8px;">
-          <div style="font-weight:bold; margin-bottom:6px; color:var(--text-sub);">Recent Shadow Findings (Read-Only Inspection):</div>`;
+        srHtml += `<div style="margin-top:12px; border-top:1px solid var(--border-dim); padding-top:8px;">
+          <div style="font-weight:bold; margin-bottom:6px; color:var(--text-sub);">Durable Findings &amp; Classified Authorities:</div>`;
         for (const f of findingsList.slice(0, 5)) {
           const sevColor = (f.severity === 'CRITICAL' || f.severity === 'HIGH') ? '#ef4444' : ((f.severity === 'MEDIUM') ? '#f59e0b' : '#10b981');
           srHtml += `<details style="margin-bottom:6px; background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:6px; padding:6px 10px;">
@@ -2451,10 +2721,9 @@ async function refreshStatus() {
             </summary>
             <div style="margin-top:6px; font-size:11px; font-family:var(--font-mono); line-height:1.5;">
               <div>Finding ID: <strong>${escapeHtml(f.finding_id)}</strong></div>
-              <div>Component: ${escapeHtml(f.component)} · Recurrence: ${f.recurrence_count}</div>
-              <div>Impact: ${escapeHtml(f.autonomy_impact)} · Authority: ${escapeHtml(f.repair_authority)}</div>
+              <div>Component: ${escapeHtml(f.component)} · Authority: <strong>${escapeHtml(f.repair_authority)}</strong></div>
               <div>Root Cause: ${escapeHtml(f.suspected_root_cause || 'NONE')}</div>
-              ${f.proposed_repair ? `<div style="margin-top:4px; color:var(--ok);">Proposed Repair (Shadow Only): ${escapeHtml(f.proposed_repair.minimal_change || 'NONE')}</div>` : ''}
+              ${f.proposed_repair ? `<div style="margin-top:4px; color:var(--ok);">Proposed: ${escapeHtml(f.proposed_repair.minimal_change || 'NONE')}</div>` : ''}
             </div>
           </details>`;
         }
@@ -2700,6 +2969,79 @@ async function submitJob() {
   } catch (e) {
     if (out) out.textContent = 'Submit failed: ' + e;
     toast('Submit failed');
+  }
+}
+
+async function dispatchControlRequest(actionId, project, commandId, canonSha, reqType, reqChange) {
+  try {
+    const validRequestType = (reqType === 'RESUME' || reqType === 'HOLD' || reqType === 'PAUSE_LANE' || reqType === 'SCOPE_CHANGE') ? reqType : 'RESUME';
+    const payload = {
+      schema_version: '0.1.0',
+      request_id: 'req-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+      project_id: project || 'lari',
+      actor_type: 'human_owner',
+      request_type: validRequestType,
+      base_control_sha: canonSha,
+      requested_change: reqChange || 'Resume lane execution under operator authorization',
+      reason: 'Authorized via Human Action Center UI',
+      requested_at: new Date().toISOString(),
+      extensions: {
+        action_id: actionId,
+        command_id: commandId
+      }
+    };
+    const r = await fetch('/api/control-requests', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-AOS-Panel-Token': TOKEN},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (!r.ok || data.status !== 'ACCEPTED') {
+      throw new Error(data.detail || data.error || ('HTTP ' + r.status));
+    }
+    toast('Action ' + actionId + ' executed successfully');
+    await refreshStatus();
+  } catch (e) {
+    alert('Action execution failed: ' + e);
+    toast('Action execution failed');
+  }
+}
+
+async function toggleSelfRepairMode(enableLive) {
+  try {
+    const r = await fetch('/api/self-repair', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-AOS-Panel-Token': TOKEN},
+      body: JSON.stringify({action: 'set_mode', live_active: enableLive})
+    });
+    const data = await r.json();
+    if (!r.ok || !data.success) {
+      throw new Error(data.detail || data.error || ('HTTP ' + r.status));
+    }
+    toast('Self-repair set to ' + (enableLive ? 'Bounded Live' : 'Shadow'));
+    await refreshStatus();
+  } catch (e) {
+    alert('Self-repair mode update failed: ' + e);
+    toast('Mode update failed');
+  }
+}
+
+async function triggerAutonomousRepair(findingId) {
+  try {
+    const r = await fetch('/api/self-repair', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-AOS-Panel-Token': TOKEN},
+      body: JSON.stringify({action: 'repair', finding_id: findingId})
+    });
+    const data = await r.json();
+    if (!r.ok || !data.success) {
+      throw new Error(data.detail || data.error || ('HTTP ' + r.status));
+    }
+    toast('Auto-repair executed for ' + findingId);
+    await refreshStatus();
+  } catch (e) {
+    alert('Auto-repair failed: ' + e);
+    toast('Auto-repair failed');
   }
 }
 
@@ -3416,6 +3758,29 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         diag_engine = SelfDiagnosisEngine(diag_root, config)
         diag_summary = diag_engine.summarize_status()
 
+        # Bounded Safe Self-Repair Cockpit
+        repair_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-repair")
+        repair_engine = BoundedSelfRepairEngine(repair_root, diag_engine, config)
+        repair_cockpit = repair_engine.summarize_cockpit()
+
+        # First-Class Human Action Center
+        action_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/action-center")
+        action_engine = ActionCenterEngine(action_root, config)
+        # Scan durable store for actionable items
+        if store_roots:
+            try:
+                first_store = RuntimeStore(store_roots[0])
+                all_cids = list(active_or_waiting)
+                action_engine.scan_and_reconcile(
+                    store=first_store,
+                    active_command_ids=all_cids,
+                    candidate_source_sha=active_sha,
+                )
+            except Exception:
+                pass
+        pending_human_actions = action_engine.list_pending_actions()
+        human_action_count = len(pending_human_actions)
+
         # Product mutations and evidence
         first_workspace_artifact = relay_info.get("first_workspace_productization_artifact") or relay_info.get("first_product_mutation")
         first_ui_mutation = relay_info.get("first_user_facing_ui_mutation")
@@ -3513,13 +3878,16 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 },
             },
             "alerts": alerts,
+            "human_actions": pending_human_actions,
+            "human_action_required_count": human_action_count,
             "self_repair": {
+                **repair_cockpit,
                 "self_diagnosis_status": diag_summary.get("self_diagnosis_status", "SHADOW_ONLY"),
                 "self_repair_shadow_status": "PREPARED",
                 "self_repair_eligibility": diag_summary.get("self_repair_eligibility", "ELIGIBLE_PENDING_GATE"),
                 "self_repair_last_finding": diag_summary.get("last_finding_id", "NONE"),
                 "self_repair_required_evidence": "EXACT_SHA_CI_PROVEN_AND_CANDIDATE_MATERIALIZED",
-                "self_repair_live_active": False,
+                "self_repair_live_active": repair_cockpit.get("live_active", False),
                 "active_finding_count": diag_summary.get("active_finding_count", 0),
                 "blocking_finding_count": diag_summary.get("blocking_finding_count", 0),
                 "last_failure_class": diag_summary.get("last_failure_class", "NONE"),
@@ -3722,7 +4090,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if not (parsed.path in ("/api/jobs", "/api/providers", "/api/goals") or parsed.path.startswith("/api/commands/")):
+        if not (
+            parsed.path in ("/api/jobs", "/api/providers", "/api/goals", "/api/control-requests", "/api/self-repair")
+            or parsed.path.startswith("/api/commands/")
+        ):
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
         if self.headers.get("X-AOS-Panel-Token") != self.token:
@@ -3742,6 +4113,44 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("Request body must be a JSON object")
+
+            # Route: Human Control Request
+            if parsed.path == "/api/control-requests":
+                action_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/action-center")
+                action_engine = ActionCenterEngine(action_root, self.config)
+                runtime_root = Path(self.config.get("runtime_root", "")).expanduser().resolve()
+                state_root = runtime_root / "state" if (runtime_root / "state" / "commands").is_dir() else runtime_root
+                local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
+                use_root = local_app_state if (local_app_state / "commands").is_dir() else state_root
+                from aos.runtime_store import RuntimeStore
+                store = RuntimeStore(use_root)
+                canon_sha = str(self.config.get("candidate_source_sha") or os.environ.get("AOS_RUNTIME_SOURCE_SHA") or "UNKNOWN")
+                res = validate_and_process_control_request(payload, action_engine, store, canon_sha)
+                self._json(HTTPStatus.OK, res)
+                return
+
+            # Route: Autonomous Self-Repair Execution
+            if parsed.path == "/api/self-repair":
+                diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+                diag_engine = SelfDiagnosisEngine(diag_root, self.config)
+                repair_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-repair")
+                repair_engine = BoundedSelfRepairEngine(repair_root, diag_engine, self.config)
+                action = payload.get("action", "repair")
+                if action == "set_mode":
+                    repair_engine.set_live_mode(bool(payload.get("live_active", False)))
+                    self._json(HTTPStatus.OK, {"status": "MODE_UPDATED", "live_active": repair_engine.live_active})
+                    return
+                finding_id = payload.get("finding_id")
+                if not finding_id:
+                    raise ValueError("finding_id is required for self-repair")
+                success, stage_or_reason, rec = repair_engine.attempt_autonomous_repair(str(finding_id))
+                self._json(HTTPStatus.OK if success else HTTPStatus.CONFLICT, {
+                    "success": success,
+                    "stage": stage_or_reason,
+                    "record": rec,
+                })
+                return
+
             if parsed.path.startswith("/api/commands/"):
                 cmd_name = parsed.path[len("/api/commands/"):]
                 result = execute_command_on_runtime(cmd_name, payload, self.config)

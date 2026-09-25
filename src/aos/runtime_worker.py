@@ -630,6 +630,53 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         else 1
                     )
                     if repeats >= 3:
+                        is_provider_wait = (
+                            fingerprint.get("failure_family") == "PROVIDER_OUTAGE"
+                            or "WAITING_FOR_REASONING_PROVIDER" in str(checkpoint.get("phase") or checkpoint.get("disposition") or "").upper()
+                            or "WAITING_FOR_REASONING_PROVIDER" in str(current_state.get("disposition") or current_state.get("state") or "").upper()
+                        )
+                        if is_provider_wait:
+                            # Resource unavailability alone MUST NOT require human decision.
+                            # Keep state WAITING_FOR_REASONING_PROVIDER with bounded backoff and preserve automatic re-entry.
+                            store.write_state(
+                                command_id,
+                                state="WAITING_FOR_REASONING_PROVIDER",
+                                disposition="WAITING_FOR_RESOURCE",
+                                failure_class="PROVIDER_RESOURCE_WAIT",
+                                recovery_disposition="WAITING_FOR_RESOURCE",
+                                recovery_fingerprint=fingerprint,
+                                recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                                completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                                same_fingerprint_respawns=repeats,
+                                strategy_generation=strategy_generation,
+                                last_worker_exit_code=0,
+                                last_recovery_at=utc_now(),
+                                worker_pid=None,
+                                retry_after_epoch=time.time() + 60.0,
+                            )
+                            store.append_event(command_id, "runtime.resource_wait_held", {
+                                "reason": "WAITING_FOR_RESOURCE",
+                                "fingerprint": fingerprint,
+                                "same_fingerprint_respawns": repeats,
+                                "lineage_preserved": True,
+                                "human_action_required": False,
+                            })
+                            result = RuntimeResult(
+                                command_id=command_id,
+                                state="WAITING_FOR_REASONING_PROVIDER",
+                                disposition="WAITING_FOR_RESOURCE",
+                                completed_batch_count=completed,
+                                canonical_source_sha=receipt.get("canonical_source_sha"),
+                                canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
+                                receipt={
+                                    **receipt,
+                                    "reason": "WAITING_FOR_RESOURCE",
+                                    "recovery_fingerprint": fingerprint,
+                                },
+                            ).to_dict()
+                            store.write_result(command_id, result)
+                            return result
+
                         store.write_state(
                             command_id,
                             state="HUMAN_REQUIRED",

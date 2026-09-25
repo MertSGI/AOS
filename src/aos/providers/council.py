@@ -29,6 +29,26 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 COUNCIL_TARGET_MEMBER_COUNT = 3
 COUNCIL_MIN_REAL_QUORUM = 2
 
+# Truthful Council Operational Modes
+COUNCIL_MODE_OFF = "OFF"
+COUNCIL_MODE_SHADOW_BUDGETED = "SHADOW_BUDGETED"
+COUNCIL_MODE_ADVISORY_ACTIVE = "ADVISORY_ACTIVE"
+COUNCIL_MODE_HUMAN_DECISION_ADVISORY = "HUMAN_DECISION_ADVISORY"
+
+COUNCIL_MODES = {
+    COUNCIL_MODE_OFF,
+    COUNCIL_MODE_SHADOW_BUDGETED,
+    COUNCIL_MODE_ADVISORY_ACTIVE,
+    COUNCIL_MODE_HUMAN_DECISION_ADVISORY,
+    "SHADOW_ONLY",  # Backwards compatibility
+}
+
+# Configurable Hard Budgets
+DEFAULT_MAX_COUNCIL_CALLS = 50
+DEFAULT_MAX_COUNCIL_TOKEN_ESTIMATE = 100000
+DEFAULT_MAX_COUNCIL_REASONING_SHARE = 0.10
+DEFAULT_COUNCIL_COOLDOWN_SECONDS = 300.0
+
 
 @dataclasses.dataclass(frozen=True)
 class CouncilTriggerAssessment:
@@ -348,16 +368,26 @@ class DeliberationCouncilV1:
         min_quorum: int = COUNCIL_MIN_REAL_QUORUM,
         target_members: int = COUNCIL_TARGET_MEMBER_COUNT,
         ledger_dir: Optional[Path] = None,
+        max_council_calls: int = DEFAULT_MAX_COUNCIL_CALLS,
+        max_council_token_estimate: int = DEFAULT_MAX_COUNCIL_TOKEN_ESTIMATE,
+        max_reasoning_share: float = DEFAULT_MAX_COUNCIL_REASONING_SHARE,
+        cooldown_seconds: float = DEFAULT_COUNCIL_COOLDOWN_SECONDS,
     ) -> None:
-        self.mode = mode
+        self.mode = mode if mode in COUNCIL_MODES else "SHADOW_ONLY"
         self.min_quorum = min_quorum
         self.target_members = target_members
         self.ledger_dir = ledger_dir
+        self.max_council_calls = max_council_calls
+        self.max_council_token_estimate = max_council_token_estimate
+        self.max_reasoning_share = max_reasoning_share
+        self.cooldown_seconds = cooldown_seconds
+        self.last_deliberation_time = 0.0
         self.shadow_sample_count = 0
         self.real_shadow_sample_count = 0
         self.trigger_count = 0
         self.skipped_capacity_count = 0
         self.skipped_redundant_count = 0
+        self.skipped_budget_count = 0
         self.agreement_count = 0
         self.disagreement_count = 0
         self.policy_violations_caught = 0
@@ -513,10 +543,40 @@ class DeliberationCouncilV1:
         start_time = time.perf_counter()
         self.trigger_count += 1
 
+        # Mode Guard: In COUNCIL_MODE_OFF, return immediately with zero Council deliberation
+        if self.mode == COUNCIL_MODE_OFF:
+            return DeliberationResult(
+                winning_proposal_id=None,
+                selected_payload=None,
+                scores={},
+                agreement_with_primary=True,
+                quorum_reached=False,
+                confidence=0.0,
+                mode=self.mode,
+                decision_record={"status": "COUNCIL_MODE_OFF", "reason": "Council is disabled in OFF mode"},
+            )
+
         assessment = assess_council_trigger(decision_type, prompt, primary_proposal)
 
         primary_proposal_count = 1
         alternate_proposal_count = len(alternate_proposals)
+
+        # Trigger Guard: If routine decision or deterministic operation, do NOT deliberate
+        if not assessment.council_required:
+            return DeliberationResult(
+                winning_proposal_id=None,
+                selected_payload=None,
+                scores={},
+                agreement_with_primary=True,
+                quorum_reached=False,
+                confidence=assessment.primary_confidence,
+                mode=self.mode,
+                decision_record={
+                    "status": "ROUTINE_BYPASS",
+                    "trigger_reason": assessment.trigger_reason,
+                    "council_required": False,
+                },
+            )
 
         # Invariant: COUNCIL_MAY_CONSUME_SPARE_REASONING_CAPACITY_ONLY=YES
         if not is_spare_capacity_available:
@@ -566,7 +626,7 @@ class DeliberationCouncilV1:
             )
 
         # Sample Deduplication Optimization:
-        # Detect repeated deliberative calls for the identical decision payload/prompt
+        # Exactly one Council deliberation per unchanged decision fingerprint
         primary_fingerprint = hashlib.sha256(json.dumps(primary_proposal, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         decision_fingerprint = hashlib.sha256(f"{decision_type}:{prompt[:300]}:{primary_fingerprint}".encode("utf-8")).hexdigest()[:16]
         if decision_fingerprint in self._recent_fingerprints:
@@ -614,25 +674,32 @@ class DeliberationCouncilV1:
                 mode=self.mode,
                 decision_record=skip_record,
             )
-        self._recent_fingerprints.add(decision_fingerprint)
 
-        # Budget Share Guard: Enforce COUNCIL_REASONING_SHARE_ESTIMATE <= 0.10
-        # If executing another Council call would exceed the bounded Council budget: skip with explicit reason.
+        # Hard Budget Guards: MAX_COUNCIL_CALLS, MAX_COUNCIL_TOKEN_ESTIMATE, and COOLDOWN
+        now_ts = time.time()
         anticipated_council_calls = len(reviewers) if reviewers else 0
         current_total = self.primary_provider_call_count + self.council_provider_call_count
         anticipated_share = (self.council_provider_call_count + anticipated_council_calls) / max(1, current_total + anticipated_council_calls)
-        if self.primary_provider_call_count > 0 and anticipated_share > 0.10:
-            self.skipped_capacity_count += 1
+
+        budget_exceeded = (
+            (self.council_provider_call_count + anticipated_council_calls > self.max_council_calls)
+            or (self.council_provider_token_estimate >= self.max_council_token_estimate)
+            or (self.primary_provider_call_count > 0 and anticipated_share > self.max_reasoning_share)
+            or (self.last_deliberation_time > 0 and (now_ts - self.last_deliberation_time) < self.cooldown_seconds and self.council_provider_call_count > 0)
+        )
+
+        if budget_exceeded:
+            self.skipped_budget_count += 1
             decision_id = f"dec-{hashlib.sha256((prompt + primary_fingerprint + str(time.time())).encode('utf-8')).hexdigest()[:12]}"
             budget_skip_record = {
                 "decision_id": decision_id,
                 "project_id": project_id,
                 "command_id": command_id or "unknown-command",
                 "decision_class": decision_type,
-                "timestamp": time.time(),
+                "timestamp": now_ts,
                 "primary_decision_fingerprint": primary_fingerprint,
                 "primary_confidence": assessment.primary_confidence,
-                "council_trigger_reason": "SKIPPED_DUE_TO_BUDGET_SHARE_LIMIT",
+                "council_trigger_reason": "SKIPPED_DUE_TO_BUDGET_LIMIT",
                 "primary_proposal_count": primary_proposal_count,
                 "council_alternate_proposal_count": alternate_proposal_count,
                 "total_blinded_proposal_count": 0,
@@ -642,7 +709,7 @@ class DeliberationCouncilV1:
                 "distinct_reviewer_count": 0,
                 "reviewed_proposal_coverage": 0,
                 "quorum_obtained": False,
-                "council_status": "SKIPPED_DUE_TO_BUDGET_SHARE_LIMIT",
+                "council_status": "SKIPPED_DUE_TO_BUDGET_LIMIT",
                 "council_result_fingerprint": None,
                 "council_agreement": True,
                 "council_confidence": 0.0,
@@ -666,6 +733,9 @@ class DeliberationCouncilV1:
                 mode=self.mode,
                 decision_record=budget_skip_record,
             )
+
+        self._recent_fingerprints.add(decision_fingerprint)
+        self.last_deliberation_time = now_ts
 
         # FIRST PASS & BLINDING:
         all_candidates = [("primary_planner", primary_proposal)] + list(alternate_proposals)

@@ -399,6 +399,25 @@ class SelfDiagnosisEngine:
             return read_json(path, {})
         return None
 
+    def record_resolution(self, finding_id: str, evidence: str) -> bool:
+        path = self.findings_dir / f"{finding_id}.json"
+        if not path.is_file():
+            return False
+        data = read_json(path, {})
+        if not data:
+            return False
+        now_utc = utc_now()
+        data["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+        data["resolved_at"] = now_utc
+        data["resolution_evidence"] = evidence
+        atomic_json(path, data)
+        fp = data.get("fingerprint")
+        if fp and fp in self._index:
+            self._index[fp]["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+            self._index[fp]["resolved_at"] = now_utc
+            self._save_index()
+        return True
+
     def list_findings(self) -> List[Dict[str, Any]]:
         findings = []
         for p in self.findings_dir.glob("diag-*.json"):

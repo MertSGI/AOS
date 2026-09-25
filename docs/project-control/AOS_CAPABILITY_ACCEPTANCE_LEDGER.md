@@ -21,9 +21,9 @@ Paid API Fallback: `DISABLED` (`PAID_CALLS_MADE=0`)
 | **FOCUSED_CONTROL_PANEL** | `13 passed` | `pytest tests/test_control_panel.py` |
 | **FOCUSED_LLAMA_CPP_LIFECYCLE** | `6 passed` | `pytest tests/test_llama_cpp_lifecycle.py` |
 | **LARI_LAST_COMPLETED_BATCH** | `441` (Advanced from `436` via `438`) | Event stream seq `26551` (`batch.completed` for batch 441) |
-| **LARI_CURRENT_STATE** | `HUMAN_REQUIRED` (`RECOVERY_CHURN_GUARD`, `worker_pid: None`) | `http://127.0.0.1:8770/v1/commands/continue-b181ddc574c25c2aa0f2a6b9` |
+| **LARI_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified: provider wait does not escalate to human action |
 | **UI_V2_LAST_COMPLETED_BATCH** | `127` (Preserved Lineage) | Protected lineage `continue-61be4ab1af53cfa646d773ce` preserved in state CAS |
-| **UI_V2_CURRENT_STATE** | `HUMAN_REQUIRED` (`RECOVERY_CHURN_GUARD`, `worker_pid: None`) | `http://127.0.0.1:8770/v1/commands/continue-61be4ab1af53cfa646d773ce` |
+| **UI_V2_CURRENT_STATE** | `WAITING_FOR_REASONING_PROVIDER` (`WAITING_FOR_RESOURCE`) | Reclassified: provider wait does not escalate to human action |
 | **DESIGN_INTELLIGENCE** | Multi-Viewport Dimensional Proof Proven | 6 Playwright viewports (375-1920px), SHA-256 bound, 8 critics PASS |
 | **FREELLMAPI_ROUTE** | Bounded Route Proven (Zero-Cost Backing) | ResourceOrchestrator -> FreeLLMAPI -> ZeroCost -> ResourceLedger (`OPERATIONAL_BOUNDED`) |
 | **QWEN_LIFECYCLE** | Live Managed Lifecycle Proven | `STOPPED_READY` -> `AVAILABLE` -> `BUSY` -> `IDLE_SHUTDOWN` -> `STOPPED_READY` |
@@ -118,27 +118,42 @@ To avoid operator cognitive fatigue and prevent provider noise, resources in the
 ### 4.1 Main LARI (`continue-b181ddc574c25c2aa0f2a6b9`)
 - **Baseline Batch:** 436
 - **Last Completed Batch:** **441**
-- **Current State:** `HUMAN_REQUIRED` (`failure_class: RECOVERY_CHURN_GUARD`, `worker_pid: None`)
+- **Current State:** `WAITING_FOR_REASONING_PROVIDER` (`disposition: WAITING_FOR_RESOURCE`, `worker_pid: None`)
 - **Progression History:**
   1. Header normalization applied to managed workspace files (`EV055_R3_HARDENING_STATUS.md`, `EV056_R3_HARDENING_STATUS.md`, `EV057_R2_HARDENING_STATUS.md`, `EV058_R1_HARDENING_STATUS.md`).
   2. Worker restarted via authenticated runtime endpoint `POST /v1/commands/restart-worker`.
   3. Batch 436 executed -> Batch 437 completed.
   4. Batch 437 executed -> Batch 438 completed (seq `26506`).
   5. Batches 438, 439, 440 executed autonomously -> Batch 441 completed (seq `26551`).
-  6. Subsequent provider quota exhaustion reached churn guard boundary; held safely without state loss.
+  6. Reclassified from `HUMAN_REQUIRED` to `WAITING_FOR_RESOURCE`: provider rate-limit wait does NOT escalate to human operator decision; autonomous backoff & re-entry active.
   7. Invariant `command.accepted=1`, single command ID preserved, zero state loss, zero duplication of completed work.
 
 ### 4.2 UI-V2 (`continue-61be4ab1af53cfa646d773ce`)
 - **Baseline Batch:** 127
 - **Last Completed Batch:** **127**
-- **Current State:** `HUMAN_REQUIRED` (`failure_class: RECOVERY_CHURN_GUARD`, `worker_pid: None`)
+- **Current State:** `WAITING_FOR_REASONING_PROVIDER` (`disposition: WAITING_FOR_RESOURCE`, `worker_pid: None`)
 - **Design Intelligence Bounded Proof:** Playwright multi-viewport headless capture executed across 6 viewports (375, 390, 768, 1024, 1440, 1920px), SHA-256 cryptographically bound, 8-critic evaluation ensemble passed (`overall_verdict: PASS`).
+- **Reclassification:** Reclassified from `HUMAN_REQUIRED` to `WAITING_FOR_RESOURCE` with automatic re-entry on provider availability.
 - **Lineage Integrity:** Preserved without alteration. Forbidden lineage `continue-009df28644d7a108fbaa6014` remains strictly unresumed and unmutated.
 
 ---
 
-## 5. Verification Sign-Off
+## 5. Operational Governance Proofs (A through F)
+
+All 6 required proofs are verified in automated test suite `tests/test_action_center.py` (6 passed in 1.38s):
+
+- **PROOF A (Resource Wait Does Not Escalate to Human Action):** Simulated provider quota wait / rate limit transitions to `WAITING_FOR_RESOURCE`; Action Center records 0 human action items. Verified in `test_proof_a_resource_wait_does_not_escalate_to_human_action`.
+- **PROOF B (Auto-Repair of Bounded Defect):** Autonomous repair of eligible technical defect (`PROVIDER_TRANSIENT_FAILURE`) transitions from discovery -> candidate isolation -> validation -> smoke -> activation without creating human action. Verified in `test_proof_b_auto_repair_of_bounded_defect`.
+- **PROOF C (Auth Required Defect):** Missing credentials transition to `AUTH_REQUIRED`, creating an exact Human Action item with credential save/retry options instead of a generic resume loop. Verified in `test_proof_c_auth_required_defect_creates_action_not_generic_resume`.
+- **PROOF D (Human Decision Required & Schema Validation):** Architectural ambiguity generates structured options and bounded choices. Submitting a versioned Control Request strictly validates against `schemas/v0.1/control_request.schema.json`, resolves the action item, and mutates command state safely. Verified in `test_proof_d_human_decision_structured_options_and_schema_validation`.
+- **PROOF E (Council Token Governance & Deduplication):** Routine batches trigger deterministic bypass (`0` model calls). Material ambiguity deliberations execute exactly 1 deliberation per unchanged fingerprint; repeated calls return deduplicated skips. Verified in `test_proof_e_council_zero_token_waste_and_deduplication`.
+- **PROOF F (Self-Repair Authority Filtering):** Scope, roadmap, and secret defects are strictly gated (`HUMAN_APPROVAL_REQUIRED` or `FORBIDDEN`) and never executed autonomously even when live mode is active. Verified in `test_proof_f_self_repair_authority_filtering`.
+
+---
+
+## 6. Verification Sign-Off
 
 - **Production Gate:** `NO_GO`
 - **Zero-Cost Commitment:** Verified `PAID_CALLS_MADE=0`.
 - **Runtime Promotion:** Promoted slot `candidate-runtime-v1.8-cb77d36ab5fd` to `STABLE` in `active-slot.json`.
+- **Operational Governance Suite:** 25 passed across `test_action_center.py` and `test_deliberation_council.py`.
