@@ -103,7 +103,28 @@ def _http_health(url: str) -> Optional[Dict[str, Any]]:
             return value
     except Exception:
         return None
-
+def _http_status(health_url: str, token: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not health_url or not token:
+        return None
+    status_url = health_url.replace("/health", "/status") if "/health" in health_url else health_url.rstrip("/") + "/v1/status"
+    try:
+        req = urllib.request.Request(
+            status_url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "AOS-Supervisor/1.0",
+                "X-AOS-Runtime-Token": token,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if int(resp.status) != 200:
+                return None
+            value = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(value, dict) or value.get("contract_version") != CONTRACT_VERSION:
+                return None
+            return value
+    except Exception:
+        return None
 
 def _runtime_health_matches(
     slot: SlotRecord, health: Optional[Dict[str, Any]], launch_nonce: Optional[str], supervisor_pid: Any
@@ -183,6 +204,7 @@ class RuntimeSupervisor:
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-supervisor-{os.getpid()}")
         self.relay_worker = AsyncControllerRelay(self.publisher)
+        self.last_status: Optional[Dict[str, Any]] = None
         self.stop_event = threading.Event()
         self.control_path = self.root / "control-request.json"
 
@@ -497,9 +519,47 @@ class RuntimeSupervisor:
                     panel_url="http://127.0.0.1:8765",
                     panel_owner="AOS",
                 )
+                # Fetch detailed status including provider evidence
+                token_path = self.config.get("runtime_token_path") or (self.config_path.parent / "runtime-api.token")
+                token = None
+                try:
+                    p = Path(token_path)
+                    if p.is_file():
+                        token = p.read_text(encoding="utf-8").strip()
+                except Exception:
+                    token = None
+                status_val = _http_status(slot.health_url, token) if slot.health_url else None
+                if status_val:
+                    self.last_status = status_val
+                elif self.last_status:
+                    # Preserve last known status snapshot on transient status read error
+                    status_val = dict(self.last_status)
+                    status_val["provider_discovery_status"] = "DEGRADED"
+
+                relay_telemetry = dict(observed)
+                if status_val:
+                    for k in (
+                        "healthy_reasoning_provider_count",
+                        "probe_eligible_reasoning_provider_count",
+                        "unknown_reasoning_provider_count",
+                        "provider_circuits_open",
+                        "all_reasoning_providers_unavailable",
+                        "next_provider_probe_at",
+                        "last_provider_success",
+                        "provider_probe_count",
+                        "provider_failover_count",
+                        "provider_details",
+                        "enabled_reasoning_providers",
+                        "healthy_reasoning_providers",
+                        "current_selected_reasoning_provider",
+                        "provider_discovery_status",
+                    ):
+                        if k in status_val:
+                            relay_telemetry[k] = status_val[k]
+
                 self.relay_worker.submit(
                     maintenance=bool(observed.get("paused")),
-                    runtime_health_dict=observed,
+                    runtime_health_dict=relay_telemetry,
                     supervisor_pid=os.getpid(),
                 )
                 if self.stop_event.wait(max(2, int(self.config.get("poll_seconds", 5)))):

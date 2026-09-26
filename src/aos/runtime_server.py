@@ -111,6 +111,10 @@ def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:
 
 
 class RuntimeEngine:
+    _policy_cache: Dict[str, list[str]] = {}
+    _policy_error: Dict[str, Dict[str, Any]] = {}
+    _policy_cache_lock = threading.Lock()
+
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = validate_runtime_config(config)
         self.runtime_root = Path(self.config["runtime_root"])
@@ -133,6 +137,7 @@ class RuntimeEngine:
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)
         self.recovery_thread.start()
         self.probe_thread: Optional[threading.Thread] = None
+        self._probe_wake_event = threading.Event()
         self.telemetry_thread = threading.Thread(target=self._status_loop, name="aos-runtime-status-cache", daemon=True)
         self.telemetry_thread.start()
         if not self.is_paused:
@@ -142,11 +147,38 @@ class RuntimeEngine:
         if self.is_paused or (self.probe_thread is not None and self.probe_thread.is_alive()):
             return
         self.probe_thread = threading.Thread(
-            target=self._run_live_probe_cycle,
+            target=self._probe_loop,
             name="aos-runtime-provider-probe",
             daemon=True,
         )
         self.probe_thread.start()
+
+    def _probe_loop(self) -> None:
+        """Persistent bounded provider watchdog loop. Survives exceptions and pauses cleanly."""
+        poll_interval = float(self.config.get("provider_probe_interval_seconds", 15.0))
+        while not self.stop_event.is_set():
+            if not self.is_paused:
+                try:
+                    self._run_live_probe_cycle()
+                except Exception as exc:
+                    self._record_probe_cycle_failure(exc)
+            # Sleep bounded interval or until explicitly woken by resume
+            self._probe_wake_event.wait(max(0.01, poll_interval))
+            self._probe_wake_event.clear()
+
+    def _record_probe_cycle_failure(self, exc: Exception) -> None:
+        """Record typed evidence for failed probe cycles while keeping the watchdog alive."""
+        error_class = exc.__class__.__name__
+        msg = str(exc)[:300]
+        for command_id in self.store.list_command_ids()[-200:]:
+            state = self.store.read_state(command_id)
+            if str(state.get("state") or "") == "WAITING_FOR_REASONING_PROVIDER":
+                self.store.append_event(command_id, "provider.probe_cycle_failed", {
+                    "error_class": error_class,
+                    "message": msg,
+                    "watchdog_alive": True,
+                    "timestamp": utc_now(),
+                })
 
     @staticmethod
     def _has_live_resource_context(state: Dict[str, Any]) -> bool:
@@ -163,9 +195,10 @@ class RuntimeEngine:
             and str(state.get("failure_class") or "") == "RECOVERY_CHURN_GUARD"
         )
 
-    @staticmethod
-    def _enabled_from_policy(policy_path: Path) -> list[str]:
+    @classmethod
+    def _enabled_from_policy(cls, policy_path: Path) -> list[str]:
         """Return enabled runtime providers, excluding unauthorized paid fallback."""
+        key = str(policy_path.resolve()) if hasattr(policy_path, "resolve") else str(policy_path)
         try:
             value = json.loads(
                 policy_path.read_text(
@@ -255,13 +288,25 @@ class RuntimeEngine:
                     )
                 )
 
+            with cls._policy_cache_lock:
+                cls._policy_cache[key] = list(result)
+                cls._policy_error.pop(key, None)
             return result
 
         except (
             OSError,
             ValueError,
             json.JSONDecodeError,
-        ):
+        ) as exc:
+            with cls._policy_cache_lock:
+                cls._policy_error[key] = {
+                    "error_class": exc.__class__.__name__,
+                    "message": str(exc)[:300],
+                    "failed_at": utc_now(),
+                }
+                cached = cls._policy_cache.get(key)
+                if cached is not None:
+                    return list(cached)
             return []
 
     def _provider_metadata(
@@ -487,32 +532,74 @@ class RuntimeEngine:
                     state = self.store.read_state(command_id)
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                         continue
-                    if state.get("required_task_class") is not None and str(state["required_task_class"]) != TaskClass.SMALL_REASONING.value:
-                        continue
+                    command = self.store.read_command(command_id) or {}
+                    project = command.get("project") or {}
+                    policy_val = project.get("routing_policy_path")
+                    cmd_enabled = self._enabled_from_policy(Path(str(policy_val))) if policy_val else []
+
+                    required_task_class = str(
+                        state.get("required_task_class")
+                        or TaskClass.SMALL_REASONING.value
+                    )
                     governor = QuotaGovernor(
                         self.store.command_dir(command_id)
                         / "project-runtime"
                         / "resource-os"
                         / "quota-governor.json"
                     )
-                    quota_eligible = any(
-                        row.get("probe_status") == "PASS"
-                        and governor.decision(
+
+                    # Truthful wake evaluation:
+                    # Provider availability + capability envelope + quota eligibility
+                    waking_providers = []
+                    for provider_id, row in results.items():
+                        if row.get("probe_status") != "PASS":
+                            continue
+                        if cmd_enabled and provider_id not in cmd_enabled:
+                            continue
+                        model_id = row.get("model_id")
+                        if not governor.decision(
                             provider_id,
-                            row.get("model_id"),
-                            TaskClass.SMALL_REASONING.value,
-                        ).eligible
-                        for provider_id, row in results.items()
-                    )
-                    if not quota_eligible:
+                            model_id,
+                            required_task_class,
+                        ).eligible:
+                            continue
+
+                        # Check capability envelope: SMALL_REASONING probes prove transport/availability.
+                        # Do not falsely promote local/small-only models to large context or complex planning.
+                        if required_task_class in (
+                            TaskClass.REPO_UI_PLANNING.value,
+                            TaskClass.LARGE_CONTEXT.value,
+                            TaskClass.AGENTIC_EXECUTION.value,
+                        ):
+                            if provider_id in ("ollama", "freellmapi_local", "qwen3_4b_llama_cpp"):
+                                continue
+
+                        waking_providers.append((provider_id, model_id, row))
+
+                    if not waking_providers:
                         continue
+
+                    registry = ProviderCircuitBreakerRegistry(
+                        self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
+                    )
+                    for provider_id, model_id, row in waking_providers:
+                        registry.record_success(
+                            provider_id,
+                            observed_at=row.get("last_observed_at") or utc_now(),
+                            model_id=model_id,
+                            task_class=required_task_class,
+                        )
+
                     self.store.write_state(command_id, retry_after_epoch=0)
                     self.store.append_event(command_id, "provider.healthy_alternate_wake", {
                         "lineage_preserved": True,
                         "command_id": command_id,
+                        "healthy_providers": [p[0] for p in waking_providers],
+                        "required_task_class": required_task_class,
+                        "evidence_source": "LIVE_PROBE_CYCLE_SUCCESS",
                     })
-        except Exception:
-            # Probe telemetry is fail-safe and must never terminate the runtime API.
+        except Exception as exc:
+            self._record_probe_cycle_failure(exc)
             return
 
     def _normalize_project(self, project_id: Optional[str]) -> ProjectProfile:
@@ -829,22 +916,59 @@ class RuntimeEngine:
                 state.get("required_task_class")
                 or TaskClass.UNKNOWN.value
             )
-            healthy = aggregate.healthy_providers_for_task(
+            # Evaluate cloud/registered providers for required_task_class.
+            # If explicit records exist for required_task_class, check them.
+            # Otherwise, providers healthy for SMALL_REASONING / transport may satisfy
+            # compatible planning tasks if quota-eligible and not OPEN for required_task_class.
+            candidate_pids = aggregate.healthy_providers_for_task(
                 required_task_class,
                 enabled,
             )
+            if not candidate_pids:
+                # Fallback: check providers healthy for small_reasoning
+                small_healthy = aggregate.healthy_providers_for_task(
+                    TaskClass.SMALL_REASONING.value,
+                    enabled,
+                )
+                for pid in small_healthy:
+                    circ = aggregate.get_circuit(pid)
+                    # Exclude if explicitly failed / OPEN for required_task_class
+                    rec = circ.health_records.get(
+                        aggregate._health_key(circ.health_records.get("model_id"), required_task_class)
+                    )
+                    if rec and rec.get("circuit_state") == CircuitState.OPEN.value:
+                        continue
+                    if required_task_class in (
+                        TaskClass.REPO_UI_PLANNING.value,
+                        TaskClass.LARGE_CONTEXT.value,
+                        TaskClass.AGENTIC_EXECUTION.value,
+                    ) and pid in ("ollama", "freellmapi_local"):
+                        continue
+                    candidate_pids.append(pid)
+
+            healthy = candidate_pids
+
+            # Qwen wake must evaluate actual task envelope eligibility, not just lifecycle state.
+            qwen_task_eligible = (
+                required_task_class in (
+                    TaskClass.SMALL_REASONING.value,
+                    TaskClass.STRUCTURED_PLANNING.value,
+                    TaskClass.UNKNOWN.value,
+                )
+            )
             qwen_available = False
-            try:
-                from aos.workers.llama_cpp_lifecycle import get_qwen_lifecycle_manager
-                q_snap = get_qwen_lifecycle_manager().get_snapshot()
-                if q_snap.state.value in {"STOPPED_READY", "IDLE", "AVAILABLE"}:
-                    from aos.workers.llama_cpp_probe import capability_store_path, resolve_capability_status, resolve_llama_cpp_identity, resolve_qwen_model
-                    exe_id = resolve_llama_cpp_identity("llama-server")
-                    model_id = resolve_qwen_model()
-                    if exe_id and model_id and resolve_capability_status(executable=exe_id, model=model_id, store_path=capability_store_path()) == "PROVEN":
-                        qwen_available = True
-            except Exception:
-                qwen_available = False
+            if qwen_task_eligible:
+                try:
+                    from aos.workers.llama_cpp_lifecycle import get_qwen_lifecycle_manager
+                    q_snap = get_qwen_lifecycle_manager().get_snapshot()
+                    if q_snap.state.value in {"STOPPED_READY", "IDLE", "AVAILABLE"}:
+                        from aos.workers.llama_cpp_probe import capability_store_path, resolve_capability_status, resolve_llama_cpp_identity, resolve_qwen_model
+                        exe_id = resolve_llama_cpp_identity("llama-server")
+                        model_id = resolve_qwen_model()
+                        if exe_id and model_id and resolve_capability_status(executable=exe_id, model=model_id, store_path=capability_store_path()) == "PROVEN":
+                            qwen_available = True
+                except Exception:
+                    qwen_available = False
 
             if not healthy and not qwen_available:
                 continue
@@ -859,8 +983,9 @@ class RuntimeEngine:
                     "required_task_class": required_task_class,
                 })
                 continue
+
             # Copy the authoritative newest success into the waiting command's
-            # own registry before waking it.  Otherwise the worker immediately
+            # own registry before waking it. Otherwise the worker immediately
             # sees its stale all-open view, waits again, and recovery can churn.
             registry = ProviderCircuitBreakerRegistry(
                 self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
@@ -876,7 +1001,7 @@ class RuntimeEngine:
                 source = aggregate.get_circuit(provider_id)
                 matching = [
                     value for value in source.health_records.values()
-                    if value.get("task_class") == required_task_class
+                    if value.get("task_class") in (required_task_class, TaskClass.SMALL_REASONING.value)
                     and value.get("circuit_state") == CircuitState.CLOSED.value
                 ]
                 if not matching:
@@ -890,21 +1015,11 @@ class RuntimeEngine:
                     newest.get("model_id"),
                     required_task_class,
                 ).eligible:
-                    quota_eligible_healthy.append(provider_id)
-            healthy = quota_eligible_healthy
-            if not healthy:
+                    quota_eligible_healthy.append((provider_id, newest))
+            if not quota_eligible_healthy:
                 continue
-            for provider_id in healthy:
-                source = aggregate.get_circuit(provider_id)
-                candidates = [
-                    value for value in source.health_records.values()
-                    if value.get("task_class") == required_task_class
-                    and value.get("circuit_state") == CircuitState.CLOSED.value
-                ]
-                newest = max(
-                    candidates,
-                    key=lambda value: str(value.get("last_observed_at") or value.get("last_success_at") or ""),
-                )
+
+            for provider_id, newest in quota_eligible_healthy:
                 registry.record_success(
                     provider_id,
                     observed_at=newest.get("last_success_at") or newest.get("last_observed_at"),
@@ -915,7 +1030,7 @@ class RuntimeEngine:
             self.store.append_event(command_id, "provider.healthy_alternate_wake", {
                 "lineage_preserved": True,
                 "command_id": command_id,
-                "healthy_providers": healthy,
+                "healthy_providers": [p[0] for p in quota_eligible_healthy],
                 "evidence_source": "NEWEST_COMMAND_LOCAL_OBSERVATION",
                 "required_task_class": required_task_class,
             })
@@ -1220,6 +1335,8 @@ class RuntimeEngine:
             "healthy_reasoning_providers": [row["provider_id"] for row in healthy],
             "current_selected_reasoning_provider": selected_provider,
             "provider_circuit_registry_paths": [str(path) for path in circuit_paths],
+            "provider_discovery_status": "DEGRADED" if self._policy_error else "HEALTHY",
+            "provider_discovery_errors": dict(self._policy_error),
         }
 
     def pause_safe(self) -> Dict[str, Any]:
@@ -1239,6 +1356,7 @@ class RuntimeEngine:
             persist_maintenance(self.runtime_root, paused=False, reason="explicit_operator_resume")
             self.is_paused = False
         self._start_probe_thread()
+        self._probe_wake_event.set()
         self.recover_unfinished()
         return {
             "status": "RESUMED",
