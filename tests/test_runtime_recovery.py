@@ -32,9 +32,18 @@ def _config(tmp_path: Path):
     }
 
 
+def _stop_threads(engine: RuntimeEngine) -> None:
+    engine.stop_event.set()
+    engine.recovery_thread.join(timeout=3.0)
+    if engine.probe_thread is not None:
+        engine.probe_thread.join(timeout=3.0)
+    engine.telemetry_thread.join(timeout=3.0)
+
+
 def test_unfinished_command_is_respawned_without_new_user_command(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        _stop_threads(engine)
         profile = ProjectProfile(
             project_id="lari",
             descriptor_path=str(tmp_path / "descriptor.json"),
@@ -57,6 +66,7 @@ def test_waiting_command_retry_backoff_and_wake_recovery(tmp_path, monkeypatch):
     import time
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        _stop_threads(engine)
         profile = ProjectProfile(
             project_id="lari",
             descriptor_path=str(tmp_path / "descriptor.json"),
@@ -96,6 +106,7 @@ def test_waiting_command_retry_backoff_and_wake_recovery(tmp_path, monkeypatch):
 def test_same_fingerprint_recovery_escalates_once_then_holds(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        _stop_threads(engine)
         profile = ProjectProfile(
             project_id="lari",
             descriptor_path=str(tmp_path / "descriptor.json"),
@@ -149,6 +160,7 @@ def test_same_fingerprint_recovery_escalates_once_then_holds(tmp_path, monkeypat
 def test_recovery_progress_or_failure_family_change_resets_streak(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     try:
+        _stop_threads(engine)
         profile = ProjectProfile(
             project_id="lari",
             descriptor_path=str(tmp_path / "descriptor.json"),
