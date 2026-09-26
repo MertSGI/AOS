@@ -108,12 +108,22 @@ def test_watchdog_performs_more_than_one_cycle(tmp_path, monkeypatch):
         engine.shutdown()
 
 
+def _isolate_engine(engine: RuntimeEngine) -> None:
+    """Stop constructor-started workers so controlled synchronous cycles do not race."""
+    engine.stop_event.set()
+    engine.recovery_thread.join(timeout=3.0)
+    if engine.probe_thread is not None:
+        engine.probe_thread.join(timeout=3.0)
+    engine.telemetry_thread.join(timeout=3.0)
+
+
 def test_first_probe_fails_later_succeeds_same_lineage_wakes(tmp_path, monkeypatch):
     """2. first probe fails, later probe succeeds, SAME waiting lineage wakes."""
     policy = _policy(tmp_path / "policy.json")
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-lineage-wake"
         _command(engine, command_id, policy, required_task_class=TaskClass.STRUCTURED_PLANNING.value)
 
@@ -253,6 +263,7 @@ def test_structured_planning_lane_wakes(tmp_path, monkeypatch):
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-structured-wake"
         _command(engine, command_id, policy, required_task_class=TaskClass.STRUCTURED_PLANNING.value)
 
@@ -278,6 +289,7 @@ def test_repo_ui_planning_lane_wakes(tmp_path, monkeypatch):
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-repo-ui-wake"
         _command(engine, command_id, policy, required_task_class=TaskClass.REPO_UI_PLANNING.value)
 
@@ -303,6 +315,7 @@ def test_small_reasoning_probe_not_promoted_to_ineligible_local_provider(tmp_pat
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-repo-ui-local-fail"
         _command(engine, command_id, policy, required_task_class=TaskClass.REPO_UI_PLANNING.value)
 
@@ -330,6 +343,7 @@ def test_qwen_ready_but_task_ineligible_does_not_wake(tmp_path, monkeypatch):
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-qwen-ineligible"
         _command(engine, command_id, policy, required_task_class=TaskClass.REPO_UI_PLANNING.value)
 
@@ -354,6 +368,7 @@ def test_qwen_ready_and_task_eligible_wakes(tmp_path, monkeypatch):
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         command_id = "continue-qwen-eligible"
         _command(engine, command_id, policy, required_task_class=TaskClass.STRUCTURED_PLANNING.value)
 
@@ -401,6 +416,7 @@ def test_worker_routing_and_relay_telemetry_resolve_same_providers(tmp_path):
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
+        _isolate_engine(engine)
         _command(engine, "continue-canonical-match", policy)
         enabled_worker = engine._enabled_from_policy(policy)
         status_dict = engine._collect_detailed_status()
@@ -415,13 +431,7 @@ def test_two_protected_waiting_lineages_independently_wake(tmp_path, monkeypatch
     cfg = _config(tmp_path, policy)
     engine = RuntimeEngine(cfg)
     try:
-        # Stop background workers so controlled probe cycle is isolated
-        engine.stop_event.set()
-        engine.recovery_thread.join(timeout=3.0)
-        if engine.probe_thread is not None:
-            engine.probe_thread.join(timeout=3.0)
-        engine.telemetry_thread.join(timeout=3.0)
-
+        _isolate_engine(engine)
         lari_id = "continue-lari-wake"
         uiv2_id = "continue-uiv2-wake"
         _command(engine, lari_id, policy, required_task_class=TaskClass.STRUCTURED_PLANNING.value)
