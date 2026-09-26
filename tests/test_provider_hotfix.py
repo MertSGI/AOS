@@ -330,3 +330,63 @@ def test_supervisor_restarts_failed_panel_companion(tmp_path, monkeypatch):
     assert supervisor._ensure_panel("a" * 40) is False
     assert len(launched) == 2
     assert all("aos.control_panel" in command for command in launched)
+
+
+def test_provider_wait_woken_command_spawns_worker_not_rehold(tmp_path, monkeypatch):
+    """Regression: a waiting-for-provider command explicitly woken by
+    _wake_waiting_from_observed_provider_health (retry_after_epoch=0) must
+    escape the resource_wait_held cycle and spawn a worker."""
+    policy = _policy(tmp_path / "policy.json")
+    engine = RuntimeEngine(_config(tmp_path, policy))
+    try:
+        engine.stop_event.set()
+        engine.recovery_thread.join(timeout=3.0)
+        if engine.probe_thread is not None:
+            engine.probe_thread.join(timeout=3.0)
+        engine.telemetry_thread.join(timeout=3.0)
+
+        command_id = "continue-wake-resume"
+        _command(engine, command_id, policy)
+
+        project_runtime = engine.store.command_dir(command_id) / "project-runtime"
+        project_runtime.mkdir(parents=True, exist_ok=True)
+        (project_runtime / "planning-kernel-checkpoint.json").write_text(json.dumps({
+            "phase": "WAITING_FOR_REASONING_PROVIDER",
+            "batch_number": 25,
+            "completed_batch_count": 25,
+        }), encoding="utf-8")
+
+        monkeypatch.setattr("aos.runtime_server.pid_alive", lambda _pid: False)
+        calls = []
+        monkeypatch.setattr(
+            engine, "_spawn_worker",
+            lambda cid, recovered: calls.append((cid, recovered)) or 123,
+        )
+
+        # Calls 1, 2: normal resume + strategy escalation → worker spawned
+        engine._recover_one(command_id)
+        engine._recover_one(command_id)
+        assert len(calls) == 2
+
+        # Call 3: same_fingerprint_respawns >= 3 and is_provider_wait=True
+        # → resource_wait_held, retry_after_epoch set to future, no spawn
+        engine._recover_one(command_id)
+        state_held = engine.store.read_state(command_id)
+        assert state_held["state"] == "WAITING_FOR_REASONING_PROVIDER"
+        assert state_held["recovery_disposition"] == "WAITING_FOR_RESOURCE"
+        assert float(state_held["retry_after_epoch"]) > 0
+        assert len(calls) == 2  # No new spawn
+
+        # Simulate _wake_waiting_from_observed_provider_health clearing retry
+        engine.store.write_state(command_id, retry_after_epoch=0)
+
+        # Call 4: with retry_after_epoch=0 and prior recovery_disposition=WAITING_FOR_RESOURCE
+        # the engine must detect the wake signal, reset churn counter, and spawn
+        engine._recover_one(command_id)
+        state_resumed = engine.store.read_state(command_id)
+        assert len(calls) == 3, f"Expected worker spawn after wake, got {len(calls)} calls"
+        assert calls[2] == (command_id, True)
+        assert state_resumed["same_fingerprint_respawns"] == 1
+        assert state_resumed["recovery_disposition"] == "RESOURCE_WAKE_RESUME"
+    finally:
+        engine.shutdown()

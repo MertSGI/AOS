@@ -763,6 +763,42 @@ class RuntimeEngine:
                 or "WAITING_FOR_REASONING_PROVIDER" in str(state.get("disposition") or state.get("state") or "").upper()
             )
             if is_provider_wait:
+                # Detect whether the command was explicitly woken by provider health
+                # evidence (_wake_waiting_from_observed_provider_health or
+                # _run_live_probe_cycle clearing retry_after_epoch to 0).
+                # If previously held AND retry cleared → provider is available:
+                # reset churn counter and spawn worker instead of re-holding.
+                incoming_retry = float(state.get("retry_after_epoch", 0) or 0)
+                was_resource_held = str(state.get("recovery_disposition") or "") == "WAITING_FOR_RESOURCE"
+                if incoming_retry <= 0 and was_resource_held:
+                    # Provider health confirmed by wake signal — spawn.
+                    recovery_disposition = "RESOURCE_WAKE_RESUME"
+                    self.store.append_event(command_id, "runtime.resource_wake_resume", {
+                        "fingerprint": fingerprint,
+                        "previous_same_fingerprint_respawns": same_fingerprint_respawns,
+                        "reason": "PROVIDER_HEALTH_CONFIRMED_WAKE",
+                    })
+                    same_fingerprint_respawns = 1
+                    self.store.write_state(
+                        command_id,
+                        recovery_disposition=recovery_disposition,
+                        recovery_fingerprint=fingerprint,
+                        recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
+                        completed_count_baseline=fingerprint["completed_batch_count_baseline"],
+                        same_fingerprint_respawns=same_fingerprint_respawns,
+                        strategy_generation=strategy_generation,
+                        last_worker_exit_code=last_exit_code,
+                        last_recovery_at=utc_now(),
+                    )
+                    self._record_recovery_disposition(
+                        command_id,
+                        fingerprint,
+                        recovery_disposition,
+                        same_fingerprint_respawns,
+                        strategy_generation,
+                    )
+                    self._spawn_worker(command_id, recovered=True)
+                    return
                 # Quota / rate-limit / provider unavailability alone must not require human decision.
                 # Hold safely in WAITING_FOR_REASONING_PROVIDER with bounded backoff and preserve automatic re-entry.
                 recovery_disposition = "WAITING_FOR_RESOURCE"
