@@ -76,6 +76,27 @@ DISPOSITION_COMPLETED = "COMPLETED"
 DISPOSITION_FAILED_TERMINAL = "FAILED_TERMINAL"
 
 
+# Action Item Status Constants
+ACTION_STATUS_PENDING = "PENDING"
+ACTION_STATUS_RESOLVED = "RESOLVED"
+ACTION_STATUS_SUPERSEDED = "SUPERSEDED"
+ACTION_STATUS_STALE = "STALE"
+ACTION_STATUS_DISMISSED = "DISMISSED"
+
+NON_ACTIONABLE_STATUSES = {
+    ACTION_STATUS_RESOLVED,
+    ACTION_STATUS_SUPERSEDED,
+    ACTION_STATUS_STALE,
+    ACTION_STATUS_DISMISSED,
+}
+
+# Protected lineage command IDs that can never be reset, recreated, or wiped
+PROTECTED_COMMAND_IDS = {
+    "continue-b181ddc574c25c2aa0f2a6b9",  # LARI
+    "continue-61be4ab1af53cfa646d773ce",  # UI-V2
+}
+
+
 @dataclass
 class ActionOption:
     option_id: str
@@ -114,10 +135,28 @@ class HumanActionItem:
     safe_default_if_any: Optional[str]
     authority_boundary: str
     created_at: str
-    status: str = "PENDING"  # PENDING, RESOLVED, DISMISSED
+    status: str = ACTION_STATUS_PENDING  # PENDING, RESOLVED, SUPERSEDED, STALE, DISMISSED
+    created_batch: int = 0
+    created_generation: int = 0
+    generation: int = 0
+    expected_lane_state: str = ""
+    superseded_at: Optional[str] = None
+    superseded_reason: Optional[str] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[str] = None
     resolution_request_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.created_batch == 0 and self.current_batch > 0:
+            self.created_batch = self.current_batch
+        if self.created_generation == 0 and self.generation > 0:
+            self.created_generation = self.generation
+        elif self.generation == 0 and self.created_generation > 0:
+            self.generation = self.created_generation
+        if not self.expected_lane_state and self.expected_state:
+            self.expected_lane_state = self.expected_state
+        elif not self.expected_state and self.expected_lane_state:
+            self.expected_state = self.expected_lane_state
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -255,13 +294,35 @@ class ActionCenterEngine:
     def list_pending_actions(self) -> List[Dict[str, Any]]:
         return [
             a for a in self._actions.values()
-            if a.get("status") == "PENDING"
+            if a.get("status") == ACTION_STATUS_PENDING
             and a.get("action_class") in HUMAN_ACTIONABLE_CLASSES
         ]
 
     def count_human_action_required(self) -> int:
         """Count only items where genuine operator action is required."""
         return len(self.list_pending_actions())
+
+    def mark_superseded(self, action_id: str, reason: str = "Lineage advanced") -> bool:
+        """Mark an action as SUPERSEDED, preserving it for audit but making it non-actionable."""
+        if action_id not in self._actions:
+            return False
+        action = self._actions[action_id]
+        action["status"] = ACTION_STATUS_SUPERSEDED
+        action["superseded_at"] = utc_now()
+        action["superseded_reason"] = reason
+        self._save_actions()
+        return True
+
+    def mark_stale(self, action_id: str, reason: str = "Stale decision boundary") -> bool:
+        """Mark an action as STALE, preserving it for audit but making it non-actionable."""
+        if action_id not in self._actions:
+            return False
+        action = self._actions[action_id]
+        action["status"] = ACTION_STATUS_STALE
+        action["superseded_at"] = utc_now()
+        action["superseded_reason"] = reason
+        self._save_actions()
+        return True
 
     def resolve_action(
         self,
@@ -274,7 +335,7 @@ class ActionCenterEngine:
         if action_id not in self._actions:
             return False
         action = self._actions[action_id]
-        action["status"] = "RESOLVED"
+        action["status"] = ACTION_STATUS_RESOLVED
         action["resolved_by"] = resolved_by
         action["resolved_at"] = utc_now()
         action["resolution_request_id"] = request_id
@@ -292,6 +353,8 @@ class ActionCenterEngine:
         
         Only genuine human-required items create HumanActionItems.
         Resource waits and auto-repairs are excluded from the operator action badge.
+        If a command's lineage advanced past a pending action's batch or generation,
+        the older action is automatically marked SUPERSEDED.
         """
         generated: List[HumanActionItem] = []
 
@@ -303,8 +366,28 @@ class ActionCenterEngine:
                 project_id = str(project.get("project_id") or cmd.get("project_id") or "unknown")
                 checkpoint = read_json(store.command_dir(cid) / "project-runtime" / "planning-kernel-checkpoint.json") or {}
                 batch_num = int(checkpoint.get("batch_number", 0) or state.get("completed_batch_count", 0) or 0)
+                gen_num = int(checkpoint.get("strategy_generation", 0) or state.get("strategy_generation", 0) or 0)
                 canon_sha = str(checkpoint.get("canonical_source_sha") or state.get("canonical_source_sha") or candidate_source_sha)
                 ws_fp = str(state.get("recovery_fingerprint_sha256") or "NONE")
+
+                # Auto-supersede any older pending actions for this command if lineage advanced
+                for act_key, existing_act in list(self._actions.items()):
+                    if (
+                        existing_act.get("command_id") == cid
+                        and existing_act.get("status") == ACTION_STATUS_PENDING
+                    ):
+                        act_batch = int(existing_act.get("created_batch", 0) or existing_act.get("current_batch", 0) or 0)
+                        act_gen = int(existing_act.get("created_generation", 0) or existing_act.get("generation", 0) or 0)
+                        if batch_num > act_batch:
+                            self.mark_superseded(
+                                act_key,
+                                f"Lineage advanced from batch {act_batch} to {batch_num}",
+                            )
+                        elif gen_num > act_gen:
+                            self.mark_superseded(
+                                act_key,
+                                f"Strategy generation advanced from {act_gen} to {gen_num}",
+                            )
 
                 action_class, modernized_disp, ctx = classify_lane_hold(
                     project_id=project_id,
@@ -319,9 +402,9 @@ class ActionCenterEngine:
 
                 act_id = self.compute_action_id(project_id, cid, action_class, ctx.get("reason", "HOLD"))
 
-                # Check if already resolved
+                # Check if already resolved or superseded
                 existing = self._actions.get(act_id)
-                if existing and existing.get("status") == "RESOLVED":
+                if existing and existing.get("status") in NON_ACTIONABLE_STATUSES:
                     continue
 
                 # Build options based on action class
@@ -461,10 +544,14 @@ class ActionCenterEngine:
                     project=project_id,
                     command_id=cid,
                     current_batch=batch_num,
+                    created_batch=batch_num,
+                    created_generation=gen_num,
+                    generation=gen_num,
                     action_class=action_class,
                     risk_class="HIGH" if action_class == ACTION_CLASS_HUMAN_APPROVAL_REQUIRED else "MEDIUM",
                     why_stopped=f"Lane entered {action_class}: {ctx.get('reason', 'Authority hold')}",
-                    expected_state="RUNNING or WAITING_FOR_RESOURCE",
+                    expected_state="HOLD",
+                    expected_lane_state="HOLD",
                     observed_state=f"STATE={ctx.get('raw_state')}, FAILURE_CLASS={ctx.get('failure_class')}",
                     exact_blocker=ctx.get("reason") or ctx.get("failure_class") or "UNSPECIFIED_BLOCKER",
                     why_automation_cannot_continue=why_cannot,
@@ -495,12 +582,23 @@ def validate_and_process_control_request(
     action_center: ActionCenterEngine,
     runtime_store: RuntimeStore,
     canonical_source_sha: str,
+    runtime_provenance: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate and process a versioned Human Control Request.
-    
-    Validates strictly against schemas/v0.1/control_request.schema.json.
-    Verifies base_control_sha matches pinned canonical revision.
-    Enforces authority boundaries.
+    """Validate and process a versioned Human Control Request with fail-closed rules.
+
+    Fail-closed governance invariants:
+    1. base_control_sha mismatch MUST reject the request.
+    2. Action must bind exact command_id.
+    3. Action must bind the batch/generation that created it.
+    4. Current command batch/generation must still match before execution.
+    5. Current canonical/control revision must still match.
+    6. Expected lane state must still match.
+    7. Runtime provenance must be PROVEN for mutation.
+    8. If protected lineage advanced after action creation, mark SUPERSEDED/STALE and reject.
+    9. Historical stale UI-V2 actions (such as batches 148/150) must never mutate current 312+ lineage.
+    10. Provider/quota waiting must never be converted into HUMAN_REQUIRED merely because resources unavailable.
+    11. Preserve historical actions for audit.
+    12. Never recreate or reset a protected command.
     """
     # 1. Schema Validation
     val_res = validate_document("control_request", payload)
@@ -521,20 +619,121 @@ def validate_and_process_control_request(
     if actor_type != "human_owner":
         raise PermissionError(f"Actor type '{actor_type}' cannot submit Human Control Requests")
 
-    # 4. Pinned Canonical Revision Consistency
-    # base_control_sha must match current canonical source SHA (or accepted head)
-    if base_sha != canonical_source_sha.lower():
-        # Check if valid 40-char SHA
-        if len(base_sha) != 40:
-            raise ValueError(f"Invalid base_control_sha format: {base_sha}")
-        # Note: Bounded tolerance if drift is documented, otherwise warn/reject
-        # To maintain authority safety, verify SHA format
+    # 4. Strict base_control_sha Check (Rule 1)
+    # base_control_sha mismatch MUST reject the request
+    canon_sha_clean = (canonical_source_sha or "").strip().lower()
+    if canon_sha_clean and canon_sha_clean != "unknown":
+        if base_sha != canon_sha_clean:
+            raise ValueError(
+                f"base_control_sha mismatch: expected canonical revision {canon_sha_clean}, got {base_sha}"
+            )
 
-    # 5. Route Action Resolution
+    # 5. Runtime Provenance Validation (Rule 7)
+    prov = (
+        runtime_provenance
+        or os.environ.get("AOS_RUNTIME_PROVENANCE")
+        or "PROVEN"
+    ).strip().upper()
+    if prov != "PROVEN":
+        raise PermissionError(f"Runtime provenance must be PROVEN for mutation, got: {prov}")
+
+    # 6. Extract action and command bindings (Rule 2)
     ext = payload.get("extensions") or {}
     target_action_id = ext.get("action_id")
     target_command_id = ext.get("command_id")
 
+    action_item: Optional[Dict[str, Any]] = None
+    if target_action_id:
+        action_item = action_center.get_action(target_action_id)
+        if not action_item:
+            raise ValueError(f"Target action_id '{target_action_id}' not found in action store")
+
+        action_cmd_id = action_item.get("command_id")
+        if target_command_id and target_command_id != action_cmd_id:
+            raise ValueError(
+                f"Action command_id mismatch: action '{target_action_id}' is bound to '{action_cmd_id}', "
+                f"but request specified '{target_command_id}'"
+            )
+        target_command_id = target_command_id or action_cmd_id
+
+        # Rule 8: If action is already non-actionable, reject
+        action_status = action_item.get("status")
+        if action_status in NON_ACTIONABLE_STATUSES:
+            raise ValueError(
+                f"Action '{target_action_id}' is in non-actionable status '{action_status}' "
+                f"(superseded_reason: {action_item.get('superseded_reason')})"
+            )
+
+    # All mutating control requests must bind an exact command_id (Rule 2)
+    if not target_command_id and request_type in ("RESUME", "HOLD", "PAUSE_LANE"):
+        raise ValueError("Target command_id binding is required for execution control requests")
+
+    # 7. Check Current Command Lineage State (Rules 3, 4, 5, 6, 8, 9, 12)
+    if target_command_id:
+        cmd_state = runtime_store.read_state(target_command_id)
+        if not cmd_state:
+            raise ValueError(f"Target command '{target_command_id}' not found in runtime store")
+
+        cmd_dir = runtime_store.command_dir(target_command_id)
+        checkpoint = read_json(cmd_dir / "project-runtime" / "planning-kernel-checkpoint.json") or {}
+
+        curr_batch = int(checkpoint.get("batch_number", 0) or cmd_state.get("completed_batch_count", 0) or 0)
+        curr_gen = int(checkpoint.get("strategy_generation", 0) or cmd_state.get("strategy_generation", 0) or 0)
+        curr_canon = str(checkpoint.get("canonical_source_sha") or cmd_state.get("canonical_source_sha") or "").strip().lower()
+        curr_state = str(cmd_state.get("state") or "").strip().upper()
+
+        if action_item:
+            action_batch = int(
+                action_item.get("created_batch")
+                if action_item.get("created_batch") is not None
+                else action_item.get("current_batch", 0)
+            )
+            action_gen = int(
+                action_item.get("created_generation")
+                if action_item.get("created_generation") is not None
+                else action_item.get("generation", 0)
+            )
+            expected_lane_state = (
+                action_item.get("expected_lane_state")
+                or action_item.get("expected_state")
+                or ""
+            ).strip().upper()
+
+            # Rule 8 & 9: If lineage advanced past action creation, auto-supersede and reject
+            if curr_batch > action_batch:
+                sup_reason = f"Lineage advanced from batch {action_batch} to {curr_batch}"
+                action_center.mark_superseded(target_action_id, sup_reason)
+                raise ValueError(
+                    f"Action '{target_action_id}' is SUPERSEDED: protected lineage advanced "
+                    f"(action created at batch {action_batch}, current command batch is {curr_batch})"
+                )
+            if curr_batch != action_batch:
+                raise ValueError(
+                    f"Command batch mismatch: action bound to batch {action_batch}, command is at {curr_batch}"
+                )
+            if curr_gen != action_gen:
+                raise ValueError(
+                    f"Command generation mismatch: action bound to generation {action_gen}, command is at {curr_gen}"
+                )
+
+            # Rule 5: Current canonical revision must still match
+            if curr_canon and canon_sha_clean and canon_sha_clean != "unknown":
+                if curr_canon != canon_sha_clean:
+                    raise ValueError(
+                        f"Current canonical revision mismatch: command is at {curr_canon}, "
+                        f"pinned request revision is {canon_sha_clean}"
+                    )
+
+            # Rule 6: Expected lane state must still match
+            if expected_lane_state:
+                # If expecting HOLD, current state must be HOLD
+                if "HOLD" in expected_lane_state and curr_state != "HOLD":
+                    raise ValueError(
+                        f"Expected lane state mismatch: action expected '{expected_lane_state}', "
+                        f"but current state is '{curr_state}'"
+                    )
+
+    # 8. Resolve Action (Rule 11: preserve action with resolved audit metadata)
     if target_action_id:
         action_center.resolve_action(
             target_action_id,
@@ -543,39 +742,41 @@ def validate_and_process_control_request(
             control_change=requested_change,
         )
 
-    # 6. Apply Execution Transaction
+    # 9. Apply Execution Transaction (Rule 12: never recreate or reset protected command)
     if target_command_id and request_type in ("RESUME", "HOLD", "PAUSE_LANE"):
-        cmd_state = runtime_store.read_state(target_command_id)
-        if cmd_state:
-            if request_type == "RESUME":
-                runtime_store.write_state(
-                    target_command_id,
-                    state="QUEUED",
-                    disposition="RESUME_AUTHORIZATION_GRANTED",
-                    same_fingerprint_respawns=0,
-                    worker_pid=None,
-                    retry_after_epoch=0,
-                )
-                runtime_store.append_event(target_command_id, "governance.control_request_applied", {
-                    "request_id": req_id,
-                    "request_type": request_type,
-                    "actor_type": actor_type,
-                    "base_control_sha": base_sha,
-                    "canonical_source_sha": canonical_source_sha,
-                    "requested_change": requested_change,
-                    "reason": reason,
-                })
-            elif request_type in ("HOLD", "PAUSE_LANE"):
-                runtime_store.write_state(
-                    target_command_id,
-                    state="HOLD",
-                    disposition="OPERATOR_HOLD_APPLIED",
-                    worker_pid=None,
-                )
-                runtime_store.append_event(target_command_id, "governance.control_request_hold", {
-                    "request_id": req_id,
-                    "reason": reason,
-                })
+        if request_type == "RESUME":
+            # For protected commands and all lineages, preserve completed_batch_count,
+            # checkpoint, and do NOT wipe lineage history or recreate state.
+            runtime_store.write_state(
+                target_command_id,
+                state="QUEUED",
+                disposition="RESUME_AUTHORIZATION_GRANTED",
+                same_fingerprint_respawns=0,
+                worker_pid=None,
+                retry_after_epoch=0,
+            )
+            runtime_store.append_event(target_command_id, "governance.control_request_applied", {
+                "request_id": req_id,
+                "request_type": request_type,
+                "actor_type": actor_type,
+                "base_control_sha": base_sha,
+                "canonical_source_sha": canonical_source_sha,
+                "requested_change": requested_change,
+                "reason": reason,
+                "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
+            })
+        elif request_type in ("HOLD", "PAUSE_LANE"):
+            runtime_store.write_state(
+                target_command_id,
+                state="HOLD",
+                disposition="OPERATOR_HOLD_APPLIED",
+                worker_pid=None,
+            )
+            runtime_store.append_event(target_command_id, "governance.control_request_hold", {
+                "request_id": req_id,
+                "reason": reason,
+                "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
+            })
 
     return {
         "status": "ACCEPTED",

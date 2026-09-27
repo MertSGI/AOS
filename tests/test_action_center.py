@@ -487,3 +487,502 @@ def test_proof_f_self_repair_authority_filtering(tmp_path):
     assert "AUTHORITY_GATE" in reason2
     assert rec2["authority_class"] == AUTHORITY_FORBIDDEN
     assert rec2["validation_status"] == "GATED_BY_AUTHORITY"
+
+
+def test_rule_1_base_control_sha_mismatch_rejects(tmp_path):
+    """Rule 1: base_control_sha mismatch MUST reject the request."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(cmd_id, state="HOLD", disposition="HUMAN_DECISION_REQUIRED")
+
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    stale_sha = "0000000000000000000000000000000000000000"
+
+    payload = {
+        "request_id": "req-rule1",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": stale_sha,
+        "requested_change": "Resume UI-V2 lane",
+        "reason": "Test mismatch",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"command_id": cmd_id},
+    }
+
+    with pytest.raises(ValueError, match="base_control_sha mismatch"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+
+def test_rule_2_command_id_binding_required_and_mismatch_rejected(tmp_path):
+    """Rule 2: Action must bind exact command_id; missing or mismatched command_id rejected."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(cmd_id, state="HOLD", disposition="HUMAN_DECISION_REQUIRED")
+
+    # Action bound to UI-V2 command
+    act_id = engine.compute_action_id("ui-v2", cmd_id, "HUMAN_DECISION_REQUIRED", "TEST")
+    item = HumanActionItem(
+        action_id=act_id,
+        project="ui-v2",
+        command_id=cmd_id,
+        current_batch=150,
+        created_batch=150,
+        action_class="HUMAN_DECISION_REQUIRED",
+        risk_class="MEDIUM",
+        why_stopped="Decision",
+        expected_state="HOLD",
+        observed_state="HOLD",
+        exact_blocker="TEST",
+        why_automation_cannot_continue="Blocker",
+        evidence_references=[],
+        canonical_revision=canon_sha,
+        workspace_fingerprint="NONE",
+        decision_required="Choose",
+        available_options=[],
+        option_consequences={},
+        reversibility="REVERSIBLE",
+        safe_default_if_any=None,
+        authority_boundary="AUTH",
+        created_at="2026-09-27T08:00:00Z",
+    )
+    engine.create_or_update_action(item)
+
+    # 1. Missing command_id when no action provided
+    payload_no_cmd = {
+        "request_id": "req-no-cmd",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Resume",
+        "reason": "Test",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {},
+    }
+    with pytest.raises(ValueError, match="command_id binding is required"):
+        validate_and_process_control_request(
+            payload=payload_no_cmd,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+    # 2. Command ID mismatch between action and request extension
+    payload_mismatch = {
+        "request_id": "req-mismatch",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Resume",
+        "reason": "Test",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {
+            "action_id": act_id,
+            "command_id": "continue-b181ddc574c25c2aa0f2a6b9",  # LARI instead of UI-V2
+        },
+    }
+    with pytest.raises(ValueError, match="Action command_id mismatch"):
+        validate_and_process_control_request(
+            payload=payload_mismatch,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+
+def test_rules_3_4_8_9_stale_batch_marked_superseded_and_rejected(tmp_path):
+    """
+    Rules 3, 4, 8, 9:
+    Historical stale UI-V2 actions (e.g. batch 148/150) must NEVER mutate current 312+ lineage.
+    Action is auto-marked SUPERSEDED and request is rejected.
+    """
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+
+    # Command is at batch 315 in current lineage
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(
+        cmd_id,
+        state="HOLD",
+        disposition="HUMAN_DECISION_REQUIRED",
+        completed_batch_count=315,
+        canonical_source_sha=canon_sha,
+    )
+
+    # Stale action created back at batch 150
+    act_id = "act-stale-uiv2-150"
+    item = HumanActionItem(
+        action_id=act_id,
+        project="ui-v2",
+        command_id=cmd_id,
+        current_batch=150,
+        created_batch=150,
+        action_class="HUMAN_DECISION_REQUIRED",
+        risk_class="MEDIUM",
+        why_stopped="Stale decision",
+        expected_state="HOLD",
+        observed_state="HOLD",
+        exact_blocker="STALE_BLOCKER",
+        why_automation_cannot_continue="Blocker",
+        evidence_references=[],
+        canonical_revision=canon_sha,
+        workspace_fingerprint="NONE",
+        decision_required="Choose",
+        available_options=[],
+        option_consequences={},
+        reversibility="REVERSIBLE",
+        safe_default_if_any=None,
+        authority_boundary="AUTH",
+        created_at="2026-09-25T08:00:00Z",
+    )
+    engine.create_or_update_action(item)
+
+    payload = {
+        "request_id": "req-stale-attempt",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Try to resume with stale batch 150 action",
+        "reason": "Test stale rejection",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"action_id": act_id, "command_id": cmd_id},
+    }
+
+    # Request MUST fail-closed because lineage advanced from batch 150 to 315
+    with pytest.raises(ValueError, match="SUPERSEDED: protected lineage advanced"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+    # Rule 8 & 11: Action is marked SUPERSEDED in store and preserved for audit
+    stored_act = engine.get_action(act_id)
+    assert stored_act is not None
+    assert stored_act["status"] == "SUPERSEDED"
+    assert "Lineage advanced from batch 150 to 315" in stored_act["superseded_reason"]
+
+    # Submitting again rejects immediately because action is non-actionable
+    with pytest.raises(ValueError, match="non-actionable status 'SUPERSEDED'"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+
+def test_rule_4_generation_mismatch_rejected(tmp_path):
+    """Rule 4: Generation mismatch between action and command must reject."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(
+        cmd_id,
+        state="HOLD",
+        disposition="HUMAN_DECISION_REQUIRED",
+        completed_batch_count=315,
+        strategy_generation=2,
+        canonical_source_sha=canon_sha,
+    )
+
+    act_id = "act-gen-mismatch"
+    item = HumanActionItem(
+        action_id=act_id,
+        project="ui-v2",
+        command_id=cmd_id,
+        current_batch=315,
+        created_batch=315,
+        generation=1,
+        created_generation=1,
+        action_class="HUMAN_DECISION_REQUIRED",
+        risk_class="MEDIUM",
+        why_stopped="Decision",
+        expected_state="HOLD",
+        observed_state="HOLD",
+        exact_blocker="GEN",
+        why_automation_cannot_continue="Blocker",
+        evidence_references=[],
+        canonical_revision=canon_sha,
+        workspace_fingerprint="NONE",
+        decision_required="Choose",
+        available_options=[],
+        option_consequences={},
+        reversibility="REVERSIBLE",
+        safe_default_if_any=None,
+        authority_boundary="AUTH",
+        created_at="2026-09-27T08:00:00Z",
+    )
+    engine.create_or_update_action(item)
+
+    payload = {
+        "request_id": "req-gen-mismatch",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Resume",
+        "reason": "Test gen",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"action_id": act_id, "command_id": cmd_id},
+    }
+
+    with pytest.raises(ValueError, match="Command generation mismatch"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+
+def test_rule_5_canonical_revision_mismatch_rejected(tmp_path):
+    """Rule 5: Current command canonical revision must match pinned control request revision."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    pinned_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    drifted_sha = "1111111111111111111111111111111111111111"
+    cmd_id = "continue-b181ddc574c25c2aa0f2a6b9"
+
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "lari"}, "goal": "LARI goal"})
+    store.write_state(
+        cmd_id,
+        state="HOLD",
+        disposition="HUMAN_DECISION_REQUIRED",
+        completed_batch_count=442,
+        canonical_source_sha=drifted_sha,  # Command drifted
+    )
+
+    act_id = "act-sha-mismatch"
+    item = HumanActionItem(
+        action_id=act_id,
+        project="lari",
+        command_id=cmd_id,
+        current_batch=442,
+        created_batch=442,
+        action_class="HUMAN_DECISION_REQUIRED",
+        risk_class="MEDIUM",
+        why_stopped="Decision",
+        expected_state="HOLD",
+        observed_state="HOLD",
+        exact_blocker="DRIFT",
+        why_automation_cannot_continue="Blocker",
+        evidence_references=[],
+        canonical_revision=drifted_sha,
+        workspace_fingerprint="NONE",
+        decision_required="Choose",
+        available_options=[],
+        option_consequences={},
+        reversibility="REVERSIBLE",
+        safe_default_if_any=None,
+        authority_boundary="AUTH",
+        created_at="2026-09-27T08:00:00Z",
+    )
+    engine.create_or_update_action(item)
+
+    payload = {
+        "request_id": "req-sha-mismatch",
+        "schema_version": "0.1.0",
+        "project_id": "lari",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": pinned_sha,
+        "requested_change": "Resume",
+        "reason": "Test sha",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"action_id": act_id, "command_id": cmd_id},
+    }
+
+    with pytest.raises(ValueError, match="Current canonical revision mismatch"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=pinned_sha,
+        )
+
+
+def test_rule_6_expected_lane_state_mismatch_rejected(tmp_path):
+    """Rule 6: Expected lane state must still match current command state."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(
+        cmd_id,
+        state="RUNNING",  # Already running, not in HOLD!
+        disposition="RUNNING",
+        completed_batch_count=315,
+        canonical_source_sha=canon_sha,
+    )
+
+    act_id = "act-state-mismatch"
+    item = HumanActionItem(
+        action_id=act_id,
+        project="ui-v2",
+        command_id=cmd_id,
+        current_batch=315,
+        created_batch=315,
+        action_class="HUMAN_DECISION_REQUIRED",
+        risk_class="MEDIUM",
+        why_stopped="Hold",
+        expected_state="HOLD",
+        expected_lane_state="HOLD",
+        observed_state="HOLD",
+        exact_blocker="HOLD",
+        why_automation_cannot_continue="Blocker",
+        evidence_references=[],
+        canonical_revision=canon_sha,
+        workspace_fingerprint="NONE",
+        decision_required="Choose",
+        available_options=[],
+        option_consequences={},
+        reversibility="REVERSIBLE",
+        safe_default_if_any=None,
+        authority_boundary="AUTH",
+        created_at="2026-09-27T08:00:00Z",
+    )
+    engine.create_or_update_action(item)
+
+    payload = {
+        "request_id": "req-state-mismatch",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Resume",
+        "reason": "Test state",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"action_id": act_id, "command_id": cmd_id},
+    }
+
+    with pytest.raises(ValueError, match="Expected lane state mismatch"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+        )
+
+
+def test_rule_7_runtime_provenance_must_be_proven(tmp_path):
+    """Rule 7: Runtime provenance must be PROVEN for mutation; UNPROVEN or missing is rejected."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+    cmd_id = "continue-61be4ab1af53cfa646d773ce"
+    store.create_command({"command_id": cmd_id, "project": {"project_id": "ui-v2"}, "goal": "UI-V2 goal"})
+    store.write_state(cmd_id, state="HOLD", disposition="HUMAN_DECISION_REQUIRED")
+
+    payload = {
+        "request_id": "req-prov-fail",
+        "schema_version": "0.1.0",
+        "project_id": "ui-v2",
+        "actor_type": "human_owner",
+        "request_type": "RESUME",
+        "base_control_sha": canon_sha,
+        "requested_change": "Resume",
+        "reason": "Test provenance",
+        "requested_at": "2026-09-27T08:00:00Z",
+        "extensions": {"command_id": cmd_id},
+    }
+
+    with pytest.raises(PermissionError, match="Runtime provenance must be PROVEN"):
+        validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+            runtime_provenance="UNPROVEN",
+        )
+
+
+def test_rule_10_provider_quota_wait_never_escalates_to_human_required():
+    """Rule 10: Provider/quota waiting must never be converted into HUMAN_REQUIRED."""
+    action_class, disposition, ctx = classify_lane_hold(
+        project_id="ui-v2",
+        command_id="continue-61be4ab1af53cfa646d773ce",
+        cmd_state={
+            "state": "WAITING_FOR_REASONING_PROVIDER",
+            "disposition": "WAITING_FOR_RESOURCE",
+            "failure_class": "PROVIDER_API_QUOTA_EXHAUSTED",
+        },
+        checkpoint={"batch_number": 315, "reason": "RATE_LIMIT_EXCEEDED"},
+    )
+    assert action_class == ACTION_CLASS_WAITING_FOR_RESOURCE
+    assert disposition == DISPOSITION_WAITING_FOR_RESOURCE
+
+
+def test_rule_12_protected_command_lineage_never_reset_or_recreated(tmp_path):
+    """Rule 12: Resume updates state=QUEUED without resetting completed_batch_count or lineage."""
+    store = RuntimeStore(tmp_path / "runtime")
+    engine = ActionCenterEngine(action_store_root=tmp_path / "actions")
+    canon_sha = "5de4adb1b840f28a9c74a23054e2a8bda8e86a08"
+
+    for cmd_id, proj in [
+        ("continue-b181ddc574c25c2aa0f2a6b9", "lari"),
+        ("continue-61be4ab1af53cfa646d773ce", "ui-v2"),
+    ]:
+        store.create_command({"command_id": cmd_id, "project": {"project_id": proj}, "goal": f"{proj} goal"})
+        store.write_state(
+            cmd_id,
+            state="HOLD",
+            disposition="OPERATOR_HOLD_APPLIED",
+            completed_batch_count=442 if proj == "lari" else 315,
+            canonical_source_sha=canon_sha,
+        )
+
+        payload = {
+            "request_id": f"req-prot-{proj}",
+            "schema_version": "0.1.0",
+            "project_id": proj,
+            "actor_type": "human_owner",
+            "request_type": "RESUME",
+            "base_control_sha": canon_sha,
+            "requested_change": f"Authorized resume for {proj}",
+            "reason": "Operator release",
+            "requested_at": "2026-09-27T08:00:00Z",
+            "extensions": {"command_id": cmd_id},
+        }
+
+        res = validate_and_process_control_request(
+            payload=payload,
+            action_center=engine,
+            runtime_store=store,
+            canonical_source_sha=canon_sha,
+            runtime_provenance="PROVEN",
+        )
+        assert res["status"] == "ACCEPTED"
+
+        updated = store.read_state(cmd_id)
+        assert updated["state"] == "QUEUED"
+        assert updated["disposition"] == "RESUME_AUTHORIZATION_GRANTED"
+        # Completed batch count preserved; NEVER reset
+        assert updated["completed_batch_count"] == (442 if proj == "lari" else 315)
