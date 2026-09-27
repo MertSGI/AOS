@@ -1,1 +1,2 @@
 {"timestamp":"2026-09-27T18:00:42.8901975Z","authority":"AOS-BOUNDED-SELF-MAINTENANCE-CANARY-20260927-01","prepared_source_sha":"5f0e722dd7e441005171d173b4c555b351d7be12","production":"NO_GO","bootstrap_authority_id":"AOS-MAINTENANCE-LANE-BOOTSTRAP-20260927-02"}
+{"timestamp":"2026-09-27T18:20:21.8089686Z","event":"authority_repair","authority":"AOS-BOUNDED-SELF-MAINTENANCE-CANARY-20260927-01","reason":"PLANNER_VALIDATION_REPAIR_EXHAUSTED: authority not present in canonical decisions","production":"NO_GO"}
