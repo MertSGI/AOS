@@ -37,6 +37,7 @@ from aos.provider_circuit import ProviderCircuitBreakerRegistry
 from aos.runtime_maintenance import is_paused
 from aos.provider_observation import canonical_failure_family
 from aos.read_identity import build_workspace_source_generation
+from aos.runtime_assets import resolve_active_runtime_artifact
 
 
 def recovery_failure_family(
@@ -210,32 +211,7 @@ def _active_runtime_artifact_path(
     Only immutable AOS runtime-owned configuration follows the exact candidate
     that launched this worker.
     """
-    original = Path(
-        stored_path
-    ).expanduser().resolve()
-
-    slot_root = str(
-        os.environ.get(
-            "AOS_RUNTIME_SLOT_ROOT"
-        )
-        or ""
-    ).strip()
-
-    if not slot_root:
-        return original
-
-    candidate = (
-        Path(slot_root)
-        .expanduser()
-        .resolve()
-        / "descriptors"
-        / original.name
-    )
-
-    if candidate.is_file():
-        return candidate
-
-    return original
+    return resolve_active_runtime_artifact(stored_path)
 
 
 _SOURCE_TRANSPORT_CONTEXT_MARKERS = (

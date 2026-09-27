@@ -40,6 +40,7 @@ from aos.provider_observation import RateLimitObservation, TaskClass
 from aos.runtime_worker import build_recovery_fingerprint
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
+from aos.runtime_assets import resolve_active_runtime_artifact
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -125,6 +126,7 @@ class RuntimeEngine:
         self.is_paused = is_paused(self.runtime_root)
         self._worker_processes: Dict[str, OwnedProcess] = {}
         self._status_lock = threading.Lock()
+        self._last_accepted_provider_graph: Optional[Dict[str, Any]] = None
         self._status_cache: Dict[str, Any] = {
             "contract_version": CONTRACT_VERSION,
             "status_state": "PAUSED" if self.is_paused else "INITIALIZING",
@@ -334,10 +336,9 @@ class RuntimeEngine:
             if not policy_value:
                 continue
 
-            path = Path(
-                str(
-                    policy_value
-                )
+            path = resolve_active_runtime_artifact(
+                str(policy_value),
+                slot_root=self.config.get("runtime_slot_root"),
             )
 
             try:
@@ -410,6 +411,7 @@ class RuntimeEngine:
         enabled: list[str] = []
         paths: list[Path] = []
         registries: list[ProviderCircuitBreakerRegistry] = []
+        slot_root = self.config.get("runtime_slot_root")
         for command_id in self.store.list_command_ids()[-200:]:
             state = self.store.read_state(command_id)
             if not self._has_live_resource_context(state):
@@ -417,7 +419,8 @@ class RuntimeEngine:
             command = self.store.read_command(command_id)
             policy_value = (command.get("project") or {}).get("routing_policy_path")
             if policy_value:
-                for provider_id in self._enabled_from_policy(Path(str(policy_value))):
+                resolved_policy = resolve_active_runtime_artifact(str(policy_value), slot_root=slot_root)
+                for provider_id in self._enabled_from_policy(resolved_policy):
                     if provider_id not in enabled:
                         enabled.append(provider_id)
             path = self.store.command_dir(command_id) / "project-runtime" / "provider-circuits.json"
@@ -430,7 +433,8 @@ class RuntimeEngine:
             for project in (self.config.get("projects") or {}).values():
                 policy_value = project.get("routing_policy_path") if isinstance(project, dict) else None
                 if policy_value:
-                    for provider_id in self._enabled_from_policy(Path(str(policy_value))):
+                    resolved_policy = resolve_active_runtime_artifact(str(policy_value), slot_root=slot_root)
+                    for provider_id in self._enabled_from_policy(resolved_policy):
                         if provider_id not in enabled:
                             enabled.append(provider_id)
         return enabled, paths, registries
@@ -438,6 +442,7 @@ class RuntimeEngine:
     def _run_live_probe_cycle(self) -> None:
         """Perform one sanitized activation probe and wake same waiting lineages."""
         try:
+            slot_root = self.config.get("runtime_slot_root")
             targets: Dict[str, Dict[str, Any]] = {}
             for command_id in self.store.list_command_ids()[-200:]:
                 state = self.store.read_state(command_id)
@@ -447,7 +452,7 @@ class RuntimeEngine:
                 policy_value = (command.get("project") or {}).get("routing_policy_path")
                 if not policy_value:
                     continue
-                policy_path = Path(str(policy_value))
+                policy_path = resolve_active_runtime_artifact(str(policy_value), slot_root=slot_root)
                 key = str(policy_path.resolve())
                 targets.setdefault(key, {"path": policy_path, "commands": []})["commands"].append(command_id)
 
@@ -535,7 +540,13 @@ class RuntimeEngine:
                     command = self.store.read_command(command_id) or {}
                     project = command.get("project") or {}
                     policy_val = project.get("routing_policy_path")
-                    cmd_enabled = self._enabled_from_policy(Path(str(policy_val))) if policy_val else []
+                    cmd_enabled = (
+                        self._enabled_from_policy(
+                            resolve_active_runtime_artifact(str(policy_val), slot_root=slot_root)
+                        )
+                        if policy_val
+                        else []
+                    )
 
                     required_task_class = str(
                         state.get("required_task_class")
@@ -1334,6 +1345,31 @@ class RuntimeEngine:
                 healthy,
                 key=lambda row: str(row.get("last_success_at") or ""),
             ).get("provider_id")
+
+        discovery_failed = bool(self._policy_error) or (bool(command_ids or self.config.get("projects")) and not enabled_providers)
+
+        if discovery_failed and self._last_accepted_provider_graph is not None:
+            # Retain last known accepted provider graph; do not present false empty/healthy
+            prev = self._last_accepted_provider_graph
+            circuit_summary = dict(prev["circuit_summary"])
+            provider_details = list(prev["provider_details"])
+            enabled_providers = list(prev["enabled_providers"])
+            healthy = list(prev["healthy"])
+            selected_provider = prev.get("selected_provider")
+            circuit_paths = list(prev.get("circuit_paths") or circuit_paths)
+            provider_discovery_status = "DEGRADED"
+        else:
+            provider_discovery_status = "DEGRADED" if discovery_failed else "HEALTHY"
+            if not discovery_failed and enabled_providers:
+                self._last_accepted_provider_graph = {
+                    "circuit_summary": dict(circuit_summary),
+                    "provider_details": list(provider_details),
+                    "enabled_providers": list(enabled_providers),
+                    "healthy": list(healthy),
+                    "selected_provider": selected_provider,
+                    "circuit_paths": list(circuit_paths),
+                }
+
         return {
             "contract_version": CONTRACT_VERSION,
             "runtime_state": "HEALTHY",
@@ -1371,7 +1407,7 @@ class RuntimeEngine:
             "healthy_reasoning_providers": [row["provider_id"] for row in healthy],
             "current_selected_reasoning_provider": selected_provider,
             "provider_circuit_registry_paths": [str(path) for path in circuit_paths],
-            "provider_discovery_status": "DEGRADED" if self._policy_error else "HEALTHY",
+            "provider_discovery_status": provider_discovery_status,
             "provider_discovery_errors": dict(self._policy_error),
         }
 

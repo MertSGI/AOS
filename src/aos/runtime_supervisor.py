@@ -553,6 +553,8 @@ class RuntimeSupervisor:
                         "healthy_reasoning_providers",
                         "current_selected_reasoning_provider",
                         "provider_discovery_status",
+                        "provider_discovery_errors",
+                        "provider_circuit_registry_paths",
                     ):
                         if k in status_val:
                             relay_telemetry[k] = status_val[k]

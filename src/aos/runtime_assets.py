@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 REQUIRED_FILES = (
     "schemas/v0.1/project_descriptor.schema.json",
@@ -117,3 +117,42 @@ def materialize_runtime_assets(source_root: Path, slot_root: Path) -> Dict[str, 
         "asset_tree_sha256": tree_sha,
         "file_count": len(files),
     }
+
+
+def resolve_active_runtime_artifact(
+    stored_path: Any,
+    *,
+    slot_root: Optional[Any] = None,
+) -> Path:
+    """Rebind AOS-owned descriptor/policy/schema artifacts to the active runtime slot.
+
+    Command lineage, product workspace, goal, and history remain untouched.
+    Product workspace paths MUST NOT be rebound.
+    Only immutable AOS runtime-owned configuration follows the active promoted
+    candidate slot at read/execution time.
+    """
+    if stored_path is None:
+        raise ValueError("stored_path must not be None")
+
+    original = Path(stored_path).expanduser().resolve()
+
+    resolved_slot_root = str(
+        slot_root
+        or os.environ.get("AOS_RUNTIME_SLOT_ROOT")
+        or ""
+    ).strip()
+
+    if not resolved_slot_root:
+        return original
+
+    slot_base = Path(resolved_slot_root).expanduser().resolve()
+    if not slot_base.is_dir():
+        return original
+
+    # Search in standard candidate asset subdirectories (descriptors, schemas)
+    for asset_dir in ASSET_DIRS:
+        candidate = slot_base / asset_dir / original.name
+        if candidate.is_file():
+            return candidate
+
+    return original

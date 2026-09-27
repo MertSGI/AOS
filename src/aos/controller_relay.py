@@ -144,6 +144,10 @@ class RelaySnapshot:
     provider_failover_count: int = 0
     provider_details: List[Dict[str, Any]] = field(default_factory=list)
     current_selected_reasoning_provider: Optional[str] = None
+    provider_discovery_status: str = "HEALTHY"
+    provider_discovery_errors: Dict[str, Any] = field(default_factory=dict)
+    enabled_reasoning_providers: List[str] = field(default_factory=list)
+    provider_circuit_registry_paths: List[str] = field(default_factory=list)
 
 
 class ControllerRelayPublisher:
@@ -643,6 +647,10 @@ class ControllerRelayPublisher:
             provider_failover_count=int(rh.get("provider_failover_count", 0) or 0),
             provider_details=list(rh.get("provider_details", []) or []),
             current_selected_reasoning_provider=rh.get("current_selected_reasoning_provider"),
+            provider_discovery_status=str(rh.get("provider_discovery_status") or "HEALTHY"),
+            provider_discovery_errors=dict(rh.get("provider_discovery_errors") or {}),
+            enabled_reasoning_providers=list(rh.get("enabled_reasoning_providers", []) or []),
+            provider_circuit_registry_paths=list(rh.get("provider_circuit_registry_paths", []) or []),
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -737,6 +745,10 @@ REMOTE_ISSUE_NUMBER={snapshot.remote_issue_number or 'NONE'}
 LAST_REMOTE_PUBLISH_AT={snapshot.last_remote_publish_at or 'NONE'}
 
 ### REASONING PROVIDERS & CIRCUIT BREAKERS
+PROVIDER_DISCOVERY_STATUS={snapshot.provider_discovery_status}
+PROVIDER_DISCOVERY_ERRORS={json.dumps(snapshot.provider_discovery_errors, sort_keys=True)}
+ENABLED_REASONING_PROVIDERS={json.dumps(snapshot.enabled_reasoning_providers)}
+PROVIDER_CIRCUIT_REGISTRY_PATHS={json.dumps(snapshot.provider_circuit_registry_paths)}
 HEALTHY_REASONING_PROVIDER_COUNT={snapshot.healthy_reasoning_provider_count}
 PROBE_ELIGIBLE_REASONING_PROVIDER_COUNT={snapshot.probe_eligible_reasoning_provider_count}
 UNKNOWN_REASONING_PROVIDER_COUNT={snapshot.unknown_reasoning_provider_count}
