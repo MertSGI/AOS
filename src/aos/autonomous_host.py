@@ -975,6 +975,11 @@ def run_host(
         if ag_backend is not None and callable(getattr(ag_backend, "get_availability", None))
         else "NOT_REGISTERED"
     )
+    backend_attempt_metrics = {
+        backend_id: dict(metrics)
+        for backend_id, metrics in state.backend_attempt_metrics.items()
+    }
+    ag_metrics = backend_attempt_metrics.get("antigravity", {})
     receipt = {
         "schema_version": "1.0.0",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -989,8 +994,17 @@ def run_host(
         "ag_backend_registered": ag_backend is not None,
         "ag_backend_availability": ag_availability,
         "ag_backend_enabled": ag_availability in ("AVAILABLE", "LOW_OR_SCARCE"),
-        "ag_invocation_count": int(state.backend_invocation_counts.get("antigravity", 0)),
+        "ag_direct_attempt_count": int(ag_metrics.get("direct_agentic_attempt_count", 0) or 0),
+        "ag_planning_bridge_attempt_count": int(ag_metrics.get("planning_bridge_attempt_count", 0) or 0),
+        "ag_total_attempt_count": int(ag_metrics.get("attempt_count", 0) or 0),
+        "ag_success_count": int(ag_metrics.get("success_count", 0) or 0),
+        "ag_degraded_count": int(ag_metrics.get("degraded_count", 0) or 0),
+        "ag_failure_count": int(ag_metrics.get("failure_count", 0) or 0),
+        "ag_final_selection_count": int(ag_metrics.get("final_selection_count", 0) or 0),
+        "ag_invocation_count": int(ag_metrics.get("attempt_count", 0) or 0),
         "backend_invocation_counts": dict(state.backend_invocation_counts),
+        "backend_attempt_metrics": backend_attempt_metrics,
+        "backend_attempt_telemetry": list(state.backend_attempt_telemetry),
         "production": "NO_GO",
         "ollama_probe": probe_ollama_models(),
     }
@@ -999,7 +1013,9 @@ def run_host(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="AOS Autonomous Host V1 (Zero-AG, non-production)")
+    parser = argparse.ArgumentParser(
+        description="AOS Autonomous Host V1 (agentic-resource gated, non-production)"
+    )
     parser.add_argument("--project", required=True, help="Project descriptor JSON")
     parser.add_argument(
         "--run-plan",

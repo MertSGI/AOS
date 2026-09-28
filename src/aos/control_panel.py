@@ -3925,7 +3925,25 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                     "availability": relay_info.get("ag_backend_availability", "UNKNOWN"),
                     "eligible": bool(relay_info.get("ag_backend_enabled", False)),
                     "invocation_count": int(relay_info.get("ag_invocation_count", 0) or 0),
+                    "direct_attempt_count": int(
+                        relay_info.get("ag_direct_attempt_count", 0) or 0
+                    ),
+                    "planning_bridge_attempt_count": int(
+                        relay_info.get("ag_planning_bridge_attempt_count", 0) or 0
+                    ),
+                    "total_attempt_count": int(
+                        relay_info.get("ag_total_attempt_count", 0) or 0
+                    ),
+                    "success_count": int(relay_info.get("ag_success_count", 0) or 0),
+                    "degraded_count": int(relay_info.get("ag_degraded_count", 0) or 0),
+                    "failure_count": int(relay_info.get("ag_failure_count", 0) or 0),
+                    "final_selection_count": int(
+                        relay_info.get("ag_final_selection_count", 0) or 0
+                    ),
                 },
+                "backend_attempt_metrics": dict(
+                    relay_info.get("backend_attempt_metrics", {}) or {}
+                ),
                 "authority": "PROJECTION_ONLY",
             },
             "product_evidence": {
@@ -3979,6 +3997,18 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "ag_backend_availability": host_status.get("ag_backend_availability", "UNKNOWN"),
         "ag_backend_enabled": bool(host_status.get("ag_backend_enabled", False)),
         "ag_invocation_count": int(host_status.get("ag_invocation_count", 0) or 0),
+        "ag_direct_attempt_count": int(host_status.get("ag_direct_attempt_count", 0) or 0),
+        "ag_planning_bridge_attempt_count": int(
+            host_status.get("ag_planning_bridge_attempt_count", 0) or 0
+        ),
+        "ag_total_attempt_count": int(host_status.get("ag_total_attempt_count", 0) or 0),
+        "ag_success_count": int(host_status.get("ag_success_count", 0) or 0),
+        "ag_degraded_count": int(host_status.get("ag_degraded_count", 0) or 0),
+        "ag_failure_count": int(host_status.get("ag_failure_count", 0) or 0),
+        "ag_final_selection_count": int(
+            host_status.get("ag_final_selection_count", 0) or 0
+        ),
+        "backend_attempt_metrics": dict(host_status.get("backend_attempt_metrics", {}) or {}),
         "allow_paid_fallback": False,
         "paid_fallback_enabled": False,
         "paid_daily_budget_usd": 0,

@@ -38,7 +38,10 @@ from extensions.autonomy_fabric.execution_backend import (
     EvidenceClass,
     AgenticSessionIdentity,
 )
-from extensions.autonomy_fabric.execution_router import ExecutionRouter
+from extensions.autonomy_fabric.execution_router import (
+    ExecutionRouter,
+    summarize_backend_attempts,
+)
 from extensions.autonomy_fabric.evidence_aggregator import EvidenceAggregator, EvidenceType
 from extensions.autonomy_fabric.completion_supervisor import CompletionSupervisor, ControllerReviewDisposition
 from extensions.autonomy_fabric.native_workers import redact_secrets
@@ -63,6 +66,8 @@ class CoordinatorState:
     completed_read_observations: List[Dict[str, Any]] = field(default_factory=list)
     agentic_execution_checkpoints: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     backend_invocation_counts: Dict[str, int] = field(default_factory=dict)
+    backend_attempt_metrics: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    backend_attempt_telemetry: List[Dict[str, Any]] = field(default_factory=list)
     iteration_count: int = 0
     schema_version: str = "2.0.0"
     last_checkpoint: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -175,6 +180,26 @@ class PersistentCoordinator:
                 }
                 if isinstance(counts, dict)
                 else {}
+            )
+            raw_metrics = data.get("backend_attempt_metrics", {})
+            self.state.backend_attempt_metrics = (
+                {
+                    str(backend_id): {
+                        str(metric): int(count)
+                        for metric, count in metrics.items()
+                        if isinstance(count, int) and count >= 0
+                    }
+                    for backend_id, metrics in raw_metrics.items()
+                    if isinstance(metrics, dict)
+                }
+                if isinstance(raw_metrics, dict)
+                else {}
+            )
+            raw_attempts = data.get("backend_attempt_telemetry", [])
+            self.state.backend_attempt_telemetry = (
+                [dict(item) for item in raw_attempts[-200:] if isinstance(item, dict)]
+                if isinstance(raw_attempts, list)
+                else []
             )
             self.state.iteration_count = data.get("iteration_count", 0)
             self.state.last_checkpoint = data.get("last_checkpoint", "")
@@ -460,9 +485,17 @@ class PersistentCoordinator:
                 )
             else:
                 res = self.router.execute_with_failover(req)
-                self.state.backend_invocation_counts[res.backend_id] = (
-                    self.state.backend_invocation_counts.get(res.backend_id, 0) + 1
-                )
+                attempts = [dict(item) for item in self.router.last_attempt_telemetry]
+                self.state.backend_attempt_telemetry = (
+                    self.state.backend_attempt_telemetry + attempts
+                )[-200:]
+                for backend_id, metrics in summarize_backend_attempts(attempts).items():
+                    aggregate = self.state.backend_attempt_metrics.setdefault(backend_id, {})
+                    for metric, value in metrics.items():
+                        aggregate[metric] = int(aggregate.get(metric, 0) or 0) + int(value)
+                    self.state.backend_invocation_counts[backend_id] = int(
+                        aggregate.get("attempt_count", 0) or 0
+                    )
             results.append(res)
 
             # 4. Record evidence
@@ -544,6 +577,7 @@ class PersistentCoordinator:
                         self.integrity_reconciler.release(
                             integrity_claim,
                             bucket=bucket,
+                            execution_id=req.request_id,
                             task_id=req.task_id,
                         )
 

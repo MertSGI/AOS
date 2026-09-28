@@ -3354,8 +3354,18 @@ def run_autonomous_project(
             })
             try:
                 from aos.integrity_reconciler import IntegrityReconciler, discover_integrity_root
-                IntegrityReconciler(discover_integrity_root(runtime_dir)).record_outcome(
+                reconciler = IntegrityReconciler(discover_integrity_root(runtime_dir))
+                execution_id = hashlib.sha256(
+                    f"{situation.project_id}:{runtime_dir.resolve()}:{batch_number}:REPLAN_NOOP".encode("utf-8")
+                ).hexdigest()
+                reconciler.record_execution(
+                    execution_id,
+                    task_signature=current_plan_fingerprint,
+                    task_id=f"batch-{batch_number:04d}",
+                )
+                reconciler.record_outcome(
                     "REPLAN_NOOP",
+                    execution_id=execution_id,
                     task_signature=current_plan_fingerprint,
                     task_id=f"batch-{batch_number:04d}",
                 )
@@ -3390,7 +3400,19 @@ def run_autonomous_project(
             "ag_backend_registered": recent_receipt.get("ag_backend_registered", False),
             "ag_backend_availability": recent_receipt.get("ag_backend_availability", "UNKNOWN"),
             "ag_backend_enabled": recent_receipt.get("ag_backend_enabled", False),
+            "ag_direct_attempt_count": int(recent_receipt.get("ag_direct_attempt_count", 0) or 0),
+            "ag_planning_bridge_attempt_count": int(
+                recent_receipt.get("ag_planning_bridge_attempt_count", 0) or 0
+            ),
+            "ag_total_attempt_count": int(recent_receipt.get("ag_total_attempt_count", 0) or 0),
+            "ag_success_count": int(recent_receipt.get("ag_success_count", 0) or 0),
+            "ag_degraded_count": int(recent_receipt.get("ag_degraded_count", 0) or 0),
+            "ag_failure_count": int(recent_receipt.get("ag_failure_count", 0) or 0),
+            "ag_final_selection_count": int(
+                recent_receipt.get("ag_final_selection_count", 0) or 0
+            ),
             "ag_invocation_count": int(recent_receipt.get("ag_invocation_count", 0) or 0),
+            "backend_attempt_metrics": dict(recent_receipt.get("backend_attempt_metrics", {}) or {}),
             "production": "NO_GO",
         })
 
@@ -3449,7 +3471,17 @@ def _final_result(
         "ag_backend_registered": bool(recent_receipt.get("ag_backend_registered", False)),
         "ag_backend_availability": str(recent_receipt.get("ag_backend_availability", "UNKNOWN")),
         "ag_backend_enabled": bool(recent_receipt.get("ag_backend_enabled", False)),
+        "ag_direct_attempt_count": int(recent_receipt.get("ag_direct_attempt_count", 0) or 0),
+        "ag_planning_bridge_attempt_count": int(
+            recent_receipt.get("ag_planning_bridge_attempt_count", 0) or 0
+        ),
+        "ag_total_attempt_count": int(recent_receipt.get("ag_total_attempt_count", 0) or 0),
+        "ag_success_count": int(recent_receipt.get("ag_success_count", 0) or 0),
+        "ag_degraded_count": int(recent_receipt.get("ag_degraded_count", 0) or 0),
+        "ag_failure_count": int(recent_receipt.get("ag_failure_count", 0) or 0),
+        "ag_final_selection_count": int(recent_receipt.get("ag_final_selection_count", 0) or 0),
         "ag_invocation_count": int(recent_receipt.get("ag_invocation_count", 0) or 0),
+        "backend_attempt_metrics": dict(recent_receipt.get("backend_attempt_metrics", {}) or {}),
         "production": "NO_GO",
     }
     _atomic_json(runtime_dir / "autonomous-project-result.json", result)

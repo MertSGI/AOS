@@ -86,6 +86,12 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
     def __init__(self, underlying_backend: AgenticExecutionBackend, *, bridge_id: Optional[str] = None):
         self.underlying_backend = underlying_backend
         self.backend_id = bridge_id or f"{underlying_backend.backend_id}_planning_bridge"
+        self._last_underlying_attempts: list[Dict[str, str]] = []
+
+    def consume_attempt_telemetry(self) -> list[Dict[str, str]]:
+        attempts = list(self._last_underlying_attempts)
+        self._last_underlying_attempts = []
+        return attempts
 
     @property
     def cost(self) -> ExecutionCost:
@@ -106,6 +112,7 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
         )
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        self._last_underlying_attempts = []
         # Enforce read-only planning: write_scope must be strictly empty
         if request.write_scope:
             return ExecutionResult(
@@ -182,6 +189,11 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
         )
 
         agentic_result = self.underlying_backend.execute(agentic_req)
+        self._last_underlying_attempts.append({
+            "backend_id": self.underlying_backend.backend_id,
+            "status": str(agentic_result.status),
+            "invocation_mode": "PLANNING_BRIDGE_INVOCATION",
+        })
 
         # If underlying execution did not succeed, fail closed
         if agentic_result.status != "SUCCESS":

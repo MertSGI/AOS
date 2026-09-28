@@ -8,7 +8,7 @@ NATIVE > CI/GITHUB > MODEL+NATIVE > AG SPECIALIST
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from dataclasses import replace
 import logging
 
@@ -21,12 +21,47 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionCost,
     EvidenceClass,
     ExecutionAvailabilityState,
+    BackendClass,
 )
 from extensions.autonomy_fabric.authority_router import AuthorityRouter, DecisionCategory
 from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
 
 
 logger = logging.getLogger("aos.execution_router")
+
+
+def summarize_backend_attempts(
+    records: Iterable[Dict[str, Any]],
+) -> Dict[str, Dict[str, int]]:
+    """Aggregate sanitized attempt facts without collapsing failover history."""
+    summary: Dict[str, Dict[str, int]] = {}
+    for record in records:
+        backend_id = str(record.get("backend_id") or "UNKNOWN")
+        metrics = summary.setdefault(backend_id, {
+            "attempt_count": 0,
+            "success_count": 0,
+            "degraded_count": 0,
+            "failure_count": 0,
+            "final_selection_count": 0,
+            "direct_agentic_attempt_count": 0,
+            "planning_bridge_attempt_count": 0,
+        })
+        metrics["attempt_count"] += 1
+        status = str(record.get("status") or "UNKNOWN").upper()
+        if status == "SUCCESS":
+            metrics["success_count"] += 1
+        elif status == "DEGRADED":
+            metrics["degraded_count"] += 1
+        else:
+            metrics["failure_count"] += 1
+        if bool(record.get("final_selection")):
+            metrics["final_selection_count"] += 1
+        mode = str(record.get("invocation_mode") or "")
+        if mode == "DIRECT_AGENTIC_INVOCATION":
+            metrics["direct_agentic_attempt_count"] += 1
+        elif mode == "PLANNING_BRIDGE_INVOCATION":
+            metrics["planning_bridge_attempt_count"] += 1
+    return summary
 
 
 class ExecutionRouter:
@@ -43,6 +78,7 @@ class ExecutionRouter:
         self.authority_router = authority_router or AuthorityRouter()
         self.ag_required = ag_required
         self.orchestrator = orchestrator or ResourceOrchestrator()
+        self.last_attempt_telemetry: List[Dict[str, Any]] = []
 
         if backends:
             for b in backends:
@@ -92,6 +128,7 @@ class ExecutionRouter:
         attempts = 0
         tried_backend_ids: Set[str] = set()
         last_degraded: Optional[ExecutionResult] = None
+        self.last_attempt_telemetry = []
 
         while attempts < 3:
             attempts += 1
@@ -130,12 +167,56 @@ class ExecutionRouter:
                 })
                 dispatch_request = replace(request, agentic_identity=None, context_pack=pack)
             result = selected.execute(dispatch_request)
+            invocation_mode = (
+                "PLANNING_BRIDGE_INVOCATION"
+                if hasattr(selected, "underlying_backend")
+                else (
+                    "DIRECT_AGENTIC_INVOCATION"
+                    if getattr(selected, "backend_class", None)
+                    == BackendClass.AGENTIC_EXECUTION_BACKEND
+                    else "BACKEND_INVOCATION"
+                )
+            )
+            call_records: List[Dict[str, Any]] = [{
+                "attempt_id": f"{request.request_id}:{attempts}:{selected.backend_id}",
+                "request_id": request.request_id,
+                "task_id": request.task_id,
+                "backend_id": selected.backend_id,
+                "status": str(result.status),
+                "invocation_mode": invocation_mode,
+                "final_selection": False,
+            }]
+            consume = getattr(selected, "consume_attempt_telemetry", None)
+            if callable(consume):
+                for index, underlying in enumerate(consume(), start=1):
+                    if not isinstance(underlying, dict):
+                        continue
+                    call_records.append({
+                        "attempt_id": (
+                            f"{request.request_id}:{attempts}:{selected.backend_id}:"
+                            f"underlying:{index}"
+                        ),
+                        "request_id": request.request_id,
+                        "task_id": request.task_id,
+                        "backend_id": str(underlying.get("backend_id") or "UNKNOWN"),
+                        "status": str(underlying.get("status") or "UNKNOWN"),
+                        "invocation_mode": str(
+                            underlying.get("invocation_mode")
+                            or "PLANNING_BRIDGE_INVOCATION"
+                        ),
+                        "bridge_backend_id": selected.backend_id,
+                        "final_selection": False,
+                    })
 
             # If result is degraded or quota exhausted, fail over to next eligible backend
             if result.status == "DEGRADED":
+                self.last_attempt_telemetry.extend(call_records)
                 last_degraded = result
                 continue
 
+            for record in call_records:
+                record["final_selection"] = True
+            self.last_attempt_telemetry.extend(call_records)
             return result
 
         # Preserve a structured non-terminal availability result when all
