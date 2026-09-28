@@ -1,8 +1,8 @@
 # AOS End-to-End Reference Architecture
 
-Status: `SOURCE_RECONCILED_REVIEW_CANDIDATE`  
-Baseline: `5de4adb1b840f28a9c74a23054e2a8bda8e86a08`  
-Production: `NO_GO`  
+Status: `SOURCE_RECONCILED_REVIEW_CANDIDATE`
+Baseline: `5de4adb1b840f28a9c74a23054e2a8bda8e86a08`
+Production: `NO_GO`
 Paid fallback: `DISABLED`
 
 ## Authority and evidence boundary
