@@ -31,6 +31,11 @@ from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
 from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
+from aos.lineage_truth import (
+    CURRENT,
+    durable_lineage_status,
+    resolve_current_lineages,
+)
 
 try:
     import truststore
@@ -44,10 +49,6 @@ except Exception:
         return ssl.create_default_context()
 
 RELAY_SCHEMA_VERSION = "1.0.0"
-PROTECTED_CURRENT_COMMAND_IDS = {
-    "continue-b181ddc574c25c2aa0f2a6b9",
-    "continue-61be4ab1af53cfa646d773ce",
-}
 
 _SECRET_PATTERNS = [
     re.compile(r'(ghp_[a-zA-Z0-9]{30,40})'),
@@ -96,6 +97,11 @@ class LaneTelemetry:
     next_retry_at: Optional[str] = None
     last_failure_class: Optional[str] = None
     product_mutation_count: int = 0
+    lineage_status: str = "UNKNOWN"
+    lineage_status_basis: str = "LEGACY_UNCLASSIFIED"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    superseded_by_command_id: Optional[str] = None
 
 
 @dataclass
@@ -120,7 +126,7 @@ class RelaySnapshot:
     cross_lane_write_scope_collision: Union[int, str] = "UNKNOWN"
     execution_outcomes: Dict[str, int] = field(default_factory=dict)
     total_executed: int = 0
-    outcome_partition_valid: bool = True
+    outcome_partition_valid: bool = False
     council_mode: str = "SHADOW_ONLY"
     council_quality_metrics: Dict[str, Any] = field(default_factory=dict)
     human_required: bool = False
@@ -169,6 +175,14 @@ class RelaySnapshot:
     ag_backend_availability: str = "UNKNOWN"
     ag_backend_enabled: bool = False
     ag_invocation_count: int = 0
+    ag_direct_attempt_count: int = 0
+    ag_planning_bridge_attempt_count: int = 0
+    ag_total_attempt_count: int = 0
+    ag_success_count: int = 0
+    ag_degraded_count: int = 0
+    ag_failure_count: int = 0
+    ag_final_selection_count: int = 0
+    backend_attempt_metrics: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
 class ControllerRelayPublisher:
@@ -359,6 +373,7 @@ class ControllerRelayPublisher:
         ag_enabled = False
         ag_availability = "UNKNOWN"
         ag_invocations = 0
+        backend_attempt_metrics: Dict[str, Dict[str, int]] = {}
 
         for s_root in store_roots:
             commands_dir = s_root / "commands"
@@ -393,10 +408,22 @@ class ControllerRelayPublisher:
                         ag_enabled = ag_enabled or bool(last_receipt.get("ag_backend_enabled"))
                         if last_receipt.get("ag_backend_availability"):
                             ag_availability = str(last_receipt["ag_backend_availability"])
+                        receipt_metrics = last_receipt.get("backend_attempt_metrics", {})
+                        if isinstance(receipt_metrics, dict):
+                            for backend_id, metrics in receipt_metrics.items():
+                                if not isinstance(metrics, dict):
+                                    continue
+                                aggregate = backend_attempt_metrics.setdefault(str(backend_id), {})
+                                for metric, value in metrics.items():
+                                    if isinstance(value, int) and value >= 0:
+                                        aggregate[str(metric)] = int(
+                                            aggregate.get(str(metric), 0) or 0
+                                        ) + value
                         ag_invocations += int(last_receipt.get("ag_invocation_count", 0) or 0)
                     proj = (c_data.get("project") or {}).get("project_id") or "lari"
                     lane_name = "Lane C" if "ui" in proj.lower() else "Lane A"
                     state_str = s_data.get("state", "UNKNOWN")
+                    lineage_status, lineage_basis = durable_lineage_status(c_data, s_data)
                     worker_pid = s_data.get("worker_pid")
                     batches = int(s_data.get("completed_batch_count", 0) or 0)
                     total_batches_now += batches
@@ -477,6 +504,14 @@ class ControllerRelayPublisher:
                         next_retry_at=retry_str,
                         last_failure_class=s_data.get("failure_class"),
                         product_mutation_count=mutations,
+                        lineage_status=lineage_status,
+                        lineage_status_basis=lineage_basis,
+                        created_at=c_data.get("created_at") or s_data.get("created_at"),
+                        updated_at=s_data.get("updated_at"),
+                        superseded_by_command_id=(
+                            s_data.get("superseded_by_command_id")
+                            or c_data.get("superseded_by_command_id")
+                        ),
                     )))
                 except Exception:
                     pass
@@ -496,9 +531,16 @@ class ControllerRelayPublisher:
                     except Exception:
                         pass
 
-        # Sort lanes deterministically: active/running/recovering first, then by lane_id
+        lineage_projection = resolve_current_lineages(lanes)
+        for lane in lanes:
+            projected = lineage_projection.get(lane["command_id"], {})
+            lane["lineage_status"] = projected.get("status", lane["lineage_status"])
+            lane["lineage_status_basis"] = projected.get(
+                "basis", lane["lineage_status_basis"]
+            )
+
+        # Sort lanes deterministically: current active/recovering first, then by lane_id.
         def lane_sort_key(x: Dict[str, Any]) -> tuple:
-            # Active/recovering/waiting lanes come before terminal ones
             is_active = x["state"] in (
                 "RUNNING",
                 "RECOVERING",
@@ -507,14 +549,16 @@ class ControllerRelayPublisher:
                 "WAITING_FOR_SOURCE_TRANSPORT",
                 "QUEUED",
             )
-            return (0 if is_active else 1, x["lane_id"], x["command_id"])
+            is_current = x.get("lineage_status") == CURRENT
+            return (0 if is_current and is_active else 1, x["lane_id"], x["command_id"])
 
         lanes.sort(key=lane_sort_key)
 
         # Active tracked lanes (non-terminal)
         active_tracked_lanes = [
             l for l in lanes
-            if l["state"] in (
+            if l.get("lineage_status") == CURRENT
+            and l["state"] in (
                 "RUNNING",
                 "RECOVERING",
                 "EXECUTING",
@@ -524,8 +568,9 @@ class ControllerRelayPublisher:
             )
         ]
         if not active_tracked_lanes and lanes:
-            # Fallback to all lanes if all are terminal
-            active_tracked_lanes = lanes
+            active_tracked_lanes = [
+                lane for lane in lanes if lane.get("lineage_status") == CURRENT
+            ]
 
         # Calculate forward progress and delta
         batch_delta = 0
@@ -550,16 +595,12 @@ class ControllerRelayPublisher:
             else:
                 no_prog_reason = "NO_ACTIVE_RUNNING_LANES"
 
-        # Protected current lineages remain operator-visible even while another
-        # lane is RUNNING. Generic historical HUMAN_REQUIRED records do not
-        # contaminate the aggregate merely by remaining on disk.
+        # Aggregate from generic current-lineage truth. Protected command IDs
+        # remain safety identities elsewhere, never telemetry authority here.
         human_req = any(
             l.get("state") == "HUMAN_REQUIRED"
-            for l in active_tracked_lanes
-        ) or any(
-            l.get("state") == "HUMAN_REQUIRED"
-            and l.get("command_id") in PROTECTED_CURRENT_COMMAND_IDS
             for l in lanes
+            if l.get("lineage_status") == CURRENT
         )
 
         # Integrity telemetry is calculated only from durable, explicitly
@@ -574,19 +615,25 @@ class ControllerRelayPublisher:
             if not (integrity_root / "instrumentation.json").is_file():
                 continue
             report = IntegrityReconciler(integrity_root, initialize=False).reconcile()
-            if report.evidence_status == "SUFFICIENT":
-                integrity_reports.append(report)
+            integrity_reports.append(report)
         if integrity_reports:
-            duplicate_work = sum(int(report.duplicate_completed_work) for report in integrity_reports)
-            lost_work = sum(int(report.lost_accepted_work) for report in integrity_reports)
-            scope_collision = sum(
-                int(report.cross_lane_write_scope_collision) for report in integrity_reports
-            )
+            sufficient_reports = [
+                report for report in integrity_reports
+                if report.evidence_status == "SUFFICIENT"
+            ]
+            if len(sufficient_reports) == len(integrity_reports):
+                duplicate_work = sum(int(report.duplicate_completed_work) for report in sufficient_reports)
+                lost_work = sum(int(report.lost_accepted_work) for report in sufficient_reports)
+                scope_collision = sum(
+                    int(report.cross_lane_write_scope_collision) for report in sufficient_reports
+                )
             for report in integrity_reports:
                 for bucket in OUTCOME_BUCKETS:
                     outcome_counts[bucket] += int(report.outcome_counts.get(bucket, 0))
-        total_executed = sum(outcome_counts.values())
-        outcome_partition_valid = total_executed == sum(outcome_counts.values())
+        total_executed = sum(report.total_executed for report in integrity_reports)
+        outcome_partition_valid = bool(integrity_reports) and all(
+            report.outcome_partition_valid for report in integrity_reports
+        )
 
         # Diagnostic lifecycle scheduling: event-driven plus bounded periodic fallback (<= every 300s)
         current_diag_sig = {
@@ -657,6 +704,8 @@ class ControllerRelayPublisher:
                     "shadow_repair_proposal_status": "NONE",
                 }
 
+        ag_metrics = backend_attempt_metrics.get("antigravity", {})
+        ag_total_attempts = int(ag_metrics.get("attempt_count", 0) or 0)
         return RelaySnapshot(
             schema_version=RELAY_SCHEMA_VERSION,
             timestamp_utc=utc_now(),
@@ -725,7 +774,21 @@ class ControllerRelayPublisher:
             ag_backend_registered=ag_registered,
             ag_backend_availability=ag_availability,
             ag_backend_enabled=ag_enabled,
-            ag_invocation_count=ag_invocations,
+            ag_invocation_count=ag_total_attempts or ag_invocations,
+            ag_direct_attempt_count=int(
+                ag_metrics.get("direct_agentic_attempt_count", 0) or 0
+            ),
+            ag_planning_bridge_attempt_count=int(
+                ag_metrics.get("planning_bridge_attempt_count", 0) or 0
+            ),
+            ag_total_attempt_count=ag_total_attempts,
+            ag_success_count=int(ag_metrics.get("success_count", 0) or 0),
+            ag_degraded_count=int(ag_metrics.get("degraded_count", 0) or 0),
+            ag_failure_count=int(ag_metrics.get("failure_count", 0) or 0),
+            ag_final_selection_count=int(
+                ag_metrics.get("final_selection_count", 0) or 0
+            ),
+            backend_attempt_metrics=backend_attempt_metrics,
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -739,9 +802,15 @@ class ControllerRelayPublisher:
                 f"Batches `{l['completed_batches']}`, Attempts `{l['attempts']}`, "
                 f"Worker PID `{l['worker_pid'] or 'NONE'}`, Command `{l['command_id']}`"
             )
-            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED") or (
-                l["state"] == "HUMAN_REQUIRED"
-                and l["command_id"] in PROTECTED_CURRENT_COMMAND_IDS
+            if l.get("lineage_status") == CURRENT and l["state"] in (
+                "RUNNING",
+                "RECOVERING",
+                "EXECUTING",
+                "WAITING_FOR_REASONING_PROVIDER",
+                "WAITING_FOR_SOURCE_TRANSPORT",
+                "QUEUED",
+                "HUMAN_REQUIRED",
+                "TECHNICAL_HOLD",
             ):
                 active_lines.append(line)
             else:
@@ -824,6 +893,14 @@ AG_BACKEND_REGISTERED={'YES' if snapshot.ag_backend_registered else 'NO'}
 AG_BACKEND_AVAILABILITY={snapshot.ag_backend_availability}
 AG_BACKEND_ENABLED={'YES' if snapshot.ag_backend_enabled else 'NO'}
 AG_INVOCATION_COUNT={snapshot.ag_invocation_count}
+AG_DIRECT_ATTEMPT_COUNT={snapshot.ag_direct_attempt_count}
+AG_PLANNING_BRIDGE_ATTEMPT_COUNT={snapshot.ag_planning_bridge_attempt_count}
+AG_TOTAL_ATTEMPT_COUNT={snapshot.ag_total_attempt_count}
+AG_SUCCESS_COUNT={snapshot.ag_success_count}
+AG_DEGRADED_COUNT={snapshot.ag_degraded_count}
+AG_FAILURE_COUNT={snapshot.ag_failure_count}
+AG_FINAL_SELECTION_COUNT={snapshot.ag_final_selection_count}
+BACKEND_ATTEMPT_METRICS_JSON={json.dumps(snapshot.backend_attempt_metrics, sort_keys=True)}
 
 ### REMOTE OUTBOX
 REMOTE_OUTBOX_TRANSPORT=GITHUB_ISSUE

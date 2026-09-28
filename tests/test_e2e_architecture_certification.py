@@ -106,12 +106,71 @@ def test_e2e_15_and_16_dedupe_then_detect_lost_accepted_work(tmp_path):
     assert any(finding["type"] == "LOST_ACCEPTED_WORK" for finding in lost.findings)
 
 
-def test_e2e_18_outcome_partition_projects_to_relay(tmp_path):
+def test_e2e_18_rejects_double_outcome_classification(tmp_path):
+    reconciler = IntegrityReconciler(tmp_path / "integrity")
+    reconciler.record_execution("execution-a", task_signature="sig-a", task_id="task-a")
+    reconciler.record_outcome(
+        "SUCCESS", execution_id="execution-a", task_signature="sig-a", task_id="task-a"
+    )
+    reconciler.record_outcome(
+        "TERMINAL_FAILURE",
+        execution_id="execution-a",
+        task_signature="sig-a",
+        task_id="task-a",
+    )
+
+    report = reconciler.reconcile()
+    assert report.total_executed == 1
+    assert report.outcome_partition_valid is False
+    assert any(
+        finding["type"] == "DOUBLE_OUTCOME_CLASSIFICATION"
+        for finding in report.findings
+    )
+
+
+def test_e2e_18_rejects_known_execution_without_outcome(tmp_path):
+    reconciler = IntegrityReconciler(tmp_path / "integrity")
+    reconciler.record_execution("execution-b", task_signature="sig-b", task_id="task-b")
+
+    report = reconciler.reconcile()
+    assert report.total_executed == 1
+    assert report.outcome_partition_valid is False
+    assert any(
+        finding["type"] == "MISSING_OUTCOME_CLASSIFICATION"
+        for finding in report.findings
+    )
+
+
+def test_e2e_18_deduplicates_exact_outcome_replay(tmp_path):
+    reconciler = IntegrityReconciler(tmp_path / "integrity")
+    reconciler.record_execution("execution-c", task_signature="sig-c", task_id="task-c")
+    for _ in range(2):
+        reconciler.record_outcome(
+            "SUCCESS",
+            execution_id="execution-c",
+            task_signature="sig-c",
+            task_id="task-c",
+        )
+
+    report = reconciler.reconcile()
+    assert report.total_executed == 1
+    assert report.outcome_counts["SUCCESS"] == 1
+    assert report.outcome_partition_valid is True
+
+
+def test_e2e_18_six_unique_outcomes_project_to_relay(tmp_path):
     runtime_root = tmp_path / "state"
     reconciler = IntegrityReconciler(runtime_root / "integrity")
     for index, bucket in enumerate(OUTCOME_BUCKETS):
+        execution_id = f"execution-{index}"
+        reconciler.record_execution(
+            execution_id,
+            task_signature=f"signature-{index}",
+            task_id=f"task-{index}",
+        )
         reconciler.record_outcome(
             bucket,
+            execution_id=execution_id,
             task_signature=f"signature-{index}",
             task_id=f"task-{index}",
         )
@@ -155,6 +214,84 @@ def test_e2e_23_protected_human_required_survives_running_lane(tmp_path):
     snapshot = publisher.collect_snapshot()
     assert snapshot.human_required is True
     assert "HUMAN_REQUIRED=YES" in publisher.render_markdown(snapshot)
+
+
+def test_e2e_23_generic_current_human_required_is_aggregated(tmp_path):
+    commands = tmp_path / "state" / "commands"
+    for command_id, project_id, state in (
+        ("continue-project-a", "project-a", "RUNNING"),
+        ("continue-project-b", "project-b", "HUMAN_REQUIRED"),
+    ):
+        command_dir = commands / command_id
+        command_dir.mkdir(parents=True)
+        (command_dir / "command.json").write_text(
+            json.dumps({"project": {"project_id": project_id}}), encoding="utf-8"
+        )
+        (command_dir / "state.json").write_text(
+            json.dumps({"state": state, "lineage_status": "CURRENT"}), encoding="utf-8"
+        )
+
+    snapshot = ControllerRelayPublisher(
+        tmp_path / "relay", {"runtime_root": str(tmp_path / "state")}
+    ).collect_snapshot()
+    assert snapshot.human_required is True
+
+
+def test_e2e_23_historical_human_required_is_excluded(tmp_path):
+    commands = tmp_path / "state" / "commands"
+    lanes = (
+        ("continue-project-a", "project-a", "RUNNING", "CURRENT"),
+        ("continue-project-b-old", "project-b", "HUMAN_REQUIRED", "HISTORICAL"),
+    )
+    for command_id, project_id, state, lineage_status in lanes:
+        command_dir = commands / command_id
+        command_dir.mkdir(parents=True)
+        (command_dir / "command.json").write_text(
+            json.dumps({"project": {"project_id": project_id}}), encoding="utf-8"
+        )
+        (command_dir / "state.json").write_text(
+            json.dumps({"state": state, "lineage_status": lineage_status}), encoding="utf-8"
+        )
+
+    snapshot = ControllerRelayPublisher(
+        tmp_path / "relay", {"runtime_root": str(tmp_path / "state")}
+    ).collect_snapshot()
+    assert snapshot.human_required is False
+
+
+def test_e2e_23_superseding_command_excludes_old_human_required(tmp_path):
+    commands = tmp_path / "state" / "commands"
+    old_id = "continue-project-b-old"
+    current_id = "continue-project-b-current"
+    old_dir = commands / old_id
+    old_dir.mkdir(parents=True)
+    (old_dir / "command.json").write_text(
+        json.dumps({"project": {"project_id": "project-b"}}), encoding="utf-8"
+    )
+    (old_dir / "state.json").write_text(
+        json.dumps({
+            "state": "HUMAN_REQUIRED",
+            "lineage_status": "SUPERSEDED",
+            "superseded_by_command_id": current_id,
+        }),
+        encoding="utf-8",
+    )
+    current_dir = commands / current_id
+    current_dir.mkdir(parents=True)
+    (current_dir / "command.json").write_text(
+        json.dumps({"project": {"project_id": "project-b"}}), encoding="utf-8"
+    )
+    (current_dir / "state.json").write_text(
+        json.dumps({"state": "RUNNING", "lineage_status": "CURRENT"}), encoding="utf-8"
+    )
+
+    snapshot = ControllerRelayPublisher(
+        tmp_path / "relay", {"runtime_root": str(tmp_path / "state")}
+    ).collect_snapshot()
+    by_id = {lane["command_id"]: lane for lane in snapshot.lanes}
+    assert snapshot.human_required is False
+    assert by_id[old_id]["lineage_status"] == "SUPERSEDED"
+    assert by_id[current_id]["lineage_status"] == "CURRENT"
 
 
 def test_e2e_10_to_12_action_freshness_and_provenance(tmp_path):
