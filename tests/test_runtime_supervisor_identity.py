@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import aos.runtime_supervisor as runtime_supervisor_module
 from aos.runtime_slots import SlotRecord
 from aos.runtime_supervisor import RuntimeSupervisor, _runtime_health_matches
 
@@ -67,3 +68,55 @@ def test_panel_host_config_preserves_all_runtime_project_profiles(tmp_path: Path
 
     assert host["default_project_id"] == "lari"
     assert set(host["projects"]) == {"lari", "lari-ui-v2"}
+
+
+def test_panel_child_uses_runtime_home_cwd_not_hostile_caller_cwd(
+    tmp_path: Path,
+    monkeypatch,
+):
+    runtime_home = tmp_path / "runtime-v1"
+    runtime_home.mkdir()
+    runtime_config = runtime_home / "runtime-config.json"
+    runtime_config.write_text(json.dumps({
+        "port": 18770,
+        "runtime_root": str(runtime_home / "state"),
+        "authorized_roots": [str(runtime_home)],
+        "projects": {},
+        "default_project": None,
+    }), encoding="utf-8")
+    supervisor_config = runtime_home / "supervisor-config.json"
+    supervisor_config.write_text(json.dumps({
+        "supervisor_root": str(runtime_home / "supervisor"),
+        "runtime_config_path": str(runtime_config),
+        "panel_host_config_path": str(runtime_home / "control-panel-host-config.json"),
+        "panel_config_path": str(runtime_home / "control-panel-config.json"),
+    }), encoding="utf-8")
+
+    hostile_cwd = tmp_path / "hostile-cwd"
+    stale_extensions = hostile_cwd / "extensions"
+    stale_extensions.mkdir(parents=True)
+    (stale_extensions / "__init__.py").write_text(
+        "# stale checkout package\n",
+        encoding="utf-8",
+    )
+    candidate_site = str(tmp_path / "candidate" / "site")
+    monkeypatch.chdir(hostile_cwd)
+    monkeypatch.setenv("PYTHONPATH", candidate_site)
+
+    captured = {}
+
+    def fake_popen_headless(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(runtime_supervisor_module, "popen_headless", fake_popen_headless)
+    supervisor = RuntimeSupervisor(supervisor_config)
+    monkeypatch.setattr(supervisor, "_panel_health", lambda: None)
+
+    assert supervisor._ensure_panel("a" * 40) is False
+    assert captured["cwd"] == str(supervisor_config.parent.resolve())
+    assert captured["cwd"] != str(hostile_cwd.resolve())
+    assert captured["env"]["PYTHONPATH"] == candidate_site
+    assert captured["env"]["AG_BACKEND_ENABLED"] == "FALSE"
+    assert captured["env"]["AOS_RUNTIME_SOURCE_SHA"] == "a" * 40

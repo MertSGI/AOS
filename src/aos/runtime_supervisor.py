@@ -305,6 +305,7 @@ class RuntimeSupervisor:
             stderr=subprocess.DEVNULL,
             close_fds=True,
             detached=True,
+            cwd=str(self.config_path.parent.resolve()),
             env=env,
         )
         self.panel_api_pid = None
