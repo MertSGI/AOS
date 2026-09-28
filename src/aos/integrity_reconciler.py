@@ -264,13 +264,43 @@ class IntegrityReconciler:
             lease["released_at"] = _utc_now()
             atomic_json(path, lease)
 
-    def record_outcome(self, bucket: str, *, task_signature: str, task_id: str) -> None:
+    def record_execution(
+        self,
+        execution_id: str,
+        *,
+        task_signature: str,
+        task_id: str,
+    ) -> None:
+        execution_id = str(execution_id or "").strip()
+        if not execution_id:
+            raise ValueError("execution_id is required")
+        _append_jsonl(self.outcomes_path, {
+            "schema_version": "1.1.0",
+            "event": "EXECUTION_STARTED",
+            "timestamp": _utc_now(),
+            "execution_id": execution_id,
+            "task_signature": task_signature,
+            "task_id": task_id,
+        })
+
+    def record_outcome(
+        self,
+        bucket: str,
+        *,
+        execution_id: str,
+        task_signature: str,
+        task_id: str,
+    ) -> None:
         if bucket not in OUTCOME_BUCKETS:
             raise ValueError(f"Unknown execution outcome bucket: {bucket}")
+        execution_id = str(execution_id or "").strip()
+        if not execution_id:
+            raise ValueError("execution_id is required")
         _append_jsonl(self.outcomes_path, {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "event": "EXECUTION_OUTCOME",
             "timestamp": _utc_now(),
+            "execution_id": execution_id,
             "bucket": bucket,
             "task_signature": task_signature,
             "task_id": task_id,
@@ -301,16 +331,42 @@ class IntegrityReconciler:
             "artifact_hashes": dict(getattr(result, "artifact_hashes", {}) or {}),
         }
         with self._lock():
+            execution_id = str(getattr(request, "request_id", "") or "").strip()
+            self.record_execution(
+                execution_id,
+                task_signature=claim.task_signature,
+                task_id=record["task_id"],
+            )
             _append_jsonl(self.accepted_path, record)
             self._release_lease(claim, "ACCEPTED")
             self.record_outcome(
-                "SUCCESS", task_signature=claim.task_signature, task_id=record["task_id"]
+                "SUCCESS",
+                execution_id=execution_id,
+                task_signature=claim.task_signature,
+                task_id=record["task_id"],
             )
 
-    def release(self, claim: IntegrityClaim, *, bucket: str, task_id: str) -> None:
+    def release(
+        self,
+        claim: IntegrityClaim,
+        *,
+        bucket: str,
+        execution_id: str,
+        task_id: str,
+    ) -> None:
         with self._lock():
+            self.record_execution(
+                execution_id,
+                task_signature=claim.task_signature,
+                task_id=task_id,
+            )
             self._release_lease(claim, bucket)
-            self.record_outcome(bucket, task_signature=claim.task_signature, task_id=task_id)
+            self.record_outcome(
+                bucket,
+                execution_id=execution_id,
+                task_signature=claim.task_signature,
+                task_id=task_id,
+            )
 
     def reconcile(self) -> IntegrityReport:
         instrumented = read_json(self.marker_path, {}).get("status") == "FULLY_INSTRUMENTED"
@@ -375,11 +431,70 @@ class IntegrityReconciler:
                     })
 
         counts = {bucket: 0 for bucket in OUTCOME_BUCKETS}
+        known_execution_ids: set[str] = set()
+        outcomes_by_execution: Dict[str, set[str]] = {}
+        outcome_findings: list[Dict[str, Any]] = []
         for record in outcomes:
-            bucket = record.get("bucket")
-            if bucket in counts:
-                counts[str(bucket)] += 1
-        total = sum(counts.values())
+            event = record.get("event")
+            execution_id = str(record.get("execution_id") or "").strip()
+            if event == "EXECUTION_STARTED":
+                if not execution_id:
+                    outcome_findings.append({
+                        "type": "INVALID_EXECUTION_ID",
+                        "event": event,
+                    })
+                    continue
+                known_execution_ids.add(execution_id)
+                continue
+            if event != "EXECUTION_OUTCOME":
+                outcome_findings.append({
+                    "type": "INVALID_OUTCOME_EVENT",
+                    "event": event,
+                })
+                continue
+            if not execution_id:
+                outcome_findings.append({
+                    "type": "INVALID_EXECUTION_ID",
+                    "event": event,
+                })
+                continue
+            bucket = str(record.get("bucket") or "")
+            if bucket not in counts:
+                outcome_findings.append({
+                    "type": "INVALID_OUTCOME_BUCKET",
+                    "execution_id": execution_id,
+                    "bucket": bucket or None,
+                })
+                continue
+            outcomes_by_execution.setdefault(execution_id, set()).add(bucket)
+
+        for execution_id in sorted(outcomes_by_execution):
+            if execution_id not in known_execution_ids:
+                outcome_findings.append({
+                    "type": "OUTCOME_WITHOUT_EXECUTION",
+                    "execution_id": execution_id,
+                })
+
+        for execution_id in sorted(known_execution_ids):
+            classifications = outcomes_by_execution.get(execution_id, set())
+            if not classifications:
+                outcome_findings.append({
+                    "type": "MISSING_OUTCOME_CLASSIFICATION",
+                    "execution_id": execution_id,
+                })
+            elif len(classifications) > 1:
+                outcome_findings.append({
+                    "type": "DOUBLE_OUTCOME_CLASSIFICATION",
+                    "execution_id": execution_id,
+                    "buckets": sorted(classifications),
+                })
+            else:
+                counts[next(iter(classifications))] += 1
+
+        if not outcomes_valid:
+            outcome_findings.append({"type": "MALFORMED_OUTCOME_LOG"})
+        findings.extend(outcome_findings)
+        total = len(known_execution_ids)
         evidence_valid = instrumented and accepted_valid and outcomes_valid
         concrete_or_unknown = lambda value: value if evidence_valid else "UNKNOWN"
         return IntegrityReport(
@@ -390,5 +505,9 @@ class IntegrityReconciler:
             findings=tuple(findings),
             outcome_counts=counts,
             total_executed=total,
-            outcome_partition_valid=(sum(counts.values()) == total),
+            outcome_partition_valid=(
+                evidence_valid
+                and not outcome_findings
+                and sum(counts.values()) == total
+            ),
         )
