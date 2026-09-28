@@ -162,7 +162,8 @@ def test_proof_c_auth_required_defect_creates_action_not_generic_resume(tmp_path
         action_class=action_class,
         risk_class="MEDIUM",
         why_stopped="Missing required reasoning credential",
-        expected_state="RUNNING",
+        expected_state="HOLD",
+        expected_lane_state="HOLD",
         observed_state="HOLD",
         exact_blocker="CREDENTIAL_NOT_CONFIGURED",
         why_automation_cannot_continue="Requires operator to provide API credential",
@@ -230,7 +231,8 @@ def test_proof_d_human_decision_structured_options_and_schema_validation(tmp_pat
         action_class=ACTION_CLASS_HUMAN_DECISION_REQUIRED,
         risk_class="HIGH",
         why_stopped="Charter architectural ambiguity detected",
-        expected_state="RUNNING",
+        expected_state="HOLD",
+        expected_lane_state="HOLD",
         observed_state="HOLD",
         exact_blocker="SPEC_AMBIGUITY",
         why_automation_cannot_continue="Requires human product owner design decision",
@@ -280,6 +282,7 @@ def test_proof_d_human_decision_structured_options_and_schema_validation(tmp_pat
         action_center=engine,
         runtime_store=store,
         canonical_source_sha=canon_sha,
+        runtime_provenance="PROVEN",
     )
     assert res["status"] == "ACCEPTED"
     assert res["action_id_resolved"] == act_id

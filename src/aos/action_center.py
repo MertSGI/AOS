@@ -75,6 +75,24 @@ DISPOSITION_HUMAN_APPROVAL_REQUIRED = "HUMAN_APPROVAL_REQUIRED"
 DISPOSITION_COMPLETED = "COMPLETED"
 DISPOSITION_FAILED_TERMINAL = "FAILED_TERMINAL"
 
+ACTION_STATUS_PENDING = "PENDING"
+ACTION_STATUS_RESOLVED = "RESOLVED"
+ACTION_STATUS_SUPERSEDED = "SUPERSEDED"
+ACTION_STATUS_STALE = "STALE"
+ACTION_STATUS_DISMISSED = "DISMISSED"
+
+NON_ACTIONABLE_STATUSES = {
+    ACTION_STATUS_RESOLVED,
+    ACTION_STATUS_SUPERSEDED,
+    ACTION_STATUS_STALE,
+    ACTION_STATUS_DISMISSED,
+}
+
+PROTECTED_COMMAND_IDS = {
+    "continue-b181ddc574c25c2aa0f2a6b9",
+    "continue-61be4ab1af53cfa646d773ce",
+}
+
 
 @dataclass
 class ActionOption:
@@ -114,10 +132,28 @@ class HumanActionItem:
     safe_default_if_any: Optional[str]
     authority_boundary: str
     created_at: str
-    status: str = "PENDING"  # PENDING, RESOLVED, DISMISSED
+    status: str = ACTION_STATUS_PENDING
+    created_batch: int = 0
+    created_generation: int = 0
+    generation: int = 0
+    expected_lane_state: str = ""
+    superseded_at: Optional[str] = None
+    superseded_reason: Optional[str] = None
     resolved_by: Optional[str] = None
     resolved_at: Optional[str] = None
     resolution_request_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.created_batch == 0 and self.current_batch > 0:
+            self.created_batch = self.current_batch
+        if self.created_generation == 0 and self.generation > 0:
+            self.created_generation = self.generation
+        elif self.generation == 0 and self.created_generation > 0:
+            self.generation = self.created_generation
+        if not self.expected_lane_state and self.expected_state:
+            self.expected_lane_state = self.expected_state
+        elif not self.expected_state and self.expected_lane_state:
+            self.expected_state = self.expected_lane_state
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -255,13 +291,33 @@ class ActionCenterEngine:
     def list_pending_actions(self) -> List[Dict[str, Any]]:
         return [
             a for a in self._actions.values()
-            if a.get("status") == "PENDING"
+            if a.get("status") == ACTION_STATUS_PENDING
             and a.get("action_class") in HUMAN_ACTIONABLE_CLASSES
         ]
 
     def count_human_action_required(self) -> int:
         """Count only items where genuine operator action is required."""
         return len(self.list_pending_actions())
+
+    def mark_superseded(self, action_id: str, reason: str = "Lineage advanced") -> bool:
+        if action_id not in self._actions:
+            return False
+        action = self._actions[action_id]
+        action["status"] = ACTION_STATUS_SUPERSEDED
+        action["superseded_at"] = utc_now()
+        action["superseded_reason"] = reason
+        self._save_actions()
+        return True
+
+    def mark_stale(self, action_id: str, reason: str = "Stale decision boundary") -> bool:
+        if action_id not in self._actions:
+            return False
+        action = self._actions[action_id]
+        action["status"] = ACTION_STATUS_STALE
+        action["superseded_at"] = utc_now()
+        action["superseded_reason"] = reason
+        self._save_actions()
+        return True
 
     def resolve_action(
         self,
@@ -274,7 +330,7 @@ class ActionCenterEngine:
         if action_id not in self._actions:
             return False
         action = self._actions[action_id]
-        action["status"] = "RESOLVED"
+        action["status"] = ACTION_STATUS_RESOLVED
         action["resolved_by"] = resolved_by
         action["resolved_at"] = utc_now()
         action["resolution_request_id"] = request_id
@@ -292,6 +348,8 @@ class ActionCenterEngine:
         
         Only genuine human-required items create HumanActionItems.
         Resource waits and auto-repairs are excluded from the operator action badge.
+        Older pending items remain audit-visible but become non-actionable when
+        their command batch or strategy generation has advanced.
         """
         generated: List[HumanActionItem] = []
 
@@ -303,8 +361,22 @@ class ActionCenterEngine:
                 project_id = str(project.get("project_id") or cmd.get("project_id") or "unknown")
                 checkpoint = read_json(store.command_dir(cid) / "project-runtime" / "planning-kernel-checkpoint.json") or {}
                 batch_num = int(checkpoint.get("batch_number", 0) or state.get("completed_batch_count", 0) or 0)
+                gen_num = int(checkpoint.get("strategy_generation", 0) or state.get("strategy_generation", 0) or 0)
                 canon_sha = str(checkpoint.get("canonical_source_sha") or state.get("canonical_source_sha") or candidate_source_sha)
                 ws_fp = str(state.get("recovery_fingerprint_sha256") or "NONE")
+
+                for action_id, prior in list(self._actions.items()):
+                    if prior.get("command_id") != cid or prior.get("status") != ACTION_STATUS_PENDING:
+                        continue
+                    prior_batch = int(prior.get("created_batch", prior.get("current_batch", 0)) or 0)
+                    prior_generation = int(prior.get("created_generation", prior.get("generation", 0)) or 0)
+                    if batch_num > prior_batch:
+                        self.mark_superseded(action_id, f"Lineage advanced from batch {prior_batch} to {batch_num}")
+                    elif gen_num > prior_generation:
+                        self.mark_superseded(
+                            action_id,
+                            f"Strategy generation advanced from {prior_generation} to {gen_num}",
+                        )
 
                 action_class, modernized_disp, ctx = classify_lane_hold(
                     project_id=project_id,
@@ -319,9 +391,9 @@ class ActionCenterEngine:
 
                 act_id = self.compute_action_id(project_id, cid, action_class, ctx.get("reason", "HOLD"))
 
-                # Check if already resolved
+                # Resolved/superseded actions cannot silently become actionable again.
                 existing = self._actions.get(act_id)
-                if existing and existing.get("status") == "RESOLVED":
+                if existing and existing.get("status") in NON_ACTIONABLE_STATUSES:
                     continue
 
                 # Build options based on action class
@@ -461,10 +533,14 @@ class ActionCenterEngine:
                     project=project_id,
                     command_id=cid,
                     current_batch=batch_num,
+                    created_batch=batch_num,
+                    created_generation=gen_num,
+                    generation=gen_num,
                     action_class=action_class,
                     risk_class="HIGH" if action_class == ACTION_CLASS_HUMAN_APPROVAL_REQUIRED else "MEDIUM",
                     why_stopped=f"Lane entered {action_class}: {ctx.get('reason', 'Authority hold')}",
-                    expected_state="RUNNING or WAITING_FOR_RESOURCE",
+                    expected_state=str(ctx.get("raw_state") or state.get("state") or "HUMAN_REQUIRED").upper(),
+                    expected_lane_state=str(ctx.get("raw_state") or state.get("state") or "HUMAN_REQUIRED").upper(),
                     observed_state=f"STATE={ctx.get('raw_state')}, FAILURE_CLASS={ctx.get('failure_class')}",
                     exact_blocker=ctx.get("reason") or ctx.get("failure_class") or "UNSPECIFIED_BLOCKER",
                     why_automation_cannot_continue=why_cannot,
@@ -495,13 +571,9 @@ def validate_and_process_control_request(
     action_center: ActionCenterEngine,
     runtime_store: RuntimeStore,
     canonical_source_sha: str,
+    runtime_provenance: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate and process a versioned Human Control Request.
-    
-    Validates strictly against schemas/v0.1/control_request.schema.json.
-    Verifies base_control_sha matches pinned canonical revision.
-    Enforces authority boundaries.
-    """
+    """Fail closed unless request, revision, lineage, state, and provenance are fresh."""
     # 1. Schema Validation
     val_res = validate_document("control_request", payload)
     if not val_res.is_valid:
@@ -521,23 +593,124 @@ def validate_and_process_control_request(
     if actor_type != "human_owner":
         raise PermissionError(f"Actor type '{actor_type}' cannot submit Human Control Requests")
 
-    # 4. Pinned Canonical Revision Consistency
-    # base_control_sha must match current canonical source SHA (or accepted head)
-    if base_sha != canonical_source_sha.lower():
-        # Check if valid 40-char SHA
-        if len(base_sha) != 40:
-            raise ValueError(f"Invalid base_control_sha format: {base_sha}")
-        # Note: Bounded tolerance if drift is documented, otherwise warn/reject
-        # To maintain authority safety, verify SHA format
+    canon_sha = str(canonical_source_sha or "").strip().lower()
+    if len(base_sha) != 40:
+        raise ValueError(f"Invalid base_control_sha format: {base_sha}")
+    if not canon_sha or canon_sha == "unknown" or base_sha != canon_sha:
+        raise ValueError(
+            f"base_control_sha mismatch: expected canonical revision {canon_sha or 'UNKNOWN'}, got {base_sha}"
+        )
 
-    # 5. Route Action Resolution
+    provenance = str(runtime_provenance or "").strip().upper()
+    if provenance != "PROVEN":
+        raise PermissionError(
+            f"Runtime provenance must be PROVEN for mutation, got: {provenance or 'UNAVAILABLE'}"
+        )
+
     ext = payload.get("extensions") or {}
     target_action_id = ext.get("action_id")
     target_command_id = ext.get("command_id")
 
+    action_item: Optional[Dict[str, Any]] = None
+    if target_action_id:
+        action_item = action_center.get_action(str(target_action_id))
+        if not action_item:
+            raise ValueError(f"Target action_id '{target_action_id}' not found in action store")
+        action_command_id = action_item.get("command_id")
+        if target_command_id and target_command_id != action_command_id:
+            raise ValueError(
+                f"Action command_id mismatch: action '{target_action_id}' is bound to "
+                f"'{action_command_id}', but request specified '{target_command_id}'"
+            )
+        target_command_id = target_command_id or action_command_id
+        if action_item.get("status") in NON_ACTIONABLE_STATUSES:
+            raise ValueError(
+                f"Action '{target_action_id}' is in non-actionable status "
+                f"'{action_item.get('status')}'"
+            )
+        action_revision = str(action_item.get("canonical_revision") or "").strip().lower()
+        if action_revision and action_revision != base_sha:
+            action_center.mark_stale(str(target_action_id), "Canonical revision changed")
+            raise ValueError(
+                f"Action canonical revision mismatch: action is bound to {action_revision}, request is {base_sha}"
+            )
+
+    if request_type in ("RESUME", "HOLD", "PAUSE_LANE") and not target_command_id:
+        raise ValueError("Target command_id binding is required for execution control requests")
+
+    if target_command_id:
+        command_state = runtime_store.read_state(str(target_command_id))
+        if not command_state:
+            raise ValueError(f"Target command '{target_command_id}' not found in runtime store")
+        checkpoint = read_json(
+            runtime_store.command_dir(str(target_command_id))
+            / "project-runtime"
+            / "planning-kernel-checkpoint.json"
+        ) or {}
+        current_batch = int(
+            checkpoint.get("batch_number", 0)
+            or command_state.get("completed_batch_count", 0)
+            or 0
+        )
+        current_generation = int(
+            checkpoint.get("strategy_generation", 0)
+            or command_state.get("strategy_generation", 0)
+            or 0
+        )
+        current_revision = str(
+            checkpoint.get("canonical_source_sha")
+            or command_state.get("canonical_source_sha")
+            or ""
+        ).strip().lower()
+        current_state = str(command_state.get("state") or "").strip().upper()
+
+        if current_revision and current_revision != canon_sha:
+            raise ValueError(
+                f"Current canonical revision mismatch: command is at {current_revision}, "
+                f"pinned request revision is {canon_sha}"
+            )
+
+        if action_item:
+            action_batch = int(action_item.get("created_batch", action_item.get("current_batch", 0)) or 0)
+            action_generation = int(
+                action_item.get("created_generation", action_item.get("generation", 0)) or 0
+            )
+            if current_batch > action_batch:
+                reason_text = f"Lineage advanced from batch {action_batch} to {current_batch}"
+                action_center.mark_superseded(str(target_action_id), reason_text)
+                raise ValueError(
+                    f"Action '{target_action_id}' is SUPERSEDED: protected lineage advanced "
+                    f"(action created at batch {action_batch}, current command batch is {current_batch})"
+                )
+            if current_batch != action_batch:
+                raise ValueError(
+                    f"Command batch mismatch: action bound to batch {action_batch}, command is at {current_batch}"
+                )
+            if current_generation != action_generation:
+                action_center.mark_superseded(
+                    str(target_action_id),
+                    f"Strategy generation changed from {action_generation} to {current_generation}",
+                )
+                raise ValueError(
+                    f"Command generation mismatch: action bound to generation {action_generation}, "
+                    f"command is at {current_generation}"
+                )
+            expected_state = str(
+                action_item.get("expected_lane_state") or action_item.get("expected_state") or ""
+            ).strip().upper()
+            if expected_state and expected_state != current_state:
+                action_center.mark_stale(
+                    str(target_action_id),
+                    f"Lane state changed from {expected_state} to {current_state}",
+                )
+                raise ValueError(
+                    f"Expected lane state mismatch: action expected '{expected_state}', "
+                    f"but current state is '{current_state}'"
+                )
+
     if target_action_id:
         action_center.resolve_action(
-            target_action_id,
+            str(target_action_id),
             resolved_by="human_owner",
             request_id=req_id,
             control_change=requested_change,
@@ -545,37 +718,37 @@ def validate_and_process_control_request(
 
     # 6. Apply Execution Transaction
     if target_command_id and request_type in ("RESUME", "HOLD", "PAUSE_LANE"):
-        cmd_state = runtime_store.read_state(target_command_id)
-        if cmd_state:
-            if request_type == "RESUME":
-                runtime_store.write_state(
-                    target_command_id,
-                    state="QUEUED",
-                    disposition="RESUME_AUTHORIZATION_GRANTED",
-                    same_fingerprint_respawns=0,
-                    worker_pid=None,
-                    retry_after_epoch=0,
-                )
-                runtime_store.append_event(target_command_id, "governance.control_request_applied", {
-                    "request_id": req_id,
-                    "request_type": request_type,
-                    "actor_type": actor_type,
-                    "base_control_sha": base_sha,
-                    "canonical_source_sha": canonical_source_sha,
-                    "requested_change": requested_change,
-                    "reason": reason,
-                })
-            elif request_type in ("HOLD", "PAUSE_LANE"):
-                runtime_store.write_state(
-                    target_command_id,
-                    state="HOLD",
-                    disposition="OPERATOR_HOLD_APPLIED",
-                    worker_pid=None,
-                )
-                runtime_store.append_event(target_command_id, "governance.control_request_hold", {
-                    "request_id": req_id,
-                    "reason": reason,
-                })
+        if request_type == "RESUME":
+            runtime_store.write_state(
+                target_command_id,
+                state="QUEUED",
+                disposition="RESUME_AUTHORIZATION_GRANTED",
+                same_fingerprint_respawns=0,
+                worker_pid=None,
+                retry_after_epoch=0,
+            )
+            runtime_store.append_event(target_command_id, "governance.control_request_applied", {
+                "request_id": req_id,
+                "request_type": request_type,
+                "actor_type": actor_type,
+                "base_control_sha": base_sha,
+                "canonical_source_sha": canonical_source_sha,
+                "requested_change": requested_change,
+                "reason": reason,
+                "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
+            })
+        elif request_type in ("HOLD", "PAUSE_LANE"):
+            runtime_store.write_state(
+                target_command_id,
+                state="HOLD",
+                disposition="OPERATOR_HOLD_APPLIED",
+                worker_pid=None,
+            )
+            runtime_store.append_event(target_command_id, "governance.control_request_hold", {
+                "request_id": req_id,
+                "reason": reason,
+                "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
+            })
 
     return {
         "status": "ACCEPTED",
