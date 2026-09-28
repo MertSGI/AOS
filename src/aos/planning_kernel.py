@@ -2627,6 +2627,46 @@ def _receipt_sha256(receipt: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _progress_fingerprint(
+    situation: ProjectSituation,
+    workspace: Path,
+    completed_task_ids: Iterable[str],
+    completed_signatures: Iterable[str],
+    receipt: Mapping[str, Any],
+) -> str:
+    """Fingerprint only accepted state that can constitute meaningful progress."""
+    evidence_ids = sorted(
+        str(value)
+        for key, value in receipt.items()
+        if (key.endswith("_execution_id") or key.endswith("_evidence_id")) and value
+    )
+    payload = {
+        "canonical_revision": situation.control_sha,
+        "repository_head": _repo_head(workspace),
+        "working_tree_state": _working_tree_state(workspace),
+        "completed_task_ids": sorted(set(completed_task_ids)),
+        "completed_task_signatures": sorted(set(completed_signatures)),
+        "evidence_ids": evidence_ids,
+        "candidate_id": receipt.get("candidate_id"),
+        "promotion_state": receipt.get("promotion_state"),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _plan_fingerprint(plan: Mapping[str, Any]) -> str:
+    tasks = plan.get("tasks", [])
+    signatures = (
+        sorted(_task_signature(task) for task in tasks if isinstance(task, Mapping))
+        if isinstance(tasks, list)
+        else []
+    )
+    return hashlib.sha256(
+        json.dumps(signatures, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _plan_repair_artifact_path(runtime_dir: Path, batch_number: int) -> Path:
     return runtime_dir / f"plan-dag-repair-{batch_number:04d}.json"
 
@@ -2863,6 +2903,10 @@ def run_autonomous_project(
     # Maintain cumulative sets from durable history
     cumulative_completed_task_ids = set(durable_history.completed_task_ids)
     cumulative_completed_signatures = set(durable_history.completed_task_signatures)
+    prior_progress_fingerprint = str(checkpoint.get("progress_fingerprint") or "")
+    prior_plan_fingerprint = str(checkpoint.get("plan_fingerprint") or "")
+    prior_blocker_fingerprint = str(checkpoint.get("blocker_fingerprint") or "")
+    consecutive_no_progress = int(checkpoint.get("consecutive_no_progress", 0) or 0)
 
     resumed_receipt: Optional[Dict[str, Any]] = None
 
@@ -3097,6 +3141,7 @@ def run_autonomous_project(
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
             return result
 
+        current_plan_fingerprint = _plan_fingerprint(plan)
         batch_runtime = runtime_dir / "batches" / f"batch-{batch_number:04d}"
         plan_path = batch_runtime / "generated-run-plan.json"
         _atomic_json(plan_path, plan)
@@ -3118,7 +3163,7 @@ def run_autonomous_project(
             "recent_completed_batches": list(completed_batches)[-30:],
             "completed_batches": list(completed_batches)[-30:],
             "replan_reason": replan_reason,
-            "ag_invocation_count": 0,
+            "ag_invocation_count": int(checkpoint.get("ag_invocation_count", 0) or 0),
             "production": "NO_GO",
         })
         if batch_executor is None:
@@ -3146,8 +3191,24 @@ def run_autonomous_project(
             "resumed": False,
         })
         total_completed_batch_count += 1
+        completed_now = {
+            str(task_id).strip()
+            for task_id in recent_receipt.get("completed_task_ids", [])
+            if str(task_id).strip()
+        }
         for t_id in recent_receipt.get("completed_task_ids", []):
             cumulative_completed_task_ids.add(str(t_id).strip())
+        for task in plan.get("tasks", []):
+            if not isinstance(task, Mapping) or str(task.get("node_id")) not in completed_now:
+                continue
+            payload = task.get("payload", {})
+            is_read = (
+                task.get("run_type") == "FILE"
+                and isinstance(payload, Mapping)
+                and payload.get("action") == "read_file"
+            )
+            if not is_read:
+                cumulative_completed_signatures.add(_task_signature(task))
 
         # Post-Implementation Visual Stage (R13-R17) for UI Planning Lineage
         di_post_blockers: List[str] = []
@@ -3247,6 +3308,65 @@ def run_autonomous_project(
             successful_batch_count += 1
             consecutive_failures = 0
             replan_reason = "MEANINGFUL_BATCH_COMPLETE_FRESH_READ_REQUIRED"
+
+        progress_fingerprint = _progress_fingerprint(
+            situation,
+            workspace,
+            cumulative_completed_task_ids,
+            cumulative_completed_signatures,
+            recent_receipt,
+        )
+        blocker_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "replan_reason": replan_reason,
+                    "failed_task_ids": sorted(recent_receipt.get("failed_task_ids", [])),
+                    "design_blockers": sorted(di_post_blockers),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        meaningful_progress = not prior_progress_fingerprint or progress_fingerprint != prior_progress_fingerprint
+        consecutive_no_progress = 0 if meaningful_progress else consecutive_no_progress + 1
+
+        if consecutive_no_progress >= 3:
+            result = _final_result(
+                situation,
+                batch_number,
+                completed_batches,
+                "TECHNICAL_HOLD",
+                "REPLAN_NOOP: three consecutive batches produced no accepted state delta",
+                recent_receipt,
+                runtime_dir,
+                total_completed_batch_count=total_completed_batch_count,
+                successful_batch_count=successful_batch_count,
+                failed_batch_count=failed_batch_count,
+            )
+            result.update({
+                "execution_outcome": "REPLAN_NOOP",
+                "progress_fingerprint": progress_fingerprint,
+                "plan_fingerprint": current_plan_fingerprint,
+                "blocker_fingerprint": blocker_fingerprint,
+                "consecutive_no_progress": consecutive_no_progress,
+                "bounded_escalation": "TECHNICAL_HOLD",
+            })
+            try:
+                from aos.integrity_reconciler import IntegrityReconciler, discover_integrity_root
+                IntegrityReconciler(discover_integrity_root(runtime_dir)).record_outcome(
+                    "REPLAN_NOOP",
+                    task_signature=current_plan_fingerprint,
+                    task_id=f"batch-{batch_number:04d}",
+                )
+            except OSError:
+                pass
+            _write_kernel_checkpoint(runtime_dir, {**result, "phase": "TECHNICAL_HOLD"})
+            return result
+
+        prior_progress_fingerprint = progress_fingerprint
+        prior_plan_fingerprint = current_plan_fingerprint
+        prior_blocker_fingerprint = blocker_fingerprint
         batch_number += 1
         _write_kernel_checkpoint(runtime_dir, {
             "project_id": situation.project_id,
@@ -3262,7 +3382,15 @@ def run_autonomous_project(
             "last_receipt": recent_receipt,
             "replan_reason": replan_reason,
             "consecutive_failures": consecutive_failures,
-            "ag_invocation_count": 0,
+            "progress_fingerprint": progress_fingerprint,
+            "plan_fingerprint": current_plan_fingerprint,
+            "blocker_fingerprint": blocker_fingerprint,
+            "consecutive_no_progress": consecutive_no_progress,
+            "meaningful_progress": meaningful_progress,
+            "ag_backend_registered": recent_receipt.get("ag_backend_registered", False),
+            "ag_backend_availability": recent_receipt.get("ag_backend_availability", "UNKNOWN"),
+            "ag_backend_enabled": recent_receipt.get("ag_backend_enabled", False),
+            "ag_invocation_count": int(recent_receipt.get("ag_invocation_count", 0) or 0),
             "production": "NO_GO",
         })
 
@@ -3318,8 +3446,10 @@ def _final_result(
         "disposition": disposition,
         "reason": redact_secrets(reason)[:2000],
         "run_plan_required_for_normal_mode": False,
-        "ag_backend_enabled": False,
-        "ag_invocation_count": 0,
+        "ag_backend_registered": bool(recent_receipt.get("ag_backend_registered", False)),
+        "ag_backend_availability": str(recent_receipt.get("ag_backend_availability", "UNKNOWN")),
+        "ag_backend_enabled": bool(recent_receipt.get("ag_backend_enabled", False)),
+        "ag_invocation_count": int(recent_receipt.get("ag_invocation_count", 0) or 0),
         "production": "NO_GO",
     }
     _atomic_json(runtime_dir / "autonomous-project-result.json", result)

@@ -209,14 +209,6 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
     # Test _spawn_worker passes env and resolved executable
     engine = RuntimeEngine(cfg)
     command_id = "test-cmd-spawn-env"
-    engine.store.create_command({
-        "command_id": command_id,
-        "project": {"project_id": "lari"},
-        "goal": "Test worker spawn environment",
-        "contract_version": "1.0.0",
-        "created_at": "2026-09-17T00:00:00Z",
-    })
-
     captured = {}
 
     class DummyProc:
@@ -228,6 +220,15 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
         return DummyProc()
 
     monkeypatch.setattr("aos.runtime_server.popen_headless", fake_popen)
+    # Patch before persisting the unfinished command: RuntimeEngine's recovery
+    # thread is live and may otherwise win the race and spawn a real worker.
+    engine.store.create_command({
+        "command_id": command_id,
+        "project": {"project_id": "lari"},
+        "goal": "Test worker spawn environment",
+        "contract_version": "1.0.0",
+        "created_at": "2026-09-17T00:00:00Z",
+    })
     try:
         pid = engine._spawn_worker(command_id, recovered=False)
         assert pid == 77777

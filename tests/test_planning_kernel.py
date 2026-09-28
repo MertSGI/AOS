@@ -1083,6 +1083,40 @@ def test_normal_mode_derives_own_plan_without_human_run_plan(tmp_path):
     assert calls["situation"] >= 2
 
 
+def test_repeated_zero_delta_replans_enter_technical_hold(tmp_path):
+    replan = {
+        "disposition": "REPLAN",
+        "rationale": "No accepted state changed",
+        "satisfied_criteria": [],
+        "unsatisfied_criteria": ["Product delta required"],
+    }
+    proposals = [_objective(), _plan()]
+    for _ in range(3):
+        proposals.extend([replan, _objective(), _plan()])
+    backend = QueueBackend(proposals)
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=tmp_path,
+        runtime_dir=tmp_path / "runtime",
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=backend,
+        situation_factory=lambda **kwargs: _situation(),
+        batch_executor=lambda **kwargs: {
+            "progress": 0.0,
+            "completed_task_ids": [],
+            "failed_task_ids": [],
+            "production": "NO_GO",
+        },
+        max_batches=4,
+    )
+
+    assert result["disposition"] == "TECHNICAL_HOLD"
+    assert result["execution_outcome"] == "REPLAN_NOOP"
+    assert result["consecutive_no_progress"] == 3
+    assert "REPLAN_NOOP" in result["reason"]
+
+
 def test_canonical_ambiguity_holds_before_reasoning(tmp_path):
     backend = QueueBackend([])
 

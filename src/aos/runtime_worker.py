@@ -399,6 +399,8 @@ def _terminal_state(disposition: str) -> str:
         return "WAITING_FOR_REASONING_PROVIDER"
     if disposition == "BOUNDED_RUN_EXHAUSTED":
         return "RUNNING"
+    if disposition == "TECHNICAL_HOLD":
+        return "TECHNICAL_HOLD"
     return "FAILED"
 
 
@@ -655,10 +657,10 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
 
                         store.write_state(
                             command_id,
-                            state="HUMAN_REQUIRED",
-                            disposition="HUMAN_REQUIRED",
-                            failure_class="RECOVERY_CHURN_GUARD",
-                            recovery_disposition="RECOVERY_CHURN_GUARD",
+                            state="TECHNICAL_HOLD",
+                            disposition="TECHNICAL_HOLD",
+                            failure_class="REPLAN_NOOP",
+                            recovery_disposition="BOUNDED_NON_CONVERGENCE_HOLD",
                             recovery_fingerprint=fingerprint,
                             recovery_fingerprint_sha256=fingerprint["fingerprint_sha256"],
                             completed_count_baseline=fingerprint["completed_batch_count_baseline"],
@@ -670,21 +672,21 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                             retry_after_epoch=0,
                         )
                         store.append_event(command_id, "runtime.recovery_churn_held", {
-                            "reason": "RECOVERY_CHURN_GUARD",
+                            "reason": "REPLAN_NOOP",
                             "fingerprint": fingerprint,
                             "same_fingerprint_respawns": repeats,
                             "lineage_preserved": True,
                         })
                         result = RuntimeResult(
                             command_id=command_id,
-                            state="HUMAN_REQUIRED",
-                            disposition="HUMAN_REQUIRED",
+                            state="TECHNICAL_HOLD",
+                            disposition="TECHNICAL_HOLD",
                             completed_batch_count=completed,
                             canonical_source_sha=receipt.get("canonical_source_sha"),
                             canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
                             receipt={
                                 **receipt,
-                                "reason": "RECOVERY_CHURN_GUARD",
+                                "reason": "REPLAN_NOOP",
                                 "recovery_fingerprint": fingerprint,
                             },
                         ).to_dict()

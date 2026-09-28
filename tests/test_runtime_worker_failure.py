@@ -136,8 +136,9 @@ def test_continuous_validation_churn_escalates_once_then_holds(tmp_path, monkeyp
     result = runtime_worker.execute_command(root, command.command_id)
 
     state = store.read_state(command.command_id)
-    assert result["state"] == "HUMAN_REQUIRED"
-    assert result["receipt"]["reason"] == "RECOVERY_CHURN_GUARD"
+    assert result["state"] == "TECHNICAL_HOLD"
+    assert result["receipt"]["reason"] == "REPLAN_NOOP"
+    assert state["failure_class"] == "REPLAN_NOOP"
     assert state["same_fingerprint_respawns"] == 3
     assert state["strategy_generation"] == 1
     assert len(calls) == 3
