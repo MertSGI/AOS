@@ -5,9 +5,9 @@ Execution Fabric. The host fresh-binds canonical project control state, restores
 an exact run plan into a durable DAG, performs model-provider invocation failover,
 dispatches native workers, and persists checkpoint / provider-attempt evidence.
 
-Production activation is intentionally out of scope. Antigravity is disabled by
-default and can only be enabled explicitly by a future separately-authorized host
-profile.
+Production activation is intentionally out of scope. Agentic executors are
+registered but remain capability-, authority-, workspace-, scarcity-, and
+availability-gated; registration never implies lane eligibility or invocation.
 """
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ from aos.providers import (
 )
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
+from aos.integrity_reconciler import IntegrityReconciler, discover_integrity_root
 
 
 
@@ -942,6 +943,15 @@ def run_host(
     registry = AgentRunRegistry(run_journal)
     dag = build_dag(canonical_binding["project_id"], registry, plan)
     router = build_execution_router(routing_policy_path, runtime_dir)
+    integrity = IntegrityReconciler(discover_integrity_root(runtime_dir))
+    lineage = next(
+        (
+            parent.name
+            for parent in runtime_dir.resolve().parents
+            if parent.parent.name.casefold() == "commands"
+        ),
+        canonical_binding["project_id"],
+    )
     coordinator = PersistentCoordinator(
         project_id=canonical_binding["project_id"],
         workspace_path=str(workspace),
@@ -955,8 +965,16 @@ def run_host(
             canonical_execution_base_sha=canonical_binding.get("execution_base_sha"),
         ),
         canonical_source_sha=canonical_binding["source_sha"],
+        integrity_reconciler=integrity,
+        command_lineage=lineage,
     )
     state = coordinator.run_until_complete(max_iterations=max_iterations)
+    ag_backend = router.get_backend("antigravity")
+    ag_availability = (
+        ag_backend.get_availability().state.value
+        if ag_backend is not None and callable(getattr(ag_backend, "get_availability", None))
+        else "NOT_REGISTERED"
+    )
     receipt = {
         "schema_version": "1.0.0",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -968,8 +986,11 @@ def run_host(
         "completed_read_observations": state.completed_read_observations,
         "iteration_count": state.iteration_count,
         "progress": dag.compute_progress(),
-        "ag_backend_enabled": False,
-        "ag_invocation_count": 0,
+        "ag_backend_registered": ag_backend is not None,
+        "ag_backend_availability": ag_availability,
+        "ag_backend_enabled": ag_availability in ("AVAILABLE", "LOW_OR_SCARCE"),
+        "ag_invocation_count": int(state.backend_invocation_counts.get("antigravity", 0)),
+        "backend_invocation_counts": dict(state.backend_invocation_counts),
         "production": "NO_GO",
         "ollama_probe": probe_ollama_models(),
     }

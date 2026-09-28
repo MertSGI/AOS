@@ -45,6 +45,7 @@ from extensions.autonomy_fabric.native_workers import redact_secrets
 from aos.read_identity import build_read_identity, normalize_read_path
 from aos.context_pack import build_context_pack
 from aos.workspace_fingerprint import compute_workspace_fingerprint
+from aos.integrity_reconciler import IntegrityReconciler
 
 
 class CheckpointCorruptionError(ValueError):
@@ -61,6 +62,7 @@ class CoordinatorState:
     failed_task_ids: List[str] = field(default_factory=list)
     completed_read_observations: List[Dict[str, Any]] = field(default_factory=list)
     agentic_execution_checkpoints: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    backend_invocation_counts: Dict[str, int] = field(default_factory=dict)
     iteration_count: int = 0
     schema_version: str = "2.0.0"
     last_checkpoint: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -84,6 +86,8 @@ class PersistentCoordinator:
         checkpoint_file: Optional[str] = None,
         workspace_source_generation: Optional[str] = None,
         canonical_source_sha: Optional[str] = None,
+        integrity_reconciler: Optional[IntegrityReconciler] = None,
+        command_lineage: Optional[str] = None,
     ):
         self.project_id = project_id
         self.workspace_path = workspace_path
@@ -97,6 +101,8 @@ class PersistentCoordinator:
             f"legacy:{project_id}".encode("utf-8")
         ).hexdigest()
         self.canonical_source_sha = canonical_source_sha
+        self.integrity_reconciler = integrity_reconciler
+        self.command_lineage = command_lineage or project_id
 
         self.state = CoordinatorState(
             coordinator_id=f"coord-{project_id}",
@@ -159,6 +165,16 @@ class PersistentCoordinator:
             checkpoints = data.get("agentic_execution_checkpoints", {})
             self.state.agentic_execution_checkpoints = (
                 dict(checkpoints) if isinstance(checkpoints, dict) else {}
+            )
+            counts = data.get("backend_invocation_counts", {})
+            self.state.backend_invocation_counts = (
+                {
+                    str(key): int(value)
+                    for key, value in counts.items()
+                    if isinstance(value, int) and value >= 0
+                }
+                if isinstance(counts, dict)
+                else {}
             )
             self.state.iteration_count = data.get("iteration_count", 0)
             self.state.last_checkpoint = data.get("last_checkpoint", "")
@@ -401,9 +417,52 @@ class PersistentCoordinator:
                 context_pack=context_pack,
             )
 
-            # 3. Route & execute with failover
+            integrity_claim = None
+            if self.integrity_reconciler is not None:
+                integrity_claim = self.integrity_reconciler.begin(
+                    req,
+                    command_lineage=self.command_lineage,
+                    execution_generation=self.state.iteration_count,
+                )
+
+            # 3. Route & execute with failover. Accepted semantic work is
+            # restored from the durable integrity ledger without replay.
             self.registry.transition(run.run_id, RunStatus.RUNNING, phase="NATIVE_EXECUTION")
-            res = self.router.execute_with_failover(req)
+            if integrity_claim is not None and integrity_claim.disposition == "ALREADY_ACCEPTED":
+                res = ExecutionResult(
+                    backend_id="integrity_reconciler",
+                    worker_id="dedupe_guard",
+                    task_id=req.task_id,
+                    request_id=req.request_id,
+                    status="SUCCESS",
+                    exit_code=0,
+                    workspace=req.workspace,
+                    stdout_digest="Accepted semantic task restored without execution",
+                    evidence_payload={
+                        "execution_skipped": True,
+                        "reason": "COMPLETED_WORK_MUST_NOT_BE_DUPLICATED",
+                        "accepted_record": integrity_claim.accepted_record,
+                    },
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+            elif integrity_claim is not None and integrity_claim.disposition == "HOLD":
+                res = ExecutionResult(
+                    backend_id="integrity_reconciler",
+                    worker_id="write_scope_guard",
+                    task_id=req.task_id,
+                    request_id=req.request_id,
+                    status="WAITING",
+                    exit_code=None,
+                    workspace=req.workspace,
+                    sanitized_errors=[str(integrity_claim.reason)],
+                    evidence_payload={"mutation_started": False},
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+            else:
+                res = self.router.execute_with_failover(req)
+                self.state.backend_invocation_counts[res.backend_id] = (
+                    self.state.backend_invocation_counts.get(res.backend_id, 0) + 1
+                )
             results.append(res)
 
             # 4. Record evidence
@@ -466,6 +525,27 @@ class PersistentCoordinator:
                     self.state.failed_task_ids.append(node.node_id)
 
             self._save_checkpoint()
+            if self.integrity_reconciler is not None and integrity_claim is not None:
+                if integrity_claim.disposition == "CLAIMED":
+                    if res.status == "SUCCESS":
+                        self.integrity_reconciler.accept(
+                            integrity_claim,
+                            req,
+                            res,
+                            command_lineage=self.command_lineage,
+                            checkpoint_path=self.checkpoint_file,
+                        )
+                    else:
+                        bucket = (
+                            "RESOURCE_WAIT"
+                            if res.status in ("DEGRADED", "WAITING")
+                            else "TERMINAL_FAILURE"
+                        )
+                        self.integrity_reconciler.release(
+                            integrity_claim,
+                            bucket=bucket,
+                            task_id=req.task_id,
+                        )
 
         return results
 
