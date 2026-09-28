@@ -41,8 +41,8 @@
     "full_pytest": "1107_PASSED_8_SKIPPED_26_DESELECTED",
     "schema_validation": "PASS",
     "diff_check": "PASS",
-    "hosted_ci": "PENDING_FINAL_SHA_PUSH"
+    "hosted_ci": "NOT_TRIGGERED_FIX_BRANCH_FILTER"
   },
-  "final_state": "SOURCE_REVIEW_READY_PENDING_HOSTED_CI",
+  "final_state": "SOURCE_REVIEW_READY_CI_NOT_TRIGGERED",
   "independent_controller_review_required": true
 }
