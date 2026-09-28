@@ -22,15 +22,15 @@ test passes on this branch. Historical live evidence remains historical.
 | E2E-15 | Accepted signature after restart/provider switch skipped | continuity tests | `test_e2e_15_and_16_dedupe_then_detect_lost_accepted_work` | PASS | Provider-neutral semantic signature |
 | E2E-16 | Lost accepted work produces concrete failure | No | `test_e2e_15_and_16_dedupe_then_detect_lost_accepted_work` | PASS | Missing expected artifact yields finding |
 | E2E-17 | Dev/test relay writer contamination rejected | No | `test_e2e_17_lower_priority_writer_cannot_replace_supervisor_snapshot` | PASS | Supervisor writer priority is authoritative |
-| E2E-18 | Outcome partition sum equals total | No | `test_e2e_18_outcome_partition_projects_to_relay` | PASS | Six exclusive durable buckets projected by relay |
+| E2E-18 | Outcome partition is independently complete and exclusive | No | `test_e2e_18_rejects_double_outcome_classification`, `test_e2e_18_rejects_known_execution_without_outcome`, `test_e2e_18_deduplicates_exact_outcome_replay`, `test_e2e_18_six_unique_outcomes_project_to_relay` | PASS | Total derives from unique durable execution IDs; double/missing/invalid classifications fail and exact replay cannot inflate counts |
 | E2E-19 | Material UI requires real browser evidence | DI pipeline tests | No | PARTIAL | `index.html`-specific and viewport policy not unified |
 | E2E-20 | Candidate pipeline through PROMOTION_READY only | candidate/materialization tests | No | PARTIAL | Source tests exist; no candidate created by this task |
 | E2E-21 | Candidate failure rollback preserves identity | runtime recovery/slots tests | No | PARTIAL | Deterministic components; no current candidate trial |
 | E2E-22 | Self-maintenance converges before 100-batch churn | recovery churn tests | `test_repeated_zero_delta_replans_enter_technical_hold` | PASS | Three zero-delta batches -> REPLAN_NOOP/TECHNICAL_HOLD |
-| E2E-23 | LARI human hold + maintenance running -> aggregate YES | No | `test_e2e_23_protected_human_required_survives_running_lane` | PASS | Exact reported three-lane regression |
+| E2E-23 | Any current lineage in HUMAN_REQUIRED -> aggregate YES | No | protected three-lane regression plus generic current, historical exclusion, and supersession tests | PASS | Generic durable current-lineage projection; no protected command ID is needed for aggregation |
 | E2E-24 | Ledger separates health/quota/credentials/service/eligibility | ledger/governor/orchestrator tests | Control-panel normalized resource contract | PARTIAL | Quality history and latency remain UNKNOWN, not fabricated |
 
 Local certification summary: 15 `PASS`, 9 `PARTIAL`, 0
-`NOT_YET_EXECUTABLE`. The repository-wide offline suite completed with 1,107
+`NOT_YET_EXECUTABLE`. The repository-wide offline suite completed with 1,113
 passed, 8 skipped, and 26 deselected; exact-SHA hosted CI remains a separate
 source-acceptance gate.

@@ -7,8 +7,8 @@ completion from live promotion. Production remains `NO_GO`.
 |---|---|---|
 | WP0 Canonical Architecture Reconciliation | COMPLETE | Reference architecture and archaeology matrix created |
 | WP1 Integration Contracts | COMPLETE | Schema, JSON contract, Markdown contract, schema tests |
-| WP2 Telemetry Truth | PARTIAL | Protected HUMAN_REQUIRED, agentic telemetry, resource dimensions, writer priority fixed; cockpit visual outcome presentation remains |
-| WP3 Integrity Reconciler | COMPLETE_SOURCE | Durable dedupe, lost-work finding, collision prevention, relay calculation; live promotion not performed |
+| WP2 Telemetry Truth | PARTIAL | Generic current-lineage HUMAN_REQUIRED, per-attempt backend/bridge/failover telemetry, resource dimensions, and writer priority fixed; cockpit visual outcome presentation remains |
+| WP3 Integrity Reconciler | COMPLETE_SOURCE | Durable dedupe, lost-work finding, collision prevention, and independently derived execution-ID outcome partition; live promotion not performed |
 | WP4 Resource Ledger / Quota Governor reconciliation | PARTIAL | Core ledger/governor remain separate; full per-task quality/latency history is open |
 | WP5 Modern AG Critical-Path Rebinding/Reconciliation | PARTIAL | Worker path reaches registered executor and bridge; current protected-lane real execution is open |
 | WP6 Local Qwen operational envelope | PARTIAL | Source/tests and historical lifecycle proof; current machine/protected-lane proof open |
@@ -17,7 +17,7 @@ completion from live promotion. Production remains `NO_GO`.
 | WP9 Design Intelligence Critical Path | PARTIAL | Pre/post source path exists; versioned canonical viewport policy and generic app binding open |
 | WP10 Self-Maintenance Convergence | COMPLETE_SOURCE | Progress fingerprints and bounded REPLAN_NOOP technical hold added |
 | WP11 Detached Promotion Coordinator | OPEN | Must remain independently authorized; no promotion in this work |
-| WP12 Full Certification | PARTIAL | 15 deterministic scenarios pass; 9 require integrated/current-runtime evidence |
+| WP12 Full Certification | PARTIAL | 15 deterministic scenarios pass; 9 require integrated/current-runtime evidence; full offline suite is 1,113 passed, 8 skipped, 26 deselected |
 | WP13 Controlled Resume | BLOCKED | Independent Controller review, exact-SHA hosted CI, candidate review, and separate resume authority required |
 
 ## Ordered next gates

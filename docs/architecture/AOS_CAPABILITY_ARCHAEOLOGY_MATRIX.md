@@ -25,10 +25,10 @@ repair. `UNKNOWN` never means healthy or absent.
 | ResourceOrchestrator | YES | YES | HISTORICAL | TESTED | YES | YES | REPORTED_BASELINE | UNKNOWN | NO | NO | unified quality history absent | Deterministic ranking plus live selection |
 | FreeLLMAPI | YES | YES | HISTORICAL_BOUNDED | TESTED_SOURCE | PARTIAL | PARTIAL | NO | UNAVAILABLE_OR_UNKNOWN | operational wording | YES | managed built service | Local readyz plus real safe request |
 | Local Qwen / llama.cpp | YES | YES | HISTORICAL_OLD_SHA | TESTED_SOURCE | YES | YES | UNKNOWN | UNKNOWN | operational wording | YES | current machine lifecycle proof | Benchmark, lifecycle, protected selection |
-| Antigravity executor | YES | YES | HISTORICAL_OLD_SHA | REGISTERED_GATED | YES | YES | UNKNOWN | UNKNOWN | disabled-by-default prose | FIXED | protected-lane real execution | Current attestation plus bounded task |
-| Codex CLI executor | YES | YES | HISTORICAL_BOUNDED | REGISTERED_GATED | YES | YES | UNKNOWN | UNKNOWN | quota hard-code | FIXED | current executable/auth/quota proof | Current bounded execution and resume |
-| Cline executor | YES | YES | HISTORICAL_PROCESS_ONLY | REGISTERED_GATED | YES | YES | UNKNOWN | DEGRADED_OR_UNKNOWN | candidate operational wording | YES | successful terminal execution | Current successful bounded task |
-| Agentic planning bridge | YES | YES | NO | CANDIDATE_TESTED | YES | YES | UNKNOWN | UNKNOWN | operational wording | YES | protected-lane planning selection | Structured plan from current backend |
+| Antigravity executor | YES | YES | HISTORICAL_OLD_SHA | REGISTERED_GATED_ATTEMPT_TELEMETRY_TESTED | YES | YES | UNKNOWN | UNKNOWN | disabled-by-default prose | FIXED | protected-lane real execution | Current attestation plus bounded task |
+| Codex CLI executor | YES | YES | HISTORICAL_BOUNDED | REGISTERED_GATED_ATTEMPT_TELEMETRY_TESTED | YES | YES | UNKNOWN | UNKNOWN | quota hard-code | FIXED | current executable/auth/quota proof | Current bounded execution and resume |
+| Cline executor | YES | YES | HISTORICAL_PROCESS_ONLY | REGISTERED_GATED_ATTEMPT_TELEMETRY_TESTED | YES | YES | UNKNOWN | DEGRADED_OR_UNKNOWN | candidate operational wording | YES | successful terminal execution | Current successful bounded task |
+| Agentic planning bridge | YES | YES | NO | UNDERLYING_ATTEMPT_TELEMETRY_TESTED | YES | YES | UNKNOWN | UNKNOWN | operational wording | YES | protected-lane planning selection | Structured plan from current backend |
 | Session continuity | YES | YES | HISTORICAL | TESTED | YES | YES | UNKNOWN | UNKNOWN | NO | NO | fresh-context fallback orchestration | Backend loss/change/re-entry E2E |
 | Workspace fingerprinting | YES | YES | HISTORICAL | TESTED | YES | YES | REPORTED_BASELINE | UNKNOWN | NO | NO | none confirmed | Current exact-session compatibility run |
 | Checkpoint/re-entry | YES | YES | YES | TESTED | YES | YES | REPORTED_BASELINE | REPORTED | NO | NO | technical-hold resume policy | Worker restart no-replay proof |
@@ -42,7 +42,7 @@ repair. `UNKNOWN` never means healthy or absent.
 | Promotion/rollback | YES | YES | YES | TESTED | YES | YES | HISTORICAL | NOT_EXERCISED | NO | NO | detached review boundary documentation | Independent promotion trial later |
 | Supervisor | YES | YES | YES | TESTED | YES | YES | REPORTED_BASELINE | REPORTED_HEALTHY | NO | NO | none confirmed | Restart plus slot identity proof |
 | Pause-safe | YES | YES | YES | TESTED | YES | YES | REPORTED_BASELINE | UNKNOWN | NO | NO | none confirmed | Supervisor reboot restoration |
-| Controller relay | YES | YES | YES | TESTED_REPAIRED | YES | YES | REPORTED_BASELINE | REPORTED_WITH_DEFECT | false HUMAN_REQUIRED aggregate | FIXED | hosted exact-SHA relay proof | E2E-23 in hosted CI |
+| Controller relay | YES | YES | YES | GENERIC_CURRENT_LINEAGE_AGGREGATION_TESTED | YES | YES | REPORTED_BASELINE | REPORTED_WITH_DEFECT | protected-ID-dependent HUMAN_REQUIRED aggregate | FIXED_SOURCE | hosted exact-SHA relay proof | E2E-23 in hosted CI |
 | Cockpit | YES | YES | HISTORICAL | TESTED_PROJECTION | YES | YES | REPORTED_BASELINE | UNKNOWN | hard-coded resource truth | PARTIAL_FIXED | outcome UI presentation | Browser projection verification |
 | Human Action Center | YES | YES | NO | TESTED_REPAIRED | YES | YES | NO_NEW_PROMOTION | CANDIDATE_TESTED | commit `5f0e722` raw form | ADAPTED | none confirmed | Controller review of fail-closed semantics |
 | Deliberation council | YES | YES | PARTIAL | SHADOW_ONLY | YES | PARTIAL | REPORTED_BASELINE | SHADOW_ONLY | NO | NO | primary-path acceptance intentionally absent | Budgeted shadow quality sample |
@@ -51,7 +51,7 @@ repair. `UNKNOWN` never means healthy or absent.
 | AOS maintenance lane | YES | YES | REPORTED_98_BATCHES | CONVERGENCE_GUARD_ADDED | YES | YES | NO_NEW_PROMOTION | NON_CONVERGENT_REPORTED | infinite churn | FIXED_SOURCE | real acceptance proof | Bounded terminal result with delta/no-op |
 | Multi-project/lane isolation | YES | YES | HISTORICAL | TESTED_REPAIRED | YES | YES | NO_NEW_PROMOTION | CANDIDATE_TESTED | workspace lock only | PARTIAL_FIXED | cross-machine integration | Two-lane exclusive-scope proof |
 | Source transport recovery | YES | YES | HISTORICAL | TESTED | YES | YES | REPORTED_BASELINE | UNKNOWN | NO | NO | none confirmed | Outage and same-lineage resume |
-| Integrity reconciliation | YES | YES | NO | CANDIDATE_TESTED | YES | YES | NO | NOT_LIVE_PROMOTED | constant UNKNOWN | FIXED_SOURCE | historical stores remain unknown | Instrumented protected command proof |
+| Integrity reconciliation | YES | YES | NO | INDEPENDENT_EXECUTION_PARTITION_TESTED | YES | YES | NO | NOT_LIVE_PROMOTED | bucket-derived total | FIXED_SOURCE | historical stores remain unknown | Instrumented protected command proof |
 
 ## Historical Action Center commit classification
 
