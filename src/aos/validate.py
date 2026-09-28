@@ -35,6 +35,7 @@ TYPE_TO_SCHEMA = {
     "agentic_execution_checkpoint": "agentic_execution_checkpoint.schema.json",
     "execution_resource_policy": "execution_resource_policy.schema.json",
     "decision_advisor_policy": "decision_advisor_policy.schema.json",
+    "aos_integration_contract": "aos_integration_contract.schema.json",
 }
 
 

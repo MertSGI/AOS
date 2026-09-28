@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/aos_integration_contract.schema.json",
+  "title": "AOS End-to-End Integration Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_id", "production", "paid_fallback", "entities", "invariants"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "contract_id": {"type": "string", "minLength": 1},
+    "production": {"const": "NO_GO"},
+    "paid_fallback": {"const": "DISABLED"},
+    "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_identity", "canonical_revision", "control_generation", "command_lineage",
+        "objective_id", "task_id", "task_signature", "workspace_fingerprint", "write_scope",
+        "lease_id", "resource_id", "resource_class", "capability_requirements", "health_state",
+        "quota_state", "scarcity_state", "session_id", "checkpoint_id", "evidence_id",
+        "accepted_source_sha", "candidate_id", "runtime_slot", "runtime_source_sha", "provenance_status"
+      ],
+      "properties": {
+        "project_identity": {"$ref": "#/$defs/entity"},
+        "canonical_revision": {"$ref": "#/$defs/entity"},
+        "control_generation": {"$ref": "#/$defs/entity"},
+        "command_lineage": {"$ref": "#/$defs/entity"},
+        "objective_id": {"$ref": "#/$defs/entity"},
+        "task_id": {"$ref": "#/$defs/entity"},
+        "task_signature": {"$ref": "#/$defs/entity"},
+        "workspace_fingerprint": {"$ref": "#/$defs/entity"},
+        "write_scope": {"$ref": "#/$defs/entity"},
+        "lease_id": {"$ref": "#/$defs/entity"},
+        "resource_id": {"$ref": "#/$defs/entity"},
+        "resource_class": {"$ref": "#/$defs/entity"},
+        "capability_requirements": {"$ref": "#/$defs/entity"},
+        "health_state": {"$ref": "#/$defs/entity"},
+        "quota_state": {"$ref": "#/$defs/entity"},
+        "scarcity_state": {"$ref": "#/$defs/entity"},
+        "session_id": {"$ref": "#/$defs/entity"},
+        "checkpoint_id": {"$ref": "#/$defs/entity"},
+        "evidence_id": {"$ref": "#/$defs/entity"},
+        "accepted_source_sha": {"$ref": "#/$defs/entity"},
+        "candidate_id": {"$ref": "#/$defs/entity"},
+        "runtime_slot": {"$ref": "#/$defs/entity"},
+        "runtime_source_sha": {"$ref": "#/$defs/entity"},
+        "provenance_status": {"$ref": "#/$defs/entity"}
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/invariant"}
+    }
+  },
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "required", "description"],
+      "properties": {
+        "authority": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "description": {"type": "string", "minLength": 1},
+        "allowed_values": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invariant_id", "antecedent", "consequent", "enforcement", "status"],
+      "properties": {
+        "invariant_id": {"type": "string", "pattern": "^INV-[0-9]{2}$"},
+        "antecedent": {"type": "string", "minLength": 1},
+        "consequent": {"type": "string", "minLength": 1},
+        "enforcement": {"type": "string", "minLength": 1},
+        "status": {"enum": ["ENFORCED", "PARTIAL", "DECLARED"]}
+      }
+    }
+  }
+}

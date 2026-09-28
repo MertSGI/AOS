@@ -1,5 +1,9 @@
 # AOS Canonical Capability & Architecture Acceptance Ledger
 
+> **HISTORICAL EVIDENCE LEDGER:** Operational labels below are not current-state
+> certification for baseline `5de4adb1...`. Current source/runtime distinctions
+> are authoritative in `docs/architecture/AOS_CAPABILITY_ARCHAEOLOGY_MATRIX.md`.
+
 Generated: 2026-09-25T06:12:00+03:00  
 Authority: Continuous Post-Activation Operationalization & System Acceptance Matrix  
 Contract Version: `1.0.0`  

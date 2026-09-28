@@ -1,5 +1,10 @@
 # AOS CRITICAL PATH GAP MATRIX
 
+> **SUPERSEDED CURRENT-TRUTH SNAPSHOT:** This historical matrix contains
+> operational claims tied to older evidence. For the reconciled baseline use
+> `docs/architecture/AOS_CAPABILITY_ARCHAEOLOGY_MATRIX.md`. Historical evidence
+> remains preserved but does not transfer across SHAs.
+
 **Inspection Date**: 2026-09-25T11:55:00+03:00  
 **Current Live Baseline**: Runtime Slot `candidate-runtime-v1.8-3df8df9990bc`, Source SHA `3df8df9990bc6a7ea64d53b1c2e0a62ddd69b93f`  
 **Protected Command Lineages**:
@@ -74,4 +79,3 @@
 7. **Telemetry & Self-Repair Reconciliation**: [RESOLVED]
    - Self-repair actions for non-mutating technical events report truthful `post_repair_evidence` and `smoke_status`.
    - Obsolete `"ollama"` (`llama3.3:70b`) completely removed from planner policies.
-

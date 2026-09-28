@@ -88,6 +88,11 @@ class TestCanonicalProjectControlData:
         res, code = validate_file("execution_resource_policy", descriptor)
         assert code == 0, [e.message for e in res.errors]
 
+    def test_end_to_end_integration_contract_is_valid(self):
+        contract = Path(__file__).resolve().parent.parent / "docs" / "architecture" / "AOS_INTEGRATION_CONTRACTS.json"
+        res, code = validate_file("aos_integration_contract", contract)
+        assert code == 0, [e.message for e in res.errors]
+
 
 class TestUnknownFieldRejection:
     """Core contract objects must reject unknown top-level and nested fields."""
@@ -169,6 +174,7 @@ class TestSchemaMetaValidation:
         "worker_capability_attestation.schema.json",
         "agentic_execution_checkpoint.schema.json",
         "execution_resource_policy.schema.json",
+        "aos_integration_contract.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)
