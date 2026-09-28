@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "as_of": "2026-09-28",
+  "base_operations_branch": "feature/aos-resource-os-operations-20260924-01",
+  "base_operations_sha": "5de4adb1b840f28a9c74a23054e2a8bda8e86a08",
+  "work_branch": "fix/aos-e2e-architecture-reconciliation-20260928-01",
+  "production": "NO_GO",
+  "paid_fallback": "DISABLED",
+  "current_lari_control_ref": "control/lari-project-control-plane",
+  "current_lari_control_sha": "9ec158f7d5c52ee65f9ecad36b76c78a99e9c1d2",
+  "lari_control_mutated": false,
+  "protected_commands_mutated": false,
+  "live_runtime_mutated": false,
+  "current_source_truth": {
+    "antigravity": "REGISTERED_CAPABILITY_AND_AVAILABILITY_GATED_CURRENT_OPERATION_UNKNOWN",
+    "agentic_planning_bridge": "CRITICAL_PATH_REACHABLE_CANDIDATE_TESTED",
+    "codex_cli": "REGISTERED_CURRENT_OPERATION_UNKNOWN",
+    "cline": "REGISTERED_HISTORICAL_PROCESS_PROOF_CURRENT_SUCCESS_UNKNOWN",
+    "qwen": "CRITICAL_PATH_REACHABLE_HISTORICAL_LIFECYCLE_PROOF_CURRENT_OPERATION_UNKNOWN",
+    "freellmapi": "SOURCE_AND_LIFECYCLE_TESTED_MANAGED_SERVICE_UNAVAILABLE_OR_UNKNOWN",
+    "design_intelligence": "PARTIAL_CRITICAL_PATH_CURRENT_PROTECTED_EXECUTION_UNKNOWN",
+    "integrity_reconciler": "SOURCE_TESTED_NOT_LIVE_PROMOTED",
+    "maintenance_convergence": "SOURCE_TESTED_NOT_LIVE_PROMOTED"
+  },
+  "confirmed_repairs": [
+    "PROTECTED_HUMAN_REQUIRED_AGGREGATION",
+    "ACTION_FRESHNESS_AND_PROVENANCE",
+    "DURABLE_ACCEPTED_WORK_DEDUPE",
+    "LOST_ACCEPTED_WORK_DETECTION",
+    "CROSS_LANE_WRITE_SCOPE_PREVENTION",
+    "AGENTIC_TELEMETRY_TRUTH",
+    "OUTCOME_PARTITION",
+    "REPLAN_NOOP_BOUNDED_TECHNICAL_HOLD",
+    "RELAY_WRITER_PRIORITY"
+  ],
+  "certification": {
+    "pass": 13,
+    "partial": 11,
+    "not_yet_executable": 0,
+    "focused_tests": "145_PASSED",
+    "full_pytest": "1107_PASSED_8_SKIPPED_26_DESELECTED",
+    "schema_validation": "PASS",
+    "diff_check": "PASS",
+    "hosted_ci": "PENDING_FINAL_SHA_PUSH"
+  },
+  "final_state": "SOURCE_REVIEW_READY_PENDING_HOSTED_CI",
+  "independent_controller_review_required": true
+}
