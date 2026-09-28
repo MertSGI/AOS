@@ -296,8 +296,21 @@ def test_mobile_lane_summary_wraps_long_blockers():
     assert "overflow-wrap: anywhere;" in _HTML
 
 
-def test_resource_operations_matrix_and_lane_hold_review_controls():
+def test_resource_operations_matrix_and_lane_hold_review_controls(tmp_path, monkeypatch):
     from aos.control_panel import get_resource_operations_matrix
+
+    capability_dir = tmp_path / "AOS" / "capabilities"
+    capability_dir.mkdir(parents=True)
+    (capability_dir / "antigravity.json").write_text(
+        json.dumps({
+            "capability_status": "PROVEN",
+            "reported_cli_version": "test-1.2.10",
+            "executable_filename": "antigravity-test",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
     matrix = get_resource_operations_matrix()
     assert len(matrix) >= 5
     by_name = {m["name"]: m for m in matrix}
@@ -311,6 +324,8 @@ def test_resource_operations_matrix_and_lane_hold_review_controls():
     ag = by_name["Antigravity"]
     assert ag["resource_type"] == "FIRST_CLASS_AGENTIC"
     assert ag["cost_class"] == "SUBSCRIPTION_INCLUDED"
+    assert ag["general_health"] == "AVAILABLE"
+    assert ag["current_blocker"] == "NONE"
     assert ag["eligibility_by_task_class"]["agentic_coding"] is True
 
     # Codex availability is attestation-derived; quota is not hard-coded.
@@ -330,3 +345,16 @@ def test_resource_operations_matrix_and_lane_hold_review_controls():
     assert "Review " in _HTML
     assert "Resume " in _HTML
     assert "Running / " in _HTML
+
+
+def test_resource_operations_matrix_requires_antigravity_attestation(tmp_path, monkeypatch):
+    from aos.control_panel import get_resource_operations_matrix
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    matrix = get_resource_operations_matrix()
+    ag = next(row for row in matrix if row["name"] == "Antigravity")
+
+    assert ag["general_health"] == "UNPROVEN"
+    assert ag["current_blocker"] == "ATTESTATION_REQUIRED"
+    assert ag["eligibility_by_task_class"]["agentic_coding"] is False
