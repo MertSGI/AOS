@@ -116,6 +116,7 @@ def test_materialize_success_when_all_match(tmp_path: Path, monkeypatch):
     descriptors = tmp_path / "descriptors"
     descriptors.mkdir()
     for name in (
+        "aos-maintenance.autonomous-host.descriptor.json",
         "lari.autonomous-host.descriptor.json",
         "lari-ui-v2.autonomous-host.descriptor.json",
         "nemotron.planner-policy.json",

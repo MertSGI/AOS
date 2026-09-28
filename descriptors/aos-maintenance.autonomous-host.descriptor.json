@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "aos-maintenance",
+  "repository": "MertSGI/AOS",
+  "control_ref": "aos/maintenance-self-canary-20260927-01",
+  "description": "Bounded isolated AOS self-maintenance lane",
+  "control": {
+    "state": "docs/project-control/aos-maintenance/STATE.json",
+    "decisions": "docs/project-control/aos-maintenance/DECISIONS.md",
+    "evidence": "docs/project-control/aos-maintenance/EVIDENCE.jsonl",
+    "roadmap": "docs/project-control/aos-maintenance/ROADMAP.md"
+  },
+  "projection": {
+    "current_status_pointer": "/status",
+    "current_milestone_pointer": "/current_gate",
+    "canonical_next_action_pointer": "/next_action"
+  },
+  "authority": {
+    "production_mutation": "human_required",
+    "roadmap_change": "human_required",
+    "destructive_data": "human_required",
+    "security_boundary_change": "human_required",
+    "payment_activation": "human_required"
+  },
+  "workers": {
+    "branch_prefix": "aos/maintenance/",
+    "isolated_worktree_required": true,
+    "max_concurrent_workers": 1
+  },
+  "verification": {
+    "checks": {
+      "action_center_governance": {
+        "argv": ["python", "-m", "pytest", "-q", "tests/test_action_center.py"],
+        "timeout_seconds": 180
+      },
+      "canonical_regression": {
+        "argv": ["python", "-m", "pytest", "-q"],
+        "timeout_seconds": 1200
+      }
+    }
+  }
+}

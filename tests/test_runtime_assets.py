@@ -17,6 +17,9 @@ def _source(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (root / "descriptors").mkdir()
+    (root / "descriptors" / "aos-maintenance.autonomous-host.descriptor.json").write_text(
+        "{}", encoding="utf-8"
+    )
     (root / "descriptors" / "lari.autonomous-host.descriptor.json").write_text("{}", encoding="utf-8")
     (root / "descriptors" / "lari-ui-v2.autonomous-host.descriptor.json").write_text("{}", encoding="utf-8")
     (root / "descriptors" / "nemotron.planner-policy.json").write_text("{}", encoding="utf-8")
@@ -29,13 +32,14 @@ def test_runtime_assets_are_self_contained_and_hashed(tmp_path: Path):
     slot = tmp_path / "candidate" / "abc"
     result = materialize_runtime_assets(source, slot)
     assert (slot / "schemas" / "v0.1" / "project_descriptor.schema.json").is_file()
+    assert (slot / "descriptors" / "aos-maintenance.autonomous-host.descriptor.json").is_file()
     assert (slot / "descriptors" / "lari.autonomous-host.descriptor.json").is_file()
     assert (slot / "descriptors" / "lari-ui-v2.autonomous-host.descriptor.json").is_file()
     assert (slot / "descriptors" / "nemotron.planner-policy.json").is_file()
     assert (slot / "site" / "aos" / "__init__.py").is_file()
     assert (slot / "site" / "extensions" / "__init__.py").is_file()
     assert len(result["asset_tree_sha256"]) == 64
-    assert result["file_count"] == 7
+    assert result["file_count"] == 8
     assert Path(result["manifest_path"]).is_file()
 
 
@@ -43,4 +47,18 @@ def test_runtime_assets_fail_closed_when_required_file_missing(tmp_path: Path):
     source = _source(tmp_path)
     (source / "schemas" / "v0.1" / "project_descriptor.schema.json").unlink()
     with pytest.raises(RuntimeAssetError):
+        materialize_runtime_assets(source, tmp_path / "slot")
+
+
+def test_runtime_assets_require_maintenance_descriptor(tmp_path: Path):
+    source = _source(tmp_path)
+    maintenance_descriptor = (
+        source / "descriptors" / "aos-maintenance.autonomous-host.descriptor.json"
+    )
+    maintenance_descriptor.unlink()
+
+    with pytest.raises(
+        RuntimeAssetError,
+        match="descriptors/aos-maintenance.autonomous-host.descriptor.json",
+    ):
         materialize_runtime_assets(source, tmp_path / "slot")
