@@ -3134,19 +3134,19 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         "usefulness_classification": "ACTIVE_VISIBLE",
         "executable": ag_exe,
         "version": ag_ver,
-        "auth_status": "AUTHENTICATED",
+        "auth_status": "ATTESTED" if ag_attested else "UNKNOWN",
         "cost_class": "SUBSCRIPTION_INCLUDED",
         "general_health": "AVAILABLE" if ag_attested else "UNPROVEN",
         "task_classes": ["agentic_coding", "repo_ui_planning", "structured_planning", "file_edit", "process_exec"],
-        "lifecycle_state": "ACTIVE_PRIMARY_AGENT",
-        "quota_status": "NOMINAL",
+        "lifecycle_state": "REGISTERED_AVAILABILITY_GATED",
+        "quota_status": "UNKNOWN",
         "retry_deadline": None,
         "current_blocker": "NONE" if ag_attested else "ATTESTATION_REQUIRED",
         "eligibility_by_task_class": {
-            "structured_planning": True,
-            "repo_ui_planning": True,
-            "agentic_coding": True,
-            "verification": True,
+            "structured_planning": ag_attested,
+            "repo_ui_planning": ag_attested,
+            "agentic_coding": ag_attested,
+            "verification": ag_attested,
         },
     })
 
@@ -3173,17 +3173,17 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         "version": codex_ver,
         "auth_status": "CHATGPT_SUBSCRIPTION",
         "cost_class": "SUBSCRIPTION_INCLUDED",
-        "general_health": "QUOTA_EXHAUSTED",
+        "general_health": "AVAILABLE" if codex_attested else "UNKNOWN",
         "task_classes": ["agentic_coding", "repo_ui_planning", "structured_planning"],
         "lifecycle_state": "PRESERVED_STANDBY",
-        "quota_status": "TEMPORARILY_QUOTA_UNAVAILABLE",
-        "retry_deadline": "WAITING_FOR_QUOTA_RESET",
-        "current_blocker": "QUOTA_EXHAUSTED",
+        "quota_status": "UNKNOWN",
+        "retry_deadline": None,
+        "current_blocker": "NONE" if codex_attested else "CAPABILITY_ATTESTATION_REQUIRED",
         "eligibility_by_task_class": {
-            "structured_planning": False,
-            "repo_ui_planning": False,
-            "agentic_coding": False,
-            "verification": False,
+            "structured_planning": codex_attested,
+            "repo_ui_planning": codex_attested,
+            "agentic_coding": codex_attested,
+            "verification": codex_attested,
         },
     })
 
@@ -3212,7 +3212,7 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         "executable": cline_exe,
         "version": cline_ver,
         "auth_status": "PROVIDER_BOUNDED",
-        "cost_class": "FREE_HARNESS",
+        "cost_class": "SUBSCRIPTION_INCLUDED",
         "general_health": "HEALTHY" if cline_attested else cline_status,
         "task_classes": ["agentic_coding", "file_edit", "bounded_execution"],
         "lifecycle_state": cline_status,
@@ -3343,6 +3343,44 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
             "eligibility_by_task_class": {"structured_planning": False, "repo_ui_planning": False},
         },
     ])
+    resource_ids = {
+        "Antigravity": "local_antigravity_subscription",
+        "Codex CLI": "local_codex_cli_chatgpt_subscription",
+        "Cline": "local_cline_cli_subscription",
+        "Qwen Local": "local_qwen3_4b_q4_k_m_cpu",
+        "FreeLLMAPI": "freellmapi_local",
+        "Jev": "jev_advisory",
+    }
+    for row in matrix:
+        name = str(row.get("name") or "unknown")
+        normalized_id = resource_ids.get(name, name.casefold().replace(" ", "_"))
+        row.update({
+            "resource_id": normalized_id,
+            "resource_class": row.get("resource_type", "UNKNOWN"),
+            "capabilities": list(row.get("task_classes", [])),
+            "health_state": row.get("general_health", "UNKNOWN"),
+            "quota_state": row.get("quota_status", "UNKNOWN"),
+            "quota_reset": row.get("retry_deadline"),
+            "credential_state": row.get("auth_status", "UNKNOWN"),
+            "service_state": row.get("lifecycle_state", "UNKNOWN"),
+            "quality_history_by_task_class": {},
+            "latency": "UNKNOWN",
+            "scarcity": "UNKNOWN",
+            "monetary_cost_class": row.get("cost_class", "UNKNOWN"),
+            "subscription_included": row.get("cost_class") == "SUBSCRIPTION_INCLUDED",
+            "session_semantics": (
+                "EXACT_SESSION_AND_FINGERPRINT_ONLY"
+                if "AGENTIC" in str(row.get("resource_type", ""))
+                else "STATELESS_OR_PROVIDER_MANAGED"
+            ),
+            "workspace_semantics": (
+                "RESTRICTED_BOUND_WORKSPACE"
+                if "AGENTIC" in str(row.get("resource_type", ""))
+                else "NOT_APPLICABLE"
+            ),
+            "provenance": "CURRENT_MACHINE_ATTESTED" if row.get("general_health") == "AVAILABLE" else "UNKNOWN",
+            "lane_eligibility": dict(row.get("eligibility_by_task_class", {})),
+        })
     return matrix
 
 
@@ -3881,6 +3919,15 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "lanes": lanes_detail,
             "deliberation": deliberation_metrics,
             "relay": relay_info,
+            "agentic_executor_truth": {
+                "antigravity": {
+                    "registered": bool(relay_info.get("ag_backend_registered", False)),
+                    "availability": relay_info.get("ag_backend_availability", "UNKNOWN"),
+                    "eligible": bool(relay_info.get("ag_backend_enabled", False)),
+                    "invocation_count": int(relay_info.get("ag_invocation_count", 0) or 0),
+                },
+                "authority": "PROJECTION_ONLY",
+            },
             "product_evidence": {
                 "first_mutation": first_ui_mutation or first_workspace_artifact,
                 "first_workspace_productization_artifact": first_workspace_artifact,
@@ -3928,7 +3975,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         "pending_jobs": pending,
         "last_job": last_job,
         "production": "NO_GO",
-        "ag_backend_enabled": False,
+        "ag_backend_registered": bool(host_status.get("ag_backend_registered", False)),
+        "ag_backend_availability": host_status.get("ag_backend_availability", "UNKNOWN"),
+        "ag_backend_enabled": bool(host_status.get("ag_backend_enabled", False)),
+        "ag_invocation_count": int(host_status.get("ag_invocation_count", 0) or 0),
         "allow_paid_fallback": False,
         "paid_fallback_enabled": False,
         "paid_daily_budget_usd": 0,
@@ -4141,7 +4191,14 @@ class _Handler(BaseHTTPRequestHandler):
                 from aos.runtime_store import RuntimeStore
                 store = RuntimeStore(use_root)
                 canon_sha = str(self.config.get("candidate_source_sha") or os.environ.get("AOS_RUNTIME_SOURCE_SHA") or "UNKNOWN")
-                res = validate_and_process_control_request(payload, action_engine, store, canon_sha)
+                deployment_state = build_status(self.config)
+                res = validate_and_process_control_request(
+                    payload,
+                    action_engine,
+                    store,
+                    canon_sha,
+                    runtime_provenance=str(deployment_state.get("provenance_status") or "UNPROVEN"),
+                )
                 self._json(HTTPStatus.OK, res)
                 return
 

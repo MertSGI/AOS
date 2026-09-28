@@ -313,10 +313,11 @@ def test_resource_operations_matrix_and_lane_hold_review_controls():
     assert ag["cost_class"] == "SUBSCRIPTION_INCLUDED"
     assert ag["eligibility_by_task_class"]["agentic_coding"] is True
 
-    # Check Codex CLI quota exhaustion status
+    # Codex availability is attestation-derived; quota is not hard-coded.
     cdx = by_name["Codex CLI"]
     assert cdx["resource_type"] == "FIRST_CLASS_AGENTIC"
-    assert cdx["general_health"] == "QUOTA_EXHAUSTED"
+    assert cdx["general_health"] in {"AVAILABLE", "UNKNOWN"}
+    assert cdx["quota_status"] == "UNKNOWN"
     assert cdx["lifecycle_state"] == "PRESERVED_STANDBY"
 
     # Check Cline prerequisite / live attested capability

@@ -30,6 +30,7 @@ from aos.provenance import (
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
+from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
 
 try:
     import truststore
@@ -43,6 +44,10 @@ except Exception:
         return ssl.create_default_context()
 
 RELAY_SCHEMA_VERSION = "1.0.0"
+PROTECTED_CURRENT_COMMAND_IDS = {
+    "continue-b181ddc574c25c2aa0f2a6b9",
+    "continue-61be4ab1af53cfa646d773ce",
+}
 
 _SECRET_PATTERNS = [
     re.compile(r'(ghp_[a-zA-Z0-9]{30,40})'),
@@ -63,6 +68,15 @@ def sanitize_text(text: str) -> str:
     for pat in _SECRET_PATTERNS:
         res = pat.sub("[REDACTED_SECRET]", res)
     return res
+
+
+def _writer_priority(writer_instance_id: str) -> int:
+    value = str(writer_instance_id or "").casefold()
+    if value.startswith("aos-supervisor-"):
+        return 30
+    if value.startswith("aos-api-"):
+        return 20
+    return 10
 
 
 @dataclass
@@ -104,6 +118,9 @@ class RelaySnapshot:
     duplicate_completed_work: Union[int, str] = "UNKNOWN"
     lost_accepted_work: Union[int, str] = "UNKNOWN"
     cross_lane_write_scope_collision: Union[int, str] = "UNKNOWN"
+    execution_outcomes: Dict[str, int] = field(default_factory=dict)
+    total_executed: int = 0
+    outcome_partition_valid: bool = True
     council_mode: str = "SHADOW_ONLY"
     council_quality_metrics: Dict[str, Any] = field(default_factory=dict)
     human_required: bool = False
@@ -148,6 +165,10 @@ class RelaySnapshot:
     provider_discovery_errors: Dict[str, Any] = field(default_factory=dict)
     enabled_reasoning_providers: List[str] = field(default_factory=list)
     provider_circuit_registry_paths: List[str] = field(default_factory=list)
+    ag_backend_registered: bool = False
+    ag_backend_availability: str = "UNKNOWN"
+    ag_backend_enabled: bool = False
+    ag_invocation_count: int = 0
 
 
 class ControllerRelayPublisher:
@@ -334,6 +355,10 @@ class ControllerRelayPublisher:
         active_cmd_count = 0
         running_lanes = 0
         waiting_lanes = 0
+        ag_registered = False
+        ag_enabled = False
+        ag_availability = "UNKNOWN"
+        ag_invocations = 0
 
         for s_root in store_roots:
             commands_dir = s_root / "commands"
@@ -355,6 +380,20 @@ class ControllerRelayPublisher:
                 try:
                     c_data = read_json(c_json, {})
                     s_data = read_json(s_json, {})
+                    kernel_checkpoint = read_json(
+                        c_dir / "project-runtime" / "planning-kernel-checkpoint.json", {}
+                    )
+                    last_receipt = (
+                        kernel_checkpoint.get("last_receipt", {})
+                        if isinstance(kernel_checkpoint, dict)
+                        else {}
+                    )
+                    if isinstance(last_receipt, dict):
+                        ag_registered = ag_registered or bool(last_receipt.get("ag_backend_registered"))
+                        ag_enabled = ag_enabled or bool(last_receipt.get("ag_backend_enabled"))
+                        if last_receipt.get("ag_backend_availability"):
+                            ag_availability = str(last_receipt["ag_backend_availability"])
+                        ag_invocations += int(last_receipt.get("ag_invocation_count", 0) or 0)
                     proj = (c_data.get("project") or {}).get("project_id") or "lari"
                     lane_name = "Lane C" if "ui" in proj.lower() else "Lane A"
                     state_str = s_data.get("state", "UNKNOWN")
@@ -511,14 +550,43 @@ class ControllerRelayPublisher:
             else:
                 no_prog_reason = "NO_ACTIVE_RUNNING_LANES"
 
-        # Truthful evaluation of human_required: only active tracked lanes can trigger intervention
-        human_req = any(l.get("state") == "HUMAN_REQUIRED" for l in active_tracked_lanes)
+        # Protected current lineages remain operator-visible even while another
+        # lane is RUNNING. Generic historical HUMAN_REQUIRED records do not
+        # contaminate the aggregate merely by remaining on disk.
+        human_req = any(
+            l.get("state") == "HUMAN_REQUIRED"
+            for l in active_tracked_lanes
+        ) or any(
+            l.get("state") == "HUMAN_REQUIRED"
+            and l.get("command_id") in PROTECTED_CURRENT_COMMAND_IDS
+            for l in lanes
+        )
 
-        # Integrity telemetry: read from durable ledger if available; emit "UNKNOWN" when no evidence exists.
-        # Constant zeroes are forbidden.
+        # Integrity telemetry is calculated only from durable, explicitly
+        # instrumented stores. Missing evidence remains UNKNOWN.
         duplicate_work: Union[int, str] = "UNKNOWN"
         lost_work: Union[int, str] = "UNKNOWN"
         scope_collision: Union[int, str] = "UNKNOWN"
+        outcome_counts = {bucket: 0 for bucket in OUTCOME_BUCKETS}
+        integrity_reports = []
+        for store_root in store_roots:
+            integrity_root = store_root / "integrity"
+            if not (integrity_root / "instrumentation.json").is_file():
+                continue
+            report = IntegrityReconciler(integrity_root, initialize=False).reconcile()
+            if report.evidence_status == "SUFFICIENT":
+                integrity_reports.append(report)
+        if integrity_reports:
+            duplicate_work = sum(int(report.duplicate_completed_work) for report in integrity_reports)
+            lost_work = sum(int(report.lost_accepted_work) for report in integrity_reports)
+            scope_collision = sum(
+                int(report.cross_lane_write_scope_collision) for report in integrity_reports
+            )
+            for report in integrity_reports:
+                for bucket in OUTCOME_BUCKETS:
+                    outcome_counts[bucket] += int(report.outcome_counts.get(bucket, 0))
+        total_executed = sum(outcome_counts.values())
+        outcome_partition_valid = total_executed == sum(outcome_counts.values())
 
         # Diagnostic lifecycle scheduling: event-driven plus bounded periodic fallback (<= every 300s)
         current_diag_sig = {
@@ -608,6 +676,9 @@ class ControllerRelayPublisher:
             duplicate_completed_work=duplicate_work,
             lost_accepted_work=lost_work,
             cross_lane_write_scope_collision=scope_collision,
+            execution_outcomes=outcome_counts,
+            total_executed=total_executed,
+            outcome_partition_valid=outcome_partition_valid,
             council_mode="SHADOW_ONLY",
             council_quality_metrics=delib_metrics,
             human_required=human_req,
@@ -651,6 +722,10 @@ class ControllerRelayPublisher:
             provider_discovery_errors=dict(rh.get("provider_discovery_errors") or {}),
             enabled_reasoning_providers=list(rh.get("enabled_reasoning_providers", []) or []),
             provider_circuit_registry_paths=list(rh.get("provider_circuit_registry_paths", []) or []),
+            ag_backend_registered=ag_registered,
+            ag_backend_availability=ag_availability,
+            ag_backend_enabled=ag_enabled,
+            ag_invocation_count=ag_invocations,
         )
 
     def render_markdown(self, snapshot: RelaySnapshot) -> str:
@@ -664,7 +739,10 @@ class ControllerRelayPublisher:
                 f"Batches `{l['completed_batches']}`, Attempts `{l['attempts']}`, "
                 f"Worker PID `{l['worker_pid'] or 'NONE'}`, Command `{l['command_id']}`"
             )
-            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED"):
+            if l["state"] in ("RUNNING", "RECOVERING", "EXECUTING", "WAITING_FOR_REASONING_PROVIDER", "QUEUED") or (
+                l["state"] == "HUMAN_REQUIRED"
+                and l["command_id"] in PROTECTED_CURRENT_COMMAND_IDS
+            ):
                 active_lines.append(line)
             else:
                 history_lines.append(line)
@@ -737,6 +815,15 @@ LOST_ACCEPTED_WORK={snapshot.lost_accepted_work}
 CROSS_LANE_WRITE_SCOPE_COLLISION={snapshot.cross_lane_write_scope_collision}
 HUMAN_REQUIRED={'YES' if snapshot.human_required else 'NO'}
 PRODUCTION={snapshot.production}
+EXECUTION_OUTCOMES_JSON={json.dumps(snapshot.execution_outcomes, sort_keys=True)}
+TOTAL_EXECUTED={snapshot.total_executed}
+OUTCOME_PARTITION_VALID={'YES' if snapshot.outcome_partition_valid else 'NO'}
+
+### AGENTIC EXECUTOR TRUTH
+AG_BACKEND_REGISTERED={'YES' if snapshot.ag_backend_registered else 'NO'}
+AG_BACKEND_AVAILABILITY={snapshot.ag_backend_availability}
+AG_BACKEND_ENABLED={'YES' if snapshot.ag_backend_enabled else 'NO'}
+AG_INVOCATION_COUNT={snapshot.ag_invocation_count}
 
 ### REMOTE OUTBOX
 REMOTE_OUTBOX_TRANSPORT=GITHUB_ISSUE
@@ -788,10 +875,16 @@ SHADOW_REPAIR_PROPOSAL_STATUS={snapshot.shadow_repair_proposal_status}
         # Concurrency safety: check sequence in existing json if present
         existing_json = read_json(latest_json, {})
         existing_writer = existing_json.get("writer", "")
+        existing_writer_instance = str(existing_json.get("writer_instance_id") or "")
         existing_seq = int(existing_json.get("sequence_number", 0) or 0)
 
         # Reject out-of-order writes from fallback writers if native AOS already wrote newer
         if existing_writer == "AOS" and snapshot.writer != "AOS" and snapshot.sequence_number <= existing_seq:
+            return
+        if (
+            existing_writer == "AOS"
+            and _writer_priority(existing_writer_instance) > _writer_priority(snapshot.writer_instance_id)
+        ):
             return
 
         # 1. Atomic LATEST.json
