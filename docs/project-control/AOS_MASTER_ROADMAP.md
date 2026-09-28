@@ -17,7 +17,7 @@ completion from live promotion. Production remains `NO_GO`.
 | WP9 Design Intelligence Critical Path | PARTIAL | Pre/post source path exists; versioned canonical viewport policy and generic app binding open |
 | WP10 Self-Maintenance Convergence | COMPLETE_SOURCE | Progress fingerprints and bounded REPLAN_NOOP technical hold added |
 | WP11 Detached Promotion Coordinator | OPEN | Must remain independently authorized; no promotion in this work |
-| WP12 Full Certification | PARTIAL | 13 deterministic scenarios pass; 11 require integrated/current-runtime evidence |
+| WP12 Full Certification | PARTIAL | 15 deterministic scenarios pass; 9 require integrated/current-runtime evidence |
 | WP13 Controlled Resume | BLOCKED | Independent Controller review, exact-SHA hosted CI, candidate review, and separate resume authority required |
 
 ## Ordered next gates

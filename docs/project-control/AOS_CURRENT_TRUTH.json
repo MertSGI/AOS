@@ -34,8 +34,8 @@
     "RELAY_WRITER_PRIORITY"
   ],
   "certification": {
-    "pass": 13,
-    "partial": 11,
+    "pass": 15,
+    "partial": 9,
     "not_yet_executable": 0,
     "focused_tests": "145_PASSED",
     "full_pytest": "1107_PASSED_8_SKIPPED_26_DESELECTED",

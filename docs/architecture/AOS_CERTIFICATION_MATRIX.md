@@ -30,7 +30,7 @@ test passes on this branch. Historical live evidence remains historical.
 | E2E-23 | LARI human hold + maintenance running -> aggregate YES | No | `test_e2e_23_protected_human_required_survives_running_lane` | PASS | Exact reported three-lane regression |
 | E2E-24 | Ledger separates health/quota/credentials/service/eligibility | ledger/governor/orchestrator tests | Control-panel normalized resource contract | PARTIAL | Quality history and latency remain UNKNOWN, not fabricated |
 
-Local certification summary: 13 `PASS`, 11 `PARTIAL`, 0
+Local certification summary: 15 `PASS`, 9 `PARTIAL`, 0
 `NOT_YET_EXECUTABLE`. The repository-wide offline suite completed with 1,107
 passed, 8 skipped, and 26 deselected; exact-SHA hosted CI remains a separate
 source-acceptance gate.
