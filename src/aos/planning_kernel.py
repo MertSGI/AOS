@@ -102,8 +102,8 @@ _ALLOWED_GIT_ACTIONS = {
     "fetch", "add", "commit", "push", "checkout", "switch", "tag", "merge",
     "cherry-pick", "restore", "worktree",
 }
+_DANGEROUS_FORCE_PUSH_PATTERN = r"\bforce[- ]?push\b"
 _DANGEROUS_PATTERNS = (
-    r"\bforce[- ]?push\b",
     r"\bpush\b[^\n]*\s--force(?:-with-lease)?\b",
     r"\bgit\s+reset\s+--hard\b",
     r"\bgit\s+clean\b",
@@ -116,6 +116,31 @@ _DANGEROUS_PATTERNS = (
     r"\bsecret\b[^\n]*(?:write|rotate|delete|create)\b",
     r"\bpayment\b|\bcharge\b|\bbilling activation\b",
 )
+
+
+def _force_push_is_explicitly_prohibited(text: str, match: re.Match[str]) -> bool:
+    """Return true only when the matched phrase is part of a clear prohibition."""
+
+    before = text[: match.start()]
+    after = text[match.end() :]
+    clause_start = max(before.rfind("\n"), before.rfind(";"), before.rfind(".")) + 1
+    clause_prefix = before[clause_start:]
+    if re.search(
+        r"\b(?:no|never|without|do\s+not|don't|must\s+not|shall\s+not)\b[^\n;.]*$",
+        clause_prefix,
+        re.I,
+    ):
+        return True
+
+    clause_end_candidates = [index for index in (after.find("\n"), after.find(";"), after.find(".")) if index >= 0]
+    clause_suffix = after[: min(clause_end_candidates)] if clause_end_candidates else after
+    return bool(
+        re.match(
+            r"\s+(?:is|are)\s+(?:strictly\s+)?(?:prohibited|forbidden|disallowed|denied)\b",
+            clause_suffix,
+            re.I,
+        )
+    )
 _SECRET_KEYS = {
     "password", "passwd", "secret", "api_key", "apikey", "access_token",
     "refresh_token", "private_key", "client_secret", "authorization", "bearer_token",
@@ -1677,6 +1702,11 @@ class CanonicalAuthorityResolver:
                     if "filter-branch" in args:
                         return "RED_LINE_GIT_FILTER_BRANCH"
 
+        for text in _walk_strings(raw_payload):
+            for match in re.finditer(_DANGEROUS_FORCE_PUSH_PATTERN, text, re.I):
+                if not _force_push_is_explicitly_prohibited(text, match):
+                    return f"RED_LINE_PATTERN:{_DANGEROUS_FORCE_PUSH_PATTERN}"
+
         for pattern in _DANGEROUS_PATTERNS:
             if re.search(pattern, payload, re.I):
                 return f"RED_LINE_PATTERN:{pattern}"
@@ -1729,6 +1759,17 @@ def _walk_keys(value: Any) -> Iterable[str]:
     elif isinstance(value, list):
         for child in value:
             yield from _walk_keys(child)
+
+
+def _walk_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for child in value.values():
+            yield from _walk_strings(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _walk_strings(child)
 
 
 

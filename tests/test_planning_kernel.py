@@ -1173,6 +1173,47 @@ def test_force_push_payload_is_rejected():
         resolver.validate_task(task)
 
 
+@pytest.mark.parametrize(
+    "prohibition",
+    [
+        "No production activation, force push, or destructive operations.",
+        "Do not force-push this branch.",
+        "A force push is strictly prohibited.",
+    ],
+)
+def test_force_push_prohibition_text_is_not_treated_as_an_unsafe_action(prohibition):
+    resolver = CanonicalAuthorityResolver(_situation())
+    task = dict(_plan()["tasks"][0])
+    task.update({
+        "run_type": "FILE",
+        "mutating": True,
+        "write_scope": ["SAFETY.md"],
+        "payload": {
+            "action": "apply_patch",
+            "patch": f"--- a/SAFETY.md\n+++ b/SAFETY.md\n@@\n+{prohibition}\n",
+        },
+    })
+
+    resolver.validate_task(task)
+
+
+def test_affirmative_force_push_instruction_remains_rejected():
+    resolver = CanonicalAuthorityResolver(_situation())
+    task = dict(_plan()["tasks"][0])
+    task.update({
+        "run_type": "FILE",
+        "mutating": True,
+        "write_scope": ["RUNBOOK.md"],
+        "payload": {
+            "action": "apply_patch",
+            "patch": "--- a/RUNBOOK.md\n+++ b/RUNBOOK.md\n@@\n+Force push the branch to replace history.\n",
+        },
+    })
+
+    with pytest.raises(AuthorityDenied, match="force"):
+        resolver.validate_task(task)
+
+
 def test_completion_detector_does_not_confuse_dag_empty_with_project_complete(tmp_path):
     backend = QueueBackend([_complete()])
     result = detect_completion(
