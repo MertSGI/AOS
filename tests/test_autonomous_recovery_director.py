@@ -601,7 +601,11 @@ def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promoti
 
     def certifier(_workspace, _branch, repair_sha, _publication):
         return {
-            "candidate_manifest": {"source_sha": repair_sha},
+            "candidate_manifest": {
+                "candidate_source_sha": repair_sha,
+                "build_source_sha": repair_sha,
+                "provenance": "PROVEN",
+            },
             "tests_passed": True,
             "evidence_valid": True,
             "exact_sha_ci_status": "SUCCESS",
@@ -629,7 +633,8 @@ def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promoti
     })
     assert result.base_sha == base_sha
     assert result.repair_sha != base_sha
-    assert result.candidate_manifest["source_sha"] == result.repair_sha
+    assert result.candidate_manifest["candidate_source_sha"] == result.repair_sha
+    assert result.candidate_manifest["build_source_sha"] == result.repair_sha
     assert git("rev-parse", f"{result.repair_sha}^") == base_sha
     assert result.promotion_performed is False
     assert result.activation_performed is False

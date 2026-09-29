@@ -249,7 +249,15 @@ class PlatformRecoveryCoordinator:
                 and bool(result.resource_backend_id)
                 and bool(result.attempt_telemetry)
                 and len(result.git_diff_sha256) == 64
-                and result.candidate_manifest.get("source_sha") == result.repair_sha
+                and (
+                    result.candidate_manifest.get("candidate_source_sha")
+                    or result.candidate_manifest.get("source_sha")
+                ) == result.repair_sha
+                and (
+                    "build_source_sha" not in result.candidate_manifest
+                    or result.candidate_manifest.get("build_source_sha")
+                    == result.repair_sha
+                )
                 and bool(result.rollback_information)
                 and result.tests_passed
                 and result.evidence_valid

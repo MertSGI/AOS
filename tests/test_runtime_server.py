@@ -63,6 +63,33 @@ def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypa
         engine.shutdown()
 
 
+def test_runtime_engine_normal_construction_wires_source_repair_executor(
+    tmp_path, monkeypatch
+):
+    cfg = _config(tmp_path)
+    workspace = Path(cfg["projects"]["lari"]["workspace"])
+    (workspace / ".git").mkdir()
+    runtime_home = tmp_path / "runtime-v1"
+    sentinel = object()
+    captured = {}
+
+    def fake_factory(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr("aos.runtime_server.create_source_repair_executor", fake_factory)
+    monkeypatch.setattr("aos.runtime_server.default_runtime_home", lambda: runtime_home)
+
+    engine = RuntimeEngine(cfg)
+    try:
+        assert engine.publisher.platform_recovery.source_repair_executor is sentinel
+        assert captured["repository"] == workspace.resolve()
+        assert captured["runtime_dir"] == Path(cfg["runtime_root"]).resolve()
+        assert captured["runtime_home"] == runtime_home
+    finally:
+        engine.shutdown()
+
+
 def test_status_uses_most_recent_command_activity_not_lexical_id(tmp_path):
     engine = RuntimeEngine(_config(tmp_path))
     try:

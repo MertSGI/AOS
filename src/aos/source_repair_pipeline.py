@@ -235,8 +235,16 @@ class IsolatedSourceRepairPipeline:
             self.certifier(workspace, branch, repair_sha, publish_evidence)
         )
         manifest = dict(certification.get("candidate_manifest") or {})
-        if manifest.get("source_sha") != repair_sha:
+        manifest_source_sha = (
+            manifest.get("candidate_source_sha") or manifest.get("source_sha")
+        )
+        if manifest_source_sha != repair_sha:
             raise ValueError("candidate manifest is not bound to the repair SHA")
+        if (
+            "build_source_sha" in manifest
+            and manifest.get("build_source_sha") != repair_sha
+        ):
+            raise ValueError("candidate build manifest is not bound to the repair SHA")
 
         return SourceRepairResult(
             isolated_worktree=str(workspace),

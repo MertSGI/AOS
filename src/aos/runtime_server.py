@@ -43,6 +43,7 @@ from aos.recovery_proof import RecoveryProofStore, TERMINAL_STATES
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.runtime_assets import resolve_active_runtime_artifact
+from aos.runtime_deploy import default_runtime_home
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
@@ -160,6 +161,7 @@ class RuntimeEngine:
                         worktree_root=worktree_root,
                         policy_path=policy_path,
                         runtime_dir=runtime_dir,
+                        runtime_home=default_runtime_home(),
                     )
         except Exception:
             # Configuration or resource capability unavailable - fail closed

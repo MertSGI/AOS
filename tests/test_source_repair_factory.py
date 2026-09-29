@@ -1,0 +1,257 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import aos.source_repair_factory as factory
+from aos.platform_recovery import SourceRepairResourceUnavailable
+
+
+REPAIR_SHA = "a" * 40
+OTHER_SHA = "b" * 40
+
+
+def _result(*, status, evidence, errors=None):
+    return SimpleNamespace(
+        status=status,
+        evidence_payload=evidence,
+        sanitized_errors=list(errors or []),
+    )
+
+
+class _Worker:
+    def __init__(self, results):
+        self.results = list(results)
+        self.requests = []
+
+    def execute(self, request):
+        self.requests.append(request)
+        if len(self.results) == 1:
+            return self.results[0]
+        return self.results.pop(0)
+
+
+def test_publisher_independently_observes_remote_sha(monkeypatch, tmp_path):
+    worker = _Worker([_result(status="SUCCESS", evidence={})])
+    observed_commands = []
+
+    def fake_git(repository, *args, **_kwargs):
+        observed_commands.append((repository, args))
+        return f"{REPAIR_SHA}\trefs/heads/repair/aos-system-test\n"
+
+    monkeypatch.setattr(factory, "_git", fake_git)
+    publication = factory._make_publisher(worker)(
+        tmp_path, "repair/aos-system-test", REPAIR_SHA
+    )
+
+    assert publication["remote_sha"] == REPAIR_SHA
+    assert publication["remote_observation"] == "git-ls-remote"
+    assert observed_commands == [(
+        tmp_path,
+        (
+            "ls-remote",
+            "--heads",
+            "origin",
+            "refs/heads/repair/aos-system-test",
+        ),
+    )]
+    assert worker.requests[0].payload["args"] == [
+        "origin", "repair/aos-system-test"
+    ]
+
+
+def test_publisher_fails_closed_on_remote_sha_mismatch(monkeypatch, tmp_path):
+    worker = _Worker([_result(status="SUCCESS", evidence={})])
+    monkeypatch.setattr(
+        factory,
+        "_git",
+        lambda *_args, **_kwargs: (
+            f"{OTHER_SHA}\trefs/heads/repair/aos-system-test\n"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="SHA mismatch"):
+        factory._make_publisher(worker)(
+            tmp_path, "repair/aos-system-test", REPAIR_SHA
+        )
+
+
+def test_certifier_polls_then_invokes_real_stage_materializer_under_runtime_home(
+    monkeypatch, tmp_path
+):
+    runtime_home = tmp_path / "runtime-v1"
+    workspace = tmp_path / "repair-worktree"
+    workspace.mkdir()
+    worker = _Worker([
+        _result(
+            status="DEGRADED",
+            evidence={
+                "sha": REPAIR_SHA,
+                "status": "queued",
+                "conclusion": None,
+                "run_id": 71,
+            },
+        ),
+        _result(
+            status="SUCCESS",
+            evidence={
+                "sha": REPAIR_SHA,
+                "status": "completed",
+                "conclusion": "success",
+                "run_id": 71,
+            },
+        ),
+    ])
+    materialize_calls = []
+
+    class Materializer:
+        @staticmethod
+        def materialize(
+            source_sha,
+            ci_run_id,
+            *,
+            repo_root,
+            remote_repo,
+            candidate_base,
+        ):
+            materialize_calls.append({
+                "source_sha": source_sha,
+                "ci_run_id": ci_run_id,
+                "repo_root": repo_root,
+                "remote_repo": remote_repo,
+                "candidate_base": candidate_base,
+            })
+            candidate = Path(candidate_base) / source_sha
+            candidate.mkdir(parents=True)
+            (candidate / "candidate-manifest.json").write_text(
+                json.dumps({
+                    "candidate_source_sha": source_sha,
+                    "build_source_sha": source_sha,
+                    "ci_run_id": ci_run_id,
+                    "provenance": "PROVEN",
+                    "files": {"proof.txt": "hash"},
+                }),
+                encoding="utf-8",
+            )
+            return candidate
+
+    validation_calls = []
+
+    def fake_validate(observed_runtime_home, source_sha):
+        validation_calls.append((observed_runtime_home, source_sha))
+        return {
+            "validation": "PASS",
+            "candidate": str(observed_runtime_home / "candidate" / source_sha),
+            "source_sha": source_sha,
+            "production": "NO_GO",
+        }
+
+    monkeypatch.setattr(factory.runtime_deploy, "_load_materializer", lambda _: Materializer)
+    monkeypatch.setattr(factory.runtime_deploy, "validate", fake_validate)
+    monkeypatch.setattr(
+        factory.runtime_deploy,
+        "activate",
+        lambda *_args, **_kwargs: pytest.fail("candidate must not be activated"),
+    )
+
+    certification = factory._make_certifier(
+        worker,
+        runtime_home,
+        ci_timeout_seconds=2,
+        ci_poll_interval_seconds=0.1,
+    )(workspace, "repair/aos-system-test", REPAIR_SHA, {"remote_sha": REPAIR_SHA})
+
+    candidate = runtime_home.resolve() / "candidate" / REPAIR_SHA
+    assert len(worker.requests) == 2
+    assert all(request.payload["sha"] == REPAIR_SHA for request in worker.requests)
+    assert materialize_calls == [{
+        "source_sha": REPAIR_SHA,
+        "ci_run_id": 71,
+        "repo_root": workspace,
+        "remote_repo": "MertSGI/AOS",
+        "candidate_base": runtime_home.resolve() / "candidate",
+    }]
+    assert validation_calls == [
+        (runtime_home.resolve(), REPAIR_SHA),
+        (runtime_home.resolve(), REPAIR_SHA),
+    ]
+    assert Path(certification["evidence"]["candidate_manifest_path"]) == (
+        candidate / "candidate-manifest.json"
+    )
+    assert certification["candidate_manifest"]["candidate_source_sha"] == REPAIR_SHA
+    assert certification["candidate_manifest"]["build_source_sha"] == REPAIR_SHA
+    assert certification["candidate_materialized"] is True
+    assert certification["evidence"]["ci_poll_attempts"] == 2
+    assert "activation_performed" not in certification
+    assert "promotion_performed" not in certification
+
+
+def test_ci_success_alone_cannot_claim_candidate_materialization(monkeypatch, tmp_path):
+    worker = _Worker([_result(
+        status="SUCCESS",
+        evidence={
+            "sha": REPAIR_SHA,
+            "status": "completed",
+            "conclusion": "success",
+            "run_id": 72,
+        },
+    )])
+    monkeypatch.setattr(
+        factory.runtime_deploy,
+        "stage",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("materialization failed")
+        ),
+    )
+
+    certifier = factory._make_certifier(worker, tmp_path / "runtime-v1")
+    with pytest.raises(RuntimeError, match="materialization failed"):
+        certifier(tmp_path, "repair/test", REPAIR_SHA, {"remote_sha": REPAIR_SHA})
+
+
+def test_failed_ci_never_materializes(monkeypatch, tmp_path):
+    worker = _Worker([_result(
+        status="FAILED",
+        evidence={
+            "sha": REPAIR_SHA,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_id": 73,
+        },
+    )])
+    stage_calls = []
+    monkeypatch.setattr(
+        factory.runtime_deploy,
+        "stage",
+        lambda *_args, **_kwargs: stage_calls.append(True),
+    )
+
+    certifier = factory._make_certifier(worker, tmp_path / "runtime-v1")
+    with pytest.raises(RuntimeError, match="EXACT_SHA_CI_FAILED"):
+        certifier(tmp_path, "repair/test", REPAIR_SHA, {"remote_sha": REPAIR_SHA})
+    assert stage_calls == []
+
+
+def test_exact_sha_ci_wait_is_bounded_and_typed(tmp_path):
+    worker = _Worker([_result(
+        status="FAILED",
+        evidence={"sha": REPAIR_SHA, "conclusion": "NO_RUNS"},
+        errors=[f"NO_BOUND_CI_RUN_FOR_SHA: {REPAIR_SHA}"],
+    )])
+    now = [0.0]
+
+    with pytest.raises(SourceRepairResourceUnavailable, match="EXACT_SHA_CI_TIMEOUT"):
+        factory._wait_for_exact_sha_ci(
+            worker,
+            tmp_path,
+            REPAIR_SHA,
+            "MertSGI/AOS",
+            timeout_seconds=1,
+            poll_interval_seconds=0.4,
+            monotonic=lambda: now[0],
+            sleep=lambda duration: now.__setitem__(0, now[0] + duration),
+        )
+
+    assert now[0] == pytest.approx(1.0)
+    assert all(request.payload["sha"] == REPAIR_SHA for request in worker.requests)

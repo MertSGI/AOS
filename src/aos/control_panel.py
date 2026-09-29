@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.runtime_contract import cumulative_completed_batch_count
+from aos.runtime_deploy import default_runtime_home
 from aos.secure_store import (
     credential_is_configured,
     delete_provider_secret,
@@ -4429,6 +4430,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         worktree_root=worktree_root,
                         policy_path=policy_path,
                         runtime_dir=runtime_dir,
+                        runtime_home=default_runtime_home(),
                     )
         except Exception:
             # Configuration or resource capability unavailable - fail closed

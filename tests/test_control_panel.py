@@ -58,6 +58,67 @@ def test_submit_job_queues_valid_envelope(tmp_path):
     assert (Path(cfg["runtime_root"]) / "inbox" / "panel-job-1.aosjob.json").is_file()
 
 
+def test_control_panel_normal_construction_wires_source_repair_executor(
+    tmp_path, monkeypatch
+):
+    runtime_root = tmp_path / "runtime-v1" / "state"
+    runtime_root.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}", encoding="utf-8")
+    host_config = tmp_path / "control-panel-host-config.json"
+    host_config.write_text(json.dumps({
+        "schema_version": "1.0.0",
+        "authorized_roots": [str(tmp_path)],
+        "runtime_root": str(runtime_root),
+        "production": "NO_GO",
+        "ag_backend_enabled": False,
+        "default_project": "aos",
+        "projects": {
+            "aos": {
+                "workspace": str(workspace),
+                "routing_policy_path": str(policy),
+            }
+        },
+    }), encoding="utf-8")
+    panel_config = tmp_path / "control-panel-config.json"
+    runtime_home = tmp_path / "runtime-v1"
+    sentinel = object()
+    captured = {}
+
+    monkeypatch.setattr(
+        control_panel,
+        "create_source_repair_executor",
+        lambda **kwargs: captured.update(kwargs) or sentinel,
+    )
+    monkeypatch.setattr(control_panel, "default_runtime_home", lambda: runtime_home)
+    monkeypatch.setattr(
+        control_panel,
+        "serve",
+        lambda host, panel, *, source_repair_executor: (
+            captured.update({
+                "served_host": host,
+                "served_panel": panel,
+                "served_executor": source_repair_executor,
+            })
+            or 0
+        ),
+    )
+
+    result = control_panel.main([
+        "--host-config", str(host_config),
+        "--panel-config", str(panel_config),
+    ])
+
+    assert result == 0
+    assert captured["repository"] == workspace.resolve()
+    assert captured["runtime_dir"] == runtime_root.resolve()
+    assert captured["runtime_home"] == runtime_home
+    assert captured["served_executor"] is sentinel
+
+
 def test_submit_job_rejects_duplicate(tmp_path):
     cfg = _config(tmp_path)
     job = _job(tmp_path)
