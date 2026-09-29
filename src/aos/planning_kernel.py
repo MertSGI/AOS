@@ -1992,6 +1992,107 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
             raise PlanningKernelError(f"Task {node_id} MODEL_REASONING payload requires prompt and schema")
 
 
+def _package_has_playwright_test_runner(workspace: Path) -> bool:
+    package_path = workspace / "package.json"
+    if not package_path.is_file():
+        return False
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(package, Mapping):
+        return False
+    return any(
+        isinstance(package.get(section), Mapping)
+        and "@playwright/test" in package[section]
+        for section in ("dependencies", "devDependencies", "optionalDependencies")
+    )
+
+
+def _playwright_test_spec_args(cmd: Sequence[str]) -> Optional[List[str]]:
+    """Return explicit spec arguments for recognized Playwright test commands."""
+    args = [str(value) for value in cmd]
+    if not args:
+        return None
+    binary = Path(args[0]).name.lower().removesuffix(".exe")
+    tail = args[1:]
+    if binary in {"npm", "npx"}:
+        while tail and tail[0] in {"exec", "--yes", "-y"}:
+            tail = tail[1:]
+        if tail and tail[0] == "--":
+            tail = tail[1:]
+        if not tail or tail[0].lower() not in {"playwright", "@playwright/test"}:
+            return None
+        tail = tail[1:]
+    elif binary != "playwright":
+        return None
+    if tail and tail[0] == "--":
+        tail = tail[1:]
+    if not tail or tail[0].lower() != "test":
+        return None
+    return [
+        value for value in tail[1:]
+        if not value.startswith("-")
+        and Path(re.sub(r":\d+(?::\d+)?$", "", value)).suffix.lower()
+        in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+    ]
+
+
+def _validate_process_workspace_inputs(task: Mapping[str, Any], workspace: Path) -> None:
+    if task.get("run_type") not in {"PROCESS", "TEST", "BUILD"}:
+        return
+    cmd = task["payload"]["cmd"]
+    spec_args = _playwright_test_spec_args(cmd)
+    if spec_args is None:
+        return
+    node_id = str(task["node_id"])
+    if not _package_has_playwright_test_runner(workspace):
+        raise PlanningKernelError(
+            f"Task {node_id} Playwright test runner capability is unavailable: "
+            "package.json does not declare @playwright/test"
+        )
+    for spec_arg in spec_args:
+        relative = re.sub(r":\d+(?::\d+)?$", "", spec_arg)
+        spec_path = (workspace / relative).resolve()
+        if spec_path != workspace and workspace not in spec_path.parents:
+            raise PlanningKernelError(f"Task {node_id} Playwright spec escapes managed workspace")
+        if not spec_path.is_file():
+            raise PlanningKernelError(
+                f"Task {node_id} Playwright spec does not exist: {relative}"
+            )
+
+
+def _validate_design_remediation_plan(
+    plan: Mapping[str, Any],
+    design_evidence: Optional[Mapping[str, Any]],
+    workspace: Optional[Path],
+) -> None:
+    if not design_evidence or design_evidence.get("outcome") != "DESIGN_REMEDIATION_REQUIRED":
+        return
+    if workspace is None:
+        raise PlanningKernelError(
+            "DESIGN_REMEDIATION_REQUIRED plan has no managed workspace"
+        )
+    root = workspace.resolve()
+    for task in plan.get("tasks", []):
+        if not isinstance(task, Mapping) or task.get("run_type") != "FILE":
+            continue
+        payload = task.get("payload", {})
+        if not isinstance(payload, Mapping):
+            continue
+        action = payload.get("action")
+        if bool(task.get("mutating")) and action in {"write_file", "apply_patch"}:
+            return
+        if action == "read_file":
+            target = (root / str(payload.get("path", ""))).resolve()
+            if (target == root or root in target.parents) and target.is_file():
+                return
+    raise PlanningKernelError(
+        "DESIGN_REMEDIATION_REQUIRED plan must mutate bounded source or read an existing source path; "
+        "verification-only tasks are not remediation"
+    )
+
+
 def _assert_acyclic(tasks: Sequence[Mapping[str, Any]]) -> None:
     graph = {str(t["node_id"]): list(t.get("dependencies", [])) for t in tasks}
     visiting: set[str] = set()
@@ -2482,6 +2583,8 @@ def compile_execution_plan(
                             f"Task {task['node_id']} FILE read target does not exist: "
                             f"{task['payload'].get('path')}"
                         )
+                for task in normalized["tasks"]:
+                    _validate_process_workspace_inputs(task, workspace_root)
             duplicates = sorted(
                 task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
             )
@@ -2506,6 +2609,7 @@ def compile_execution_plan(
                 raise PlanningKernelError(
                     "Execution plan contains only generic environment readiness checks and does not advance product work"
                 )
+            _validate_design_remediation_plan(normalized, di_pre_evidence, workspace)
             resolver = CanonicalAuthorityResolver(situation)
             for task in normalized["tasks"]:
                 resolver.validate_task(task)
@@ -2642,18 +2746,36 @@ def _progress_fingerprint(
     receipt: Mapping[str, Any],
 ) -> str:
     """Fingerprint only accepted state that can constitute meaningful progress."""
-    evidence_ids = sorted(
-        str(value)
+    volatile_evidence_keys = {
+        "batch_number", "captured_at", "generated_at", "manifest_id", "run_id", "timestamp", "updated_at",
+        "visual_manifest_id",
+    }
+
+    def material_evidence(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                str(key): material_evidence(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+                if str(key) not in volatile_evidence_keys
+                and not str(key).endswith("_execution_id")
+                and not str(key).endswith("_evidence_id")
+            }
+        if isinstance(value, list):
+            return [material_evidence(item) for item in value]
+        return value
+
+    evidence_content = {
+        str(key): material_evidence(value)
         for key, value in receipt.items()
-        if (key.endswith("_execution_id") or key.endswith("_evidence_id")) and value
-    )
+        if str(key).endswith("_evidence") or str(key) == "evidence_payload"
+    }
     payload = {
         "canonical_revision": situation.control_sha,
         "repository_head": _repo_head(workspace),
         "working_tree_state": _working_tree_state(workspace),
         "completed_task_ids": sorted(set(completed_task_ids)),
         "completed_task_signatures": sorted(set(completed_signatures)),
-        "evidence_ids": evidence_ids,
+        "material_evidence": evidence_content,
         "candidate_id": receipt.get("candidate_id"),
         "promotion_state": receipt.get("promotion_state"),
     }

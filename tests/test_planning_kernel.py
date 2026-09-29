@@ -905,6 +905,150 @@ def test_plan_compiler_repairs_invented_python_script_path(tmp_path):
     assert backend.calls == 2
 
 
+def test_plan_compiler_rejects_nonexistent_playwright_spec_before_execution(tmp_path, monkeypatch):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"@playwright/test": "1.60.0"}}),
+        encoding="utf-8",
+    )
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {
+        "cmd": ["playwright", "test", "tests/visual/invented.spec.ts"],
+    }
+    backend = QueueBackend([invalid, _plan()])
+    monkeypatch.setattr(
+        "aos.planning_kernel.shutil.which",
+        lambda binary: f"/available/{binary}",
+    )
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"] == ["git", "diff", "--check"]
+    assert backend.calls == 2
+    assert "Playwright spec does not exist" in backend.requests[1].payload["prompt"]
+
+
+def test_playwright_binary_on_path_does_not_prove_test_runner_capability(tmp_path, monkeypatch):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"playwright": "1.60.0"}}),
+        encoding="utf-8",
+    )
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {
+        "cmd": ["playwright", "test", "tests/visual/real.spec.ts"],
+    }
+    (tmp_path / "tests" / "visual").mkdir(parents=True)
+    (tmp_path / "tests" / "visual" / "real.spec.ts").write_text("// test\n", encoding="utf-8")
+    backend = QueueBackend([invalid, _plan()])
+    monkeypatch.setattr(
+        "aos.planning_kernel.shutil.which",
+        lambda binary: f"/available/{binary}",
+    )
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert result["tasks"][0]["payload"]["cmd"][0] == "git"
+    assert backend.calls == 2
+    assert "does not declare @playwright/test" in backend.requests[1].payload["prompt"]
+
+
+def test_design_remediation_rejects_verification_only_process_plan(tmp_path):
+    plan = _validate_plan_shape(_plan(), Objective.from_dict(_objective()), _situation())
+    evidence = {"outcome": "DESIGN_REMEDIATION_REQUIRED"}
+
+    with pytest.raises(Exception, match="verification-only tasks are not remediation"):
+        planning_kernel._validate_design_remediation_plan(plan, evidence, tmp_path)
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+    source_plan = json.loads(json.dumps(plan))
+    source_plan["tasks"][0].update({
+        "run_type": "FILE",
+        "payload": {"action": "read_file", "path": "src/App.tsx"},
+    })
+    planning_kernel._validate_design_remediation_plan(source_plan, evidence, tmp_path)
+
+
+def test_rotating_design_ids_do_not_change_progress_fingerprint(tmp_path):
+    material = {
+        "outcome": "DESIGN_REMEDIATION_REQUIRED",
+        "remediation_findings": ["CTA contrast"],
+        "file_hashes": {"1440": "a" * 64},
+    }
+    first = {
+        "design_intelligence_execution_id": "loop-first",
+        "design_intelligence_evidence": {
+            **material,
+            "batch_number": 1,
+            "design_intelligence_execution_id": "loop-first",
+            "visual_manifest_id": "vis-first",
+            "captured_at": "2026-09-29T00:00:00+00:00",
+        },
+    }
+    second = {
+        "design_intelligence_execution_id": "loop-second",
+        "design_intelligence_evidence": {
+            **material,
+            "batch_number": 2,
+            "design_intelligence_execution_id": "loop-second",
+            "visual_manifest_id": "vis-second",
+            "captured_at": "2026-09-29T00:01:00+00:00",
+        },
+    }
+
+    first_fingerprint = planning_kernel._progress_fingerprint(
+        _situation(), tmp_path, [], [], first,
+    )
+    second_fingerprint = planning_kernel._progress_fingerprint(
+        _situation(), tmp_path, [], [], second,
+    )
+
+    assert first_fingerprint == second_fingerprint
+
+
+def test_vite_index_is_not_accepted_as_static_render_evidence(tmp_path):
+    from aos.design_render_entry import resolve_render_entry
+
+    (tmp_path / "index.html").write_text(
+        '<div id="root"></div><script type="module" src="/index.tsx"></script>',
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"dev": "vite"}, "devDependencies": {"vite": "7.0.0"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="loopback HTTP evidence"):
+        resolve_render_entry(tmp_path)
+
+
+def test_bounded_static_html_discovery_remains_supported(tmp_path):
+    from aos.design_render_entry import resolve_render_entry
+
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><h1>Static</h1></body></html>",
+        encoding="utf-8",
+    )
+
+    entry = resolve_render_entry(tmp_path)
+
+    assert entry.source == "BOUNDED_STATIC_DISCOVERY"
+    assert entry.entrypoint == (tmp_path / "index.html").resolve()
+
+
 def test_plan_compiler_rejects_and_repairs_duplicate_completed_task_identity(tmp_path):
     duplicate = _plan()
     corrected = _plan()
@@ -1777,14 +1921,14 @@ def test_design_intelligence_execution_for_ui_planning_lane(tmp_path):
                 "tasks": [
                     {
                         "node_id": "ui-task-1",
-                        "run_type": "PROCESS",
+                        "run_type": "FILE",
                         "authority_id": "DECISION-020",
                         "risk_class": "R0",
                         "mutating": False,
                         "dependencies": [],
                         "scope_tags": ["ui"],
                         "write_scope": [],
-                        "payload": {"cmd": ["python", "script.py"]},
+                        "payload": {"action": "read_file", "path": "index.html"},
                         "expected_artifacts": [],
                         "tests": ["test ui"],
                         "evidence_requirements": ["evidence"],
