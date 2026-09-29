@@ -12,6 +12,7 @@ from aos.action_center import (
 from aos.controller_relay import ControllerRelayPublisher
 from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
 from aos.runtime_store import RuntimeStore, atomic_json
+from aos.recovery_proof import RecoveryProofStore
 from extensions.autonomy_fabric.execution_backend import (
     EvidenceClass,
     ExecutionCapability,
@@ -358,6 +359,19 @@ def test_e2e_10_to_12_action_freshness_and_provenance(tmp_path):
         "extensions": {"action_id": action_id, "command_id": command_id},
     }
 
+    proof = RecoveryProofStore(store.runtime_root).issue(
+        command_id=command_id,
+        project_id="lari",
+        canonical_revision=BASE_SHA,
+        runtime_source_sha=BASE_SHA,
+        root_cause="DECISION_REQUIRED",
+        evidence={"decision": "ACCEPTED", "checkpoint_batch": 528},
+        authority="HUMAN_OWNER",
+        expires_at="2099-01-01T00:00:00+00:00",
+        recovery_fingerprint="e2e-action-freshness",
+    )
+    payload["extensions"]["recovery_proof_id"] = proof["proof_id"]
+
     with pytest.raises(PermissionError, match="provenance must be PROVEN"):
         validate_and_process_control_request(payload, engine, store, BASE_SHA)
 
@@ -371,6 +385,7 @@ def test_e2e_10_to_12_action_freshness_and_provenance(tmp_path):
     assert accepted["status"] == "ACCEPTED"
     state = store.read_state(command_id)
     assert state["state"] == "QUEUED"
+    assert state["disposition"] == "PROOF_BOUND_RECOVERY_AUTHORIZATION_GRANTED"
     assert state["completed_batch_count"] == 528
 
 

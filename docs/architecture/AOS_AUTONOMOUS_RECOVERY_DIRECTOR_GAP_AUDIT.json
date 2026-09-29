@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0.0",
+  "as_of": "2026-09-29",
+  "audit_base_sha": "5ce59e16be1490ac2c56fc92bdf9fcdfc16f1bec",
+  "work_branch": "feature/aos-autonomous-recovery-director-20260929-01",
+  "scope": "SOURCE_ONLY_NO_LIVE_MUTATION",
+  "planes": {
+    "product_execution": {
+      "authority": "durable command plus command-scoped admission plus global maintenance",
+      "states": ["ACTIVE", "HOLD", "SUPERSEDED"],
+      "missing_admission_record": "HOLD"
+    },
+    "platform_recovery": {
+      "work_unit": "SYSTEM_REPAIR_JOB",
+      "product_command": false,
+      "finite_dispositions": [
+        "REPAIRED_VERIFIED",
+        "NO_REPAIR_REQUIRED",
+        "PROMOTION_READY",
+        "WAITING_FOR_RESOURCE",
+        "HUMAN_REQUIRED",
+        "UNSAFE_TO_REPAIR",
+        "FAILED_VERIFICATION"
+      ]
+    },
+    "promotion": {
+      "separate_authority": true,
+      "platform_self_promotion": false,
+      "production": "NO_GO"
+    }
+  },
+  "audited_subsystems": [
+    "Runtime V1 server/store/worker/maintenance/recovery/client/CLI/panel bridge",
+    "supervisor/slots/candidate/deploy/rollback/provenance",
+    "planning kernel/autonomous host/Task DAG/PersistentCoordinator",
+    "ExecutionRouter/ResourceOrchestrator/ResourceLedger/QuotaGovernor",
+    "provider registry/circuits/observations/probes",
+    "Antigravity/Codex CLI/Cline/planning bridge continuity",
+    "Qwen llama.cpp backend and lifecycle",
+    "FreeLLMAPI adapter and lifecycle",
+    "self diagnosis/self repair/integrity reconciler/Action Center/Controller Relay",
+    "Design Intelligence/browser capture/visual QA",
+    "Deliberation Council",
+    "architecture/current-truth/certification artifacts and tests"
+  ],
+  "discovered_gaps": [
+    {
+      "id": "ARD-001",
+      "severity": "CRITICAL",
+      "gap": "Global resume recovered every unfinished command and provider wake/probe loops included held lineages.",
+      "source_status": "CORRECTED_AND_FOCUSED_TESTED"
+    },
+    {
+      "id": "ARD-002",
+      "severity": "CRITICAL",
+      "gap": "Action Center could convert terminal HUMAN_REQUIRED directly to QUEUED without bounded recovery proof.",
+      "source_status": "CORRECTED_PROOF_BOUND"
+    },
+    {
+      "id": "ARD-003",
+      "severity": "HIGH",
+      "gap": "Self repair claimed APPLIED from labels without an actuator or observed postcondition.",
+      "source_status": "CORRECTED_ACTUATOR_AND_POSTCONDITION_REQUIRED"
+    },
+    {
+      "id": "ARD-004",
+      "severity": "HIGH",
+      "gap": "Self-repair mode was process-local and the panel recreated the engine at a hard-coded checkout path.",
+      "source_status": "CORRECTED_DURABLE_MODE_AND_CONFIGURED_ROOT"
+    },
+    {
+      "id": "ARD-005",
+      "severity": "HIGH",
+      "gap": "Historical aos-maintenance product commands were the only modeled self-maintenance vehicle.",
+      "source_status": "REPLACED_IN_SOURCE_BY_PLATFORM_RECOVERY_COORDINATOR"
+    },
+    {
+      "id": "ARD-006",
+      "severity": "HIGH",
+      "gap": "FreeLLMAPI routing instantiated an adapter but did not own on-demand start, bounded restart, or shutdown.",
+      "source_status": "CORRECTED_MANAGED_LIFECYCLE_OWNERSHIP"
+    },
+    {
+      "id": "ARD-007",
+      "severity": "MEDIUM",
+      "gap": "Resource selection primarily used backend constants and class-local availability rather than a provider-neutral authoritative snapshot.",
+      "source_status": "SNAPSHOT_CONTRACT_IMPLEMENTED_UNKNOWN_PRESERVED"
+    },
+    {
+      "id": "ARD-008",
+      "severity": "MEDIUM",
+      "gap": "UI visual proof assumed workspace-root index.html and post-stage absence was not always explicit evidence.",
+      "source_status": "PROJECT_RENDER_CONTRACT_AND_TYPED_UNAVAILABLE_EVIDENCE_IMPLEMENTED"
+    },
+    {
+      "id": "ARD-009",
+      "severity": "MEDIUM",
+      "gap": "Current-truth and certification documents still described the 5de4 integration era.",
+      "source_status": "RECONCILED_FOR_5CE_BOOTSTRAP_BRANCH"
+    }
+  ],
+  "existing_capabilities_verified_in_source": {
+    "qwen": "ON_DEMAND_LOOPBACK_CPU_BOUNDED_AND_ATTESTATION_GATED",
+    "agentic_continuity": "WORKSPACE_SOURCE_CHECKPOINT_ARTIFACT_AND_SUPERSEDED_SESSION_BOUND",
+    "candidate_promotion": "SEPARATE_FROM_SOURCE_AND_CANDIDATE_MATERIALIZATION",
+    "council": "ADVISORY_ONLY_NO_MUTATION_AUTHORITY",
+    "paid_fallback": "DISABLED"
+  },
+  "remaining_gates": [
+    "Hosted exact-SHA CI has not run for this branch.",
+    "No immutable candidate has been materialized from this branch.",
+    "No live runtime promotion or protected command admission has occurred.",
+    "Source repair requires a configured bounded executor; absence yields WAITING_FOR_RESOURCE.",
+    "Current-machine Qwen, FreeLLMAPI, agentic, and browser availability remains UNKNOWN until separately attested.",
+    "ResourceLedger and QuotaGovernor retain provider-oriented event semantics; the snapshot unifies decision truth without fabricating missing measurements."
+  ],
+  "live_boundary": {
+    "live_runtime_mutated": false,
+    "protected_commands_mutated": false,
+    "providers_invoked": false,
+    "paid_api_calls": 0,
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED"
+  }
+}

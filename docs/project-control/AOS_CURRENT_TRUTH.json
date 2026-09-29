@@ -1,48 +1,61 @@
 {
   "schema_version": "1.0.0",
-  "as_of": "2026-09-28",
-  "base_operations_branch": "feature/aos-resource-os-operations-20260924-01",
-  "base_operations_sha": "5de4adb1b840f28a9c74a23054e2a8bda8e86a08",
-  "work_branch": "fix/aos-e2e-architecture-reconciliation-20260928-01",
+  "as_of": "2026-09-29",
+  "operations_branch": "feature/aos-resource-os-operations-20260924-01",
+  "operations_source_sha": "5ce59e16be1490ac2c56fc92bdf9fcdfc16f1bec",
+  "work_branch": "feature/aos-autonomous-recovery-director-20260929-01",
+  "implementation_identity": "WORK_BRANCH_GIT_HEAD",
   "production": "NO_GO",
   "paid_fallback": "DISABLED",
-  "current_lari_control_ref": "control/lari-project-control-plane",
-  "current_lari_control_sha": "9ec158f7d5c52ee65f9ecad36b76c78a99e9c1d2",
-  "lari_control_mutated": false,
-  "protected_commands_mutated": false,
-  "live_runtime_mutated": false,
-  "current_source_truth": {
-    "antigravity": "REGISTERED_GATED_ATTEMPT_TELEMETRY_SOURCE_TESTED_CURRENT_OPERATION_UNKNOWN",
-    "agentic_planning_bridge": "CRITICAL_PATH_REACHABLE_UNDERLYING_ATTEMPT_TELEMETRY_SOURCE_TESTED",
-    "codex_cli": "REGISTERED_GENERIC_ATTEMPT_TELEMETRY_SOURCE_TESTED_CURRENT_OPERATION_UNKNOWN",
-    "cline": "REGISTERED_GENERIC_ATTEMPT_TELEMETRY_SOURCE_TESTED_CURRENT_SUCCESS_UNKNOWN",
-    "qwen": "CRITICAL_PATH_REACHABLE_HISTORICAL_LIFECYCLE_PROOF_CURRENT_OPERATION_UNKNOWN",
-    "freellmapi": "SOURCE_AND_LIFECYCLE_TESTED_MANAGED_SERVICE_UNAVAILABLE_OR_UNKNOWN",
-    "design_intelligence": "PARTIAL_CRITICAL_PATH_CURRENT_PROTECTED_EXECUTION_UNKNOWN",
-    "integrity_reconciler": "INDEPENDENT_EXECUTION_ID_PARTITION_SOURCE_TESTED_NOT_LIVE_PROMOTED",
-    "maintenance_convergence": "SOURCE_TESTED_NOT_LIVE_PROMOTED"
+  "live_runtime": {
+    "source_sha": "5ce59e16be1490ac2c56fc92bdf9fcdfc16f1bec",
+    "slot": "candidate-runtime-v1.8-5ce59e16be14",
+    "health": "HEALTHY_AT_TASK_BASELINE",
+    "global_maintenance": "PAUSED_SAFE_AT_TASK_BASELINE",
+    "mutated_by_bootstrap": false
   },
-  "confirmed_repairs": [
-    "GENERIC_CURRENT_LINEAGE_HUMAN_REQUIRED_AGGREGATION",
-    "ACTION_FRESHNESS_AND_PROVENANCE",
-    "DURABLE_ACCEPTED_WORK_DEDUPE",
-    "LOST_ACCEPTED_WORK_DETECTION",
-    "CROSS_LANE_WRITE_SCOPE_PREVENTION",
-    "GENERIC_PER_ATTEMPT_AGENTIC_TELEMETRY_TRUTH",
-    "INDEPENDENT_OUTCOME_PARTITION",
-    "REPLAN_NOOP_BOUNDED_TECHNICAL_HOLD",
-    "RELAY_WRITER_PRIORITY"
-  ],
+  "architecture_evolution": {
+    "historical_maintenance_lane": "RETAINED_AS_HISTORY_NOT_RESUMED",
+    "replacement": "PLATFORM_RECOVERY_COORDINATOR_SYSTEM_REPAIR_JOB",
+    "planes": ["PRODUCT_EXECUTION", "PLATFORM_RECOVERY", "PROMOTION"],
+    "self_promotion": "FORBIDDEN"
+  },
+  "source_status": {
+    "selective_command_admission": "IMPLEMENTED_AND_FOCUSED_TESTED",
+    "proof_bound_terminal_recovery": "IMPLEMENTED_AND_FOCUSED_TESTED",
+    "platform_recovery_coordinator": "IMPLEMENTED_AND_FOCUSED_TESTED",
+    "real_self_repair_actuators": "ACTUATOR_AND_POSTCONDITION_CONTRACT_IMPLEMENTED_RESOURCE_REPROBE_WIRED",
+    "self_repair_mode": "DURABLE_SHADOW_GOVERNED_OR_BOUNDED_LIVE",
+    "resource_snapshot": "IMPLEMENTED_UNKNOWN_PRESERVED",
+    "qwen": "EXISTING_ON_DEMAND_ATTESTATION_GATED_CURRENT_MACHINE_OPERATION_UNKNOWN",
+    "freellmapi": "MANAGED_START_RESTART_SHUTDOWN_WIRED_CURRENT_MACHINE_OPERATION_UNKNOWN",
+    "agentic_backends": "CONTINUITY_CONTRACT_EXISTING_CURRENT_CAPACITY_UNKNOWN",
+    "design_intelligence": "PROJECT_RENDER_ENTRY_WIRED_REAL_BROWSER_PROOF_STILL_REQUIRED",
+    "council": "ADVISORY_ONLY_NO_MUTATION_AUTHORITY"
+  },
+  "gate_status": {
+    "source_implemented": true,
+    "focused_tests": "251_PASSED_ACROSS_ARCHITECTURE_AND_PANEL_ROUTER_SUITES",
+    "full_offline_tests": "1132_PASSED_8_SKIPPED_26_DESELECTED",
+    "hosted_exact_sha_ci": "NOT_RUN_FOR_WORK_BRANCH",
+    "candidate_materialized": false,
+    "runtime_wired": false,
+    "live_promoted": false,
+    "real_live_execution_proven": false
+  },
+  "protected_lineages": {
+    "lari": "HUMAN_REQUIRED_RECOVERY_CHURN_GUARD_UNCHANGED",
+    "lari_ui_v2": "WAITING_FOR_REASONING_PROVIDER_WAITING_FOR_RESOURCE_UNCHANGED",
+    "historical_maintenance": "HISTORICAL_NOT_RESUMED",
+    "forbidden_historical": "UNCHANGED_NOT_EXECUTED"
+  },
   "certification": {
-    "pass": 15,
-    "partial": 9,
-    "not_yet_executable": 0,
-    "focused_tests": "CONTROLLER_CORRECTION_104_PASSED",
-    "full_pytest": "1113_PASSED_8_SKIPPED_26_DESELECTED",
-    "schema_validation": "PASS",
-    "diff_check": "PASS",
-    "hosted_ci": "NOT_TRIGGERED_FIX_BRANCH_FILTER"
+    "e2e_pass": 15,
+    "e2e_partial": 9,
+    "e2e_not_yet_executable": 0,
+    "schema_validation": "PASS_STATE_EVIDENCE_AND_NEW_CONTRACT_SCHEMAS",
+    "diff_check": "PASS"
   },
-  "final_state": "CONTROLLER_REVIEW_READY_CI_NOT_TRIGGERED",
+  "final_state": "CONTROLLER_REVIEW_REQUIRED",
   "independent_controller_review_required": true
 }
