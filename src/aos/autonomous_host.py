@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from aos.process_utils import run_headless
 from aos.read_identity import build_workspace_source_generation
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
+from aos.freellmapi_lifecycle import FreeLLMAPIConfig, FreeLLMAPILifecycle
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_observation import (
@@ -253,6 +255,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         resource_ledger: Optional[ResourceLedger] = None,
     ) -> None:
         self.provider_router = provider_router
+        self._freellmapi_lifecycle: Optional[FreeLLMAPILifecycle] = None
         self.provider_factory = provider_factory or self._default_provider_factory
         self.attempt_journal = attempt_journal
         if circuit_registry is None and attempt_journal is not None:
@@ -282,12 +285,22 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             entry = self.provider_router.registry.get_provider(provider_id)
             if entry is None:
                 raise PlannerContractError("freellmapi_local registry entry is missing")
+            if self._freellmapi_lifecycle is None:
+                parsed_port = int(
+                    urllib.parse.urlparse(
+                        entry.base_url or "http://127.0.0.1:3000/v1"
+                    ).port or 3000
+                )
+                self._freellmapi_lifecycle = FreeLLMAPILifecycle(
+                    FreeLLMAPIConfig(port=parsed_port)
+                )
             return FreeLLMAPILocalPlannerProvider(
                 model=entry.model_id,
                 base_url=entry.base_url or "http://127.0.0.1:3000/v1",
                 credential_env_var=entry.credential_env_var or "FREELLMAPI_LOCAL_API_KEY",
                 max_output_tokens=entry.max_output_tokens or 2200,
                 readiness_timeout_seconds=entry.readiness_timeout_seconds or 1.5,
+                lifecycle_manager=self._freellmapi_lifecycle,
             )
 
         factory = _PROVIDER_FACTORIES.get(provider_id)
@@ -310,6 +323,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 )
 
         raise PlannerContractError(f"No executable provider adapter registered for '{provider_id}'")
+
+    def close(self) -> None:
+        if self._freellmapi_lifecycle is not None:
+            self._freellmapi_lifecycle.stop()
 
 
     def get_health(self) -> ExecutionHealth:
@@ -968,7 +985,10 @@ def run_host(
         integrity_reconciler=integrity,
         command_lineage=lineage,
     )
-    state = coordinator.run_until_complete(max_iterations=max_iterations)
+    try:
+        state = coordinator.run_until_complete(max_iterations=max_iterations)
+    finally:
+        router.close()
     ag_backend = router.get_backend("antigravity")
     ag_availability = (
         ag_backend.get_availability().state.value

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/recovery_proof.schema.json",
+  "title": "AOS Proof-Bound Terminal Recovery",
+  "type": "object",
+  "required": [
+    "contract_version", "proof_id", "command_id", "project_id",
+    "canonical_revision", "runtime_source_sha", "root_cause", "evidence",
+    "evidence_sha256", "authority", "issued_at", "expires_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {"const": "1.0.0"},
+    "proof_id": {"type": "string", "pattern": "^recovery-[0-9a-f]{32}$"},
+    "command_id": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "minLength": 1},
+    "canonical_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "runtime_source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "root_cause": {"type": "string", "minLength": 1},
+    "evidence": {"type": "object", "minProperties": 1},
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "authority": {"type": "string", "minLength": 1},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "repair_identity": {"type": ["string", "null"]},
+    "candidate_identity": {"type": ["string", "null"]},
+    "recovery_fingerprint": {"type": ["string", "null"]},
+    "accepted_at": {"type": "string", "format": "date-time"},
+    "accepted_by": {"type": "string", "minLength": 1}
+  }
+}

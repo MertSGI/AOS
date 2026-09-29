@@ -29,7 +29,7 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
@@ -41,6 +41,7 @@ from aos.self_diagnosis import (
     STATUS_HUMAN_REQUIRED,
     STATUS_OBSERVED,
     STATUS_RESOLVED_WITHOUT_REPAIR,
+    STATUS_REPAIRED_VERIFIED,
     STATUS_SHADOW_REPAIR_PROPOSED,
     STATUS_SUPPRESSED_DUPLICATE,
     SelfDiagnosisEngine,
@@ -149,6 +150,52 @@ class RepairExecutionRecord:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class RepairActuationResult:
+    """Evidence returned by a concrete bounded repair actuator."""
+
+    operation_performed: bool
+    postcondition_verified: bool
+    operation: str
+    evidence: Dict[str, Any]
+    rollback_reference: Optional[str] = None
+
+
+RepairActuator = Callable[[Dict[str, Any], Dict[str, Any]], RepairActuationResult]
+
+
+class ResourceReprobeActuator:
+    """Concrete bounded actuator for an authenticated Resource OS reprobe."""
+
+    def __init__(self, runtime_client: Any) -> None:
+        self.runtime_client = runtime_client
+
+    def __call__(
+        self, finding: Dict[str, Any], proposal: Dict[str, Any]
+    ) -> RepairActuationResult:
+        before = self.runtime_client.status()
+        operation = self.runtime_client.reprobe_resources()
+        after = self.runtime_client.status()
+        before_count = int(before.get("provider_probe_count", 0) or 0)
+        after_count = int(after.get("provider_probe_count", 0) or 0)
+        healthy = list(after.get("healthy_reasoning_providers") or [])
+        performed = operation.get("status") == "RESOURCE_REPROBE_COMPLETED"
+        verified = performed and (after_count > before_count or bool(healthy))
+        return RepairActuationResult(
+            operation_performed=performed,
+            postcondition_verified=verified,
+            operation="AUTHENTICATED_RESOURCE_REPROBE",
+            evidence={
+                "finding_id": finding.get("finding_id"),
+                "probe_count_before": before_count,
+                "probe_count_after": after_count,
+                "healthy_provider_count": len(healthy),
+                "secrets_exposed": False,
+            },
+            rollback_reference="NO_PERSISTENT_CONFIGURATION_MUTATION",
+        )
+
+
 class BoundedSelfRepairEngine:
     """Bounded Safe Autonomous Live Self-Repair Engine."""
 
@@ -161,9 +208,12 @@ class BoundedSelfRepairEngine:
         self.repair_root = repair_root.expanduser().resolve()
         self.repair_root.mkdir(parents=True, exist_ok=True)
         self.history_file = self.repair_root / "repair-history.json"
+        self.mode_file = self.repair_root / "repair-mode.json"
         self.diag_engine = diagnosis_engine
         self.config = config or {}
-        self.live_active = False  # Bounded execution toggle; defaults to Safe Mode
+        persisted_mode = read_json(self.mode_file, {})
+        self.live_active = persisted_mode.get("mode") == "BOUNDED_LIVE"
+        self._actuators: Dict[str, RepairActuator] = {}
         self._history: Dict[str, Dict[str, Any]] = self._load_history()
 
     def _load_history(self) -> Dict[str, Dict[str, Any]]:
@@ -173,7 +223,19 @@ class BoundedSelfRepairEngine:
         atomic_json(self.history_file, self._history)
 
     def set_live_mode(self, enabled: bool) -> None:
-        self.live_active = enabled
+        self.live_active = bool(enabled)
+        atomic_json(self.mode_file, {
+            "contract_version": CONTRACT_VERSION,
+            "mode": "BOUNDED_LIVE" if self.live_active else "SHADOW_GOVERNED",
+            "updated_at": utc_now(),
+        })
+
+    def register_actuator(self, failure_class: str, actuator: RepairActuator) -> None:
+        """Register a narrow actuator; arbitrary shell repair is never accepted."""
+        key = str(failure_class).strip().upper()
+        if not key:
+            raise ValueError("failure_class is required")
+        self._actuators[key] = actuator
 
     def get_repair_record(self, repair_id: str) -> Optional[Dict[str, Any]]:
         return self._history.get(repair_id)
@@ -244,40 +306,42 @@ class BoundedSelfRepairEngine:
             self._save_history()
             return False, "PREPARED_SHADOW_ONLY", record.to_dict()
 
-        # Execute Safe Technical Repair in Bounded Steps
-        # 1. Isolate Candidate & Validation
-        stage = STAGE_ISOLATED_CANDIDATE
-        val_status = "PASSED"
-        smoke_status = "PASSED"
-
-        # Safe technical defect handling: e.g. provider backoff reset, state reconciliation, telemetry repair
-        if f_class in ("PROVIDER_TRANSIENT_FAILURE", "PROVIDER_ALL_UNAVAILABLE"):
-            val_status = "CIRCUIT_PROBE_SCHEDULED"
-            smoke_status = "VERIFIED"
-            stage = STAGE_ACTIVATED
-            res_status = "APPLIED"
-            post_evidence = "CIRCUIT_PROBE_SCHEDULED"
-
-        elif f_class == "NO_FORWARD_PROGRESS":
-            val_status = "TELEMETRY_REFRESHED"
-            smoke_status = "VERIFIED"
-            stage = STAGE_ACTIVATED
-            res_status = "APPLIED"
-            post_evidence = "TELEMETRY_REFRESHED"
-
+        actuator = self._actuators.get(str(f_class).upper())
+        if actuator is None:
+            actuation = RepairActuationResult(
+                operation_performed=False,
+                postcondition_verified=False,
+                operation="NONE",
+                evidence={"reason": "NO_REGISTERED_BOUNDED_ACTUATOR"},
+            )
         else:
-            val_status = "FOCUSED_VALIDATION_PASSED"
-            smoke_status = "VERIFIED"
-            stage = STAGE_ACTIVATED
-            res_status = "APPLIED"
-            post_evidence = "STATE_CONSISTENT"
+            try:
+                actuation = actuator(finding, proposed)
+            except Exception as exc:
+                actuation = RepairActuationResult(
+                    operation_performed=False,
+                    postcondition_verified=False,
+                    operation="ACTUATOR_EXCEPTION",
+                    evidence={"error_class": exc.__class__.__name__, "message": str(exc)[:500]},
+                )
 
-        # Record Completion
+        applied = bool(
+            actuation.operation_performed
+            and actuation.postcondition_verified
+            and actuation.evidence
+        )
+        stage = STAGE_ACTIVATED if applied else STAGE_VALIDATION
+        val_status = "POSTCONDITION_VERIFIED" if applied else "FAILED_VERIFICATION"
+        smoke_status = "VERIFIED" if applied else "NOT_PROVEN"
         res_data = {
-            "status": res_status,
-            "remediation": proposed.get("minimal_change", "Safe technical adjustment applied"),
-            "post_repair_evidence": post_evidence,
-            "applied_at": utc_now(),
+            "status": "APPLIED" if applied else "NOT_APPLIED",
+            "remediation": proposed.get("minimal_change", "Bounded technical repair"),
+            "operation": actuation.operation,
+            "operation_performed": actuation.operation_performed,
+            "postcondition_verified": actuation.postcondition_verified,
+            "post_repair_evidence": actuation.evidence,
+            "rollback_reference": actuation.rollback_reference,
+            "applied_at": utc_now() if applied else None,
         }
 
         record = RepairExecutionRecord(
@@ -295,13 +359,17 @@ class BoundedSelfRepairEngine:
         self._history[repair_id] = record.to_dict()
         self._save_history()
 
-        # Update finding status in diagnosis engine
-        self.diag_engine.record_resolution(
-            finding_id=finding_id,
-            evidence=f"Autonomous self-repair applied via {repair_id}",
-        )
+        if applied:
+            self.diag_engine.record_resolution(
+                finding_id=finding_id,
+                evidence=(
+                    f"Autonomous self-repair applied via {repair_id}; "
+                    f"postcondition evidence={json.dumps(actuation.evidence, sort_keys=True)}"
+                ),
+                resolution_status=STATUS_REPAIRED_VERIFIED,
+            )
 
-        return True, stage, record.to_dict()
+        return applied, stage if applied else "FAILED_VERIFICATION", record.to_dict()
 
     def summarize_cockpit(self) -> Dict[str, Any]:
         """Summarize current Self-Repair Cockpit status."""

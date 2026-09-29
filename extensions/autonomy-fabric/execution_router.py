@@ -93,6 +93,13 @@ class ExecutionRouter:
     def list_backends(self) -> List[ExecutionBackend]:
         return list(self._backends.values())
 
+    def close(self) -> None:
+        """Release only resources explicitly owned by registered backends."""
+        for backend in self._backends.values():
+            close = getattr(backend, "close", None)
+            if callable(close):
+                close()
+
     def select_backend(self, request: ExecutionRequest) -> Optional[ExecutionBackend]:
         """Selects the best eligible backend satisfying capabilities and authority.
 

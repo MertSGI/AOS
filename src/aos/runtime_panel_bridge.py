@@ -22,6 +22,11 @@ def _client(config: Dict[str, Any]) -> RuntimeClient:
     return RuntimeClient(base_url, Path(token_path))
 
 
+def runtime_client(config: Dict[str, Any]) -> RuntimeClient:
+    """Return the authenticated loopback client for bounded panel actuators."""
+    return _client(config)
+
+
 def runtime_status(config: Dict[str, Any]) -> Dict[str, Any]:
     if not runtime_configured(config):
         return {
@@ -117,6 +122,35 @@ def execute_command_on_runtime(command_name: str, payload: Dict[str, Any], confi
         return client.pause_safe()
     if cmd == "resume":
         return client.resume()
+    if cmd == "resume-selected":
+        command_ids = payload.get("command_ids")
+        if not isinstance(command_ids, list):
+            raise ValueError("command_ids must be a list")
+        return client.resume_selected(
+            [str(item) for item in command_ids],
+            reason=str(payload.get("reason") or "PANEL_SELECTED_RESUME"),
+        )
+    if cmd == "hold":
+        cid = payload.get("command_id")
+        if not cid:
+            raise ValueError("command_id is required for hold")
+        return client.hold_command(
+            str(cid), reason=str(payload.get("reason") or "PANEL_COMMAND_HOLD")
+        )
+    if cmd == "supersede":
+        cid = payload.get("command_id")
+        if not cid:
+            raise ValueError("command_id is required for supersede")
+        return client.supersede_command(
+            str(cid), reason=str(payload.get("reason") or "PANEL_COMMAND_SUPERSEDE")
+        )
+    if cmd == "accept-recovery-proof":
+        proof_id = payload.get("proof_id")
+        if not proof_id:
+            raise ValueError("proof_id is required")
+        return client.accept_recovery_proof(str(proof_id))
+    if cmd == "reprobe-resources":
+        return client.reprobe_resources()
     if cmd == "quiesce":
         return client.quiesce(float(payload.get("timeout_seconds", 10.0)))
     if cmd == "shutdown":

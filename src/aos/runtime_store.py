@@ -125,6 +125,16 @@ class RuntimeStore:
                 "ag_invocation_count": 0,
             })
             atomic_json(root / "event-seq.json", {"next_seq": 1})
+        # A newly authenticated command is explicitly admitted. Commands that
+        # predate this registry have no record and therefore still fail closed
+        # to HOLD during recovery.
+        from aos.runtime_admission import AdmissionState, CommandAdmissionStore
+        CommandAdmissionStore(self.runtime_root).set_state(
+            command_id,
+            AdmissionState.ACTIVE,
+            authority="COMMAND_CREATION",
+            reason="NEW_COMMAND_EXPLICIT_ADMISSION",
+        )
         self.append_event(command_id, "command.accepted", {
             "project_id": command["project"]["project_id"],
             "goal": command["goal"],

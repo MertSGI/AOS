@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 
+from aos.resource_snapshot import ResourceSnapshotStore
+
 from extensions.autonomy_fabric.execution_backend import (
     BackendClass, ExecutionAvailabilityState, ExecutionBackend, ExecutionCost, ExecutionHealth,
     ExecutionRequest,
@@ -29,7 +31,16 @@ class ResourceOrchestrator:
         ExecutionCost.PAID_CLOUD: 1000,
     }
 
+    def __init__(self, snapshot_store: Optional[ResourceSnapshotStore] = None) -> None:
+        self.snapshot_store = snapshot_store
+
     def rank(self, backends: Iterable[ExecutionBackend], request: ExecutionRequest) -> List[ResourceRank]:
+        backend_list = list(backends)
+        snapshots = (
+            self.snapshot_store.observe_and_record(backend_list)
+            if self.snapshot_store is not None
+            else {}
+        )
         required = set(request.required_capabilities)
         requirements = request.payload.get("resource_requirements", {})
         requirements = requirements if isinstance(requirements, dict) else {}
@@ -42,7 +53,7 @@ class ResourceOrchestrator:
         scarcity_policy = str(requirements.get("scarcity_policy", "ALLOW_SCARCE")).upper()
 
         ranked: List[ResourceRank] = []
-        for backend in backends:
+        for backend in backend_list:
             reasons: list[str] = []
             eligible = True
             if not required.issubset(backend.supported_capabilities):
@@ -67,6 +78,17 @@ class ResourceOrchestrator:
                 elif availability.state == ExecutionAvailabilityState.LOW_OR_SCARCE and scarcity_policy == "AVOID_SCARCE":
                     eligible = False
                     reasons.append("SCARCITY_POLICY_AVOIDED")
+            snapshot = snapshots.get(backend.backend_id)
+            if snapshot is not None:
+                if snapshot.health in {"UNAVAILABLE", "QUOTA_EXHAUSTED", "UNKNOWN"}:
+                    eligible = False
+                    reasons.append(f"SNAPSHOT_HEALTH_{snapshot.health}")
+                if snapshot.credential_status == "UNAVAILABLE":
+                    eligible = False
+                    reasons.append("SNAPSHOT_CREDENTIAL_UNAVAILABLE")
+                if snapshot.local_service_status == "UNAVAILABLE":
+                    eligible = False
+                    reasons.append("SNAPSHOT_LOCAL_SERVICE_UNAVAILABLE")
 
             # Local Qwen envelope check
             is_local_qwen = "qwen" in backend.backend_id.lower() or (

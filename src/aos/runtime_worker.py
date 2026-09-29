@@ -35,6 +35,7 @@ from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
 from aos.provider_circuit import ProviderCircuitBreakerRegistry
 from aos.runtime_maintenance import is_paused
+from aos.runtime_admission import CommandAdmissionStore
 from aos.provider_observation import canonical_failure_family
 from aos.read_identity import build_workspace_source_generation
 from aos.runtime_assets import resolve_active_runtime_artifact
@@ -368,6 +369,45 @@ def _pause_safe_cycle_result(
     return result
 
 
+def _admission_hold_cycle_result(
+    store: RuntimeStore,
+    command_id: str,
+    *,
+    cycle: int,
+) -> Dict[str, Any]:
+    """Stop at a durable cycle boundary when command admission is not ACTIVE."""
+    admission = CommandAdmissionStore(store.runtime_root).get(command_id)
+    state = store.read_state(command_id)
+    result = RuntimeResult(
+        command_id=command_id,
+        state="TECHNICAL_HOLD",
+        disposition="COMMAND_ADMISSION_HOLD",
+        completed_batch_count=int(state.get("completed_batch_count", 0) or 0),
+        canonical_source_sha=state.get("canonical_source_sha"),
+        canonical_execution_base_sha=state.get("canonical_execution_base_sha"),
+        receipt={
+            "reason": admission.reason,
+            "admission_state": admission.state,
+            "legacy_missing_record": admission.legacy_missing_record,
+            "cycle_boundary": int(cycle),
+        },
+    ).to_dict()
+    store.write_result(command_id, result)
+    store.write_state(
+        command_id,
+        state="TECHNICAL_HOLD",
+        disposition="COMMAND_ADMISSION_HOLD",
+        worker_pid=None,
+    )
+    store.append_event(command_id, "runtime.worker_admission_held", {
+        "cycle": int(cycle),
+        "admission_state": admission.state,
+        "reason": admission.reason,
+        "lineage_preserved": True,
+    })
+    return result
+
+
 def _safe_exception_message(exc: BaseException) -> str:
     return redact_secrets(str(exc))[:1500]
 
@@ -409,6 +449,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
     raw = store.read_command(command_id)
     if not raw:
         raise ValueError(f"Command not found: {command_id}")
+    if not CommandAdmissionStore(runtime_root).is_active(command_id):
+        return _admission_hold_cycle_result(store, command_id, cycle=0)
     command = ContinueProjectCommand.from_mapping(raw)
     command_root = store.command_dir(command_id)
     project_runtime = command_root / "project-runtime"
@@ -480,6 +522,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             watcher = PlanningArtifactWatcher(store, command_id, project_runtime, stop)
             watcher.start()
             while True:
+                if not CommandAdmissionStore(runtime_root).is_active(command_id):
+                    return _admission_hold_cycle_result(store, command_id, cycle=cycle)
                 if is_paused(runtime_root):
                     return _pause_safe_cycle_result(
                         store,
@@ -576,6 +620,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     # An already in-flight cycle may finish after PAUSED_SAFE is
                     # persisted, but continuous execution must not begin a new
                     # cycle while maintenance is active.
+                    if not CommandAdmissionStore(runtime_root).is_active(command_id):
+                        return _admission_hold_cycle_result(store, command_id, cycle=cycle)
                     if is_paused(runtime_root):
                         return _pause_safe_cycle_result(
                             store,

@@ -38,6 +38,8 @@ from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_probe import probe_enabled_providers
 from aos.provider_observation import RateLimitObservation, TaskClass
 from aos.runtime_worker import build_recovery_fingerprint
+from aos.runtime_admission import AdmissionState, CommandAdmissionStore
+from aos.recovery_proof import RecoveryProofStore, TERMINAL_STATES
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.runtime_assets import resolve_active_runtime_artifact
@@ -120,6 +122,8 @@ class RuntimeEngine:
         self.config = validate_runtime_config(config)
         self.runtime_root = Path(self.config["runtime_root"])
         self.store = RuntimeStore(self.runtime_root)
+        self.admissions = CommandAdmissionStore(self.runtime_root)
+        self.recovery_proofs = RecoveryProofStore(self.runtime_root)
         self.stop_event = threading.Event()
         self._pause_lock = threading.RLock()
         # This read occurs before any recovery/probe/telemetry thread exists.
@@ -173,6 +177,8 @@ class RuntimeEngine:
         error_class = exc.__class__.__name__
         msg = str(exc)[:300]
         for command_id in self.store.list_command_ids()[-200:]:
+            if not self.admissions.is_active(command_id):
+                continue
             state = self.store.read_state(command_id)
             if str(state.get("state") or "") == "WAITING_FOR_REASONING_PROVIDER":
                 self.store.append_event(command_id, "provider.probe_cycle_failed", {
@@ -413,6 +419,8 @@ class RuntimeEngine:
         registries: list[ProviderCircuitBreakerRegistry] = []
         slot_root = self.config.get("runtime_slot_root")
         for command_id in self.store.list_command_ids()[-200:]:
+            if not self.admissions.is_active(command_id):
+                continue
             state = self.store.read_state(command_id)
             if not self._has_live_resource_context(state):
                 continue
@@ -445,6 +453,8 @@ class RuntimeEngine:
             slot_root = self.config.get("runtime_slot_root")
             targets: Dict[str, Dict[str, Any]] = {}
             for command_id in self.store.list_command_ids()[-200:]:
+                if not self.admissions.is_active(command_id):
+                    continue
                 state = self.store.read_state(command_id)
                 if not self._has_live_resource_context(state):
                     continue
@@ -534,6 +544,8 @@ class RuntimeEngine:
 
             if any_success and not self.is_paused:
                 for command_id in self.store.list_command_ids()[-200:]:
+                    if not self.admissions.is_active(command_id):
+                        continue
                     state = self.store.read_state(command_id)
                     if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                         continue
@@ -642,6 +654,12 @@ class RuntimeEngine:
             profile = self._normalize_project(payload.get("project_id"))
             command = ContinueProjectCommand.from_mapping(payload, project=profile)
             self.store.create_command(command.to_dict())
+            self.admissions.set_state(
+                command.command_id,
+                AdmissionState.ACTIVE,
+                authority="AUTHENTICATED_CONTINUE_SUBMISSION",
+                reason="NEW_COMMAND_EXPLICITLY_ADMITTED",
+            )
             self._spawn_worker(command.command_id, recovered=False)
         return {
             "contract_version": CONTRACT_VERSION,
@@ -659,7 +677,7 @@ class RuntimeEngine:
 
     def _spawn_worker(self, command_id: str, *, recovered: bool) -> Optional[int]:
         with self._pause_lock:
-            if self.is_paused:
+            if self.is_paused or not self.admissions.is_active(command_id):
                 return None
             state = self.store.read_state(command_id)
             existing = state.get("worker_pid")
@@ -706,7 +724,7 @@ class RuntimeEngine:
             return proc.pid
 
     def _recover_one(self, command_id: str) -> None:
-        if self.is_paused:
+        if self.is_paused or not self.admissions.is_active(command_id):
             return
         state = self.store.read_state(command_id)
         current = str(state.get("state") or "")
@@ -954,6 +972,8 @@ class RuntimeEngine:
             enabled_providers=enabled,
         )
         for command_id in self.store.list_command_ids()[-200:]:
+            if not self.admissions.is_active(command_id):
+                continue
             state = self.store.read_state(command_id)
             if str(state.get("state") or "") != "WAITING_FOR_REASONING_PROVIDER":
                 continue
@@ -1432,7 +1452,125 @@ class RuntimeEngine:
         self.recover_unfinished()
         return {
             "status": "RESUMED",
-            "message": "Autonomous recovery and execution resumed.",
+            "message": "Autonomous recovery resumed for ACTIVE command admissions only.",
+            "timestamp": utc_now(),
+            "admission_policy": "ACTIVE_ONLY_MISSING_IS_HOLD",
+        }
+
+    def reprobe_resources(self) -> Dict[str, Any]:
+        if self.is_paused:
+            raise RuntimeError("Global PAUSED_SAFE blocks resource reprobe")
+        self._run_live_probe_cycle()
+        return {
+            "status": "RESOURCE_REPROBE_COMPLETED",
+            "active_commands_only": True,
+            "timestamp": utc_now(),
+        }
+
+    def resume_commands(self, command_ids: list[str], *, authority: str, reason: str) -> Dict[str, Any]:
+        """Atomically admit only the selected non-terminal command lineages."""
+        for command_id in command_ids:
+            state = self.store.read_state(command_id)
+            if not state:
+                raise ValueError(f"Command not found: {command_id}")
+            if str(state.get("state") or "") in TERMINAL_STATES:
+                raise ValueError(
+                    f"Terminal command requires an accepted recovery proof: {command_id}"
+                )
+        proof_ids = {
+            command_id: record.recovery_proof_id
+            for command_id in command_ids
+            if (record := self.admissions.get(command_id)).recovery_proof_id
+        }
+        records = self.admissions.activate_many(
+            command_ids,
+            authority=authority,
+            reason=reason,
+            recovery_proof_ids=proof_ids,
+        )
+        spawned: Dict[str, Optional[int]] = {}
+        if not self.is_paused:
+            for command_id in command_ids:
+                spawned[command_id] = self._spawn_worker(command_id, recovered=True)
+        return {
+            "status": "COMMANDS_ACTIVE",
+            "commands": [record.to_dict() for record in records],
+            "worker_pids": spawned,
+            "global_maintenance": "PAUSED_SAFE" if self.is_paused else "RUNNING",
+            "timestamp": utc_now(),
+        }
+
+    def hold_command(self, command_id: str, *, authority: str, reason: str) -> Dict[str, Any]:
+        record = self.admissions.set_state(
+            command_id,
+            AdmissionState.HOLD,
+            authority=authority,
+            reason=reason,
+        )
+        self.store.append_event(command_id, "command.admission_held", record.to_dict())
+        return {"status": "COMMAND_HELD", "admission": record.to_dict(), "timestamp": utc_now()}
+
+    def supersede_command(self, command_id: str, *, authority: str, reason: str) -> Dict[str, Any]:
+        record = self.admissions.set_state(
+            command_id,
+            AdmissionState.SUPERSEDED,
+            authority=authority,
+            reason=reason,
+        )
+        self.store.write_state(
+            command_id,
+            state="SUPERSEDED",
+            disposition="SUPERSEDED",
+            worker_pid=None,
+        )
+        self.store.append_event(command_id, "command.superseded", record.to_dict())
+        return {"status": "COMMAND_SUPERSEDED", "admission": record.to_dict(), "timestamp": utc_now()}
+
+    def accept_terminal_recovery(self, proof_id: str, *, accepted_by: str) -> Dict[str, Any]:
+        proof = self.recovery_proofs.read(proof_id)
+        command_id = str(proof.get("command_id") or "")
+        if not command_id:
+            raise ValueError(f"Recovery proof not found: {proof_id}")
+        command = self.store.read_command(command_id)
+        state = self.store.read_state(command_id)
+        if self.admissions.get(command_id).state == AdmissionState.SUPERSEDED.value:
+            raise ValueError(f"Superseded command cannot be recovered: {command_id}")
+        canonical_revision = str(state.get("canonical_source_sha") or "")
+        runtime_source_sha = str(self.config.get("candidate_source_sha") or "")
+        self.recovery_proofs.validate(
+            proof_id,
+            command=command,
+            state=state,
+            canonical_revision=canonical_revision,
+            runtime_source_sha=runtime_source_sha,
+        )
+        accepted = self.recovery_proofs.accept(proof_id, accepted_by=accepted_by)
+        record = self.admissions.set_state(
+            command_id,
+            AdmissionState.HOLD,
+            authority="ACCEPTED_RECOVERY_PROOF",
+            reason="RECOVERY_AUTHORIZED_AWAITING_EXPLICIT_ADMISSION",
+            recovery_proof_id=proof_id,
+        )
+        self.store.write_state(
+            command_id,
+            state="RECOVERY_AUTHORIZED",
+            disposition="RECOVERY_AUTHORIZED_HOLD",
+            worker_pid=None,
+            retry_after_epoch=0,
+        )
+        self.store.append_event(command_id, "command.recovery_proof_accepted", {
+            "proof_id": proof_id,
+            "accepted_by": accepted_by,
+            "evidence_sha256": accepted.get("evidence_sha256"),
+            "execution_admitted": False,
+        })
+        return {
+            "status": "RECOVERY_AUTHORIZED_HOLD",
+            "command_id": command_id,
+            "proof_id": proof_id,
+            "admission": record.to_dict(),
+            "execution_admitted": False,
             "timestamp": utc_now(),
         }
 
@@ -1608,6 +1746,11 @@ class RuntimeHandler(BaseHTTPRequestHandler):
             "/v1/commands/continue",
             "/v1/commands/pause-safe",
             "/v1/commands/resume",
+            "/v1/commands/resume-selected",
+            "/v1/commands/hold",
+            "/v1/commands/supersede",
+            "/v1/commands/accept-recovery-proof",
+            "/v1/commands/reprobe-resources",
             "/v1/commands/restart-worker",
             "/v1/commands/heartbeat-now",
             "/v1/commands/checkpoint-now",
@@ -1652,6 +1795,47 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/v1/commands/resume":
                 result = self.engine.resume()
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/resume-selected":
+                command_ids = payload.get("command_ids")
+                if not isinstance(command_ids, list):
+                    raise ValueError("command_ids must be a list")
+                result = self.engine.resume_commands(
+                    [str(item) for item in command_ids],
+                    authority=str(payload.get("authority") or "AUTHENTICATED_OPERATOR"),
+                    reason=str(payload.get("reason") or "EXPLICIT_SELECTED_RESUME"),
+                )
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path in ("/v1/commands/hold", "/v1/commands/supersede"):
+                command_id = str(payload.get("command_id") or "")
+                if not command_id:
+                    raise ValueError("command_id is required")
+                operation = (
+                    self.engine.hold_command
+                    if parsed.path.endswith("/hold")
+                    else self.engine.supersede_command
+                )
+                result = operation(
+                    command_id,
+                    authority=str(payload.get("authority") or "AUTHENTICATED_OPERATOR"),
+                    reason=str(payload.get("reason") or "EXPLICIT_OPERATOR_DECISION"),
+                )
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/accept-recovery-proof":
+                proof_id = str(payload.get("proof_id") or "")
+                if not proof_id:
+                    raise ValueError("proof_id is required")
+                result = self.engine.accept_terminal_recovery(
+                    proof_id,
+                    accepted_by=str(payload.get("accepted_by") or "AUTHENTICATED_OPERATOR"),
+                )
+                self._json(HTTPStatus.OK, result)
+                return
+            if parsed.path == "/v1/commands/reprobe-resources":
+                result = self.engine.reprobe_resources()
                 self._json(HTTPStatus.OK, result)
                 return
             if parsed.path == "/v1/commands/quiesce":

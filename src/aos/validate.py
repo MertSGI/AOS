@@ -36,6 +36,9 @@ TYPE_TO_SCHEMA = {
     "execution_resource_policy": "execution_resource_policy.schema.json",
     "decision_advisor_policy": "decision_advisor_policy.schema.json",
     "aos_integration_contract": "aos_integration_contract.schema.json",
+    "command_admission": "command_admission.schema.json",
+    "recovery_proof": "recovery_proof.schema.json",
+    "system_repair_job": "system_repair_job.schema.json",
 }
 
 

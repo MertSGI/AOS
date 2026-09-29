@@ -1922,7 +1922,7 @@ def test_design_intelligence_missing_entrypoint_reports_typed_unavailable(tmp_pa
     di_evidence = plan.get("design_intelligence_evidence")
     assert di_evidence is not None
     assert di_evidence["outcome"] == "DESIGN_EVIDENCE_UNAVAILABLE"
-    assert "Required UI render entrypoint not found" in di_evidence["reason"]
+    assert "No proven UI render entry" in di_evidence["reason"]
     assert (runtime_dir / "design-intelligence-pre-0002.json").exists()
 
 

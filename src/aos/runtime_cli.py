@@ -40,6 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status")
     sub.add_parser("pause-safe")
     sub.add_parser("resume")
+    resume_selected = sub.add_parser("resume-selected")
+    resume_selected.add_argument("command_id", nargs="+")
+    resume_selected.add_argument("--reason", required=True)
+    hold = sub.add_parser("hold")
+    hold.add_argument("command_id")
+    hold.add_argument("--reason", required=True)
+    supersede = sub.add_parser("supersede")
+    supersede.add_argument("command_id")
+    supersede.add_argument("--reason", required=True)
+    accept_proof = sub.add_parser("accept-recovery-proof")
+    accept_proof.add_argument("proof_id")
+    sub.add_parser("reprobe-resources")
     quiesce = sub.add_parser("quiesce")
     quiesce.add_argument("--timeout", type=float, default=10.0)
     shutdown = sub.add_parser("shutdown")
@@ -77,6 +89,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             value = client.pause_safe()
         elif args.command == "resume":
             value = client.resume()
+        elif args.command == "resume-selected":
+            value = client.resume_selected(args.command_id, reason=args.reason)
+        elif args.command == "hold":
+            value = client.hold_command(args.command_id, reason=args.reason)
+        elif args.command == "supersede":
+            value = client.supersede_command(args.command_id, reason=args.reason)
+        elif args.command == "accept-recovery-proof":
+            value = client.accept_recovery_proof(args.proof_id)
+        elif args.command == "reprobe-resources":
+            value = client.reprobe_resources()
         elif args.command == "quiesce":
             value = client.quiesce(args.timeout)
         elif args.command == "shutdown":

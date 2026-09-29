@@ -180,6 +180,7 @@ class FreeLLMAPILocalPlannerProvider:
         readiness_timeout_seconds: float = DEFAULT_READINESS_TIMEOUT_SECONDS,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         opener: Optional[Any] = None,
+        lifecycle_manager: Optional[Any] = None,
     ) -> None:
         self.model = str(model).strip() or "auto:reliable"
         self.base_url = _validated_base_url(base_url)
@@ -188,6 +189,7 @@ class FreeLLMAPILocalPlannerProvider:
         self.readiness_timeout_seconds = max(0.1, float(readiness_timeout_seconds))
         self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
         self._opener = opener or urllib.request.urlopen
+        self.lifecycle_manager = lifecycle_manager
         self.last_readiness: Optional[FreeLLMAPIReadiness] = None
         self.last_routing_metadata: Dict[str, Any] = {}
         self._readiness_checked_at = 0.0
@@ -273,6 +275,14 @@ class FreeLLMAPILocalPlannerProvider:
 
     def _require_ready(self) -> None:
         readiness = self.check_readiness()
+        if not readiness.service_available and self.lifecycle_manager is not None:
+            self.lifecycle_manager.start()
+            lifecycle_status = self.lifecycle_manager.probe()
+            readiness = self.check_readiness(force=True)
+            if not lifecycle_status.service_available and not readiness.service_available:
+                raise PlannerTransientError(
+                    f"freellmapi_local MANAGED_START_FAILED ({lifecycle_status.reason})"
+                )
         if readiness.eligible:
             return
         if not readiness.service_available:
@@ -390,21 +400,28 @@ class FreeLLMAPILocalPlannerProvider:
             },
         )
 
-        try:
-            with self._opener(request, timeout=self.request_timeout_seconds) as response:
-                status = int(getattr(response, "status", response.getcode()))
-                self.last_routing_metadata = sanitize_routing_headers(response.headers)
-                body = _bounded_json_body(response, MAX_RESPONSE_BYTES)
-        except urllib.error.HTTPError as exc:
-            self.last_routing_metadata = sanitize_routing_headers(exc.headers or {})
+        for attempt in range(2):
             try:
-                body = _bounded_json_body(exc, MAX_RESPONSE_BYTES)
-            except PlannerContractError:
-                body = None
-            self._raise_http_error(int(exc.code), body, headers=exc.headers or {})
-            raise AssertionError("unreachable")
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise PlannerTransientError("freellmapi_local LOCAL_GATEWAY_UNAVAILABLE") from exc
+                with self._opener(request, timeout=self.request_timeout_seconds) as response:
+                    status = int(getattr(response, "status", response.getcode()))
+                    self.last_routing_metadata = sanitize_routing_headers(response.headers)
+                    body = _bounded_json_body(response, MAX_RESPONSE_BYTES)
+                break
+            except urllib.error.HTTPError as exc:
+                self.last_routing_metadata = sanitize_routing_headers(exc.headers or {})
+                try:
+                    body = _bounded_json_body(exc, MAX_RESPONSE_BYTES)
+                except PlannerContractError:
+                    body = None
+                self._raise_http_error(int(exc.code), body, headers=exc.headers or {})
+                raise AssertionError("unreachable")
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if attempt == 0 and self.lifecycle_manager is not None:
+                    self.lifecycle_manager.restart()
+                    status_after_restart = self.lifecycle_manager.probe()
+                    if status_after_restart.eligible:
+                        continue
+                raise PlannerTransientError("freellmapi_local LOCAL_GATEWAY_UNAVAILABLE") from exc
 
         if status != 200:
             self._raise_http_error(status, body)

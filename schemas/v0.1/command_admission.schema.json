@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/command_admission.schema.json",
+  "title": "AOS Durable Command Admission Registry",
+  "type": "object",
+  "required": ["contract_version", "updated_at", "records"],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {"const": "1.0.0"},
+    "updated_at": {"type": "string"},
+    "records": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["command_id", "project_id", "state", "reason", "authority", "updated_at", "recovery_proof_id"],
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {"type": "string", "minLength": 1},
+          "project_id": {"type": "string", "minLength": 1},
+          "state": {"enum": ["ACTIVE", "HOLD", "SUPERSEDED"]},
+          "reason": {"type": "string", "minLength": 1},
+          "authority": {"type": "string", "minLength": 1},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "recovery_proof_id": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

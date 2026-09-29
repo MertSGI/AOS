@@ -1,0 +1,211 @@
+"""Platform recovery plane, separate from product execution commands.
+
+The coordinator consumes durable self-diagnosis findings and produces bounded
+SYSTEM_REPAIR_JOB records.  It cannot activate a runtime or promote a source
+candidate; successful source work stops at PROMOTION_READY.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
+
+from aos.runtime_contract import CONTRACT_VERSION, utc_now
+from aos.runtime_store import atomic_json, exclusive_file_lock, read_json
+from aos.self_repair import (
+    AUTHORITY_AUTO_REPAIR_ELIGIBLE,
+    AUTHORITY_FORBIDDEN,
+    AUTHORITY_HUMAN_APPROVAL_REQUIRED,
+    BoundedSelfRepairEngine,
+    classify_defect_repair_authority,
+)
+
+
+class RepairDisposition(str, Enum):
+    REPAIRED_VERIFIED = "REPAIRED_VERIFIED"
+    NO_REPAIR_REQUIRED = "NO_REPAIR_REQUIRED"
+    PROMOTION_READY = "PROMOTION_READY"
+    WAITING_FOR_RESOURCE = "WAITING_FOR_RESOURCE"
+    HUMAN_REQUIRED = "HUMAN_REQUIRED"
+    UNSAFE_TO_REPAIR = "UNSAFE_TO_REPAIR"
+    FAILED_VERIFICATION = "FAILED_VERIFICATION"
+
+
+@dataclass(frozen=True)
+class SourceRepairResult:
+    isolated_worktree: str
+    branch: str
+    base_sha: str
+    repair_sha: str
+    workspace_fingerprint: str
+    resource_backend_id: str
+    attempt_telemetry: Dict[str, Any]
+    git_diff_sha256: str
+    candidate_manifest: Dict[str, Any]
+    rollback_information: Dict[str, Any]
+    tests_passed: bool
+    evidence_valid: bool
+    exact_sha_ci_status: str
+    candidate_materialized: bool
+    promotion_performed: bool = False
+    activation_performed: bool = False
+    evidence: Optional[Dict[str, Any]] = None
+
+
+SourceRepairExecutor = Callable[[Dict[str, Any]], SourceRepairResult]
+
+
+class PlatformRecoveryCoordinator:
+    """Durable recovery director with finite, auditable dispositions."""
+
+    def __init__(
+        self,
+        recovery_root: Path,
+        repair_engine: BoundedSelfRepairEngine,
+        *,
+        source_base_sha: str,
+        source_repair_executor: Optional[SourceRepairExecutor] = None,
+    ) -> None:
+        self.root = recovery_root.expanduser().resolve()
+        self.jobs_root = self.root / "jobs"
+        self.index_path = self.root / "finding-job-index.json"
+        self.lock_path = self.root / "platform-recovery.lock"
+        self.repair_engine = repair_engine
+        self.source_base_sha = source_base_sha
+        self.source_repair_executor = source_repair_executor
+
+    @staticmethod
+    def _job_id(finding: Dict[str, Any]) -> str:
+        body = json.dumps({
+            "finding_id": finding.get("finding_id"),
+            "fingerprint": finding.get("fingerprint"),
+            "episode_id": finding.get("episode_id"),
+        }, sort_keys=True, separators=(",", ":"))
+        return f"repair-{hashlib.sha256(body.encode('utf-8')).hexdigest()[:24]}"
+
+    def _persist(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        job_id = str(job["job_id"])
+        with exclusive_file_lock(self.lock_path):
+            index = read_json(self.index_path, {})
+            atomic_json(self.jobs_root / f"{job_id}.json", job)
+            index[str(job["finding_id"])] = job_id
+            atomic_json(self.index_path, index)
+        return job
+
+    def get_job(self, job_id: str) -> Dict[str, Any]:
+        return read_json(self.jobs_root / f"{job_id}.json", {})
+
+    def process_finding(self, finding_id: str) -> Dict[str, Any]:
+        finding = self.repair_engine.diag_engine.get_finding(finding_id)
+        if not finding:
+            raise ValueError(f"Finding not found: {finding_id}")
+        job_id = self._job_id(finding)
+        existing = self.get_job(job_id)
+        if existing and existing.get("disposition") in {item.value for item in RepairDisposition}:
+            return existing
+
+        proposed = finding.get("proposed_repair") or {}
+        authority = classify_defect_repair_authority(
+            component=str(finding.get("component") or ""),
+            failure_class=str(finding.get("failure_class") or ""),
+            symptom=str(finding.get("symptom") or ""),
+            files_affected=proposed.get("files_likely_affected") or (),
+        )
+        job: Dict[str, Any] = {
+            "contract_version": CONTRACT_VERSION,
+            "job_type": "SYSTEM_REPAIR_JOB",
+            "job_id": job_id,
+            "finding_id": finding_id,
+            "finding_fingerprint": finding.get("fingerprint"),
+            "authority_class": authority,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+            "product_command_id": None,
+            "activation_permitted": False,
+            "promotion_permitted": False,
+            "production": "NO_GO",
+        }
+
+        if str(finding.get("status")) in {"RESOLVED_WITHOUT_REPAIR", "REPAIRED_VERIFIED"}:
+            job.update(disposition=RepairDisposition.NO_REPAIR_REQUIRED.value)
+            return self._persist(job)
+        if authority == AUTHORITY_FORBIDDEN:
+            job.update(disposition=RepairDisposition.UNSAFE_TO_REPAIR.value)
+            return self._persist(job)
+        if authority == AUTHORITY_HUMAN_APPROVAL_REQUIRED:
+            job.update(disposition=RepairDisposition.HUMAN_REQUIRED.value)
+            return self._persist(job)
+
+        requires_candidate = bool(finding.get("requires_candidate") or proposed.get("ci_required"))
+        if requires_candidate:
+            if self.source_repair_executor is None:
+                job.update(
+                    disposition=RepairDisposition.WAITING_FOR_RESOURCE.value,
+                    blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE",
+                )
+                return self._persist(job)
+            try:
+                result = self.source_repair_executor({
+                    "job_id": job_id,
+                    "finding": finding,
+                    "required_base_sha": self.source_base_sha,
+                    "requirements": {
+                        "isolated_worktree": True,
+                        "exact_sha_ci": True,
+                        "immutable_candidate": True,
+                        "promotion": False,
+                        "activation": False,
+                    },
+                })
+            except Exception as exc:
+                job.update(
+                    disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                    error_class=exc.__class__.__name__,
+                    error=str(exc)[:500],
+                )
+                return self._persist(job)
+            evidence = asdict(result)
+            safe = (
+                result.base_sha == self.source_base_sha
+                and bool(result.isolated_worktree)
+                and bool(result.workspace_fingerprint)
+                and bool(result.resource_backend_id)
+                and bool(result.attempt_telemetry)
+                and len(result.git_diff_sha256) == 64
+                and result.candidate_manifest.get("source_sha") == result.repair_sha
+                and bool(result.rollback_information)
+                and result.tests_passed
+                and result.evidence_valid
+                and result.exact_sha_ci_status == "SUCCESS"
+                and result.candidate_materialized
+                and not result.promotion_performed
+                and not result.activation_performed
+            )
+            job.update(
+                disposition=(
+                    RepairDisposition.PROMOTION_READY.value
+                    if safe
+                    else RepairDisposition.FAILED_VERIFICATION.value
+                ),
+                source_repair=evidence,
+            )
+            return self._persist(job)
+
+        if authority == AUTHORITY_AUTO_REPAIR_ELIGIBLE:
+            success, stage, repair = self.repair_engine.attempt_autonomous_repair(finding_id)
+            job.update(
+                disposition=(
+                    RepairDisposition.REPAIRED_VERIFIED.value
+                    if success
+                    else RepairDisposition.FAILED_VERIFICATION.value
+                ),
+                repair_stage=stage,
+                repair_record=repair,
+            )
+            return self._persist(job)
+
+        job.update(disposition=RepairDisposition.HUMAN_REQUIRED.value)
+        return self._persist(job)

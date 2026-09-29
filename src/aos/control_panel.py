@@ -31,6 +31,7 @@ from aos.runtime_panel_bridge import (
     execute_command_on_runtime,
     runtime_configured,
     runtime_status,
+    runtime_client,
     submit_goal_to_runtime,
 )
 from aos.provenance import (
@@ -49,8 +50,21 @@ from aos.action_center import (
 )
 from aos.self_repair import (
     BoundedSelfRepairEngine,
+    ResourceReprobeActuator,
     classify_defect_repair_authority,
 )
+
+
+def _controller_relay_root(config: Dict[str, Any]) -> Path:
+    configured = str(config.get("controller_relay_dir") or "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    runtime_root = str(config.get("runtime_root") or "").strip()
+    if runtime_root:
+        return Path(runtime_root).expanduser().resolve() / "controller-relay"
+    local = os.environ.get("LOCALAPPDATA")
+    base = Path(local) if local else Path.home() / ".local" / "share"
+    return (base / "AOS" / "controller-relay").resolve()
 
 MAX_BODY_BYTES = 256 * 1024
 
@@ -3800,7 +3814,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
 
         # Load native relay snapshot if available
         relay_info = {}
-        relay_file = Path("C:/Projects/AOS/.aos-runtime/controller-relay/LATEST.json")
+        relay_root = _controller_relay_root(config)
+        relay_file = relay_root / "LATEST.json"
         if relay_file.is_file():
             try:
                 relay_info = json.loads(relay_file.read_text(encoding="utf-8"))
@@ -3808,17 +3823,17 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 pass
 
         # Self-diagnosis summary from durable findings
-        diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+        diag_root = relay_root / "self-diagnosis"
         diag_engine = SelfDiagnosisEngine(diag_root, config)
         diag_summary = diag_engine.summarize_status()
 
         # Bounded Safe Self-Repair Cockpit
-        repair_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-repair")
+        repair_root = relay_root / "self-repair"
         repair_engine = BoundedSelfRepairEngine(repair_root, diag_engine, config)
         repair_cockpit = repair_engine.summarize_cockpit()
 
         # First-Class Human Action Center
-        action_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/action-center")
+        action_root = relay_root / "action-center"
         action_engine = ActionCenterEngine(action_root, config)
         # Scan durable store for actionable items
         if store_roots:
@@ -4170,7 +4185,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if parsed.path.startswith("/api/findings/"):
             finding_id = parsed.path[len("/api/findings/"):].strip()
-            diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+            diag_root = _controller_relay_root(self.config) / "self-diagnosis"
             diag_engine = SelfDiagnosisEngine(diag_root, self.config)
             finding = diag_engine.get_finding(finding_id)
             if finding:
@@ -4212,7 +4227,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             # Route: Human Control Request
             if parsed.path == "/api/control-requests":
-                action_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/action-center")
+                action_root = _controller_relay_root(self.config) / "action-center"
                 action_engine = ActionCenterEngine(action_root, self.config)
                 runtime_root = Path(self.config.get("runtime_root", "")).expanduser().resolve()
                 state_root = runtime_root / "state" if (runtime_root / "state" / "commands").is_dir() else runtime_root
@@ -4234,10 +4249,16 @@ class _Handler(BaseHTTPRequestHandler):
 
             # Route: Autonomous Self-Repair Execution
             if parsed.path == "/api/self-repair":
-                diag_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-diagnosis")
+                relay_root = _controller_relay_root(self.config)
+                diag_root = relay_root / "self-diagnosis"
                 diag_engine = SelfDiagnosisEngine(diag_root, self.config)
-                repair_root = Path("C:/Projects/AOS/.aos-runtime/controller-relay/self-repair")
+                repair_root = relay_root / "self-repair"
                 repair_engine = BoundedSelfRepairEngine(repair_root, diag_engine, self.config)
+                if runtime_configured(self.config):
+                    repair_engine.register_actuator(
+                        "PROVIDER_TRANSIENT_FAILURE",
+                        ResourceReprobeActuator(runtime_client(self.config)),
+                    )
                 action = payload.get("action", "repair")
                 if action == "set_mode":
                     repair_engine.set_live_mode(bool(payload.get("live_active", False)))

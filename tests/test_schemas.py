@@ -185,6 +185,9 @@ class TestSchemaMetaValidation:
         "agentic_execution_checkpoint.schema.json",
         "execution_resource_policy.schema.json",
         "aos_integration_contract.schema.json",
+        "command_admission.schema.json",
+        "recovery_proof.schema.json",
+        "system_repair_job.schema.json",
     ]
 
     @pytest.mark.parametrize("schema_file", ALL_SCHEMAS)

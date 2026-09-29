@@ -35,6 +35,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import RuntimeStore, atomic_json, read_json
+from aos.runtime_admission import AdmissionState, CommandAdmissionStore
+from aos.recovery_proof import RecoveryProofStore, TERMINAL_STATES
 from aos.validate import validate_document
 
 
@@ -708,21 +710,47 @@ def validate_and_process_control_request(
                     f"but current state is '{current_state}'"
                 )
 
-    if target_action_id:
-        action_center.resolve_action(
-            str(target_action_id),
-            resolved_by="human_owner",
-            request_id=req_id,
-            control_change=requested_change,
-        )
-
     # 6. Apply Execution Transaction
     if target_command_id and request_type in ("RESUME", "HOLD", "PAUSE_LANE"):
+        admissions = CommandAdmissionStore(runtime_store.runtime_root)
         if request_type == "RESUME":
+            command_state = runtime_store.read_state(target_command_id)
+            current_state = str(command_state.get("state") or "").upper()
+            recovery_proof_id = str(ext.get("recovery_proof_id") or "")
+            if admissions.get(target_command_id).state == AdmissionState.SUPERSEDED.value:
+                raise PermissionError(
+                    f"Superseded command cannot be recovered: {target_command_id}"
+                )
+            if current_state in TERMINAL_STATES:
+                if not recovery_proof_id:
+                    raise PermissionError(
+                        "Terminal command recovery requires extensions.recovery_proof_id"
+                    )
+                proofs = RecoveryProofStore(runtime_store.runtime_root)
+                command = runtime_store.read_command(target_command_id)
+                proofs.validate(
+                    recovery_proof_id,
+                    command=command,
+                    state=command_state,
+                    canonical_revision=canon_sha,
+                    runtime_source_sha=canon_sha,
+                )
+                proofs.accept(recovery_proof_id, accepted_by="human_owner")
+            admissions.set_state(
+                target_command_id,
+                AdmissionState.ACTIVE,
+                authority="HUMAN_CONTROL_REQUEST",
+                reason=reason,
+                recovery_proof_id=recovery_proof_id or None,
+            )
             runtime_store.write_state(
                 target_command_id,
                 state="QUEUED",
-                disposition="RESUME_AUTHORIZATION_GRANTED",
+                disposition=(
+                    "PROOF_BOUND_RECOVERY_AUTHORIZATION_GRANTED"
+                    if recovery_proof_id
+                    else "RESUME_AUTHORIZATION_GRANTED"
+                ),
                 same_fingerprint_respawns=0,
                 worker_pid=None,
                 retry_after_epoch=0,
@@ -738,6 +766,12 @@ def validate_and_process_control_request(
                 "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
             })
         elif request_type in ("HOLD", "PAUSE_LANE"):
+            admissions.set_state(
+                target_command_id,
+                AdmissionState.HOLD,
+                authority="HUMAN_CONTROL_REQUEST",
+                reason=reason,
+            )
             runtime_store.write_state(
                 target_command_id,
                 state="HOLD",
@@ -749,6 +783,14 @@ def validate_and_process_control_request(
                 "reason": reason,
                 "protected_lineage": target_command_id in PROTECTED_COMMAND_IDS,
             })
+
+    if target_action_id:
+        action_center.resolve_action(
+            str(target_action_id),
+            resolved_by="human_owner",
+            request_id=req_id,
+            control_change=requested_change,
+        )
 
     return {
         "status": "ACCEPTED",

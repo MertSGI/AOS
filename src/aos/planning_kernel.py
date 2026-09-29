@@ -2066,22 +2066,27 @@ def compile_execution_plan(
             from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
             from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
             from extensions.design_intelligence.critics import DesignCriticEnsemble, VisualCriticAdapter
+            from aos.design_render_entry import resolve_render_entry
 
             ws_root = workspace.resolve()
-            index_html_path = ws_root / "index.html"
-            if not index_html_path.is_file():
+            try:
+                render_entry = resolve_render_entry(ws_root)
+            except (FileNotFoundError, ValueError) as render_exc:
                 di_pre_evidence = {
                     "schema_version": "1.0.0",
                     "stage": "PRE_IMPLEMENTATION",
                     "project_id": situation.project_id,
                     "batch_number": batch_number,
                     "outcome": "DESIGN_EVIDENCE_UNAVAILABLE",
-                    "reason": f"Required UI render entrypoint not found: {index_html_path}",
+                    "reason": str(render_exc),
                 }
             else:
+                index_html_path = render_entry.entrypoint
                 real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
-                index_css_path = ws_root / "index.css"
-                real_css = index_css_path.read_text(encoding="utf-8", errors="replace") if index_css_path.is_file() else ""
+                real_css = (
+                    render_entry.stylesheet.read_text(encoding="utf-8", errors="replace")
+                    if render_entry.stylesheet else ""
+                )
 
                 evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-pre"
                 evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -2104,6 +2109,7 @@ def compile_execution_plan(
                         "outcome": outcome_type,
                         "error": exc_msg,
                         "reason": f"Visual screenshot capture unavailable: {exc_msg}",
+                        "render_entry": render_entry.to_dict(),
                     }
                     visual_manifest = None
 
@@ -2154,6 +2160,7 @@ def compile_execution_plan(
                         "visual_manifest_id": visual_manifest.manifest_id,
                         "viewports_captured": visual_manifest.viewports_captured,
                         "file_hashes": visual_manifest.file_hashes,
+                        "render_entry": render_entry.to_dict(),
                     }
 
             if di_pre_evidence:
@@ -3218,13 +3225,27 @@ def run_autonomous_project(
                 from extensions.design_intelligence.design_loop import AutonomousDesignLoopPipeline
                 from extensions.design_intelligence.browser_capture import RealBrowserCaptureAdapter
                 from extensions.design_intelligence.critics import DesignCriticEnsemble, VisualCriticAdapter
+                from aos.design_render_entry import resolve_render_entry
 
                 ws_root = workspace.resolve()
-                index_html_path = ws_root / "index.html"
-                if index_html_path.is_file():
+                try:
+                    render_entry = resolve_render_entry(ws_root)
+                except (FileNotFoundError, ValueError) as render_exc:
+                    di_post_blockers.append(f"DESIGN_EVIDENCE_UNAVAILABLE: {render_exc}")
+                    recent_receipt["design_intelligence_post_evidence"] = {
+                        "schema_version": "1.0.0",
+                        "stage": "POST_IMPLEMENTATION",
+                        "outcome": "DESIGN_EVIDENCE_UNAVAILABLE",
+                        "reason": str(render_exc),
+                    }
+                    render_entry = None
+                if render_entry is not None:
+                    index_html_path = render_entry.entrypoint
                     real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
-                    index_css_path = ws_root / "index.css"
-                    real_css = index_css_path.read_text(encoding="utf-8", errors="replace") if index_css_path.is_file() else ""
+                    real_css = (
+                        render_entry.stylesheet.read_text(encoding="utf-8", errors="replace")
+                        if render_entry.stylesheet else ""
+                    )
 
                     evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-post"
                     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -3275,6 +3296,7 @@ def run_autonomous_project(
                         "visual_manifest_id": visual_manifest.manifest_id,
                         "viewports_captured": visual_manifest.viewports_captured,
                         "file_hashes": visual_manifest.file_hashes,
+                        "render_entry": render_entry.to_dict(),
                     }
                     di_post_artifact_path = runtime_dir / f"design-intelligence-post-{int(batch_number or 0):04d}.json"
                     _atomic_json(di_post_artifact_path, di_post_evidence)

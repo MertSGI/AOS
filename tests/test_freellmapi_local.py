@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import io
 import socket
 import threading
 import uuid
+import urllib.error
+from types import SimpleNamespace
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -127,6 +130,45 @@ def _fake_gateway() -> Iterator[tuple[_GatewayState, str]]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_adapter_owns_on_demand_managed_gateway_start():
+    class Response(io.BytesIO):
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+        def getcode(self):
+            return self.status
+
+    calls = {"open": 0, "start": 0, "probe": 0}
+
+    def opener(_request, timeout):
+        calls["open"] += 1
+        if calls["open"] == 1:
+            raise urllib.error.URLError("gateway stopped")
+        return Response(b'{"status":"ok","ready_upstreams":1}')
+
+    class Lifecycle:
+        def start(self):
+            calls["start"] += 1
+            return SimpleNamespace(service_available=False, eligible=False, reason="starting")
+
+        def probe(self):
+            calls["probe"] += 1
+            return SimpleNamespace(service_available=True, eligible=True, reason="ready")
+
+    provider = FreeLLMAPILocalPlannerProvider(
+        opener=opener,
+        lifecycle_manager=Lifecycle(),
+    )
+    provider._require_ready()
+    assert calls == {"open": 2, "start": 1, "probe": 1}
 
 
 def _unused_loopback_url() -> str:

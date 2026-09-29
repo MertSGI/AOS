@@ -28,6 +28,7 @@ from aos.self_diagnosis import (
     SelfDiagnosisEngine,
     ShadowRepairProposal,
     STATUS_RESOLVED_WITHOUT_REPAIR,
+    STATUS_REPAIRED_VERIFIED,
 )
 from aos.self_repair import (
     BoundedSelfRepairEngine,
@@ -36,6 +37,7 @@ from aos.self_repair import (
     AUTHORITY_HUMAN_APPROVAL_REQUIRED,
     AUTHORITY_FORBIDDEN,
     STAGE_ACTIVATED,
+    RepairActuationResult,
 )
 
 
@@ -79,6 +81,16 @@ def test_proof_b_auto_repair_of_bounded_defect(tmp_path):
         diagnosis_engine=diag_engine,
     )
     repair_engine.set_live_mode(True)
+    repair_engine.register_actuator(
+        "PROVIDER_TRANSIENT_FAILURE",
+        lambda _finding, _proposal: RepairActuationResult(
+            operation_performed=True,
+            postcondition_verified=True,
+            operation="RESET_EXPIRED_BACKOFF_AND_PROBE",
+            evidence={"probe_status": "PASS", "backoff_expired": True},
+            rollback_reference="providers.json.before",
+        ),
+    )
     
     # Record a safe, technical finding
     finding_obj = diag_engine.record_or_update_finding(
@@ -121,13 +133,13 @@ def test_proof_b_auto_repair_of_bounded_defect(tmp_path):
     success, stage, record = repair_engine.attempt_autonomous_repair(finding_id)
     assert success is True
     assert stage == STAGE_ACTIVATED
-    assert record["validation_status"] == "CIRCUIT_PROBE_SCHEDULED"
+    assert record["validation_status"] == "POSTCONDITION_VERIFIED"
     assert record["smoke_status"] == "VERIFIED"
     assert record["rollback_retained"] is True
     
     # Verify finding resolution in diagnostic engine
     updated_finding = diag_engine.get_finding(finding_id)
-    assert updated_finding["status"] == STATUS_RESOLVED_WITHOUT_REPAIR
+    assert updated_finding["status"] == STATUS_REPAIRED_VERIFIED
     assert "Autonomous self-repair applied" in updated_finding["resolution_evidence"]
 
 

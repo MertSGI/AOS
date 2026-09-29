@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mertsgi.org/aos/v0.1/system_repair_job.schema.json",
+  "title": "AOS Platform Recovery System Repair Job",
+  "type": "object",
+  "required": [
+    "contract_version", "job_type", "job_id", "finding_id",
+    "authority_class", "created_at", "updated_at", "product_command_id",
+    "activation_permitted", "promotion_permitted", "production", "disposition"
+  ],
+  "properties": {
+    "contract_version": {"const": "1.0.0"},
+    "job_type": {"const": "SYSTEM_REPAIR_JOB"},
+    "job_id": {"type": "string", "pattern": "^repair-[0-9a-f]{24}$"},
+    "finding_id": {"type": "string", "minLength": 1},
+    "authority_class": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "product_command_id": {"type": "null"},
+    "activation_permitted": {"const": false},
+    "promotion_permitted": {"const": false},
+    "production": {"const": "NO_GO"},
+    "disposition": {
+      "enum": [
+        "REPAIRED_VERIFIED", "NO_REPAIR_REQUIRED", "PROMOTION_READY",
+        "WAITING_FOR_RESOURCE", "HUMAN_REQUIRED", "UNSAFE_TO_REPAIR",
+        "FAILED_VERIFICATION"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

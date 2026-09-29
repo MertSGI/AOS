@@ -34,6 +34,7 @@ STATUS_OBSERVED = "OBSERVED"
 STATUS_CLASSIFIED = "CLASSIFIED"
 STATUS_SHADOW_REPAIR_PROPOSED = "SHADOW_REPAIR_PROPOSED"
 STATUS_RESOLVED_WITHOUT_REPAIR = "RESOLVED_WITHOUT_REPAIR"
+STATUS_REPAIRED_VERIFIED = "REPAIRED_VERIFIED"
 STATUS_SUPPRESSED_DUPLICATE = "SUPPRESSED_DUPLICATE"
 STATUS_HUMAN_REQUIRED = "HUMAN_REQUIRED"
 
@@ -215,7 +216,7 @@ class SelfDiagnosisEngine:
 
             # Check if defect is returning from resolved state
             is_reopened = False
-            if current_status == STATUS_RESOLVED_WITHOUT_REPAIR:
+            if current_status in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_REPAIRED_VERIFIED):
                 # Return of a resolved defect: new recurrence episode
                 recurrence += 1
                 episode_id = f"ep-{int(time.time())}-r{recurrence}-{fp[:6]}"
@@ -364,7 +365,7 @@ class SelfDiagnosisEngine:
 
         for fp, meta in self._index.items():
             status = meta.get("status", "")
-            if status in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_SUPPRESSED_DUPLICATE):
+            if status in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_REPAIRED_VERIFIED, STATUS_SUPPRESSED_DUPLICATE):
                 continue
 
             if fp in observed_fingerprints:
@@ -399,7 +400,13 @@ class SelfDiagnosisEngine:
             return read_json(path, {})
         return None
 
-    def record_resolution(self, finding_id: str, evidence: str) -> bool:
+    def record_resolution(
+        self,
+        finding_id: str,
+        evidence: str,
+        *,
+        resolution_status: str = STATUS_RESOLVED_WITHOUT_REPAIR,
+    ) -> bool:
         path = self.findings_dir / f"{finding_id}.json"
         if not path.is_file():
             return False
@@ -407,13 +414,15 @@ class SelfDiagnosisEngine:
         if not data:
             return False
         now_utc = utc_now()
-        data["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+        if resolution_status not in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_REPAIRED_VERIFIED):
+            raise ValueError(f"Unsupported resolution status: {resolution_status}")
+        data["status"] = resolution_status
         data["resolved_at"] = now_utc
         data["resolution_evidence"] = evidence
         atomic_json(path, data)
         fp = data.get("fingerprint")
         if fp and fp in self._index:
-            self._index[fp]["status"] = STATUS_RESOLVED_WITHOUT_REPAIR
+            self._index[fp]["status"] = resolution_status
             self._index[fp]["resolved_at"] = now_utc
             self._save_index()
         return True
@@ -658,11 +667,11 @@ class SelfDiagnosisEngine:
     def summarize_status(self) -> Dict[str, Any]:
         """Produce a sanitized summary of active shadow diagnosis metrics."""
         findings = self.list_findings()
-        active_count = len([f for f in findings if f.get("status") not in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_SUPPRESSED_DUPLICATE)])
+        active_count = len([f for f in findings if f.get("status") not in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_REPAIRED_VERIFIED, STATUS_SUPPRESSED_DUPLICATE)])
         blocking_count = len([
             f for f in findings
             if f.get("autonomy_impact") in ("BLOCKING_SINGLE_LANE", "BLOCKING_MULTI_LANE", "BLOCKING_AOS_RUNTIME")
-            and f.get("status") not in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_SUPPRESSED_DUPLICATE)
+            and f.get("status") not in (STATUS_RESOLVED_WITHOUT_REPAIR, STATUS_REPAIRED_VERIFIED, STATUS_SUPPRESSED_DUPLICATE)
         ])
         recurring_count = len([f for f in findings if int(f.get("recurrence_count", 1)) > 1])
         new_count = len([f for f in findings if int(f.get("recurrence_count", 1)) == 1])

@@ -119,6 +119,36 @@ class RuntimeClient:
     def resume(self) -> Dict[str, Any]:
         return self._request("POST", "/v1/commands/resume", {})
 
+    def resume_selected(self, command_ids: Iterable[str], *, reason: str) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/resume-selected", {
+            "command_ids": list(command_ids),
+            "authority": "AUTHENTICATED_OPERATOR",
+            "reason": reason,
+        })
+
+    def hold_command(self, command_id: str, *, reason: str) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/hold", {
+            "command_id": command_id,
+            "authority": "AUTHENTICATED_OPERATOR",
+            "reason": reason,
+        })
+
+    def supersede_command(self, command_id: str, *, reason: str) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/supersede", {
+            "command_id": command_id,
+            "authority": "AUTHENTICATED_OPERATOR",
+            "reason": reason,
+        })
+
+    def accept_recovery_proof(self, proof_id: str) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/accept-recovery-proof", {
+            "proof_id": proof_id,
+            "accepted_by": "AUTHENTICATED_OPERATOR",
+        })
+
+    def reprobe_resources(self) -> Dict[str, Any]:
+        return self._request("POST", "/v1/commands/reprobe-resources", {})
+
     def restart_worker(self, command_id: str) -> Dict[str, Any]:
         return self._request("POST", "/v1/commands/restart-worker", {"command_id": command_id})
 
