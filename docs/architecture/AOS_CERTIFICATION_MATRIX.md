@@ -24,22 +24,25 @@ test passes on this branch. Historical live evidence remains historical.
 | E2E-17 | Dev/test relay writer contamination rejected | No | `test_e2e_17_lower_priority_writer_cannot_replace_supervisor_snapshot` | PASS | Supervisor writer priority is authoritative |
 | E2E-18 | Outcome partition is independently complete and exclusive | No | `test_e2e_18_rejects_double_outcome_classification`, `test_e2e_18_rejects_known_execution_without_outcome`, `test_e2e_18_deduplicates_exact_outcome_replay`, `test_e2e_18_six_unique_outcomes_project_to_relay` | PASS | Total derives from unique durable execution IDs; double/missing/invalid classifications fail and exact replay cannot inflate counts |
 | E2E-19 | Material UI requires real browser evidence | DI pipeline tests | Project render-entry contract tests | PARTIAL | Project-aware static entry discovery and typed unavailable evidence are proven; no real browser run on this branch |
-| E2E-20 | Candidate pipeline through PROMOTION_READY only | candidate/materialization tests | Platform recovery source-boundary test | PARTIAL | Promotion-ready contract rejects activation/promotion and preserves source evidence; no candidate created by this task |
+| E2E-20 | Candidate pipeline through PROMOTION_READY only | candidate/materialization tests | Platform recovery source-boundary and isolated source-repair pipeline tests | PARTIAL | Isolated lineage, clean commit, exact-SHA publication/certification, candidate binding, and no activation/promotion are enforced; no candidate created by this task |
 | E2E-21 | Candidate failure rollback preserves identity | runtime recovery/slots tests | No | PARTIAL | Deterministic components; no current candidate trial |
 | E2E-22 | Self-maintenance converges before 100-batch churn | recovery churn tests | `test_repeated_zero_delta_replans_enter_technical_hold` | PASS | Three zero-delta batches -> REPLAN_NOOP/TECHNICAL_HOLD |
 | E2E-23 | Any current lineage in HUMAN_REQUIRED -> aggregate YES | No | protected three-lane regression plus generic current, historical exclusion, and supersession tests | PASS | Generic durable current-lineage projection; no protected command ID is needed for aggregation |
-| E2E-24 | Ledger separates health/quota/credentials/service/eligibility | ledger/governor/orchestrator tests | Provider-neutral resource snapshot test | PARTIAL | Authoritative snapshot preserves credential/service/quota/quality/latency as UNKNOWN when unobserved; live quality history remains unproven |
+| E2E-24 | Ledger separates health/quota/credentials/service/eligibility | ledger/governor/orchestrator tests | Provider-neutral snapshot-ledger and shared-router-wiring tests | PARTIAL | One critical-path snapshot/ledger/quota/orchestrator plane preserves credential/service/quota/quality/latency as UNKNOWN when unobserved; live quality history remains unproven |
 
 Additional bootstrap invariants are covered by
 `tests/test_autonomous_recovery_director.py`: durable selective admission,
 legacy fail-closed HOLD, atomic selected activation, irreversible supersession,
 proof binding/freshness/replay rejection, real repair postconditions, persistent
-repair mode, non-product finite system-repair jobs, no self-promotion, truthful
-resource UNKNOWN, and project-aware render entry resolution.
+repair mode, relay-to-platform recovery job wiring, a concrete isolated source
+repair pipeline, non-product finite system-repair jobs, no self-promotion,
+truthful resource UNKNOWN, shared resource-ledger/router wiring, and
+project-aware render entry resolution.
 
 Bootstrap classification remains 15 `PASS`, 9 `PARTIAL`, 0
 `NOT_YET_EXECUTABLE`; source implementation does not automatically promote a
 scenario. The current repository-wide offline result is recorded in
-`docs/project-control/AOS_CURRENT_TRUTH.json`: 1,132 passed, 8 skipped, and 26
-deselected. Exact-SHA hosted CI for the final documentation checkpoint, immutable
-candidate certification, and live proof remain separate gates.
+`docs/project-control/AOS_CURRENT_TRUTH.json`: 1,135 passed, 8 skipped, and 26
+deselected. Implementation checkpoint `06d7f92a5af7c1477e073ce912e92d879d641de4`
+passed hosted exact-SHA CI run `36553293959`; immutable candidate certification,
+live promotion, and real protected-lineage execution remain separate gates.

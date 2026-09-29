@@ -84,7 +84,7 @@
       "id": "ARD-007",
       "severity": "MEDIUM",
       "gap": "Resource selection primarily used backend constants and class-local availability rather than a provider-neutral authoritative snapshot.",
-      "source_status": "SNAPSHOT_CONTRACT_IMPLEMENTED_UNKNOWN_PRESERVED"
+      "source_status": "SNAPSHOT_LEDGER_QUOTA_ORCHESTRATOR_CRITICAL_PATH_WIRED_UNKNOWN_PRESERVED"
     },
     {
       "id": "ARD-008",
@@ -107,12 +107,12 @@
     "paid_fallback": "DISABLED"
   },
   "remaining_gates": [
-    "Hosted exact-SHA CI has not run for this branch.",
+    "Implementation checkpoint 06d7f92a5af7c1477e073ce912e92d879d641de4 passed hosted exact-SHA CI run 36553293959; subsequent evidence-only commits require their own CI observation.",
     "No immutable candidate has been materialized from this branch.",
     "No live runtime promotion or protected command admission has occurred.",
-    "Source repair requires a configured bounded executor; absence yields WAITING_FOR_RESOURCE.",
+    "The isolated source-repair pipeline is implemented, but bounded repair, branch publication, and exact-SHA certification capabilities must be explicitly configured; absence yields WAITING_FOR_RESOURCE.",
     "Current-machine Qwen, FreeLLMAPI, agentic, and browser availability remains UNKNOWN until separately attested.",
-    "ResourceLedger and QuotaGovernor retain provider-oriented event semantics; the snapshot unifies decision truth without fabricating missing measurements."
+    "The execution router now shares one ResourceLedger, QuotaGovernor, ResourceSnapshotStore, and ResourceOrchestrator; current-machine quality history and availability remain unproven where no observation exists."
   ],
   "live_boundary": {
     "live_runtime_mutated": false,

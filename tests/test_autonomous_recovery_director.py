@@ -17,6 +17,7 @@ from aos.resource_snapshot import ResourceSnapshotStore
 from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.source_repair_pipeline import IsolatedSourceRepairPipeline
 from aos.autonomous_host import build_execution_router
+from aos.controller_relay import ControllerRelayPublisher
 from aos.runtime_admission import AdmissionState, CommandAdmissionStore
 from aos.runtime_store import RuntimeStore
 from aos.self_diagnosis import SelfDiagnosisEngine, ShadowRepairProposal
@@ -324,6 +325,24 @@ def test_execution_router_wires_one_resource_truth_plane(tmp_path):
     assert router.orchestrator.snapshot_store is not None
     assert router.orchestrator.snapshot_store.ledger is provider.resource_ledger
     assert provider.quota_governor.ledger is provider.resource_ledger
+
+
+def test_controller_relay_persists_platform_job_without_actuation(tmp_path):
+    relay = ControllerRelayPublisher(
+        tmp_path / "relay",
+        {
+            "runtime_root": str(tmp_path / "state"),
+            "candidate_source_sha": SOURCE_SHA,
+        },
+    )
+    finding = _finding(relay.diagnostics)
+    relay.diagnostics.diagnose_runtime = lambda **_kwargs: [finding]
+    relay.collect_snapshot(force_diagnosis=True)
+    jobs = relay.platform_recovery.list_recent_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["finding_id"] == finding.finding_id
+    assert jobs[0]["disposition"] == RepairDisposition.WAITING_FOR_RESOURCE.value
+    assert jobs[0]["execution_started"] is False
 
 
 def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promotion(tmp_path):
