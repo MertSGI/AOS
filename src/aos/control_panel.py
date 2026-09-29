@@ -53,6 +53,7 @@ from aos.self_repair import (
     ResourceReprobeActuator,
     classify_defect_repair_authority,
 )
+from aos.platform_recovery import PlatformRecoveryCoordinator
 
 
 def _controller_relay_root(config: Dict[str, Any]) -> Path:
@@ -3831,6 +3832,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         repair_root = relay_root / "self-repair"
         repair_engine = BoundedSelfRepairEngine(repair_root, diag_engine, config)
         repair_cockpit = repair_engine.summarize_cockpit()
+        platform_recovery = PlatformRecoveryCoordinator(
+            relay_root / "platform-recovery",
+            repair_engine,
+            source_base_sha=str(config.get("candidate_source_sha") or "UNKNOWN"),
+        )
+        platform_recovery_jobs = platform_recovery.list_recent_jobs()
 
         # First-Class Human Action Center
         action_root = relay_root / "action-center"
@@ -3991,6 +3998,12 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 "last_autonomy_impact": diag_summary.get("last_autonomy_impact", "NONE"),
                 "shadow_repair_proposal_status": diag_summary.get("shadow_repair_proposal_status", "NONE"),
                 "findings": diag_summary.get("findings", []),
+            },
+            "platform_recovery": {
+                "plane": "PLATFORM_RECOVERY",
+                "product_command_id": None,
+                "promotion_authority": "CONTROLLER_ONLY",
+                "jobs": platform_recovery_jobs,
             },
         }
 
@@ -4202,7 +4215,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if not (
-            parsed.path in ("/api/jobs", "/api/providers", "/api/goals", "/api/control-requests", "/api/self-repair")
+            parsed.path in ("/api/jobs", "/api/providers", "/api/goals", "/api/control-requests", "/api/self-repair", "/api/platform-recovery")
             or parsed.path.startswith("/api/commands/")
         ):
             self._json(HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
@@ -4245,6 +4258,39 @@ class _Handler(BaseHTTPRequestHandler):
                     runtime_provenance=str(deployment_state.get("provenance_status") or "UNPROVEN"),
                 )
                 self._json(HTTPStatus.OK, res)
+                return
+
+            # Route: governed platform-recovery dispatch
+            if parsed.path == "/api/platform-recovery":
+                relay_root = _controller_relay_root(self.config)
+                diag_engine = SelfDiagnosisEngine(relay_root / "self-diagnosis", self.config)
+                repair_engine = BoundedSelfRepairEngine(
+                    relay_root / "self-repair", diag_engine, self.config
+                )
+                if runtime_configured(self.config):
+                    repair_engine.register_actuator(
+                        "PROVIDER_TRANSIENT_FAILURE",
+                        ResourceReprobeActuator(runtime_client(self.config)),
+                    )
+                coordinator = PlatformRecoveryCoordinator(
+                    relay_root / "platform-recovery",
+                    repair_engine,
+                    source_base_sha=str(
+                        self.config.get("candidate_source_sha")
+                        or os.environ.get("AOS_RUNTIME_SOURCE_SHA")
+                        or "UNKNOWN"
+                    ),
+                )
+                finding_id = payload.get("finding_id")
+                if not finding_id:
+                    raise ValueError("finding_id is required for platform recovery")
+                job = coordinator.process_finding(str(finding_id))
+                status = (
+                    HTTPStatus.OK
+                    if job.get("disposition") in {"REPAIRED_VERIFIED", "NO_REPAIR_REQUIRED"}
+                    else HTTPStatus.CONFLICT
+                )
+                self._json(status, job)
                 return
 
             # Route: Autonomous Self-Repair Execution

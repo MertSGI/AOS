@@ -1,11 +1,14 @@
 """Authoritative, provider-neutral Resource OS availability snapshots."""
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
+from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.runtime_store import atomic_json, exclusive_file_lock, read_json
 
 
@@ -41,9 +44,10 @@ class ResourceSnapshot:
 class ResourceSnapshotStore:
     """Persists one honest current observation per registered resource."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, ledger: Optional[ResourceLedger] = None) -> None:
         self.path = path.expanduser().resolve()
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self.ledger = ledger
 
     @staticmethod
     def observe_backend(backend: Any) -> ResourceSnapshot:
@@ -112,6 +116,33 @@ class ResourceSnapshotStore:
                 resources = {}
             for snapshot in snapshots:
                 resources[snapshot.resource_id] = snapshot.to_dict()
+                if self.ledger is not None:
+                    serialized = json.dumps(
+                        snapshot.to_dict(), sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=True,
+                    )
+                    observation_id = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]
+                    self.ledger.append(
+                        ResourceEventType.RESOURCE_SNAPSHOT,
+                        idempotency_key=f"snapshot:{snapshot.resource_id}:{observation_id}",
+                        payload={
+                            "resource_id": snapshot.resource_id,
+                            "resource_class": snapshot.resource_class,
+                            "capability": "|".join(snapshot.capability),
+                            "health": snapshot.health,
+                            "credential_status": snapshot.credential_status,
+                            "local_service_status": snapshot.local_service_status,
+                            "quota_state": snapshot.quota_state,
+                            "retry_at_epoch": snapshot.retry_after_epoch,
+                            "scarcity": snapshot.scarcity,
+                            "cost_class": snapshot.cost_class,
+                            "context_capacity": snapshot.context_capacity,
+                            "quality_history": snapshot.quality_history,
+                            "expected_latency_ms": snapshot.expected_latency_ms,
+                            "workspace_session_compatibility": snapshot.workspace_session_compatibility,
+                            "provenance": snapshot.provenance,
+                        },
+                    )
             document = {
                 "contract_version": CONTRACT_VERSION,
                 "observed_at": utc_now(),

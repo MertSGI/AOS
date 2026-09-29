@@ -32,6 +32,7 @@ from aos.process_utils import run_headless
 from aos.read_identity import build_workspace_source_generation
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
+from aos.resource_snapshot import ResourceSnapshotStore
 from aos.freellmapi_lifecycle import FreeLLMAPIConfig, FreeLLMAPILifecycle
 
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
@@ -94,6 +95,7 @@ from extensions.autonomy_fabric.execution_backend import (  # noqa: E402
     ExecutionTrustZone,
 )
 from extensions.autonomy_fabric.execution_router import ExecutionRouter  # noqa: E402
+from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator  # noqa: E402
 from extensions.autonomy_fabric.antigravity_agentic_backend import (  # noqa: E402
     AntigravityAgenticExecutionBackend,
 )
@@ -906,9 +908,24 @@ def build_dag(project_id: str, registry: AgentRunRegistry, plan: Dict[str, Any])
 def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRouter:
     registry = load_routing_policy(str(policy_path))
     provider_router = ProviderRouter(registry)
+    resource_dir = runtime_dir / "resource-os"
+    resource_ledger = ResourceLedger(
+        resource_dir / "resource-ledger.jsonl",
+        resource_dir / "resource-ledger-snapshot.json",
+    )
+    quota_governor = QuotaGovernor(
+        resource_dir / "quota-governor.json",
+        ledger=resource_ledger,
+    )
+    snapshot_store = ResourceSnapshotStore(
+        resource_dir / "resource-snapshot.json",
+        ledger=resource_ledger,
+    )
     reasoning_backend = ProviderFailoverReasoningBackend(
         provider_router=provider_router,
         attempt_journal=runtime_dir / "provider-attempts.jsonl",
+        quota_governor=quota_governor,
+        resource_ledger=resource_ledger,
     )
     # Antigravity is registered as an availability-gated agentic resource. It
     # cannot be selected without a matching task capability and local proof.
@@ -933,6 +950,7 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
             AgenticStructuredPlanningBridge(cline_backend),
         ],
         ag_required=False,
+        orchestrator=ResourceOrchestrator(snapshot_store=snapshot_store),
     )
 
 

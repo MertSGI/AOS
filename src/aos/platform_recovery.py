@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, exclusive_file_lock, read_json
@@ -98,13 +98,72 @@ class PlatformRecoveryCoordinator:
     def get_job(self, job_id: str) -> Dict[str, Any]:
         return read_json(self.jobs_root / f"{job_id}.json", {})
 
+    def list_recent_jobs(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return bounded durable recovery jobs, newest first."""
+        if not self.jobs_root.is_dir():
+            return []
+        jobs = [
+            read_json(path, {})
+            for path in self.jobs_root.glob("repair-*.json")
+        ]
+        populated = [job for job in jobs if job]
+        populated.sort(
+            key=lambda job: str(job.get("updated_at") or job.get("created_at") or ""),
+            reverse=True,
+        )
+        return populated[: max(0, int(limit))]
+
+    def observe_finding(self, finding_id: str) -> Dict[str, Any]:
+        """Create a durable classified job without executing an actuator."""
+        finding = self.repair_engine.diag_engine.get_finding(finding_id)
+        if not finding:
+            raise ValueError(f"Finding not found: {finding_id}")
+        job_id = self._job_id(finding)
+        existing = self.get_job(job_id)
+        if existing:
+            return existing
+        proposed = finding.get("proposed_repair") or {}
+        authority = classify_defect_repair_authority(
+            component=str(finding.get("component") or ""),
+            failure_class=str(finding.get("failure_class") or ""),
+            symptom=str(finding.get("symptom") or ""),
+            files_affected=proposed.get("files_likely_affected") or (),
+        )
+        disposition = RepairDisposition.WAITING_FOR_RESOURCE.value
+        blocker = "BOUNDED_ACTUATOR_DISPATCH_REQUIRED"
+        if authority == AUTHORITY_FORBIDDEN:
+            disposition = RepairDisposition.UNSAFE_TO_REPAIR.value
+            blocker = "AUTHORITY_FORBIDDEN"
+        elif authority == AUTHORITY_HUMAN_APPROVAL_REQUIRED:
+            disposition = RepairDisposition.HUMAN_REQUIRED.value
+            blocker = "HUMAN_APPROVAL_REQUIRED"
+        elif finding.get("requires_candidate") or proposed.get("ci_required"):
+            blocker = "ISOLATED_SOURCE_REPAIR_EXECUTOR_REQUIRED"
+        return self._persist({
+            "contract_version": CONTRACT_VERSION,
+            "job_type": "SYSTEM_REPAIR_JOB",
+            "job_id": job_id,
+            "finding_id": finding_id,
+            "finding_fingerprint": finding.get("fingerprint"),
+            "authority_class": authority,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+            "product_command_id": None,
+            "activation_permitted": False,
+            "promotion_permitted": False,
+            "production": "NO_GO",
+            "disposition": disposition,
+            "blocker": blocker,
+            "execution_started": False,
+        })
+
     def process_finding(self, finding_id: str) -> Dict[str, Any]:
         finding = self.repair_engine.diag_engine.get_finding(finding_id)
         if not finding:
             raise ValueError(f"Finding not found: {finding_id}")
         job_id = self._job_id(finding)
         existing = self.get_job(job_id)
-        if existing and existing.get("disposition") in {item.value for item in RepairDisposition}:
+        if existing and existing.get("disposition") != RepairDisposition.WAITING_FOR_RESOURCE.value:
             return existing
 
         proposed = finding.get("proposed_repair") or {}
@@ -195,6 +254,12 @@ class PlatformRecoveryCoordinator:
             return self._persist(job)
 
         if authority == AUTHORITY_AUTO_REPAIR_ELIGIBLE:
+            if not self.repair_engine.live_active:
+                job.update(
+                    disposition=RepairDisposition.WAITING_FOR_RESOURCE.value,
+                    blocker="BOUNDED_LIVE_NOT_ENABLED",
+                )
+                return self._persist(job)
             success, stage, repair = self.repair_engine.attempt_autonomous_repair(finding_id)
             job.update(
                 disposition=(

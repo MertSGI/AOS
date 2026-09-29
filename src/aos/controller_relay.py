@@ -30,6 +30,8 @@ from aos.provenance import (
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
+from aos.self_repair import BoundedSelfRepairEngine
+from aos.platform_recovery import PlatformRecoveryCoordinator
 from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
 from aos.lineage_truth import (
     CURRENT,
@@ -209,6 +211,14 @@ class ControllerRelayPublisher:
         self._last_diagnosis_epoch: float = 0.0
         self._last_diagnosis_signature: Dict[str, Any] = {}
         self.diagnostics = SelfDiagnosisEngine(self.local_relay_dir / "self-diagnosis", self.runtime_config)
+        self.repair_engine = BoundedSelfRepairEngine(
+            self.local_relay_dir / "self-repair", self.diagnostics, self.runtime_config
+        )
+        self.platform_recovery = PlatformRecoveryCoordinator(
+            self.local_relay_dir / "platform-recovery",
+            self.repair_engine,
+            source_base_sha=str(self.runtime_config.get("candidate_source_sha") or "UNKNOWN"),
+        )
 
     def _init_sequence(self) -> int:
         seq_path = self.local_relay_dir / "sequence.json"
@@ -669,6 +679,14 @@ class ControllerRelayPublisher:
                     local_git_head=local_git_head,
                     outbox_status=self.remote_outbox_status,
                 )
+                # Diagnosis is continuously connected to the platform recovery
+                # plane, but relay publication only classifies/persists jobs.
+                # Actuation remains a separate authenticated, governed action.
+                for finding in diag_findings:
+                    try:
+                        self.platform_recovery.observe_finding(finding.finding_id)
+                    except Exception:
+                        continue
                 # Reconcile active findings against currently observed fingerprints
                 observed_fps = {f.fingerprint for f in diag_findings}
                 self.diagnostics.reconcile_active_findings(observed_fps)

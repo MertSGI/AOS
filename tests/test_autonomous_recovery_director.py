@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -13,6 +14,9 @@ from aos.platform_recovery import (
 )
 from aos.recovery_proof import RecoveryProofStore
 from aos.resource_snapshot import ResourceSnapshotStore
+from aos.resource_ledger import ResourceEventType, ResourceLedger
+from aos.source_repair_pipeline import IsolatedSourceRepairPipeline
+from aos.autonomous_host import build_execution_router
 from aos.runtime_admission import AdmissionState, CommandAdmissionStore
 from aos.runtime_store import RuntimeStore
 from aos.self_diagnosis import SelfDiagnosisEngine, ShadowRepairProposal
@@ -273,7 +277,10 @@ def test_resource_snapshot_preserves_unknown_and_render_contract_is_project_awar
         def get_health(self):
             return ExecutionHealth.HEALTHY
 
-    snapshots = ResourceSnapshotStore(tmp_path / "resource-snapshot.json")
+    ledger = ResourceLedger(tmp_path / "resource-ledger.jsonl")
+    snapshots = ResourceSnapshotStore(
+        tmp_path / "resource-snapshot.json", ledger=ledger
+    )
     observed = snapshots.observe_and_record([Backend()])["local-tool"]
     assert observed.health == "HEALTHY"
     assert observed.credential_status == "UNKNOWN"
@@ -287,6 +294,9 @@ def test_resource_snapshot_preserves_unknown_and_render_contract_is_project_awar
     rank = ResourceOrchestrator(snapshot_store=snapshots).rank([Backend()], request)
     assert rank[0].eligible is True
     assert snapshots.read()["resources"]["local-tool"]["quota_state"] == "UNKNOWN"
+    event = ledger.events([ResourceEventType.RESOURCE_SNAPSHOT.value])[-1]
+    assert event.payload["resource_id"] == "local-tool"
+    assert event.payload["credential_status"] == "UNKNOWN"
 
     workspace = tmp_path / "workspace"
     entry = workspace / "apps" / "web" / "home.html"
@@ -304,3 +314,78 @@ def test_resource_snapshot_preserves_unknown_and_render_contract_is_project_awar
     assert resolved.entrypoint == entry.resolve()
     assert resolved.stylesheet == css.resolve()
     assert resolved.source == "PROJECT_CONTRACT"
+
+
+def test_execution_router_wires_one_resource_truth_plane(tmp_path):
+    policy = Path("descriptors/nemotron.planner-policy.json").resolve()
+    router = build_execution_router(policy, tmp_path / "runtime")
+    provider = router.get_backend("provider_failover_reasoning_backend")
+    assert provider is not None
+    assert router.orchestrator.snapshot_store is not None
+    assert router.orchestrator.snapshot_store.ledger is provider.resource_ledger
+    assert provider.quota_governor.ledger is provider.resource_ledger
+
+
+def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promotion(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args, cwd=repo):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, text=True,
+            capture_output=True,
+        ).stdout.strip()
+
+    git("init")
+    git("config", "user.name", "AOS Test")
+    git("config", "user.email", "aos-test@example.invalid")
+    (repo / "source.txt").write_text("base\n", encoding="utf-8")
+    git("add", "source.txt")
+    git("commit", "-m", "base")
+    base_sha = git("rev-parse", "HEAD")
+
+    def repair_driver(_request, workspace):
+        (workspace / "source.txt").write_text("repaired\n", encoding="utf-8")
+        git("add", "source.txt", cwd=workspace)
+        git("commit", "-m", "bounded repair", cwd=workspace)
+        return {
+            "resource_backend_id": "native_execution",
+            "attempt_telemetry": {"attempt_count": 1},
+        }
+
+    def publisher(_workspace, _branch, repair_sha):
+        return {"remote_sha": repair_sha, "push_mode": "FAST_FORWARD_ONLY"}
+
+    def certifier(_workspace, _branch, repair_sha, _publication):
+        return {
+            "candidate_manifest": {"source_sha": repair_sha},
+            "tests_passed": True,
+            "evidence_valid": True,
+            "exact_sha_ci_status": "SUCCESS",
+            "candidate_materialized": True,
+            "evidence": {"ci_run_id": "synthetic"},
+        }
+
+    pipeline = IsolatedSourceRepairPipeline(
+        repo,
+        tmp_path / "worktrees",
+        repair_driver=repair_driver,
+        publisher=publisher,
+        certifier=certifier,
+    )
+    result = pipeline({
+        "job_id": "repair-test-1",
+        "required_base_sha": base_sha,
+        "requirements": {
+            "isolated_worktree": True,
+            "exact_sha_ci": True,
+            "immutable_candidate": True,
+            "promotion": False,
+            "activation": False,
+        },
+    })
+    assert result.base_sha == base_sha
+    assert result.repair_sha != base_sha
+    assert result.candidate_manifest["source_sha"] == result.repair_sha
+    assert result.promotion_performed is False
+    assert result.activation_performed is False

@@ -32,6 +32,7 @@ class ResourceEventType(str, Enum):
     RECOVERY_DISPOSITION = "RECOVERY_DISPOSITION"
     DECISION_REQUESTED = "DECISION_REQUESTED"
     DECISION_RESULT = "DECISION_RESULT"
+    RESOURCE_SNAPSHOT = "RESOURCE_SNAPSHOT"
 
 
 _SAFE_KEYS = {
@@ -47,6 +48,10 @@ _SAFE_KEYS = {
     "workspace_source_generation", "fingerprint_sha256",
     "route_id", "model_requested", "model_resolved", "decision_kind",
     "latency_ms", "advisory_only", "zero_cost_eligible",
+    "resource_class", "capability", "health", "credential_status",
+    "local_service_status", "quota_state", "scarcity", "cost_class",
+    "context_capacity", "quality_history", "expected_latency_ms",
+    "workspace_session_compatibility", "provenance",
 }
 _SAFE_TEXT = re.compile(r"^[A-Za-z0-9_.:/|*-]{0,256}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:|-]{1,256}$")
@@ -78,6 +83,7 @@ def _sanitize_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "reasoning_output_tokens", "total_tokens", "artifact_count",
         "same_fingerprint_respawns", "strategy_generation",
         "batch_number", "completed_batch_count_baseline",
+        "context_capacity", "expected_latency_ms",
     }
     numeric_keys = integer_keys | {"cost_estimate_usd", "cost_actual_usd", "retry_at_epoch", "latency_ms"}
     for key, value in payload.items():
