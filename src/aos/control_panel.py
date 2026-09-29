@@ -54,6 +54,7 @@ from aos.self_repair import (
     classify_defect_repair_authority,
 )
 from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
+from aos.source_repair_factory import create_source_repair_executor
 
 
 def _controller_relay_root(config: Dict[str, Any]) -> Path:
@@ -4402,9 +4403,41 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        host_config_path = Path(args.host_config).expanduser().resolve()
+        panel_config_path = Path(args.panel_config).expanduser().resolve()
+        host_config = load_config(host_config_path)
+
+        # Construct governed source repair executor when configuration is sufficient.
+        # Fail closed: if any required capability is missing, leave executor as None
+        # so PlatformRecoveryCoordinator reports WAITING_FOR_RESOURCE with
+        # blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE".
+        source_repair_executor = None
+        try:
+            default_project_id = host_config.get("default_project", "")
+            projects = host_config.get("projects", {})
+            default_project = projects.get(default_project_id)
+            if default_project:
+                repository = Path(default_project["workspace"]).expanduser().resolve()
+                policy_path = Path(default_project["routing_policy_path"]).expanduser().resolve()
+                runtime_root = Path(host_config["runtime_root"]).expanduser().resolve()
+                worktree_root = (runtime_root / "worktrees").resolve()
+                runtime_dir = runtime_root
+                # Verify repository is a valid git repository before constructing executor
+                if (repository / ".git").exists():
+                    source_repair_executor = create_source_repair_executor(
+                        repository=repository,
+                        worktree_root=worktree_root,
+                        policy_path=policy_path,
+                        runtime_dir=runtime_dir,
+                    )
+        except Exception:
+            # Configuration or resource capability unavailable - fail closed
+            source_repair_executor = None
+
         return serve(
-            Path(args.host_config).expanduser().resolve(),
-            Path(args.panel_config).expanduser().resolve(),
+            host_config_path,
+            panel_config_path,
+            source_repair_executor=source_repair_executor,
         )
     except Exception as exc:
         print(f"AOS_DIRECT_HOLD: {exc}", file=os.sys.stderr)

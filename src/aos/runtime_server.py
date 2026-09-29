@@ -48,6 +48,7 @@ from aos.secure_store import (
     provider_presence,
     resolve_credential_env_var,
 )
+from aos.source_repair_factory import create_source_repair_executor
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -137,8 +138,40 @@ class RuntimeEngine:
             "timestamp": utc_now(),
             "production": "NO_GO",
         }
+
+        # Construct governed source repair executor when configuration is sufficient.
+        # Fail closed: if any required capability is missing, leave executor as None
+        # so PlatformRecoveryCoordinator reports WAITING_FOR_RESOURCE with
+        # blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE".
+        source_repair_executor = None
+        try:
+            default_project_id = self.config.get("default_project", "")
+            projects = self.config.get("projects", {})
+            default_project = projects.get(default_project_id)
+            if default_project:
+                repository = Path(default_project["workspace"]).expanduser().resolve()
+                policy_path = Path(default_project["routing_policy_path"]).expanduser().resolve()
+                worktree_root = (self.runtime_root / "worktrees").resolve()
+                runtime_dir = self.runtime_root
+                # Verify repository is a valid git repository before constructing executor
+                if (repository / ".git").exists():
+                    source_repair_executor = create_source_repair_executor(
+                        repository=repository,
+                        worktree_root=worktree_root,
+                        policy_path=policy_path,
+                        runtime_dir=runtime_dir,
+                    )
+        except Exception:
+            # Configuration or resource capability unavailable - fail closed
+            source_repair_executor = None
+
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
-        self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-api-{os.getpid()}")
+        self.publisher = ControllerRelayPublisher(
+            relay_dir,
+            self.config,
+            writer_instance_id=f"aos-api-{os.getpid()}",
+            source_repair_executor=source_repair_executor,
+        )
         self.relay_worker = AsyncControllerRelay(self.publisher)
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)
         self.recovery_thread.start()
