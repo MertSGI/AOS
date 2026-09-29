@@ -330,6 +330,98 @@ class NativeFileWorker(ExecutionBackend):
         return results
 
 
+def _resolve_process_argv(
+    cmd: List[str],
+    env: Dict[str, str],
+    *,
+    platform_name: Optional[str] = None,
+) -> Tuple[List[str], Dict[str, str]]:
+    """Resolve an allowlisted process command without relying on a shell.
+
+    On Windows npm/npx are launcher wrappers. A bare ``npx`` passed to
+    CreateProcess with shell=False can fail with WinError 2 even though
+    PowerShell resolves npx.ps1/npx.cmd. For the managed Node distribution,
+    invoke the npm CLI JavaScript directly through node.exe instead.
+    """
+    if not cmd:
+        raise FileNotFoundError("PROCESS_EXECUTABLE_UNAVAILABLE: empty command")
+
+    argv = [str(item) for item in cmd]
+    requested = argv[0]
+
+    binary_name = os.path.basename(requested).lower()
+    if binary_name.endswith(".exe"):
+        binary_name = binary_name[:-4]
+
+    effective_platform = platform_name or os.name
+    effective_path = str(env.get("PATH", "") or "")
+
+    if effective_platform == "nt" and binary_name in {"npm", "npx"}:
+        node_path = (
+            shutil.which("node.exe", path=effective_path)
+            or shutil.which("node", path=effective_path)
+        )
+
+        cli_name = "npm-cli.js" if binary_name == "npm" else "npx-cli.js"
+
+        if node_path:
+            node_path = str(Path(node_path).resolve())
+            cli_path = (
+                Path(node_path).parent
+                / "node_modules"
+                / "npm"
+                / "bin"
+                / cli_name
+            )
+
+            if cli_path.is_file():
+                return (
+                    [node_path, str(cli_path), *argv[1:]],
+                    {
+                        "requested_binary": requested,
+                        "resolved_executable": node_path,
+                        "launcher": str(cli_path),
+                        "resolution_mode": "WINDOWS_NODE_CLI_DIRECT",
+                    },
+                )
+
+        raise FileNotFoundError(
+            f"PROCESS_EXECUTABLE_UNAVAILABLE: {binary_name} requires "
+            f"managed node.exe and {cli_name}"
+        )
+
+    resolved = shutil.which(requested, path=effective_path)
+
+    if resolved is None and os.path.isfile(requested):
+        resolved = os.path.abspath(requested)
+
+    if resolved is None:
+        raise FileNotFoundError(
+            f"PROCESS_EXECUTABLE_UNAVAILABLE: could not resolve "
+            f"'{requested}' on effective PATH"
+        )
+
+    resolved_path = Path(resolved)
+
+    if (
+        effective_platform == "nt"
+        and resolved_path.suffix.casefold() in {".cmd", ".bat", ".ps1"}
+    ):
+        raise FileNotFoundError(
+            f"PROCESS_WRAPPER_UNSUPPORTED_WITHOUT_SHELL: '{resolved_path}'"
+        )
+
+    return (
+        [str(resolved_path), *argv[1:]],
+        {
+            "requested_binary": requested,
+            "resolved_executable": str(resolved_path),
+            "launcher": "",
+            "resolution_mode": "DIRECT_EXECUTABLE",
+        },
+    )
+
+
 class NativeProcessWorker(ExecutionBackend):
     """Native process runner for deterministic commands (pytest, node, python, etc.)."""
 
@@ -399,8 +491,9 @@ class NativeProcessWorker(ExecutionBackend):
 
         timeout = request.timeout_seconds or 180
         try:
+            resolved_cmd, resolution = _resolve_process_argv(cmd, safe_env)
             proc = run_headless(
-                cmd,
+                resolved_cmd,
                 cwd=workspace,
                 env=safe_env,
                 timeout=timeout,
@@ -420,7 +513,11 @@ class NativeProcessWorker(ExecutionBackend):
                 stdout_digest=stdout_clean[:2000],
                 stderr_digest=stderr_clean[:2000],
                 sanitized_errors=[stderr_clean] if proc.returncode != 0 else [],
-                evidence_payload={"stdout": stdout_clean, "stderr": stderr_clean},
+                evidence_payload={
+                    "stdout": stdout_clean,
+                    "stderr": stderr_clean,
+                    "process_resolution": resolution,
+                },
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
         except subprocess.TimeoutExpired:

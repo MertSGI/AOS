@@ -22,6 +22,7 @@ from extensions.autonomy_fabric.native_workers import (
     AntigravityExecutionBackend,
     redact_secrets,
     compute_file_sha256,
+    _resolve_process_argv,
 )
 
 
@@ -299,6 +300,67 @@ def test_native_process_worker_execution_and_policy_denial():
         res_bad = worker.execute(req_bad)
         assert res_bad.status == "DENIED"
         assert res_bad.exit_code == 126
+
+
+
+def test_windows_npx_resolution_uses_managed_node_cli_without_shell(monkeypatch, tmp_path):
+    node_dir = tmp_path / "node-v24-test"
+    cli_dir = node_dir / "node_modules" / "npm" / "bin"
+    cli_dir.mkdir(parents=True)
+
+    node_exe = node_dir / "node.exe"
+    node_exe.write_bytes(b"MZ")
+
+    npx_cli = cli_dir / "npx-cli.js"
+    npx_cli.write_text("// synthetic npx cli\n", encoding="utf-8")
+
+    def fake_which(name, path=None):
+        if name in {"node.exe", "node"}:
+            return str(node_exe)
+        return None
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+
+    argv, evidence = _resolve_process_argv(
+        [
+            "npx",
+            "playwright",
+            "test",
+            "--project=chromium",
+            "tests/example.spec.ts",
+        ],
+        {"PATH": str(node_dir)},
+        platform_name="nt",
+    )
+
+    assert argv == [
+        str(node_exe.resolve()),
+        str(npx_cli),
+        "playwright",
+        "test",
+        "--project=chromium",
+        "tests/example.spec.ts",
+    ]
+
+    assert evidence["requested_binary"] == "npx"
+    assert evidence["resolved_executable"] == str(node_exe.resolve())
+    assert evidence["launcher"] == str(npx_cli)
+    assert evidence["resolution_mode"] == "WINDOWS_NODE_CLI_DIRECT"
+
+
+def test_windows_npx_resolution_fails_typed_when_managed_node_missing(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name, path=None: None)
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="PROCESS_EXECUTABLE_UNAVAILABLE",
+    ):
+        _resolve_process_argv(
+            ["npx", "playwright", "test"],
+            {"PATH": ""},
+            platform_name="nt",
+        )
+
 
 
 def test_native_git_worker_bounded_actions_and_prohibited_protection():
