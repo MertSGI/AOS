@@ -31,7 +31,7 @@ from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
 from aos.self_repair import BoundedSelfRepairEngine
-from aos.platform_recovery import PlatformRecoveryCoordinator
+from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
 from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
 from aos.lineage_truth import (
     CURRENT,
@@ -196,6 +196,7 @@ class ControllerRelayPublisher:
         runtime_config: Dict[str, Any],
         writer_instance_id: Optional[str] = None,
         remote_repo: str = "MertSGI/AOS",
+        source_repair_executor: Optional[SourceRepairExecutor] = None,
     ) -> None:
         self.local_relay_dir = local_relay_dir.expanduser().resolve()
         self.local_relay_dir.mkdir(parents=True, exist_ok=True)
@@ -218,6 +219,7 @@ class ControllerRelayPublisher:
             self.local_relay_dir / "platform-recovery",
             self.repair_engine,
             source_base_sha=str(self.runtime_config.get("candidate_source_sha") or "UNKNOWN"),
+            source_repair_executor=source_repair_executor,
         )
 
     def _init_sequence(self) -> int:

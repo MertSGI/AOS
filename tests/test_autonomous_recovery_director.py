@@ -10,12 +10,16 @@ from aos.design_render_entry import resolve_render_entry
 from aos.platform_recovery import (
     PlatformRecoveryCoordinator,
     RepairDisposition,
+    SourceRepairResourceUnavailable,
     SourceRepairResult,
 )
 from aos.recovery_proof import RecoveryProofStore
 from aos.resource_snapshot import ResourceSnapshotStore
 from aos.resource_ledger import ResourceEventType, ResourceLedger
-from aos.source_repair_pipeline import IsolatedSourceRepairPipeline
+from aos.source_repair_pipeline import (
+    IsolatedSourceRepairPipeline,
+    ResourceBackedRepairDriver,
+)
 from aos.autonomous_host import build_execution_router
 from aos.controller_relay import ControllerRelayPublisher
 from aos.runtime_admission import AdmissionState, CommandAdmissionStore
@@ -33,6 +37,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionCost,
     ExecutionHealth,
     ExecutionRequest,
+    ExecutionResult,
 )
 from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
 
@@ -208,6 +213,14 @@ def test_self_repair_requires_real_actuation_and_verified_postcondition(tmp_path
     assert BoundedSelfRepairEngine(tmp_path / "repair", diag).live_active is True
 
 
+def test_self_repair_defaults_to_shadow_governed(tmp_path):
+    diag = SelfDiagnosisEngine(tmp_path / "diagnosis")
+    repair = BoundedSelfRepairEngine(tmp_path / "repair", diag)
+
+    assert repair.live_active is False
+    assert repair.summarize_cockpit()["self_repair_mode"] == "SHADOW_GOVERNED"
+
+
 def test_resource_reprobe_actuator_requires_observed_postcondition():
     class Client:
         def __init__(self):
@@ -266,6 +279,164 @@ def test_platform_recovery_source_pipeline_stops_at_promotion_ready(tmp_path):
     assert job["activation_permitted"] is False
     assert job["promotion_permitted"] is False
     assert validate_document("system_repair_job", job).is_valid
+
+
+def test_platform_recovery_resource_unavailable_is_a_typed_wait(tmp_path):
+    diag = SelfDiagnosisEngine(tmp_path / "diagnosis")
+    finding = _finding(diag, requires_candidate=True)
+    repair = BoundedSelfRepairEngine(tmp_path / "repair", diag)
+
+    def unavailable(_request):
+        raise SourceRepairResourceUnavailable("NO_ELIGIBLE_SOURCE_REPAIR_RESOURCE")
+
+    coordinator = PlatformRecoveryCoordinator(
+        tmp_path / "platform-recovery",
+        repair,
+        source_base_sha=SOURCE_SHA,
+        source_repair_executor=unavailable,
+    )
+    job = coordinator.process_finding(finding.finding_id)
+
+    assert job["disposition"] == RepairDisposition.WAITING_FOR_RESOURCE.value
+    assert job["blocker"] == "SOURCE_REPAIR_RESOURCE_UNAVAILABLE"
+    assert job["error_class"] == "SourceRepairResourceUnavailable"
+
+
+def test_platform_recovery_missing_source_executor_waits_without_fallback(tmp_path):
+    diag = SelfDiagnosisEngine(tmp_path / "diagnosis")
+    finding = _finding(diag, requires_candidate=True)
+    coordinator = PlatformRecoveryCoordinator(
+        tmp_path / "platform-recovery",
+        BoundedSelfRepairEngine(tmp_path / "repair", diag),
+        source_base_sha=SOURCE_SHA,
+    )
+
+    job = coordinator.process_finding(finding.finding_id)
+
+    assert job["disposition"] == RepairDisposition.WAITING_FOR_RESOURCE.value
+    assert job["blocker"] == "SOURCE_REPAIR_EXECUTOR_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"base_sha": "b" * 40},
+        {"repair_sha": SOURCE_SHA, "candidate_manifest": {"source_sha": SOURCE_SHA}},
+        {"exact_sha_ci_status": "IN_PROGRESS"},
+        {"candidate_materialized": False},
+        {"promotion_performed": True},
+        {"activation_performed": True},
+    ],
+)
+def test_platform_recovery_rejects_unproven_source_results(tmp_path, override):
+    diag = SelfDiagnosisEngine(tmp_path / "diagnosis")
+    finding = _finding(diag, requires_candidate=True)
+    repair = BoundedSelfRepairEngine(tmp_path / "repair", diag)
+
+    def executor(request):
+        repair_sha = str(override.get("repair_sha") or "a" * 40)
+        values = {
+            "isolated_worktree": str(tmp_path / "isolated"),
+            "branch": "repair/aos-system-test",
+            "base_sha": request["required_base_sha"],
+            "repair_sha": repair_sha,
+            "workspace_fingerprint": "workspace-fingerprint",
+            "resource_backend_id": "codex_cli",
+            "attempt_telemetry": {"attempt_count": 1},
+            "git_diff_sha256": "d" * 64,
+            "candidate_manifest": {"source_sha": repair_sha},
+            "rollback_information": {"base_sha": SOURCE_SHA},
+            "tests_passed": True,
+            "evidence_valid": True,
+            "exact_sha_ci_status": "SUCCESS",
+            "candidate_materialized": True,
+            "promotion_performed": False,
+            "activation_performed": False,
+        }
+        values.update(override)
+        return SourceRepairResult(**values)
+
+    coordinator = PlatformRecoveryCoordinator(
+        tmp_path / "platform-recovery",
+        repair,
+        source_base_sha=SOURCE_SHA,
+        source_repair_executor=executor,
+    )
+    job = coordinator.process_finding(finding.finding_id)
+
+    assert job["disposition"] == RepairDisposition.FAILED_VERIFICATION.value
+
+
+def test_platform_recovery_never_dispatches_unsafe_source_finding(tmp_path):
+    diag = SelfDiagnosisEngine(tmp_path / "diagnosis")
+    finding = diag.record_or_update_finding(
+        component="production",
+        failure_class="UNKNOWN",
+        symptom="Production credential policy change requested",
+        severity="HIGH",
+        autonomy_impact="BLOCKED",
+        affected_lane_ids=[],
+        evidence_refs=["finding"],
+        evidence_class="SOURCE_PROOF",
+        confidence=1.0,
+        suspected_root_cause="Policy boundary",
+        repair_authority="FORBIDDEN",
+        requires_candidate=True,
+    )
+    called = False
+
+    def executor(_request):
+        nonlocal called
+        called = True
+        raise AssertionError("unsafe finding must not dispatch")
+
+    coordinator = PlatformRecoveryCoordinator(
+        tmp_path / "platform-recovery",
+        BoundedSelfRepairEngine(tmp_path / "repair", diag),
+        source_base_sha=SOURCE_SHA,
+        source_repair_executor=executor,
+    )
+    job = coordinator.process_finding(finding.finding_id)
+
+    assert job["disposition"] == RepairDisposition.UNSAFE_TO_REPAIR.value
+    assert called is False
+
+
+def test_resource_backed_repair_driver_uses_router_selection_not_a_named_worker(tmp_path):
+    class Router:
+        last_attempt_telemetry = [
+            {"backend_id": "codex_cli", "status": "SUCCESS", "final_selection": True}
+        ]
+
+        def execute_with_failover(self, request):
+            assert request.payload["resource_requirements"]["scarcity_policy"] == "AVOID_SCARCE"
+            assert ExecutionCapability.LONG_HORIZON_AGENTIC_WORK in request.required_capabilities
+            assert request.write_scope == ["src/aos/platform_recovery.py"]
+            return ExecutionResult(
+                backend_id="codex_cli",
+                worker_id="codex_cli",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="SUCCESS",
+                exit_code=0,
+                workspace=request.workspace,
+                changed_paths=["src/aos/platform_recovery.py"],
+            )
+
+    driver = ResourceBackedRepairDriver(Router())
+    evidence = driver({
+        "job_id": "repair-resource-selection",
+        "required_base_sha": SOURCE_SHA,
+        "finding": {
+            "repair_authority": AUTHORITY_AUTO_REPAIR_ELIGIBLE,
+            "proposed_repair": {
+                "files_likely_affected": ["src/aos/platform_recovery.py"]
+            },
+        },
+    }, tmp_path)
+
+    assert evidence["resource_backend_id"] == "codex_cli"
+    assert evidence["attempt_telemetry"]["selected_backend_id"] == "codex_cli"
 
 
 def test_resource_snapshot_preserves_unknown_and_render_contract_is_project_aware(tmp_path):
@@ -345,6 +516,61 @@ def test_controller_relay_persists_platform_job_without_actuation(tmp_path):
     assert jobs[0]["execution_started"] is False
 
 
+def test_controller_relay_wires_real_isolated_source_repair_executor(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args, cwd=repo):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, text=True,
+            capture_output=True,
+        ).stdout.strip()
+
+    git("init")
+    git("config", "user.name", "AOS Test")
+    git("config", "user.email", "aos-test@example.invalid")
+    (repo / "source.txt").write_text("base\n", encoding="utf-8")
+    git("add", "source.txt")
+    git("commit", "-m", "base")
+    base_sha = git("rev-parse", "HEAD")
+
+    def repair_driver(_request, workspace):
+        (workspace / "source.txt").write_text("repaired\n", encoding="utf-8")
+        return {
+            "resource_backend_id": "codex_cli",
+            "attempt_telemetry": {"attempt_count": 1},
+        }
+
+    pipeline = IsolatedSourceRepairPipeline(
+        repo,
+        tmp_path / "worktrees",
+        repair_driver=repair_driver,
+        publisher=lambda _workspace, _branch, sha: {
+            "remote_sha": sha, "push_mode": "NORMAL"
+        },
+        certifier=lambda _workspace, _branch, sha, _publication: {
+            "candidate_manifest": {"source_sha": sha, "immutable": True},
+            "tests_passed": True,
+            "evidence_valid": True,
+            "exact_sha_ci_status": "SUCCESS",
+            "candidate_materialized": True,
+        },
+    )
+    relay = ControllerRelayPublisher(
+        tmp_path / "relay",
+        {"runtime_root": str(tmp_path / "state"), "candidate_source_sha": base_sha},
+        source_repair_executor=pipeline,
+    )
+    finding = _finding(relay.diagnostics, requires_candidate=True)
+    job = relay.platform_recovery.process_finding(finding.finding_id)
+
+    assert job["disposition"] == RepairDisposition.PROMOTION_READY.value
+    assert job["source_repair"]["base_sha"] == base_sha
+    assert job["source_repair"]["repair_sha"] != base_sha
+    assert job["source_repair"]["promotion_performed"] is False
+    assert job["source_repair"]["activation_performed"] is False
+
+
 def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promotion(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -365,8 +591,6 @@ def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promoti
 
     def repair_driver(_request, workspace):
         (workspace / "source.txt").write_text("repaired\n", encoding="utf-8")
-        git("add", "source.txt", cwd=workspace)
-        git("commit", "-m", "bounded repair", cwd=workspace)
         return {
             "resource_backend_id": "native_execution",
             "attempt_telemetry": {"attempt_count": 1},
@@ -406,5 +630,6 @@ def test_isolated_source_repair_pipeline_proves_lineage_and_stops_before_promoti
     assert result.base_sha == base_sha
     assert result.repair_sha != base_sha
     assert result.candidate_manifest["source_sha"] == result.repair_sha
+    assert git("rev-parse", f"{result.repair_sha}^") == base_sha
     assert result.promotion_performed is False
     assert result.activation_performed is False

@@ -58,6 +58,10 @@ class SourceRepairResult:
 SourceRepairExecutor = Callable[[Dict[str, Any]], SourceRepairResult]
 
 
+class SourceRepairResourceUnavailable(RuntimeError):
+    """The governed source-repair path has no currently eligible resource."""
+
+
 class PlatformRecoveryCoordinator:
     """Durable recovery director with finite, auditable dispositions."""
 
@@ -219,6 +223,14 @@ class PlatformRecoveryCoordinator:
                         "activation": False,
                     },
                 })
+            except SourceRepairResourceUnavailable as exc:
+                job.update(
+                    disposition=RepairDisposition.WAITING_FOR_RESOURCE.value,
+                    blocker="SOURCE_REPAIR_RESOURCE_UNAVAILABLE",
+                    error_class=exc.__class__.__name__,
+                    error=str(exc)[:500],
+                )
+                return self._persist(job)
             except Exception as exc:
                 job.update(
                     disposition=RepairDisposition.FAILED_VERIFICATION.value,
@@ -229,6 +241,9 @@ class PlatformRecoveryCoordinator:
             evidence = asdict(result)
             safe = (
                 result.base_sha == self.source_base_sha
+                and len(result.repair_sha) == 40
+                and all(character in "0123456789abcdef" for character in result.repair_sha)
+                and result.repair_sha != result.base_sha
                 and bool(result.isolated_worktree)
                 and bool(result.workspace_fingerprint)
                 and bool(result.resource_backend_id)

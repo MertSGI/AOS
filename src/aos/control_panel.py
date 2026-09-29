@@ -53,7 +53,7 @@ from aos.self_repair import (
     ResourceReprobeActuator,
     classify_defect_repair_authority,
 )
-from aos.platform_recovery import PlatformRecoveryCoordinator
+from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
 
 
 def _controller_relay_root(config: Dict[str, Any]) -> Path:
@@ -4174,6 +4174,10 @@ class _Handler(BaseHTTPRequestHandler):
     def token(self) -> str:
         return self.server.aos_token  # type: ignore[attr-defined]
 
+    @property
+    def source_repair_executor(self) -> Optional[SourceRepairExecutor]:
+        return getattr(self.server, "aos_source_repair_executor", None)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/health":
@@ -4280,6 +4284,7 @@ class _Handler(BaseHTTPRequestHandler):
                         or os.environ.get("AOS_RUNTIME_SOURCE_SHA")
                         or "UNKNOWN"
                     ),
+                    source_repair_executor=self.source_repair_executor,
                 )
                 finding_id = payload.get("finding_id")
                 if not finding_id:
@@ -4287,7 +4292,9 @@ class _Handler(BaseHTTPRequestHandler):
                 job = coordinator.process_finding(str(finding_id))
                 status = (
                     HTTPStatus.OK
-                    if job.get("disposition") in {"REPAIRED_VERIFIED", "NO_REPAIR_REQUIRED"}
+                    if job.get("disposition") in {
+                        "REPAIRED_VERIFIED", "NO_REPAIR_REQUIRED", "PROMOTION_READY"
+                    }
                     else HTTPStatus.CONFLICT
                 )
                 self._json(status, job)
@@ -4355,7 +4362,12 @@ def ensure_panel_token(panel_config_path: Path) -> Dict[str, Any]:
     return data
 
 
-def serve(local_host_config: Path, panel_config_path: Path) -> int:
+def serve(
+    local_host_config: Path,
+    panel_config_path: Path,
+    *,
+    source_repair_executor: Optional[SourceRepairExecutor] = None,
+) -> int:
     host_config = load_config(local_host_config)
     panel = ensure_panel_token(panel_config_path)
     if panel.get("bind_host") not in ("127.0.0.1", "localhost"):
@@ -4369,6 +4381,7 @@ def serve(local_host_config: Path, panel_config_path: Path) -> int:
     server.daemon_threads = True
     server.aos_config = host_config  # type: ignore[attr-defined]
     server.aos_token = panel["panel_token"]  # type: ignore[attr-defined]
+    server.aos_source_repair_executor = source_repair_executor  # type: ignore[attr-defined]
     print(f"AOS_DIRECT_READY=http://127.0.0.1:{port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)

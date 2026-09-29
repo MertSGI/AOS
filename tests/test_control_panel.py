@@ -1,10 +1,16 @@
 import json
+import threading
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 import aos.control_panel as control_panel
 from aos.control_panel import _HTML, _get_sanitized_providers, build_status, configure_provider, submit_job
+from aos.platform_recovery import SourceRepairResult
+from aos.self_diagnosis import SelfDiagnosisEngine, ShadowRepairProposal
+from aos.self_repair import AUTHORITY_AUTO_REPAIR_ELIGIBLE
 
 
 def _config(tmp_path: Path):
@@ -66,6 +72,89 @@ def test_submit_job_rejects_secret_bearing_key(tmp_path):
     job["api_key"] = "never-store"
     with pytest.raises(ValueError, match="secret"):
         submit_job(job, cfg)
+
+
+def test_platform_recovery_route_passes_configured_source_executor(tmp_path):
+    source_sha = "a" * 40
+    relay_root = tmp_path / "relay"
+    config = _config(tmp_path)
+    config.update({
+        "controller_relay_dir": str(relay_root),
+        "candidate_source_sha": source_sha,
+    })
+    diagnosis = SelfDiagnosisEngine(relay_root / "self-diagnosis", config)
+    finding = diagnosis.record_or_update_finding(
+        component="telemetry",
+        failure_class="TELEMETRY_DEFECT",
+        symptom="Source repair required",
+        severity="MEDIUM",
+        autonomy_impact="DEGRADED",
+        affected_lane_ids=[],
+        evidence_refs=["source-proof"],
+        evidence_class="SOURCE_PROOF",
+        confidence=0.99,
+        suspected_root_cause="Bounded source defect",
+        repair_authority=AUTHORITY_AUTO_REPAIR_ELIGIBLE,
+        requires_candidate=True,
+        proposed_repair=ShadowRepairProposal(
+            problem="Bounded source defect",
+            evidence=["source-proof"],
+            root_cause_hypothesis="Wiring defect",
+            minimal_change="Patch one source file",
+            files_likely_affected=["src/aos/control_panel.py"],
+            tests_required=["tests/test_control_panel.py"],
+            ci_required=True,
+            runtime_proof_required="EXACT_SHA_CI_SUCCESS",
+            rollback_plan="Retain base SHA",
+            authority_class=AUTHORITY_AUTO_REPAIR_ELIGIBLE,
+        ),
+    )
+
+    def executor(request):
+        repair_sha = "b" * 40
+        return SourceRepairResult(
+            isolated_worktree=str(tmp_path / "isolated"),
+            branch="repair/aos-system-test",
+            base_sha=request["required_base_sha"],
+            repair_sha=repair_sha,
+            workspace_fingerprint="workspace-fingerprint",
+            resource_backend_id="codex_cli",
+            attempt_telemetry={"attempt_count": 1},
+            git_diff_sha256="d" * 64,
+            candidate_manifest={"source_sha": repair_sha, "immutable": True},
+            rollback_information={"base_sha": source_sha},
+            tests_passed=True,
+            evidence_valid=True,
+            exact_sha_ci_status="SUCCESS",
+            candidate_materialized=True,
+        )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), control_panel._Handler)
+    server.aos_config = config  # type: ignore[attr-defined]
+    server.aos_token = "x" * 40  # type: ignore[attr-defined]
+    server.aos_source_repair_executor = executor  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"finding_id": finding.finding_id}).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/platform-recovery",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-AOS-Panel-Token": "x" * 40,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        assert result["disposition"] == "PROMOTION_READY"
+        assert result["source_repair"]["base_sha"] == source_sha
+        assert result["promotion_permitted"] is False
+        assert result["activation_permitted"] is False
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
 
 
 def test_build_status_is_fail_closed_and_ag_disabled(tmp_path, monkeypatch):

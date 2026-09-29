@@ -7,13 +7,18 @@ silently acquires provider, remote, promotion, or activation authority.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping
 
-from aos.platform_recovery import SourceRepairResult
+from aos.platform_recovery import SourceRepairResourceUnavailable, SourceRepairResult
 from aos.process_utils import run_headless
 from aos.workspace_fingerprint import compute_workspace_fingerprint
+from extensions.autonomy_fabric.execution_backend import (
+    ExecutionCapability,
+    ExecutionRequest,
+)
 
 
 _FULL_SHA = re.compile(r"^[a-f0-9]{40}$")
@@ -22,6 +27,100 @@ _SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 RepairDriver = Callable[[Dict[str, Any], Path], Mapping[str, Any]]
 BranchPublisher = Callable[[Path, str, str], Mapping[str, Any]]
 ExactShaCertifier = Callable[[Path, str, str, Mapping[str, Any]], Mapping[str, Any]]
+
+
+class ResourceBackedRepairDriver:
+    """Dispatch one bounded source repair through the existing resource router."""
+
+    def __init__(
+        self,
+        execution_router: Any,
+        *,
+        scarcity_policy: str = "AVOID_SCARCE",
+        timeout_seconds: int = 1800,
+    ) -> None:
+        if scarcity_policy not in {"ALLOW_SCARCE", "AVOID_SCARCE"}:
+            raise ValueError("unsupported source-repair scarcity policy")
+        self.execution_router = execution_router
+        self.scarcity_policy = scarcity_policy
+        self.timeout_seconds = max(60, min(int(timeout_seconds), 3600))
+
+    def __call__(self, request: Dict[str, Any], workspace: Path) -> Mapping[str, Any]:
+        finding = request.get("finding") or {}
+        proposed = finding.get("proposed_repair") or {}
+        write_scope = [
+            str(path).replace("\\", "/").strip("/")
+            for path in proposed.get("files_likely_affected") or []
+            if str(path).strip()
+        ]
+        if not write_scope:
+            raise SourceRepairResourceUnavailable(
+                "SOURCE_REPAIR_WRITE_SCOPE_UNAVAILABLE"
+            )
+        prompt = json.dumps({
+            "task": "Apply the smallest source repair for this diagnosed AOS finding.",
+            "finding": finding,
+            "constraints": {
+                "workspace": "Use only the provided isolated git worktree.",
+                "write_scope": write_scope,
+                "commit": "Do not commit or publish; the owning pipeline performs those steps.",
+                "promotion": False,
+                "activation": False,
+                "production": "NO_GO",
+                "paid_fallback": "DISABLED",
+            },
+        }, ensure_ascii=False, sort_keys=True)
+        if len(prompt) > 64_000:
+            raise ValueError("source-repair context exceeds the bounded resource envelope")
+        execution_request = ExecutionRequest(
+            task_id=str(request["job_id"]),
+            project_id="aos-platform-recovery",
+            workspace=str(workspace),
+            operation_class="bounded_source_repair",
+            required_capabilities=[
+                ExecutionCapability.FILE_READ,
+                ExecutionCapability.FILE_WRITE,
+                ExecutionCapability.PATCH_APPLY,
+                ExecutionCapability.PROCESS_EXEC,
+                ExecutionCapability.GIT_READ,
+                ExecutionCapability.TEST_EXECUTION,
+                ExecutionCapability.LONG_HORIZON_AGENTIC_WORK,
+            ],
+            authority_id=str(finding.get("repair_authority") or "PLATFORM_RECOVERY"),
+            read_scope=["."],
+            write_scope=write_scope,
+            network_policy="APPROVED_ENDPOINTS",
+            timeout_seconds=self.timeout_seconds,
+            payload={
+                "prompt": prompt,
+                "source_sha": str(request["required_base_sha"]),
+                "resource_requirements": {
+                    "scarcity_policy": self.scarcity_policy,
+                    "agentic_planning_allowed": True,
+                },
+            },
+        )
+        result = self.execution_router.execute_with_failover(execution_request)
+        telemetry = list(getattr(self.execution_router, "last_attempt_telemetry", []) or [])
+        if result.status != "SUCCESS":
+            detail = "; ".join(str(item) for item in result.sanitized_errors[:3])
+            if result.backend_id == "router" or result.status in {"DENIED", "DEGRADED"}:
+                raise SourceRepairResourceUnavailable(
+                    f"NO_ELIGIBLE_SOURCE_REPAIR_RESOURCE:{detail or result.status}"
+                )
+            raise RuntimeError(
+                f"SOURCE_REPAIR_RESOURCE_FAILED:{result.backend_id}:{detail or result.status}"
+            )
+        return {
+            "resource_backend_id": result.backend_id,
+            "attempt_telemetry": {
+                "attempt_count": len(telemetry) or 1,
+                "attempts": telemetry,
+                "selected_backend_id": result.backend_id,
+            },
+            "changed_paths": list(result.changed_paths),
+            "evidence": dict(result.evidence_payload),
+        }
 
 
 class IsolatedSourceRepairPipeline:
@@ -38,6 +137,12 @@ class IsolatedSourceRepairPipeline:
     ) -> None:
         self.repository = repository.expanduser().resolve()
         self.worktree_root = worktree_root.expanduser().resolve()
+        try:
+            self.worktree_root.relative_to(self.repository)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("source repair worktree root must be isolated from the repository")
         self.repair_driver = repair_driver
         self.publisher = publisher
         self.certifier = certifier
@@ -90,6 +195,20 @@ class IsolatedSourceRepairPipeline:
         self._git(self.repository, "worktree", "add", "-b", branch, str(workspace), base_sha)
 
         driver_evidence = dict(self.repair_driver(request, workspace))
+        precommit_sha = str(self._git(workspace, "rev-parse", "HEAD")).strip().lower()
+        dirty = str(self._git(workspace, "status", "--porcelain=v1")).strip()
+        if precommit_sha != base_sha and dirty:
+            raise ValueError("repair resource left a committed repair with additional dirty changes")
+        if precommit_sha == base_sha:
+            if not dirty:
+                raise ValueError("repair resource produced no source change")
+            self._git(workspace, "add", "--all")
+            self._git(
+                workspace,
+                "commit",
+                "-m",
+                f"fix(platform): bounded repair {job_id}",
+            )
         repair_sha = str(self._git(workspace, "rev-parse", "HEAD")).strip().lower()
         if not _FULL_SHA.fullmatch(repair_sha) or repair_sha == base_sha:
             raise ValueError("repair driver did not produce a new exact source commit")
@@ -108,6 +227,10 @@ class IsolatedSourceRepairPipeline:
         publish_evidence = dict(self.publisher(workspace, branch, repair_sha))
         if str(publish_evidence.get("remote_sha") or "").lower() != repair_sha:
             raise ValueError("published source branch is not bound to the repair SHA")
+        if str(publish_evidence.get("push_mode") or "").upper() not in {
+            "NORMAL", "FAST_FORWARD_ONLY"
+        }:
+            raise ValueError("source repair publication must be normal and non-force")
         certification = dict(
             self.certifier(workspace, branch, repair_sha, publish_evidence)
         )
