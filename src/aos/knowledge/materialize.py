@@ -105,6 +105,12 @@ def render_documents(ledger: KnowledgeLedger) -> Dict[str, str]:
     _section(live, "Historical Promotion and Rollback Receipts", [
         event for event in events if event["event_type"] in {"LIVE_PROMOTION_RECEIPT", "ROLLBACK_RECEIPT"}
     ])
+    _section(live, "Prepared or Incomplete Runtime Transitions", [
+        event for event in index["unresolved_runtime_transitions"].values()
+    ])
+    _section(live, "Historical Aborted Runtime Transitions", [
+        event for event in events if event["event_type"] == "RUNTIME_TRANSITION_ABORTED"
+    ])
     live.extend(["## Current Runtime State", "",
                  "Not cached here. Generate fresh CURRENT_TRUTH before operational decisions.", ""])
 

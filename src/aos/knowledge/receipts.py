@@ -84,3 +84,22 @@ def record_live_promotion_receipt(ledger: KnowledgeLedger, **kwargs: Any) -> Dic
 
 def record_rollback_receipt(ledger: KnowledgeLedger, **kwargs: Any) -> Dict[str, Any]:
     return record_receipt(ledger, KnowledgeEventType.ROLLBACK_RECEIPT, **kwargs)
+
+
+def record_runtime_transition_intent(ledger: KnowledgeLedger, **kwargs: Any) -> Dict[str, Any]:
+    claims = kwargs.get("claims") or {}
+    required = {"transition_id", "operation", "boundary", "target_state", "previous_state"}
+    if required - set(claims):
+        raise ValueError("runtime transition intent is missing required transition identity")
+    if claims.get("operation") not in {"ACTIVATE", "PROMOTE", "ROLLBACK"}:
+        raise ValueError("unsupported runtime transition operation")
+    if not kwargs.get("result_sha"):
+        raise ValueError("runtime transition intent requires an exact relevant source SHA")
+    return record_receipt(ledger, KnowledgeEventType.RUNTIME_TRANSITION_INTENT, **kwargs)
+
+
+def record_runtime_transition_aborted(ledger: KnowledgeLedger, **kwargs: Any) -> Dict[str, Any]:
+    claims = kwargs.get("claims") or {}
+    if not claims.get("transition_id"):
+        raise ValueError("runtime transition abort requires transition_id")
+    return record_receipt(ledger, KnowledgeEventType.RUNTIME_TRANSITION_ABORTED, **kwargs)

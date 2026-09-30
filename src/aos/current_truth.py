@@ -116,6 +116,8 @@ def _active_slot(runtime_home: Path) -> tuple[Optional[Dict[str, Any]], Optional
     configured_root = supervisor_config.get("supervisor_root") if supervisor_config else None
     supervisor_root = Path(str(configured_root)).expanduser().resolve() if configured_root else runtime_home / "supervisor"
     pointer, _ = _read_mapping(supervisor_root / "active-slot.json")
+    if pointer and pointer.get("transition_state") == "INCOMPLETE_HOLD":
+        return pointer, None, supervisor_root
     if not pointer or pointer.get("active") not in ("stable", "candidate"):
         return pointer, None, supervisor_root
     key = "candidate_slot_id" if pointer["active"] == "candidate" else "stable_slot_id"
@@ -263,7 +265,10 @@ def generate_current_truth(
     operations_sha = _git_sha(operations_repo, str(operations_ref)) if operations_ref else None
 
     pointer_slot_id = None
-    if pointer and pointer.get("active") in ("stable", "candidate"):
+    transition_incomplete = bool(
+        pointer and pointer.get("transition_state") == "INCOMPLETE_HOLD"
+    )
+    if pointer and not transition_incomplete and pointer.get("active") in ("stable", "candidate"):
         pointer_key = "candidate_slot_id" if pointer["active"] == "candidate" else "stable_slot_id"
         pointer_slot_id = pointer.get(pointer_key)
 
@@ -371,6 +376,18 @@ def generate_current_truth(
             "maintenance": maintenance_observation,
         },
         "slot_candidate": {
+            "runtime_transition": (
+                _contradiction(
+                    {
+                        "transition_id": pointer.get("transition_id"),
+                        "operation": pointer.get("transition_operation"),
+                        "state": pointer.get("transition_state"),
+                    },
+                    "RUNTIME_TRANSITION_INCOMPLETE_HOLD",
+                )
+                if transition_incomplete
+                else _known("NONE", "active-slot.json")
+            ),
             "active_slot_pointer": (
                 _known(
                     {
@@ -422,6 +439,7 @@ def generate_current_truth(
             ("slot_candidate.configured_slot_id", configured_slot),
             ("slot_candidate.source_binding", source_binding),
             ("slot_candidate.slot_binding", slot_binding),
+            ("slot_candidate.runtime_transition", observations["slot_candidate"]["runtime_transition"]),
             ("policy.production", production_observation),
             ("policy.paid_fallback", paid_observation),
         )

@@ -29,6 +29,15 @@ from aos.knowledge.receipts import (
     record_rollback_receipt,
     record_verification_receipt,
 )
+from aos.knowledge.runtime_transitions import (
+    abort_transition,
+    clear_transition_marker,
+    prepare_transition,
+    transition_identity,
+    transition_marker,
+    transition_status,
+    unresolved_transition_intents,
+)
 
 
 class DeploymentError(RuntimeError):
@@ -689,8 +698,6 @@ def activate(
         result_sha=source_sha,
     )
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
-    persist_maintenance(runtime_root, paused=True, reason="candidate_activation_default")
-
     supervisor_root = Path(read_json(runtime_home / "supervisor-config.json", {}).get("supervisor_root") or (runtime_home / "supervisor"))
     slots = SlotManager(supervisor_root, knowledge_ledger=knowledge_ledger)
     previous = read_json(slots.pointer, {})
@@ -750,8 +757,20 @@ def activate(
             backup / "startup-authority.backup",
         )
 
-    atomic_json(backup / "transaction.json", {
+    target_pointer = {
+        "contract_version": CONTRACT_VERSION,
+        "stable_slot_id": previous_slot,
+        "candidate_slot_id": manifest["candidate_slot_id"],
+        "active": "candidate",
+        "promotion_state": "TRIAL_MAINTENANCE",
+        "updated_at": utc_now(),
+    }
+    transition_id = transition_identity("DEPLOY_ACTIVATION", txid, source_sha)
+    transaction = {
         "transaction_id": txid,
+        "activation_transition_id": transition_id,
+        "activation_transition_state": "CREATED",
+        "activation_owner_pid": os.getpid(),
         "source_sha": source_sha,
         "previous_slot_id": previous_slot,
         "supervisor_root": str(supervisor_root),
@@ -759,9 +778,36 @@ def activate(
         "startup_existed": startup_existed,
         "startup_managed": install_startup,
         "created_at": utc_now(),
-    })
+    }
+    atomic_json(backup / "transaction.json", transaction)
 
     try:
+        prepare_transition(
+            knowledge_ledger,
+            transition_id=transition_id,
+            operation="ACTIVATE",
+            boundary="aos.runtime_deploy",
+            resource=str(backup / "transaction.json"),
+            result_sha=source_sha,
+            previous_state={
+                "slot_pointer": previous,
+                "runtime_config_sha256": _sha256(config_path),
+                "startup_existed": startup_existed,
+            },
+            target_state={"slot_pointer": target_pointer, "candidate_root": str(candidate)},
+            module_ids=["RuntimeDeploy", "RuntimeSupervisor", "CandidateManifest"],
+            identity={"transaction_id": txid, "proof_identity": manifest.get("ci_run_id")},
+        )
+    except Exception:
+        transaction["activation_transition_state"] = "PREPARE_FAILED"
+        atomic_json(backup / "transaction.json", transaction)
+        raise
+    transaction["activation_transition_state"] = "PREPARED"
+    atomic_json(backup / "transaction.json", transaction)
+
+    completion_persisted = False
+    try:
+        persist_maintenance(runtime_root, paused=True, reason="candidate_activation_default")
         config = _candidate_runtime_config(config, candidate, manifest)
         atomic_json(config_path, config)
         slot = SlotRecord(
@@ -774,14 +820,10 @@ def activate(
             created_at=utc_now(),
         )
         slots.write_slot(slot)
-        atomic_json(slots.pointer, {
-            "contract_version": CONTRACT_VERSION,
-            "stable_slot_id": previous_slot,
-            "candidate_slot_id": slot.slot_id,
-            "active": "candidate",
-            "promotion_state": "TRIAL_MAINTENANCE",
-            "updated_at": utc_now(),
-        })
+        atomic_json(
+            slots.pointer,
+            {**target_pointer, **transition_marker(transition_id, "ACTIVATE")},
+        )
         atomic_json(
             supervisor_root / "control-request.json",
             {"action": "START", "requested_at": utc_now()},
@@ -813,8 +855,17 @@ def activate(
                 result_sha=source_sha,
                 module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
                 evidence_refs=[str(backup / "transaction.json")],
-                claims={"activation": result["activation"], "transaction_id": txid, "promotion": False},
+                claims={
+                    "transition_id": transition_id,
+                    "activation": result["activation"],
+                    "transaction_id": txid,
+                    "promotion": False,
+                },
             )
+            completion_persisted = True
+            atomic_json(slots.pointer, target_pointer)
+            transaction["activation_transition_state"] = "COMPLETED"
+            atomic_json(backup / "transaction.json", transaction)
             return result
 
         if startup is not None:
@@ -860,18 +911,60 @@ def activate(
             module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
             evidence_refs=[str(backup / "transaction.json")],
             runtime_evidence={"runtime_health": health, "panel_health": panel},
-            claims={"activation": "PASS_MAINTENANCE", "transaction_id": txid, "promotion": False},
+            claims={
+                "transition_id": transition_id,
+                "activation": "PASS_MAINTENANCE",
+                "transaction_id": txid,
+                "promotion": False,
+            },
         )
+        completion_persisted = True
+        atomic_json(slots.pointer, target_pointer)
+        transaction["activation_transition_state"] = "COMPLETED"
+        atomic_json(backup / "transaction.json", transaction)
         return result
     except Exception as exc:
+        if completion_persisted or transition_status(knowledge_ledger, transition_id)["completion"]:
+            transaction["activation_transition_state"] = "INCOMPLETE_HOLD"
+            atomic_json(backup / "transaction.json", transaction)
+            raise DeploymentError(
+                f"Activation completion is durable but final exposure requires reconciliation: {transition_id}"
+            ) from exc
         try:
-            _restore_transaction(runtime_home, backup, startup_dir)
+            previous_pointer = _restore_transaction(
+                runtime_home,
+                backup,
+                startup_dir,
+                transition_id=transition_id,
+                operation="ACTIVATE",
+            )
+            abort_transition(
+                knowledge_ledger,
+                transition_id=transition_id,
+                boundary="aos.runtime_deploy",
+                result_sha=source_sha,
+                reason=f"activation failed and was restored: {exc}",
+                recovered_state={"restored_slot_id": previous_pointer},
+            )
+            restored_pointer = read_json(slots.pointer, {})
+            atomic_json(slots.pointer, clear_transition_marker(restored_pointer))
+            transaction["activation_transition_state"] = "ABORTED"
+            atomic_json(backup / "transaction.json", transaction)
         except Exception as rollback_error:
+            transaction["activation_transition_state"] = "INCOMPLETE_HOLD"
+            atomic_json(backup / "transaction.json", transaction)
             raise DeploymentError(f"Activation failed ({exc}); automatic rollback also failed ({rollback_error})") from exc
         raise
 
 
-def _restore_transaction(runtime_home: Path, backup: Path, startup_dir: Path) -> str:
+def _restore_transaction(
+    runtime_home: Path,
+    backup: Path,
+    startup_dir: Path,
+    *,
+    transition_id: Optional[str] = None,
+    operation: str = "ROLLBACK",
+) -> str:
     tx = read_json(backup / "transaction.json", {})
     if not tx:
         raise DeploymentError(f"Rollback transaction metadata missing: {backup}")
@@ -880,13 +973,15 @@ def _restore_transaction(runtime_home: Path, backup: Path, startup_dir: Path) ->
         persist_maintenance(Path(current["runtime_root"]), paused=True, reason="deployment_rollback")
     supervisor = Path(tx["supervisor_root"]).expanduser().resolve()
     atomic_json(supervisor / "control-request.json", {"action": "SHUTDOWN", "requested_at": utc_now()})
-    for name, target in (
-        ("runtime-config.json", runtime_home / "runtime-config.json"),
-        ("active-slot.json", supervisor / "active-slot.json"),
-    ):
-        source = backup / name
-        if source.is_file():
-            atomic_json(target, read_json(source, {}))
+    config_backup = backup / "runtime-config.json"
+    if config_backup.is_file():
+        atomic_json(runtime_home / "runtime-config.json", read_json(config_backup, {}))
+    pointer_backup = backup / "active-slot.json"
+    if pointer_backup.is_file():
+        restored_pointer = read_json(pointer_backup, {})
+        if transition_id:
+            restored_pointer.update(transition_marker(transition_id, operation))
+        atomic_json(supervisor / "active-slot.json", restored_pointer)
     if bool(tx.get("startup_managed", True)):
         startup_raw = str(
             tx.get("startup_path")
@@ -949,30 +1044,207 @@ def rollback(runtime_home: Path, transaction_id: str, startup_dir: Path) -> Dict
     source_sha = str(tx.get("source_sha") or "")
     if len(source_sha) != 40:
         raise DeploymentError("Rollback transaction lacks exact source SHA for knowledge preflight")
+    knowledge_ledger = ledger_for_runtime(runtime_home)
     execution_context_preflight(
-        ledger_for_runtime(runtime_home),
+        knowledge_ledger,
         project_id="AOS",
         task_class="RUNTIME_ROLLBACK",
         module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
         paths=["runtime-config.json", "supervisor/active-slot.json"],
         base_sha=source_sha,
     )
-    previous_slot = _restore_transaction(runtime_home, backup, startup_dir)
-    result = {"rollback": "PASS", "transaction_id": transaction_id, "restored_slot_id": previous_slot}
-    restored = read_json(runtime_home / "supervisor" / "slots" / f"{previous_slot}.json", {})
+    supervisor = Path(tx["supervisor_root"]).expanduser().resolve()
+    previous_slot = str(tx.get("previous_slot_id") or "")
+    restored = read_json(supervisor / "slots" / f"{previous_slot}.json", {})
     restored_sha = restored.get("source_sha")
-    record_rollback_receipt(
-        ledger_for_runtime(runtime_home),
-        project_id="AOS",
-        idempotency_key=f"runtime-rollback:{transaction_id}",
-        agent_class="AOS_NATIVE",
-        tool_name="aos.runtime_deploy",
-        result_sha=restored_sha if isinstance(restored_sha, str) and len(restored_sha) == 40 else None,
+    if not isinstance(restored_sha, str) or len(restored_sha) != 40:
+        raise DeploymentError("Rollback target lacks exact source SHA")
+    transition_id = transition_identity("DEPLOY_ROLLBACK", transaction_id, restored_sha)
+    result = {"rollback": "PASS", "transaction_id": transaction_id, "restored_slot_id": previous_slot}
+    existing = transition_status(knowledge_ledger, transition_id)
+    if existing["completion"] is not None:
+        pointer = read_json(supervisor / "active-slot.json", {})
+        if pointer.get("transition_state") == "INCOMPLETE_HOLD":
+            raise DeploymentError(
+                f"Completed rollback requires restart reconciliation: {transition_id}"
+            )
+        if pointer.get("active") == "stable" and pointer.get("stable_slot_id") == previous_slot:
+            return result
+        raise DeploymentError(f"Rollback completion state mismatch: {transition_id}")
+    prepare_transition(
+        knowledge_ledger,
+        transition_id=transition_id,
+        operation="ROLLBACK",
+        boundary="aos.runtime_deploy",
+        resource=str(backup / "transaction.json"),
+        result_sha=restored_sha,
+        previous_state={
+            "slot_pointer": read_json(supervisor / "active-slot.json", {}),
+            "activation_source_sha": source_sha,
+        },
+        target_state={"restored_slot_id": previous_slot, "restored_source_sha": restored_sha},
         module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
-        evidence_refs=[str(backup / "transaction.json")],
-        claims=result,
+        identity={"transaction_id": transaction_id},
     )
-    return result
+    tx["rollback_transition_id"] = transition_id
+    tx["rollback_transition_state"] = "PREPARED"
+    atomic_json(backup / "transaction.json", tx)
+    try:
+        previous_slot = _restore_transaction(
+            runtime_home,
+            backup,
+            startup_dir,
+            transition_id=transition_id,
+            operation="ROLLBACK",
+        )
+        record_rollback_receipt(
+            knowledge_ledger,
+            project_id="AOS",
+            idempotency_key=f"runtime-rollback:{transition_id}",
+            agent_class="AOS_NATIVE",
+            tool_name="aos.runtime_deploy",
+            result_sha=restored_sha,
+            module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+            evidence_refs=[str(backup / "transaction.json")],
+            claims={**result, "transition_id": transition_id},
+        )
+        pointer = read_json(supervisor / "active-slot.json", {})
+        atomic_json(supervisor / "active-slot.json", clear_transition_marker(pointer))
+        tx["rollback_transition_state"] = "COMPLETED"
+        atomic_json(backup / "transaction.json", tx)
+        return result
+    except Exception:
+        tx["rollback_transition_state"] = "INCOMPLETE_HOLD"
+        atomic_json(backup / "transaction.json", tx)
+        raise
+
+
+def reconcile_runtime_transitions(runtime_home: Path, startup_dir: Path) -> Dict[str, Any]:
+    """Reconcile prepared deployment transitions before normal supervisor use."""
+    runtime_home = runtime_home.expanduser().resolve()
+    startup_dir = startup_dir.expanduser().resolve()
+    ledger = ledger_for_runtime(runtime_home)
+    reconciled: list[Dict[str, str]] = []
+    prepared_activation: Optional[Dict[str, Any]] = None
+    backups = runtime_home / "deployment-backups"
+    if not backups.is_dir():
+        remaining = unresolved_transition_intents(ledger, boundary="aos.runtime_deploy")
+        if remaining:
+            raise DeploymentError("Unresolved deployment transition has no recovery transaction")
+        return {"status": "READY", "reconciled": reconciled, "prepared_activation": None}
+    for backup in sorted(path for path in backups.iterdir() if path.is_dir()):
+        tx_path = backup / "transaction.json"
+        tx = read_json(tx_path, {})
+        if not tx:
+            continue
+        supervisor = Path(tx["supervisor_root"]).expanduser().resolve()
+        activation_id = str(tx.get("activation_transition_id") or "")
+        activation_state = str(tx.get("activation_transition_state") or "")
+        if activation_id and activation_state in {"CREATED", "PREPARED", "INCOMPLETE_HOLD"}:
+            status = transition_status(ledger, activation_id)
+            if status["intent"] is None:
+                tx["activation_transition_state"] = "PREPARE_FAILED"
+                atomic_json(tx_path, tx)
+                continue
+            if status["completion"] is not None:
+                pointer = read_json(supervisor / "active-slot.json", {})
+                if pointer.get("transition_id") == activation_id:
+                    atomic_json(supervisor / "active-slot.json", clear_transition_marker(pointer))
+                tx["activation_transition_state"] = "COMPLETED"
+                reconciled.append({"transition_id": activation_id, "result": "COMPLETED"})
+            elif status["abort"] is not None:
+                pointer = read_json(supervisor / "active-slot.json", {})
+                if pointer.get("transition_id") == activation_id:
+                    atomic_json(supervisor / "active-slot.json", clear_transition_marker(pointer))
+                tx["activation_transition_state"] = "ABORTED"
+                reconciled.append({"transition_id": activation_id, "result": "ABORTED"})
+            elif (
+                activation_state == "PREPARED"
+                and process_alive(tx.get("activation_owner_pid"))
+            ):
+                candidate = {
+                    "transition_id": activation_id,
+                    "owner_pid": int(tx["activation_owner_pid"]),
+                }
+                if prepared_activation is not None and prepared_activation != candidate:
+                    raise DeploymentError("Multiple prepared activations are concurrently owned")
+                prepared_activation = candidate
+                continue
+            else:
+                restored_slot = _restore_transaction(
+                    runtime_home,
+                    backup,
+                    startup_dir,
+                    transition_id=activation_id,
+                    operation="ACTIVATE",
+                )
+                abort_transition(
+                    ledger,
+                    transition_id=activation_id,
+                    boundary="aos.runtime_deploy",
+                    result_sha=str(tx["source_sha"]),
+                    reason="restart reconciliation restored incomplete activation",
+                    recovered_state={"restored_slot_id": restored_slot},
+                )
+                pointer = read_json(supervisor / "active-slot.json", {})
+                atomic_json(supervisor / "active-slot.json", clear_transition_marker(pointer))
+                tx["activation_transition_state"] = "ABORTED"
+                reconciled.append({"transition_id": activation_id, "result": "ABORTED"})
+            atomic_json(tx_path, tx)
+
+        rollback_id = str(tx.get("rollback_transition_id") or "")
+        rollback_state = str(tx.get("rollback_transition_state") or "")
+        if rollback_id and rollback_state in {"PREPARED", "INCOMPLETE_HOLD"}:
+            status = transition_status(ledger, rollback_id)
+            restored_slot = str(tx.get("previous_slot_id") or "")
+            restored = read_json(supervisor / "slots" / f"{restored_slot}.json", {})
+            restored_sha = str(restored.get("source_sha") or "")
+            if status["completion"] is None:
+                _restore_transaction(
+                    runtime_home,
+                    backup,
+                    startup_dir,
+                    transition_id=rollback_id,
+                    operation="ROLLBACK",
+                )
+                record_rollback_receipt(
+                    ledger,
+                    project_id="AOS",
+                    idempotency_key=f"runtime-rollback:{rollback_id}",
+                    agent_class="AOS_NATIVE",
+                    tool_name="aos.runtime_deploy",
+                    result_sha=restored_sha,
+                    module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+                    evidence_refs=[str(tx_path)],
+                    claims={
+                        "transition_id": rollback_id,
+                        "rollback": "PASS",
+                        "transaction_id": str(tx["transaction_id"]),
+                        "restored_slot_id": restored_slot,
+                        "reconciled_after_restart": True,
+                    },
+                )
+            pointer = read_json(supervisor / "active-slot.json", {})
+            if pointer.get("transition_id") == rollback_id:
+                atomic_json(supervisor / "active-slot.json", clear_transition_marker(pointer))
+            tx["rollback_transition_state"] = "COMPLETED"
+            atomic_json(tx_path, tx)
+            reconciled.append({"transition_id": rollback_id, "result": "COMPLETED"})
+    remaining = unresolved_transition_intents(ledger, boundary="aos.runtime_deploy")
+    allowed_id = prepared_activation.get("transition_id") if prepared_activation else None
+    unexpected = [
+        event for event in remaining
+        if event.get("claims", {}).get("transition_id") != allowed_id
+    ]
+    if unexpected:
+        raise DeploymentError(
+            f"Unresolved deployment transition requires recovery: {unexpected[0]['claims']['transition_id']}"
+        )
+    return {
+        "status": "PREPARED" if prepared_activation else "READY",
+        "reconciled": reconciled,
+        "prepared_activation": prepared_activation,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:

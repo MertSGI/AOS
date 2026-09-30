@@ -49,6 +49,9 @@ def derive_index(events: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
     questions: Dict[str, Dict[str, Any]] = {}
     next_actions: Dict[str, str] = {}
     latest_promotion: Optional[Dict[str, Any]] = None
+    unresolved_transitions: Dict[str, Dict[str, Any]] = {}
+    completed_transitions: Dict[str, Dict[str, Any]] = {}
+    aborted_transitions: Dict[str, Dict[str, Any]] = {}
     latest_operational_observation: Optional[Dict[str, Any]] = None
 
     for event in ordered:
@@ -100,6 +103,23 @@ def derive_index(events: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
                 latest_verification[module_id] = ref
         elif event_type == KnowledgeEventType.LIVE_PROMOTION_RECEIPT.value:
             latest_promotion = ref
+        if event_type == KnowledgeEventType.RUNTIME_TRANSITION_INTENT.value:
+            transition_id = str(event.get("claims", {}).get("transition_id") or "")
+            if transition_id:
+                unresolved_transitions[transition_id] = ref
+        elif event_type in {
+            KnowledgeEventType.LIVE_PROMOTION_RECEIPT.value,
+            KnowledgeEventType.ROLLBACK_RECEIPT.value,
+        }:
+            transition_id = str(event.get("claims", {}).get("transition_id") or "")
+            if transition_id:
+                unresolved_transitions.pop(transition_id, None)
+                completed_transitions[transition_id] = ref
+        elif event_type == KnowledgeEventType.RUNTIME_TRANSITION_ABORTED.value:
+            transition_id = str(event.get("claims", {}).get("transition_id") or "")
+            if transition_id:
+                unresolved_transitions.pop(transition_id, None)
+                aborted_transitions[transition_id] = ref
         if event.get("base_sha") or event.get("result_sha"):
             binding_key = "|".join(event.get("module_ids") or [event["project_id"]])
             bindings[binding_key] = ref
@@ -126,6 +146,9 @@ def derive_index(events: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         "latest_accepted_implementation_by_module": dict(sorted(latest_impl.items())),
         "latest_accepted_verification_by_module": dict(sorted(latest_verification.items())),
         "latest_live_promotion": latest_promotion,
+        "unresolved_runtime_transitions": dict(sorted(unresolved_transitions.items())),
+        "completed_runtime_transitions": dict(sorted(completed_transitions.items())),
+        "aborted_runtime_transitions": dict(sorted(aborted_transitions.items())),
         "project_canonical_next_action": dict(sorted(next_actions.items())),
         "source_runtime_sha_bindings": dict(sorted(bindings.items())),
         "current_unresolved_questions": dict(sorted(questions.items())),

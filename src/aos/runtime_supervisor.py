@@ -198,10 +198,20 @@ class RuntimeSupervisor:
             else self.config_path.parent
         )
         knowledge_ledger = ledger_for_runtime(runtime_home)
+        # Prepared deployment transitions are reconciled before any slot can
+        # be selected or launched. A reconciliation failure aborts supervisor
+        # construction and therefore leaves runtime use fail-closed.
+        from aos.runtime_deploy import default_startup_dir, reconcile_runtime_transitions
+        transition_recovery = reconcile_runtime_transitions(runtime_home, default_startup_dir())
+        prepared_activation = transition_recovery.get("prepared_activation") or {}
         self.slots = SlotManager(
             self.root,
             knowledge_ledger=knowledge_ledger,
+            prepared_transition_id=prepared_activation.get("transition_id"),
+            prepared_transition_owner_pid=prepared_activation.get("owner_pid"),
         )
+        if self.slots.pointer.is_file():
+            self.slots.reconcile_incomplete_transition()
         self.state_path = self.root / "supervisor-state.json"
         self.child: Optional[OwnedProcess] = None
         self.child_slot_id: Optional[str] = None

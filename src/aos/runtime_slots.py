@@ -8,11 +8,25 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
+from aos.process_utils import process_alive
 from aos.runtime_store import atomic_json, read_json
 from aos.knowledge.hooks import execution_context_preflight
 from aos.knowledge.accepted_work import assert_accepted_work_receipted
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_live_promotion_receipt, record_rollback_receipt
+from aos.knowledge.runtime_transitions import (
+    abort_transition,
+    clear_transition_marker,
+    prepare_transition,
+    transition_identity,
+    transition_marker,
+    transition_status,
+    unresolved_transition_intents,
+)
+
+
+class RuntimeTransitionIncompleteError(RuntimeError):
+    """Normal slot use is forbidden while a prepared transition is unresolved."""
 
 
 @dataclass(frozen=True)
@@ -63,12 +77,30 @@ class SlotRecord:
 
 
 class SlotManager:
-    def __init__(self, root: Path, *, knowledge_ledger: Optional[KnowledgeLedger] = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        knowledge_ledger: Optional[KnowledgeLedger] = None,
+        prepared_transition_id: Optional[str] = None,
+        prepared_transition_owner_pid: Optional[int] = None,
+    ) -> None:
         self.root = root.expanduser().resolve()
         self.slots = self.root / "slots"
         self.slots.mkdir(parents=True, exist_ok=True)
         self.pointer = self.root / "active-slot.json"
         self.knowledge_ledger = knowledge_ledger
+        self.prepared_transition_id = prepared_transition_id
+        self.prepared_transition_owner_pid = prepared_transition_owner_pid
+
+    def _prepared_activation_allowed(self, value: Dict[str, Any]) -> bool:
+        return bool(
+            value.get("transition_state") == "INCOMPLETE_HOLD"
+            and value.get("transition_operation") == "ACTIVATE"
+            and value.get("transition_id") == self.prepared_transition_id
+            and self.prepared_transition_owner_pid
+            and process_alive(self.prepared_transition_owner_pid)
+        )
 
     def write_slot(self, record: SlotRecord) -> Path:
         path = self.slots / f"{record.slot_id}.json"
@@ -101,7 +133,77 @@ class SlotManager:
             raise ValueError("Invalid or missing active slot pointer")
         if value.get("active") not in ("stable", "candidate"):
             raise ValueError("Invalid active slot")
+        prepared_allowed = self._prepared_activation_allowed(value)
+        if value.get("transition_state") == "INCOMPLETE_HOLD" and not prepared_allowed:
+            raise RuntimeTransitionIncompleteError(
+                f"RUNTIME_TRANSITION_INCOMPLETE:{value.get('transition_id') or 'UNKNOWN'}"
+            )
+        if self.knowledge_ledger is not None:
+            unresolved = unresolved_transition_intents(
+                self.knowledge_ledger,
+                boundary="aos.runtime_slots",
+                resource=str(self.pointer),
+            )
+            unresolved = tuple(
+                event for event in unresolved
+                if event.get("claims", {}).get("transition_id") != self.prepared_transition_id
+                or not prepared_allowed
+            )
+            if unresolved:
+                transition_id = unresolved[-1]["claims"]["transition_id"]
+                raise RuntimeTransitionIncompleteError(
+                    f"RUNTIME_TRANSITION_INCOMPLETE:{transition_id}"
+                )
         return value
+
+    def reconcile_incomplete_transition(self) -> Dict[str, Any]:
+        """Deterministically finish or abort an interrupted local slot transition."""
+        if self.knowledge_ledger is None:
+            raise ValueError("KCP_REQUIRED_BUT_UNAVAILABLE")
+        current = read_json(self.pointer, {})
+        marker_id = str(current.get("transition_id") or "")
+        if marker_id:
+            status = transition_status(self.knowledge_ledger, marker_id)
+            if status["completion"] is not None or status["abort"] is not None:
+                final = clear_transition_marker(current)
+                atomic_json(self.pointer, final)
+                current = final
+        unresolved = unresolved_transition_intents(
+            self.knowledge_ledger,
+            boundary="aos.runtime_slots",
+            resource=str(self.pointer),
+        )
+        for intent in unresolved:
+            claims = intent["claims"]
+            transition_id = str(claims["transition_id"])
+            previous = dict(claims["previous_state"])
+            target = dict(claims["target_state"])
+            current = read_json(self.pointer, {})
+            comparable = clear_transition_marker(current)
+            if comparable not in (previous, target) and current not in (previous, target):
+                held = {**current, **transition_marker(transition_id, str(claims["operation"]))}
+                atomic_json(self.pointer, held)
+                raise RuntimeTransitionIncompleteError(
+                    f"RUNTIME_TRANSITION_RECONCILIATION_REQUIRED:{transition_id}"
+                )
+            atomic_json(self.pointer, previous)
+            try:
+                abort_transition(
+                    self.knowledge_ledger,
+                    transition_id=transition_id,
+                    boundary="aos.runtime_slots",
+                    result_sha=str(intent["result_sha"]),
+                    reason="restart reconciliation restored previous slot pointer",
+                    recovered_state=previous,
+                )
+            except Exception:
+                atomic_json(
+                    self.pointer,
+                    {**previous, **transition_marker(transition_id, str(claims["operation"]))},
+                )
+                raise
+            current = previous
+        return self.read_pointer()
 
     def active_slot(self) -> SlotRecord:
         pointer = self.read_pointer()
@@ -111,34 +213,90 @@ class SlotManager:
     def rollback(self, *, reason: str) -> Dict[str, Any]:
         pointer = self.read_pointer()
         stable = self.read_slot(str(pointer["stable_slot_id"]))
-        if self.knowledge_ledger is not None:
-            if not stable.source_sha:
-                raise ValueError("slot rollback knowledge preflight requires stable source SHA")
-            execution_context_preflight(
-                self.knowledge_ledger,
-                project_id="AOS",
-                task_class="RUNTIME_ROLLBACK",
-                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
-                paths=[str(self.pointer)],
-                base_sha=stable.source_sha,
+        if self.knowledge_ledger is None:
+            raise ValueError("KCP_REQUIRED_BUT_UNAVAILABLE")
+        if not stable.source_sha or len(stable.source_sha) != 40:
+            raise ValueError("slot rollback knowledge preflight requires stable source SHA")
+        execution_context_preflight(
+            self.knowledge_ledger,
+            project_id="AOS",
+            task_class="RUNTIME_ROLLBACK",
+            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+            paths=[str(self.pointer)],
+            base_sha=stable.source_sha,
+        )
+        previous = dict(pointer)
+        target = dict(pointer)
+        target["active"] = "stable"
+        target["promotion_state"] = "ROLLED_BACK"
+        target["rollback_reason"] = str(reason)[:1000]
+        target["updated_at"] = utc_now()
+        transition_id = transition_identity(
+            "SLOT_ROLLBACK",
+            str(self.pointer),
+            pointer.get("stable_slot_id"),
+            pointer.get("candidate_slot_id"),
+            stable.source_sha,
+            str(reason)[:1000],
+        )
+        existing = transition_status(self.knowledge_ledger, transition_id)
+        if existing["completion"] is not None:
+            if pointer.get("active") == "stable" and pointer.get("rollback_reason") == str(reason)[:1000]:
+                return pointer
+            raise RuntimeTransitionIncompleteError(
+                f"RUNTIME_TRANSITION_COMPLETION_STATE_MISMATCH:{transition_id}"
             )
-        pointer["active"] = "stable"
-        pointer["promotion_state"] = "ROLLED_BACK"
-        pointer["rollback_reason"] = str(reason)[:1000]
-        pointer["updated_at"] = utc_now()
-        atomic_json(self.pointer, pointer)
-        if self.knowledge_ledger is not None:
+        prepare_transition(
+            self.knowledge_ledger,
+            transition_id=transition_id,
+            operation="ROLLBACK",
+            boundary="aos.runtime_slots",
+            resource=str(self.pointer),
+            result_sha=stable.source_sha,
+            previous_state=previous,
+            target_state=target,
+            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+            identity={"restored_slot_id": stable.slot_id},
+        )
+        completion = False
+        try:
+            atomic_json(self.pointer, {**target, **transition_marker(transition_id, "ROLLBACK")})
             record_rollback_receipt(
                 self.knowledge_ledger,
                 project_id="AOS",
-                idempotency_key=f"slot-rollback:{pointer['updated_at']}:{pointer['stable_slot_id']}",
+                idempotency_key=f"slot-rollback:{transition_id}",
                 agent_class="AOS_NATIVE",
                 tool_name="aos.runtime_slots",
                 result_sha=stable.source_sha,
                 module_ids=["RuntimeSupervisor"],
-                claims={"reason": reason, "restored_slot_id": stable.slot_id},
+                claims={
+                    "transition_id": transition_id,
+                    "reason": reason,
+                    "restored_slot_id": stable.slot_id,
+                },
             )
-        return pointer
+            completion = True
+            atomic_json(self.pointer, target)
+            return target
+        except Exception:
+            if completion or transition_status(self.knowledge_ledger, transition_id)["completion"]:
+                raise
+            atomic_json(self.pointer, previous)
+            try:
+                abort_transition(
+                    self.knowledge_ledger,
+                    transition_id=transition_id,
+                    boundary="aos.runtime_slots",
+                    result_sha=stable.source_sha,
+                    reason="slot rollback failed before completion",
+                    recovered_state=previous,
+                )
+            except Exception:
+                atomic_json(
+                    self.pointer,
+                    {**previous, **transition_marker(transition_id, "ROLLBACK")},
+                )
+            raise
 
     def mark_candidate_healthy(self) -> Dict[str, Any]:
         pointer = self.read_pointer()
@@ -175,21 +333,76 @@ class SlotManager:
             project_id="AOS",
             result_sha=candidate.source_sha,
         )
-        pointer["stable_slot_id"] = pointer["candidate_slot_id"]
-        pointer["active"] = "stable"
-        pointer["promotion_state"] = "STABLE"
-        pointer["promotion_proof_id"] = proof_id
-        pointer["updated_at"] = utc_now()
-        atomic_json(self.pointer, pointer)
-        record_live_promotion_receipt(
-            self.knowledge_ledger,
-            project_id="AOS",
-            idempotency_key=f"slot-promotion:{proof_id}:{candidate.source_sha}",
-            agent_class="AOS_NATIVE",
-            tool_name="aos.runtime_slots",
-            result_sha=candidate.source_sha,
-            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
-            evidence_refs=[proof_id],
-            claims={"promotion_state": "STABLE", "slot_id": candidate.slot_id},
+        transition_id = transition_identity(
+            "SLOT_PROMOTION", str(self.pointer), proof_id, candidate.source_sha, candidate.slot_id
         )
-        return pointer
+        existing = transition_status(self.knowledge_ledger, transition_id)
+        if existing["completion"] is not None:
+            if (
+                pointer.get("active") == "stable"
+                and pointer.get("stable_slot_id") == candidate.slot_id
+                and pointer.get("promotion_proof_id") == proof_id
+            ):
+                return pointer
+            raise RuntimeTransitionIncompleteError(
+                f"RUNTIME_TRANSITION_COMPLETION_STATE_MISMATCH:{transition_id}"
+            )
+        previous = dict(pointer)
+        target = dict(pointer)
+        target["stable_slot_id"] = target["candidate_slot_id"]
+        target["active"] = "stable"
+        target["promotion_state"] = "STABLE"
+        target["promotion_proof_id"] = proof_id
+        target["updated_at"] = utc_now()
+        prepare_transition(
+            self.knowledge_ledger,
+            transition_id=transition_id,
+            operation="PROMOTE",
+            boundary="aos.runtime_slots",
+            resource=str(self.pointer),
+            result_sha=candidate.source_sha,
+            previous_state=previous,
+            target_state=target,
+            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+            identity={"proof_id": proof_id, "candidate_slot_id": candidate.slot_id},
+        )
+        completion = False
+        try:
+            atomic_json(self.pointer, {**target, **transition_marker(transition_id, "PROMOTE")})
+            record_live_promotion_receipt(
+                self.knowledge_ledger,
+                project_id="AOS",
+                idempotency_key=f"slot-promotion:{transition_id}",
+                agent_class="AOS_NATIVE",
+                tool_name="aos.runtime_slots",
+                result_sha=candidate.source_sha,
+                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+                evidence_refs=[proof_id],
+                claims={
+                    "transition_id": transition_id,
+                    "promotion_state": "STABLE",
+                    "slot_id": candidate.slot_id,
+                },
+            )
+            completion = True
+            atomic_json(self.pointer, target)
+            return target
+        except Exception:
+            if completion or transition_status(self.knowledge_ledger, transition_id)["completion"]:
+                raise
+            atomic_json(self.pointer, previous)
+            try:
+                abort_transition(
+                    self.knowledge_ledger,
+                    transition_id=transition_id,
+                    boundary="aos.runtime_slots",
+                    result_sha=candidate.source_sha,
+                    reason="slot promotion failed before completion",
+                    recovered_state=previous,
+                )
+            except Exception:
+                atomic_json(
+                    self.pointer,
+                    {**previous, **transition_marker(transition_id, "PROMOTE")},
+                )
+            raise
