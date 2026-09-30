@@ -60,6 +60,11 @@ jobs:
         run: |
           python -m pytest -v --tb=short tests/test_current_truth.py
 
+      - name: Enforce Knowledge Continuity authority invariants
+        run: |
+          python scripts/validate_knowledge_continuity.py
+          python -m pytest -v --tb=short tests/test_knowledge_continuity.py
+
       - name: Run offline/non-Postgres pytest suite
         run: |
           python -m pytest -v --tb=short \

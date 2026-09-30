@@ -35,6 +35,7 @@ aos-runtime = "aos.runtime_server:main"
 aos-runtime-supervisor = "aos.runtime_supervisor:main"
 aos-runtime-deploy = "aos.runtime_deploy:main"
 aosctl = "aos.runtime_cli:main"
+aos-knowledge = "aos.knowledge.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aos.local/schemas/v0.1/knowledge_event.schema.json",
+  "title": "AOS Knowledge Event",
+  "type": "object",
+  "required": [
+    "contract_version", "sequence", "event_id", "idempotency_key", "event_type",
+    "created_at", "authority_class", "project_id", "production", "paid_fallback",
+    "previous_hash", "content_hash"
+  ],
+  "properties": {
+    "contract_version": {"const": "1.0.0"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "event_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512},
+    "event_type": {"enum": [
+      "DECISION_ACCEPTED", "DECISION_SUPERSEDED", "IMPLEMENTATION_RECEIPT",
+      "VERIFICATION_RECEIPT", "LIVE_PROMOTION_RECEIPT", "ROLLBACK_RECEIPT",
+      "AUDIT_FINDING", "AUDIT_FINDING_RESOLVED", "MODULE_RELATIONSHIP", "HANDOFF",
+      "BLOCKER", "RESOURCE_OBSERVATION", "CONTEXT_PREFLIGHT_RECEIPT",
+      "SECOND_BRAIN_SYNC_RECEIPT", "CANDIDATE_MATERIALIZATION_RECEIPT",
+      "CURRENT_TRUTH_OBSERVATION", "BOOTSTRAP"
+    ]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "authority_class": {"enum": [
+      "CANONICAL_GOVERNANCE", "OPERATIONAL_TRUTH", "KNOWLEDGE_LEDGER", "SECOND_BRAIN_MIRROR"
+    ]},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "objective_id": {"type": "string", "maxLength": 16384},
+    "task_id": {"type": "string", "maxLength": 16384},
+    "agent_id": {"type": "string", "maxLength": 16384},
+    "agent_class": {"enum": [
+      "CODEX", "CLINE", "ANTIGRAVITY", "AOS_NATIVE", "CONTROLLER",
+      "HUMAN_OPERATOR", "OTHER_MODEL"
+    ]},
+    "tool_name": {"type": "string", "maxLength": 16384},
+    "session_id": {"type": "string", "maxLength": 16384},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "result_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "repository": {"type": "string", "maxLength": 16384},
+    "branch": {"type": "string", "maxLength": 16384},
+    "module_ids": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "changed_paths": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "read_paths": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "decision_ids": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "supersedes": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "superseded_by": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "invariants": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "claims": {"type": "object"},
+    "evidence_refs": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "ci": {"type": "object"},
+    "runtime_evidence": {"type": "object"},
+    "current_truth_observed_at": {"type": "string", "format": "date-time"},
+    "current_truth_status": {"type": "string", "maxLength": 16384},
+    "blockers": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "open_questions": {"type": "array", "maxItems": 512, "items": {"type": "string"}},
+    "canonical_next_action": {"type": "string", "maxLength": 16384},
+    "risk_class": {"type": "string", "maxLength": 16384},
+    "production": {"const": "NO_GO"},
+    "paid_fallback": {"const": "DISABLED"},
+    "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

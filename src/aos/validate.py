@@ -39,6 +39,7 @@ TYPE_TO_SCHEMA = {
     "command_admission": "command_admission.schema.json",
     "recovery_proof": "recovery_proof.schema.json",
     "system_repair_job": "system_repair_job.schema.json",
+    "knowledge_event": "knowledge_event.schema.json",
 }
 
 

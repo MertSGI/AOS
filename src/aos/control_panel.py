@@ -54,6 +54,7 @@ from aos.self_repair import (
     classify_defect_repair_authority,
 )
 from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
+from aos.knowledge.hooks import ledger_from_runtime_config
 from aos.source_repair_factory import create_source_repair_executor_from_config
 
 
@@ -3837,6 +3838,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             relay_root / "platform-recovery",
             repair_engine,
             source_base_sha=str(config.get("candidate_source_sha") or "UNKNOWN"),
+            knowledge_ledger=ledger_from_runtime_config(config),
         )
         platform_recovery_jobs = platform_recovery.list_recent_jobs()
 
@@ -4286,6 +4288,7 @@ class _Handler(BaseHTTPRequestHandler):
                         or "UNKNOWN"
                     ),
                     source_repair_executor=self.source_repair_executor,
+                    knowledge_ledger=ledger_from_runtime_config(self.config),
                 )
                 finding_id = payload.get("finding_id")
                 if not finding_id:

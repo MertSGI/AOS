@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_slots import SlotManager, SlotRecord
+from aos.knowledge.hooks import ledger_for_runtime
 from aos.runtime_store import atomic_json, read_json
 from aos.process_utils import OwnedProcess, background_python_executable, popen_headless, process_alive, terminate_process_tree, get_headless_creationflags
 from aos.controller_relay import AsyncControllerRelay, ControllerRelayPublisher
@@ -190,7 +191,16 @@ class RuntimeSupervisor:
         self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.root = Path(self.config["supervisor_root"]).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.slots = SlotManager(self.root)
+        runtime_config_path = self.config.get("runtime_config_path")
+        runtime_home = (
+            Path(str(runtime_config_path)).expanduser().resolve().parent
+            if runtime_config_path
+            else self.config_path.parent
+        )
+        self.slots = SlotManager(
+            self.root,
+            knowledge_ledger=ledger_for_runtime(runtime_home),
+        )
         self.state_path = self.root / "supervisor-state.json"
         self.child: Optional[OwnedProcess] = None
         self.child_slot_id: Optional[str] = None

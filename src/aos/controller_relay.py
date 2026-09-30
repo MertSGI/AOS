@@ -32,6 +32,7 @@ from aos.runtime_store import atomic_json, read_json
 from aos.self_diagnosis import SelfDiagnosisEngine
 from aos.self_repair import BoundedSelfRepairEngine
 from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
+from aos.knowledge.hooks import ledger_from_runtime_config
 from aos.integrity_reconciler import IntegrityReconciler, OUTCOME_BUCKETS
 from aos.lineage_truth import (
     CURRENT,
@@ -220,6 +221,7 @@ class ControllerRelayPublisher:
             self.repair_engine,
             source_base_sha=str(self.runtime_config.get("candidate_source_sha") or "UNKNOWN"),
             source_repair_executor=source_repair_executor,
+            knowledge_ledger=ledger_from_runtime_config(self.runtime_config),
         )
 
     def _init_sequence(self) -> int:

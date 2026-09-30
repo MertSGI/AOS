@@ -55,3 +55,13 @@ safety mechanism and is not evidence that Runtime V1 itself is stable.
 Promotion of the candidate slot requires a separate accepted proof identifier.
 Packaging as a Windows Service or executable does not itself satisfy autonomy
 acceptance.
+
+## Knowledge continuity
+
+Runtime V1 stores append-only continuity events under
+`<runtime-home>/knowledge/`. KCP records bounded context preflights and receipts
+at execution, verification, candidate, recovery, activation, promotion, and
+rollback boundaries. It never mutates product command state. Local ledger write
+failure fails closed at high-impact acceptance and promotion boundaries;
+external mirror failure is advisory degradation only. See
+`docs/architecture/AOS_KNOWLEDGE_CONTINUITY_PLANE.md`.

@@ -15,6 +15,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, exclusive_file_lock, read_json
+from aos.knowledge.audit import record_audit_finding
+from aos.knowledge.hooks import execution_context_preflight
+from aos.knowledge.ledger import KnowledgeLedger
+from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 from aos.self_repair import (
     AUTHORITY_AUTO_REPAIR_ELIGIBLE,
     AUTHORITY_FORBIDDEN,
@@ -72,6 +76,7 @@ class PlatformRecoveryCoordinator:
         *,
         source_base_sha: str,
         source_repair_executor: Optional[SourceRepairExecutor] = None,
+        knowledge_ledger: Optional[KnowledgeLedger] = None,
     ) -> None:
         self.root = recovery_root.expanduser().resolve()
         self.jobs_root = self.root / "jobs"
@@ -80,6 +85,7 @@ class PlatformRecoveryCoordinator:
         self.repair_engine = repair_engine
         self.source_base_sha = source_base_sha
         self.source_repair_executor = source_repair_executor
+        self.knowledge_ledger = knowledge_ledger
 
     @staticmethod
     def _job_id(finding: Dict[str, Any]) -> str:
@@ -117,6 +123,23 @@ class PlatformRecoveryCoordinator:
         )
         return populated[: max(0, int(limit))]
 
+    def _record_knowledge_finding(self, finding: Dict[str, Any], proposed: Dict[str, Any]) -> None:
+        if self.knowledge_ledger is None:
+            return
+        finding_id = str(finding.get("finding_id") or "")
+        record_audit_finding(
+            self.knowledge_ledger,
+            project_id="AOS",
+            finding_id=finding_id,
+            layer="PLATFORM_RECOVERY",
+            severity=str(finding.get("severity") or "UNKNOWN"),
+            claim=str(finding.get("symptom") or finding.get("failure_class") or finding_id),
+            evidence=[str(finding.get("fingerprint") or "")],
+            affected_modules=[str(finding.get("component") or "PlatformRecovery")],
+            affected_paths=list(proposed.get("files_likely_affected") or ()),
+            source_sha=self.source_base_sha,
+        )
+
     def observe_finding(self, finding_id: str) -> Dict[str, Any]:
         """Create a durable classified job without executing an actuator."""
         finding = self.repair_engine.diag_engine.get_finding(finding_id)
@@ -143,6 +166,7 @@ class PlatformRecoveryCoordinator:
             blocker = "HUMAN_APPROVAL_REQUIRED"
         elif finding.get("requires_candidate") or proposed.get("ci_required"):
             blocker = "ISOLATED_SOURCE_REPAIR_EXECUTOR_REQUIRED"
+        self._record_knowledge_finding(finding, proposed)
         return self._persist({
             "contract_version": CONTRACT_VERSION,
             "job_type": "SYSTEM_REPAIR_JOB",
@@ -171,6 +195,7 @@ class PlatformRecoveryCoordinator:
             return existing
 
         proposed = finding.get("proposed_repair") or {}
+        self._record_knowledge_finding(finding, proposed)
         authority = classify_defect_repair_authority(
             component=str(finding.get("component") or ""),
             failure_class=str(finding.get("failure_class") or ""),
@@ -210,6 +235,15 @@ class PlatformRecoveryCoordinator:
                     blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE",
                 )
                 return self._persist(job)
+            if self.knowledge_ledger is not None:
+                execution_context_preflight(
+                    self.knowledge_ledger,
+                    project_id="AOS",
+                    task_class="PLATFORM_RECOVERY",
+                    module_ids=[str(finding.get("component") or "PlatformRecovery")],
+                    paths=list(proposed.get("files_likely_affected") or ()),
+                    base_sha=self.source_base_sha,
+                )
             try:
                 result = self.source_repair_executor({
                     "job_id": job_id,
@@ -274,6 +308,30 @@ class PlatformRecoveryCoordinator:
                 ),
                 source_repair=evidence,
             )
+            if safe and self.knowledge_ledger is not None:
+                common = {
+                    "project_id": "AOS",
+                    "agent_class": "AOS_NATIVE",
+                    "tool_name": "aos.platform_recovery",
+                    "base_sha": result.base_sha,
+                    "result_sha": result.repair_sha,
+                    "module_ids": [str(finding.get("component") or "PlatformRecovery")],
+                    "changed_paths": list(proposed.get("files_likely_affected") or ()),
+                    "evidence_refs": [result.git_diff_sha256],
+                }
+                record_implementation_receipt(
+                    self.knowledge_ledger,
+                    idempotency_key=f"recovery-implementation:{job_id}:{result.repair_sha}",
+                    claims={"finding_id": finding_id, "promotion_performed": False},
+                    **common,
+                )
+                record_verification_receipt(
+                    self.knowledge_ledger,
+                    idempotency_key=f"recovery-verification:{job_id}:{result.repair_sha}",
+                    verification={"status": result.exact_sha_ci_status, "tests_passed": result.tests_passed},
+                    claims={"finding_id": finding_id, "candidate_materialized": True},
+                    **common,
+                )
             return self._persist(job)
 
         if authority == AUTHORITY_AUTO_REPAIR_ELIGIBLE:
@@ -283,6 +341,15 @@ class PlatformRecoveryCoordinator:
                     blocker="BOUNDED_LIVE_NOT_ENABLED",
                 )
                 return self._persist(job)
+            if self.knowledge_ledger is not None:
+                execution_context_preflight(
+                    self.knowledge_ledger,
+                    project_id="AOS",
+                    task_class="PLATFORM_RUNTIME_REPAIR",
+                    module_ids=[str(finding.get("component") or "PlatformRecovery")],
+                    paths=list(proposed.get("files_likely_affected") or ()),
+                    base_sha=self.source_base_sha,
+                )
             success, stage, repair = self.repair_engine.attempt_autonomous_repair(finding_id)
             job.update(
                 disposition=(
@@ -293,6 +360,30 @@ class PlatformRecoveryCoordinator:
                 repair_stage=stage,
                 repair_record=repair,
             )
+            if success and self.knowledge_ledger is not None:
+                common = {
+                    "project_id": "AOS",
+                    "agent_class": "AOS_NATIVE",
+                    "tool_name": "aos.platform_recovery",
+                    "base_sha": self.source_base_sha,
+                    "result_sha": self.source_base_sha,
+                    "module_ids": [str(finding.get("component") or "PlatformRecovery")],
+                    "changed_paths": list(proposed.get("files_likely_affected") or ()),
+                }
+                record_implementation_receipt(
+                    self.knowledge_ledger,
+                    idempotency_key=f"runtime-repair:{job_id}:{stage}",
+                    runtime_evidence={"repair_stage": stage, "repair_record": repair},
+                    claims={"finding_id": finding_id, "runtime_repair": True},
+                    **common,
+                )
+                record_verification_receipt(
+                    self.knowledge_ledger,
+                    idempotency_key=f"runtime-repair-verification:{job_id}:{stage}",
+                    verification={"status": "PASS", "repair_stage": stage},
+                    claims={"finding_id": finding_id, "postcondition_verified": True},
+                    **common,
+                )
             return self._persist(job)
 
         job.update(disposition=RepairDisposition.HUMAN_REQUIRED.value)

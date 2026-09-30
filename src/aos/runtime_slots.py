@@ -9,6 +9,9 @@ from typing import Any, Dict, Optional
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
+from aos.knowledge.hooks import execution_context_preflight
+from aos.knowledge.ledger import KnowledgeLedger
+from aos.knowledge.receipts import record_live_promotion_receipt, record_rollback_receipt
 
 
 @dataclass(frozen=True)
@@ -59,11 +62,12 @@ class SlotRecord:
 
 
 class SlotManager:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, knowledge_ledger: Optional[KnowledgeLedger] = None) -> None:
         self.root = root.expanduser().resolve()
         self.slots = self.root / "slots"
         self.slots.mkdir(parents=True, exist_ok=True)
         self.pointer = self.root / "active-slot.json"
+        self.knowledge_ledger = knowledge_ledger
 
     def write_slot(self, record: SlotRecord) -> Path:
         path = self.slots / f"{record.slot_id}.json"
@@ -105,11 +109,34 @@ class SlotManager:
 
     def rollback(self, *, reason: str) -> Dict[str, Any]:
         pointer = self.read_pointer()
+        stable = self.read_slot(str(pointer["stable_slot_id"]))
+        if self.knowledge_ledger is not None:
+            if not stable.source_sha:
+                raise ValueError("slot rollback knowledge preflight requires stable source SHA")
+            execution_context_preflight(
+                self.knowledge_ledger,
+                project_id="AOS",
+                task_class="RUNTIME_ROLLBACK",
+                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+                paths=[str(self.pointer)],
+                base_sha=stable.source_sha,
+            )
         pointer["active"] = "stable"
         pointer["promotion_state"] = "ROLLED_BACK"
         pointer["rollback_reason"] = str(reason)[:1000]
         pointer["updated_at"] = utc_now()
         atomic_json(self.pointer, pointer)
+        if self.knowledge_ledger is not None:
+            record_rollback_receipt(
+                self.knowledge_ledger,
+                project_id="AOS",
+                idempotency_key=f"slot-rollback:{pointer['updated_at']}:{pointer['stable_slot_id']}",
+                agent_class="AOS_NATIVE",
+                tool_name="aos.runtime_slots",
+                result_sha=stable.source_sha,
+                module_ids=["RuntimeSupervisor"],
+                claims={"reason": reason, "restored_slot_id": stable.slot_id},
+            )
         return pointer
 
     def mark_candidate_healthy(self) -> Dict[str, Any]:
@@ -129,10 +156,34 @@ class SlotManager:
         if not proof_id or len(proof_id) > 200:
             raise ValueError("A bounded proof_id is required for promotion")
         pointer = self.read_pointer()
+        candidate = self.read_slot(str(pointer["candidate_slot_id"]))
+        if self.knowledge_ledger is not None:
+            if not candidate.source_sha:
+                raise ValueError("candidate promotion requires exact source SHA")
+            execution_context_preflight(
+                self.knowledge_ledger,
+                project_id="AOS",
+                task_class="RUNTIME_PROMOTION",
+                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+                paths=[str(self.pointer)],
+                base_sha=candidate.source_sha,
+            )
         pointer["stable_slot_id"] = pointer["candidate_slot_id"]
         pointer["active"] = "stable"
         pointer["promotion_state"] = "STABLE"
         pointer["promotion_proof_id"] = proof_id
         pointer["updated_at"] = utc_now()
         atomic_json(self.pointer, pointer)
+        if self.knowledge_ledger is not None:
+            record_live_promotion_receipt(
+                self.knowledge_ledger,
+                project_id="AOS",
+                idempotency_key=f"slot-promotion:{proof_id}:{candidate.source_sha}",
+                agent_class="AOS_NATIVE",
+                tool_name="aos.runtime_slots",
+                result_sha=candidate.source_sha,
+                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+                evidence_refs=[proof_id],
+                claims={"promotion_state": "STABLE", "slot_id": candidate.slot_id},
+            )
         return pointer

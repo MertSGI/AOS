@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aos.process_utils import run_headless
+from aos.knowledge.hooks import configured_ledger, execution_context_preflight
+from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 
 from aos.candidate_store import (
     CandidateStoreError,
@@ -129,6 +131,7 @@ class ControlledExecutionEngine:
             "canonical_snapshot",
             "execution_authority",
             "execution_base_resolvability",
+            "knowledge_context_preflight",
             "live_guard_pre_execution",
             "workspace_initial_integrity",
             "worker_execution",
@@ -375,6 +378,29 @@ class ControlledExecutionEngine:
                 exec_base_sha=exec_base_sha,
                 err_list=[f"Execution base commit '{exec_base_sha}' does not exist or cannot be resolved in repository '{repo}': {e}"],
             )
+
+        # KCP is opt-in here because this generic engine does not own a Runtime
+        # V1 home. When configured, failure is fail-closed before mutation.
+        knowledge_ledger = configured_ledger()
+        if knowledge_ledger is not None:
+            try:
+                execution_context_preflight(
+                    knowledge_ledger,
+                    project_id=str(project_id),
+                    task_class=str(gate),
+                    module_ids=self.task.get("module_ids") or [str(project_id)],
+                    paths=self.task.get("allowed_scope", {}).get("paths") or [],
+                    base_sha=str(exec_base_sha),
+                )
+                _record_check("knowledge_context_preflight", "PASS")
+            except Exception as e:
+                _record_check("knowledge_context_preflight", "FAIL", str(e))
+                return _build_and_validate_result(
+                    "HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha,
+                    err_list=[f"Knowledge context preflight failed: {e}"],
+                )
+        else:
+            _record_check("knowledge_context_preflight", "PASS", "KCP runtime home not configured")
 
 
         # 9. Checkpoint B: Immediately before worker (live_guard_pre_execution)
@@ -974,6 +1000,30 @@ class ControlledExecutionEngine:
                 changed_paths=final_changed_paths,
                 source_repo_path=local_target_repo_path,
             )
+            if knowledge_ledger is not None:
+                receipt_common = {
+                    "project_id": str(project_id),
+                    "agent_class": "AOS_NATIVE",
+                    "tool_name": "aos.controlled_execution",
+                    "base_sha": str(exec_base_sha),
+                    "result_sha": str(final_head),
+                    "module_ids": self.task.get("module_ids") or [str(project_id)],
+                    "changed_paths": final_changed_paths,
+                    "evidence_refs": [str(candidate_metadata.get("candidate_id"))],
+                }
+                record_implementation_receipt(
+                    knowledge_ledger,
+                    idempotency_key=f"controlled-implementation:{task_id}:{final_head}",
+                    claims={"attempted": True, "candidate_id": candidate_metadata.get("candidate_id")},
+                    **receipt_common,
+                )
+                record_verification_receipt(
+                    knowledge_ledger,
+                    idempotency_key=f"controlled-verification:{task_id}:{final_head}",
+                    verification={"status": "PASS", "required_checks": req_checks},
+                    claims={"candidate_persisted": True},
+                    **receipt_common,
+                )
             _record_check("candidate_persistence", "PASS", f"Persisted candidate {candidate_metadata.get('candidate_id')}")
         except Exception as e:
             _record_check("candidate_persistence", "FAIL", str(e))

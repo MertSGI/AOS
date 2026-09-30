@@ -21,6 +21,13 @@ from aos.runtime_contract import CONTRACT_VERSION, utc_now, validate_configured_
 from aos.runtime_maintenance import persist_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
+from aos.knowledge.hooks import execution_context_preflight, ledger_for_runtime
+from aos.knowledge.receipts import (
+    record_candidate_materialization_receipt,
+    record_live_promotion_receipt,
+    record_rollback_receipt,
+    record_verification_receipt,
+)
 
 
 class DeploymentError(RuntimeError):
@@ -97,6 +104,18 @@ def stage(runtime_home: Path, repo_root: Path, source_sha: str, ci_run_id: int, 
         candidate_base=runtime_home / "candidate",
     )
     result = validate(runtime_home, source_sha)
+    record_candidate_materialization_receipt(
+        ledger_for_runtime(runtime_home),
+        project_id="AOS",
+        idempotency_key=f"runtime-materialization:{source_sha}:{ci_run_id}",
+        agent_class="AOS_NATIVE",
+        tool_name="aos.runtime_deploy",
+        result_sha=source_sha,
+        repository=repo,
+        module_ids=["RuntimeDeploy", "CandidateManifest"],
+        evidence_refs=[str(candidate / "candidate-manifest.json")],
+        claims={"ci_run_id": ci_run_id, "candidate": candidate.name},
+    )
     result["stage"] = "PASS"
     return result
 
@@ -167,7 +186,7 @@ print(json.dumps(result,sort_keys=True))
         raise DeploymentError("Runtime config must remain production NO_GO")
     if config and config.get("projects"):
         _candidate_runtime_config(config, candidate, manifest)
-    return {
+    result = {
         "validation": "PASS",
         "candidate": str(candidate),
         "source_sha": source_sha,
@@ -177,6 +196,22 @@ print(json.dumps(result,sort_keys=True))
         "import_origins": imports,
         "production": "NO_GO",
     }
+    record_verification_receipt(
+        ledger_for_runtime(runtime_home),
+        project_id="AOS",
+        idempotency_key=(
+            f"runtime-validation:{source_sha}:{manifest.get('candidate_tree_sha256')}:"
+            f"{manifest.get('ci_run_id')}"
+        ),
+        agent_class="AOS_NATIVE",
+        tool_name="aos.runtime_deploy",
+        result_sha=source_sha,
+        module_ids=["RuntimeDeploy", "CandidateManifest"],
+        verification={"status": "PASS", "ci_run_id": manifest.get("ci_run_id")},
+        evidence_refs=[str(candidate / "candidate-manifest.json")],
+        claims={"candidate_tree_sha256": manifest.get("candidate_tree_sha256")},
+    )
+    return result
 
 
 def _startup_path(startup_dir: Path) -> Path:
@@ -632,11 +667,20 @@ def activate(
         raise DeploymentError(f"Runtime config missing: {config_path}")
     if config.get("production") != "NO_GO":
         raise DeploymentError("Activation is forbidden unless production is NO_GO")
+    knowledge_ledger = ledger_for_runtime(runtime_home)
+    execution_context_preflight(
+        knowledge_ledger,
+        project_id="AOS",
+        task_class="RUNTIME_ACTIVATION",
+        module_ids=["RuntimeDeploy", "RuntimeSupervisor", "CandidateManifest"],
+        paths=["runtime-config.json", "supervisor/active-slot.json"],
+        base_sha=source_sha,
+    )
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
     persist_maintenance(runtime_root, paused=True, reason="candidate_activation_default")
 
     supervisor_root = Path(read_json(runtime_home / "supervisor-config.json", {}).get("supervisor_root") or (runtime_home / "supervisor"))
-    slots = SlotManager(supervisor_root)
+    slots = SlotManager(supervisor_root, knowledge_ledger=knowledge_ledger)
     previous = read_json(slots.pointer, {})
     if not previous:
         raise DeploymentError(
@@ -737,7 +781,7 @@ def activate(
             startup = _install_startup(startup_dir, candidate)
 
         if not launch:
-            return {
+            result = {
                 **validation,
                 "activation": (
                     "STAGED_MAINTENANCE"
@@ -748,6 +792,18 @@ def activate(
                 "startup": str(startup) if startup else None,
                 "startup_installed": bool(startup),
             }
+            record_live_promotion_receipt(
+                knowledge_ledger,
+                project_id="AOS",
+                idempotency_key=f"runtime-activation:{txid}:staged",
+                agent_class="AOS_NATIVE",
+                tool_name="aos.runtime_deploy",
+                result_sha=source_sha,
+                module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+                evidence_refs=[str(backup / "transaction.json")],
+                claims={"activation": result["activation"], "transaction_id": txid, "promotion": False},
+            )
+            return result
 
         if startup is not None:
             launch_startup_authority(startup)
@@ -773,7 +829,7 @@ def activate(
             raise DeploymentError("Activation exact-SHA paused health proof failed")
         if not panel or panel.get("panel_state") != "HEALTHY":
             raise DeploymentError("Activation panel proof failed")
-        return {
+        result = {
             **validation,
             "activation": "PASS_MAINTENANCE",
             "transaction_id": txid,
@@ -782,6 +838,19 @@ def activate(
             "startup": str(startup) if startup else None,
             "startup_installed": bool(startup),
         }
+        record_live_promotion_receipt(
+            knowledge_ledger,
+            project_id="AOS",
+            idempotency_key=f"runtime-activation:{txid}:pass",
+            agent_class="AOS_NATIVE",
+            tool_name="aos.runtime_deploy",
+            result_sha=source_sha,
+            module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+            evidence_refs=[str(backup / "transaction.json")],
+            runtime_evidence={"runtime_health": health, "panel_health": panel},
+            claims={"activation": "PASS_MAINTENANCE", "transaction_id": txid, "promotion": False},
+        )
+        return result
     except Exception as exc:
         try:
             _restore_transaction(runtime_home, backup, startup_dir)
@@ -865,8 +934,33 @@ def rollback(runtime_home: Path, transaction_id: str, startup_dir: Path) -> Dict
     tx = read_json(backup / "transaction.json", {})
     if not tx:
         raise DeploymentError(f"Rollback transaction not found: {transaction_id}")
+    source_sha = str(tx.get("source_sha") or "")
+    if len(source_sha) != 40:
+        raise DeploymentError("Rollback transaction lacks exact source SHA for knowledge preflight")
+    execution_context_preflight(
+        ledger_for_runtime(runtime_home),
+        project_id="AOS",
+        task_class="RUNTIME_ROLLBACK",
+        module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+        paths=["runtime-config.json", "supervisor/active-slot.json"],
+        base_sha=source_sha,
+    )
     previous_slot = _restore_transaction(runtime_home, backup, startup_dir)
-    return {"rollback": "PASS", "transaction_id": transaction_id, "restored_slot_id": previous_slot}
+    result = {"rollback": "PASS", "transaction_id": transaction_id, "restored_slot_id": previous_slot}
+    restored = read_json(runtime_home / "supervisor" / "slots" / f"{previous_slot}.json", {})
+    restored_sha = restored.get("source_sha")
+    record_rollback_receipt(
+        ledger_for_runtime(runtime_home),
+        project_id="AOS",
+        idempotency_key=f"runtime-rollback:{transaction_id}",
+        agent_class="AOS_NATIVE",
+        tool_name="aos.runtime_deploy",
+        result_sha=restored_sha if isinstance(restored_sha, str) and len(restored_sha) == 40 else None,
+        module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+        evidence_refs=[str(backup / "transaction.json")],
+        claims=result,
+    )
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:

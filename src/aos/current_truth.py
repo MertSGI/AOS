@@ -493,6 +493,11 @@ def refresh_current_truth(
     except Exception as exc:
         projection = _degraded_projection(exc)
     atomic_json(runtime_home / CURRENT_TRUTH_FILENAME, projection)
+    # Only degraded/contradictory transitions are retained, explicitly as
+    # historical observations. KCP never turns a cached projection into current
+    # operational authority.
+    from aos.knowledge.hooks import record_current_truth_transition
+    record_current_truth_transition(runtime_home, projection)
     return projection
 
 
