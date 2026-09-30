@@ -30,6 +30,7 @@ from aos.knowledge.receipts import (
     record_verification_receipt,
 )
 from aos.knowledge.runtime_transitions import (
+    RuntimeTransitionTerminalStateError,
     abort_transition,
     clear_transition_marker,
     prepare_transition,
@@ -1062,6 +1063,11 @@ def rollback(runtime_home: Path, transaction_id: str, startup_dir: Path) -> Dict
     transition_id = transition_identity("DEPLOY_ROLLBACK", transaction_id, restored_sha)
     result = {"rollback": "PASS", "transaction_id": transaction_id, "restored_slot_id": previous_slot}
     existing = transition_status(knowledge_ledger, transition_id)
+    if existing["abort"] is not None:
+        raise RuntimeTransitionTerminalStateError(
+            f"RUNTIME_TRANSITION_ALREADY_ABORTED:{transition_id}; "
+            "the transaction cannot be reused for rollback"
+        )
     if existing["completion"] is not None:
         pointer = read_json(supervisor / "active-slot.json", {})
         if pointer.get("transition_state") == "INCOMPLETE_HOLD":
@@ -1196,6 +1202,10 @@ def reconcile_runtime_transitions(runtime_home: Path, startup_dir: Path) -> Dict
         rollback_state = str(tx.get("rollback_transition_state") or "")
         if rollback_id and rollback_state in {"PREPARED", "INCOMPLETE_HOLD"}:
             status = transition_status(ledger, rollback_id)
+            if status["abort"] is not None:
+                raise DeploymentError(
+                    f"Aborted rollback cannot be completed during reconciliation: {rollback_id}"
+                )
             restored_slot = str(tx.get("previous_slot_id") or "")
             restored = read_json(supervisor / "slots" / f"{restored_slot}.json", {})
             restored_sha = str(restored.get("source_sha") or "")

@@ -127,6 +127,7 @@ class KnowledgeLedger:
         idempotency_key: str,
         authority_class: AuthorityClass | str = AuthorityClass.KNOWLEDGE_LEDGER,
         created_at: Optional[str] = None,
+        append_precondition: Optional[Callable[[Tuple[Dict[str, Any], ...]], None]] = None,
         **fields: Any,
     ) -> Dict[str, Any]:
         event_type_value = KnowledgeEventType(event_type).value
@@ -152,6 +153,8 @@ class KnowledgeLedger:
         self.root.mkdir(parents=True, exist_ok=True)
         with _append_lock(self.lock_path):
             events = self._read_events_unlocked()
+            if append_precondition is not None:
+                append_precondition(events)
             for existing in events:
                 if existing["idempotency_key"] != idempotency_key:
                     continue

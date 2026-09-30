@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -10,12 +12,20 @@ import aos.runtime_slots as runtime_slots
 from aos.knowledge.index import derive_index
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.materialize import render_documents
+from aos.knowledge.model import KnowledgeEventType
 from aos.knowledge.receipts import (
     record_implementation_receipt,
     record_live_promotion_receipt,
+    record_rollback_receipt,
     record_verification_receipt,
 )
-from aos.knowledge.runtime_transitions import prepare_transition
+from aos.knowledge.runtime_transitions import (
+    RuntimeTransitionTerminalStateError,
+    abort_transition,
+    prepare_transition,
+    transition_identity,
+    transition_status,
+)
 from aos.runtime_deploy import activate, reconcile_runtime_transitions, rollback
 from aos.runtime_slots import RuntimeTransitionIncompleteError, SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
@@ -60,6 +70,14 @@ def _slot_environment(tmp_path: Path):
 
 def _types(ledger: KnowledgeLedger):
     return [event["event_type"] for event in ledger.read_events()]
+
+
+def _terminal_sets(ledger: KnowledgeLedger):
+    index = derive_index(ledger.read_events())
+    completed = set(index["completed_runtime_transitions"])
+    aborted = set(index["aborted_runtime_transitions"])
+    assert completed.isdisjoint(aborted)
+    return completed, aborted
 
 
 def test_promotion_prepare_failure_leaves_pointer_unchanged(tmp_path, monkeypatch):
@@ -118,6 +136,39 @@ def test_promotion_success_orders_intent_before_completion(tmp_path):
     assert manager.active_slot().source_sha == SOURCE_SHA
 
 
+def test_promotion_aborted_attempt_cannot_complete_on_exact_retry(tmp_path, monkeypatch):
+    ledger, manager = _slot_environment(tmp_path)
+    real_receipt = runtime_slots.record_live_promotion_receipt
+    attempts = 0
+
+    def fail_first_receipt(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("receipt")
+        return real_receipt(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_slots, "record_live_promotion_receipt", fail_first_receipt)
+    with pytest.raises(OSError, match="receipt"):
+        manager.promote_candidate(proof_id="proof")
+    aborted_id = next(
+        event["claims"]["transition_id"]
+        for event in ledger.read_events()
+        if event["event_type"] == "RUNTIME_TRANSITION_ABORTED"
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="ALREADY_ABORTED"):
+        manager.promote_candidate(proof_id="proof")
+    completed, aborted = _terminal_sets(ledger)
+    assert aborted_id in aborted
+    assert aborted_id not in completed
+
+    manager.promote_candidate(proof_id="proof-new-attempt")
+    completed, aborted = _terminal_sets(ledger)
+    new_id = next(iter(completed))
+    assert new_id != aborted_id
+    assert aborted_id in aborted
+
+
 def test_slot_rollback_prepare_and_completion_failures_are_safe(tmp_path, monkeypatch):
     ledger, manager = _slot_environment(tmp_path)
     before = read_json(manager.pointer, {})
@@ -141,6 +192,39 @@ def test_slot_rollback_success_has_durable_completion(tmp_path):
     completion = next(event for event in ledger.read_events() if event["event_type"] == "ROLLBACK_RECEIPT")
     assert result["active"] == "stable"
     assert completion["claims"]["restored_slot_id"] == "stable"
+
+
+def test_slot_rollback_aborted_attempt_cannot_complete_on_exact_retry(tmp_path, monkeypatch):
+    ledger, manager = _slot_environment(tmp_path)
+    real_receipt = runtime_slots.record_rollback_receipt
+    attempts = 0
+
+    def fail_first_receipt(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("receipt")
+        return real_receipt(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_slots, "record_rollback_receipt", fail_first_receipt)
+    with pytest.raises(OSError, match="receipt"):
+        manager.rollback(reason="failed health")
+    aborted_id = next(
+        event["claims"]["transition_id"]
+        for event in ledger.read_events()
+        if event["event_type"] == "RUNTIME_TRANSITION_ABORTED"
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="ALREADY_ABORTED"):
+        manager.rollback(reason="failed health")
+    completed, aborted = _terminal_sets(ledger)
+    assert aborted_id in aborted
+    assert aborted_id not in completed
+
+    manager.rollback(reason="failed health; new attempt")
+    completed, aborted = _terminal_sets(ledger)
+    new_id = next(iter(completed))
+    assert new_id != aborted_id
+    assert aborted_id in aborted
 
 
 def _deploy_environment(tmp_path: Path, monkeypatch):
@@ -355,6 +439,42 @@ def test_runtime_rollback_completion_failure_holds_then_reconciles(tmp_path, mon
     assert "ROLLBACK_RECEIPT" in _types(ledger)
 
 
+def test_deploy_rollback_aborted_transaction_cannot_be_retried(tmp_path, monkeypatch):
+    runtime_home, startup, supervisor, ledger = _deploy_environment(tmp_path, monkeypatch)
+    activated = activate(runtime_home, SOURCE_SHA, startup, launch=False, install_startup=False)
+    transaction_id = activated["transaction_id"]
+    backup = runtime_home / "deployment-backups" / transaction_id
+    tx = read_json(backup / "transaction.json", {})
+    transition_id = transition_identity("DEPLOY_ROLLBACK", transaction_id, STABLE_SHA)
+    pointer_before = read_json(supervisor / "active-slot.json", {})
+    prepare_transition(
+        ledger,
+        transition_id=transition_id,
+        operation="ROLLBACK",
+        boundary="aos.runtime_deploy",
+        resource=str(backup / "transaction.json"),
+        result_sha=STABLE_SHA,
+        previous_state={"slot_pointer": pointer_before, "activation_source_sha": SOURCE_SHA},
+        target_state={"restored_slot_id": tx["previous_slot_id"], "restored_source_sha": STABLE_SHA},
+        module_ids=["RuntimeDeploy", "RuntimeSupervisor"],
+        identity={"transaction_id": transaction_id},
+    )
+    abort_transition(
+        ledger,
+        transition_id=transition_id,
+        boundary="aos.runtime_deploy",
+        result_sha=STABLE_SHA,
+        reason="verified no restore mutation occurred",
+        recovered_state={"slot_pointer": pointer_before},
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="ALREADY_ABORTED"):
+        rollback(runtime_home, transaction_id, startup)
+    assert read_json(supervisor / "active-slot.json", {}) == pointer_before
+    completed, aborted = _terminal_sets(ledger)
+    assert transition_id in aborted
+    assert transition_id not in completed
+
+
 def test_transition_projection_never_treats_intent_as_live_promotion(tmp_path):
     ledger = KnowledgeLedger(tmp_path / "knowledge")
     prepare_transition(
@@ -386,3 +506,162 @@ def test_transition_projection_never_treats_intent_as_live_promotion(tmp_path):
     completed = derive_index(ledger.read_events())
     assert completed["latest_live_promotion"]["event_type"] == "LIVE_PROMOTION_RECEIPT"
     assert completed["unresolved_runtime_transitions"] == {}
+
+
+def test_shared_terminal_guards_and_projection_exclusivity(tmp_path):
+    aborted_ledger = KnowledgeLedger(tmp_path / "aborted")
+    aborted_id = "a" * 64
+    prepare_transition(
+        aborted_ledger,
+        transition_id=aborted_id,
+        operation="PROMOTE",
+        boundary="aos.runtime_slots",
+        resource="active-slot.json",
+        result_sha=SOURCE_SHA,
+        previous_state={"active": "candidate"},
+        target_state={"active": "stable"},
+        module_ids=["RuntimeSupervisor"],
+    )
+    abort_transition(
+        aborted_ledger,
+        transition_id=aborted_id,
+        boundary="aos.runtime_slots",
+        result_sha=SOURCE_SHA,
+        reason="test abort",
+        recovered_state={"active": "candidate"},
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="ALREADY_ABORTED"):
+        record_live_promotion_receipt(
+            aborted_ledger,
+            project_id="AOS",
+            idempotency_key="forbidden-completion",
+            agent_class="AOS_NATIVE",
+            tool_name="pytest",
+            result_sha=SOURCE_SHA,
+            claims={"transition_id": aborted_id},
+        )
+    _terminal_sets(aborted_ledger)
+
+    completed_ledger = KnowledgeLedger(tmp_path / "completed")
+    completed_id = "b" * 64
+    prepare_transition(
+        completed_ledger,
+        transition_id=completed_id,
+        operation="ROLLBACK",
+        boundary="aos.runtime_slots",
+        resource="active-slot.json",
+        result_sha=STABLE_SHA,
+        previous_state={"active": "candidate"},
+        target_state={"active": "stable"},
+        module_ids=["RuntimeSupervisor"],
+    )
+    record_rollback_receipt(
+        completed_ledger,
+        project_id="AOS",
+        idempotency_key="completed-rollback",
+        agent_class="AOS_NATIVE",
+        tool_name="pytest",
+        result_sha=STABLE_SHA,
+        claims={"transition_id": completed_id},
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="ALREADY_COMPLETED"):
+        abort_transition(
+            completed_ledger,
+            transition_id=completed_id,
+            boundary="aos.runtime_slots",
+            result_sha=STABLE_SHA,
+            reason="forbidden abort",
+            recovered_state={"active": "candidate"},
+        )
+    completed, aborted = _terminal_sets(completed_ledger)
+    assert completed_id in completed
+    assert completed_id not in aborted
+
+
+def test_projection_rejects_preexisting_contradictory_terminal_history(tmp_path):
+    ledger = KnowledgeLedger(tmp_path / "contradictory")
+    transition_id = "e" * 64
+    prepare_transition(
+        ledger,
+        transition_id=transition_id,
+        operation="PROMOTE",
+        boundary="aos.runtime_slots",
+        resource="active-slot.json",
+        result_sha=SOURCE_SHA,
+        previous_state={"active": "candidate"},
+        target_state={"active": "stable"},
+        module_ids=["RuntimeSupervisor"],
+    )
+    ledger.append(
+        KnowledgeEventType.RUNTIME_TRANSITION_ABORTED,
+        project_id="AOS",
+        idempotency_key="raw-abort",
+        claims={"transition_id": transition_id, "status": "ABORTED"},
+    )
+    ledger.append(
+        KnowledgeEventType.LIVE_PROMOTION_RECEIPT,
+        project_id="AOS",
+        idempotency_key="raw-completion",
+        result_sha=SOURCE_SHA,
+        claims={"transition_id": transition_id, "promotion_state": "STABLE"},
+    )
+    with pytest.raises(RuntimeTransitionTerminalStateError, match="TERMINAL_STATE_CONFLICT"):
+        transition_status(ledger, transition_id)
+    with pytest.raises(ValueError, match="contradictory terminal states"):
+        derive_index(ledger.read_events())
+
+
+def test_abort_and_completion_race_has_exactly_one_terminal_state(tmp_path):
+    ledger = KnowledgeLedger(tmp_path / "race")
+    transition_id = "9" * 64
+    prepare_transition(
+        ledger,
+        transition_id=transition_id,
+        operation="PROMOTE",
+        boundary="aos.runtime_slots",
+        resource="active-slot.json",
+        result_sha=SOURCE_SHA,
+        previous_state={"active": "candidate"},
+        target_state={"active": "stable"},
+        module_ids=["RuntimeSupervisor"],
+    )
+    barrier = threading.Barrier(2)
+
+    def complete():
+        barrier.wait()
+        try:
+            record_live_promotion_receipt(
+                ledger,
+                project_id="AOS",
+                idempotency_key="racing-completion",
+                agent_class="AOS_NATIVE",
+                tool_name="pytest",
+                result_sha=SOURCE_SHA,
+                claims={"transition_id": transition_id},
+            )
+            return "COMPLETED"
+        except RuntimeTransitionTerminalStateError:
+            return "REJECTED"
+
+    def abort():
+        barrier.wait()
+        try:
+            abort_transition(
+                ledger,
+                transition_id=transition_id,
+                boundary="aos.runtime_slots",
+                result_sha=SOURCE_SHA,
+                reason="racing abort",
+                recovered_state={"active": "candidate"},
+            )
+            return "ABORTED"
+        except RuntimeTransitionTerminalStateError:
+            return "REJECTED"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        completion_future = pool.submit(complete)
+        abort_future = pool.submit(abort)
+        outcomes = {completion_future.result(), abort_future.result()}
+    assert outcomes in ({"COMPLETED", "REJECTED"}, {"ABORTED", "REJECTED"})
+    completed, aborted = _terminal_sets(ledger)
+    assert (transition_id in completed) != (transition_id in aborted)

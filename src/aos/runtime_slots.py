@@ -15,6 +15,7 @@ from aos.knowledge.accepted_work import assert_accepted_work_receipted
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_live_promotion_receipt, record_rollback_receipt
 from aos.knowledge.runtime_transitions import (
+    RuntimeTransitionTerminalStateError,
     abort_transition,
     clear_transition_marker,
     prepare_transition,
@@ -240,6 +241,11 @@ class SlotManager:
             str(reason)[:1000],
         )
         existing = transition_status(self.knowledge_ledger, transition_id)
+        if existing["abort"] is not None:
+            raise RuntimeTransitionTerminalStateError(
+                f"RUNTIME_TRANSITION_ALREADY_ABORTED:{transition_id}; "
+                "a new rollback attempt identity is required"
+            )
         if existing["completion"] is not None:
             if pointer.get("active") == "stable" and pointer.get("rollback_reason") == str(reason)[:1000]:
                 return pointer
@@ -337,6 +343,11 @@ class SlotManager:
             "SLOT_PROMOTION", str(self.pointer), proof_id, candidate.source_sha, candidate.slot_id
         )
         existing = transition_status(self.knowledge_ledger, transition_id)
+        if existing["abort"] is not None:
+            raise RuntimeTransitionTerminalStateError(
+                f"RUNTIME_TRANSITION_ALREADY_ABORTED:{transition_id}; "
+                "a new promotion proof_id is required"
+            )
         if existing["completion"] is not None:
             if (
                 pointer.get("active") == "stable"

@@ -1,7 +1,7 @@
 """Typed receipt helpers for agent, tool, verification, and runtime work."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 from aos.knowledge.index import rebuild_index
 from aos.knowledge.ledger import KnowledgeLedger
@@ -27,6 +27,7 @@ def record_receipt(
     blockers: Iterable[str] = (),
     canonical_next_action: Optional[str] = None,
     claims: Optional[Mapping[str, Any]] = None,
+    append_precondition: Optional[Callable[[Tuple[Dict[str, Any], ...]], None]] = None,
     **bindings: Any,
 ) -> Dict[str, Any]:
     """Append a receipt and synchronously refresh its derived index.
@@ -52,6 +53,7 @@ def record_receipt(
         blockers=list(blockers),
         canonical_next_action=canonical_next_action,
         claims=dict(claims or {}),
+        append_precondition=append_precondition,
         **bindings,
     )
     rebuild_index(ledger)
@@ -79,10 +81,26 @@ def record_candidate_materialization_receipt(ledger: KnowledgeLedger, **kwargs: 
 def record_live_promotion_receipt(ledger: KnowledgeLedger, **kwargs: Any) -> Dict[str, Any]:
     if kwargs.get("production") not in (None, "NO_GO"):
         raise ValueError("KCP promotion receipts cannot enable production")
+    transition_id = str((kwargs.get("claims") or {}).get("transition_id") or "")
+    if transition_id:
+        from aos.knowledge.runtime_transitions import transition_completion_precondition
+        kwargs["append_precondition"] = transition_completion_precondition(
+            transition_id,
+            event_type=KnowledgeEventType.LIVE_PROMOTION_RECEIPT,
+            idempotency_key=str(kwargs.get("idempotency_key") or ""),
+        )
     return record_receipt(ledger, KnowledgeEventType.LIVE_PROMOTION_RECEIPT, **kwargs)
 
 
 def record_rollback_receipt(ledger: KnowledgeLedger, **kwargs: Any) -> Dict[str, Any]:
+    transition_id = str((kwargs.get("claims") or {}).get("transition_id") or "")
+    if transition_id:
+        from aos.knowledge.runtime_transitions import transition_completion_precondition
+        kwargs["append_precondition"] = transition_completion_precondition(
+            transition_id,
+            event_type=KnowledgeEventType.ROLLBACK_RECEIPT,
+            idempotency_key=str(kwargs.get("idempotency_key") or ""),
+        )
     return record_receipt(ledger, KnowledgeEventType.ROLLBACK_RECEIPT, **kwargs)
 
 
@@ -95,6 +113,8 @@ def record_runtime_transition_intent(ledger: KnowledgeLedger, **kwargs: Any) -> 
         raise ValueError("unsupported runtime transition operation")
     if not kwargs.get("result_sha"):
         raise ValueError("runtime transition intent requires an exact relevant source SHA")
+    from aos.knowledge.runtime_transitions import transition_prepare_precondition
+    kwargs["append_precondition"] = transition_prepare_precondition(str(claims["transition_id"]))
     return record_receipt(ledger, KnowledgeEventType.RUNTIME_TRANSITION_INTENT, **kwargs)
 
 
@@ -102,4 +122,9 @@ def record_runtime_transition_aborted(ledger: KnowledgeLedger, **kwargs: Any) ->
     claims = kwargs.get("claims") or {}
     if not claims.get("transition_id"):
         raise ValueError("runtime transition abort requires transition_id")
+    from aos.knowledge.runtime_transitions import transition_abort_precondition
+    kwargs["append_precondition"] = transition_abort_precondition(
+        str(claims["transition_id"]),
+        idempotency_key=str(kwargs.get("idempotency_key") or ""),
+    )
     return record_receipt(ledger, KnowledgeEventType.RUNTIME_TRANSITION_ABORTED, **kwargs)

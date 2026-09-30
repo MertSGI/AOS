@@ -113,11 +113,19 @@ def derive_index(events: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         }:
             transition_id = str(event.get("claims", {}).get("transition_id") or "")
             if transition_id:
+                if transition_id in aborted_transitions:
+                    raise ValueError(
+                        f"runtime transition has contradictory terminal states: {transition_id}"
+                    )
                 unresolved_transitions.pop(transition_id, None)
                 completed_transitions[transition_id] = ref
         elif event_type == KnowledgeEventType.RUNTIME_TRANSITION_ABORTED.value:
             transition_id = str(event.get("claims", {}).get("transition_id") or "")
             if transition_id:
+                if transition_id in completed_transitions:
+                    raise ValueError(
+                        f"runtime transition has contradictory terminal states: {transition_id}"
+                    )
                 unresolved_transitions.pop(transition_id, None)
                 aborted_transitions[transition_id] = ref
         if event.get("base_sha") or event.get("result_sha"):
