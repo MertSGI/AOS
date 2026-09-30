@@ -69,6 +69,20 @@ class ExecutionAvailabilityState(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class ExecutionFailureDisposition(str, Enum):
+    """Routing meaning of a normalized backend failure.
+
+    Resource availability failures remain retryable after the finite route is
+    exhausted.  Backend-local failures may be routed around, but must never be
+    relabeled as a project-wide resource outage.  Authority, security, and
+    request-contract failures stop routing immediately.
+    """
+
+    RESOURCE_UNAVAILABLE = "RESOURCE_UNAVAILABLE"
+    BACKEND_LOCAL = "BACKEND_LOCAL"
+    FAIL_CLOSED = "FAIL_CLOSED"
+
+
 @dataclass(frozen=True)
 class ExecutionAvailabilitySnapshot:
     state: ExecutionAvailabilityState
@@ -184,6 +198,99 @@ class ExecutionResult:
         if self.availability is not None:
             d["availability"]["state"] = self.availability.state.value
         return d
+
+
+_FAIL_CLOSED_FAILURE_TOKENS = (
+    "AUTHORITY",
+    "SECURITY",
+    "WRITE_SCOPE_VIOLATION",
+    "PLANNING_WRITE_AUTHORITY_DENIED",
+    "PLANNING_MUTATION_DETECTED",
+    "COMPLETED_WORK_MUST_NOT_BE_DUPLICATED",
+    "INVALID_PLANNING_SCHEMA",
+    "UNKNOWN_PROVIDER_FAILURE_FAIL_CLOSED",
+)
+
+_BACKEND_LOCAL_FAILURE_TOKENS = (
+    "PRELAUNCH_CONTRACT_FAILURE",
+    "CONTRACT_FAILURE",
+    "MALFORMED_STRUCTURED_OUTPUT",
+    "SCHEMA_VALIDATION_FAILED",
+    "STALE_AGENT_SESSION",
+    "EXECUTABLE_UNAVAILABLE",
+    "ADAPTER_CONTRACT",
+    "EXECUTION_NONZERO_EXIT",
+    "INCOMPLETE_OUTCOME",
+)
+
+_RESOURCE_UNAVAILABLE_FAILURE_TOKENS = (
+    "ALL_ELIGIBLE_REASONING_PROVIDER",
+    "ALL_ELIGIBLE_REASONING_RESOURCES_UNAVAILABLE",
+    "QUOTA",
+    "RATE_LIMIT",
+    "CAPACITY",
+    "NETWORK_UNAVAILABLE",
+    "TEMPORARILY_UNAVAILABLE",
+    "PROVIDER_UNREACHABLE",
+    "LOCAL_MODEL_UNAVAILABLE",
+    "LOCAL_REASONING_SERVICE_UNAVAILABLE",
+    "LOCAL_GATEWAY_UNAVAILABLE",
+    "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE",
+    "UPSTREAM_ROUTE_UNAVAILABLE",
+    "CREDIT_EXHAUSTED",
+    "AUTH_UNAVAILABLE",
+    "CREDENTIAL_UNAVAILABLE",
+    "TIMEOUT",
+)
+
+
+def execution_failure_class(result: Any) -> str:
+    """Return one sanitized, normalized failure class for routing decisions."""
+    payload = getattr(result, "evidence_payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    value = payload.get("failure_class")
+    if not value:
+        errors = getattr(result, "sanitized_errors", [])
+        if isinstance(errors, list) and errors:
+            value = errors[0]
+    return str(value or getattr(result, "status", "UNKNOWN")).upper()
+
+
+def classify_execution_failure(result: Any) -> ExecutionFailureDisposition:
+    """Classify a failed result at the explicit failover/wait boundary."""
+    status = str(getattr(result, "status", "UNKNOWN")).upper()
+    failure_class = execution_failure_class(result)
+
+    if any(token in failure_class for token in _FAIL_CLOSED_FAILURE_TOKENS):
+        return ExecutionFailureDisposition.FAIL_CLOSED
+    if any(token in failure_class for token in _BACKEND_LOCAL_FAILURE_TOKENS):
+        return ExecutionFailureDisposition.BACKEND_LOCAL
+
+    availability = getattr(result, "availability", None)
+    availability_state = getattr(availability, "state", None)
+    try:
+        availability_state = ExecutionAvailabilityState(availability_state)
+    except (TypeError, ValueError):
+        availability_state = None
+    if availability_state in {
+        ExecutionAvailabilityState.QUOTA_EXHAUSTED,
+        ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+        ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+    }:
+        return ExecutionFailureDisposition.RESOURCE_UNAVAILABLE
+    if availability_state == ExecutionAvailabilityState.CONTRACT_FAILURE:
+        return ExecutionFailureDisposition.BACKEND_LOCAL
+
+    if status == "WAITING_FOR_REASONING_PROVIDER" or any(
+        token in failure_class for token in _RESOURCE_UNAVAILABLE_FAILURE_TOKENS
+    ):
+        return ExecutionFailureDisposition.RESOURCE_UNAVAILABLE
+    if status == "DEGRADED":
+        # A bare DEGRADED result is safe to route around, but cannot prove a
+        # global resource outage without an availability classification.
+        return ExecutionFailureDisposition.BACKEND_LOCAL
+    return ExecutionFailureDisposition.FAIL_CLOSED
 
 
 class ExecutionBackend(ABC):

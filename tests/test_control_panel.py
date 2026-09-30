@@ -467,8 +467,13 @@ def test_dashboard_defines_tracked_lane_count_before_using_it():
     assert _HTML.index(definition) < _HTML.index(usage)
 
     assert "const activeStates = new Set([" in _HTML
-    assert "'WAITING_FOR_REASONING_PROVIDER'" in _HTML
-    assert "'WAITING_FOR_SOURCE_TRANSPORT'" in _HTML
+    active_states = _HTML.split("const activeStates = new Set([", 1)[1].split("]);", 1)[0]
+    assert "'RUNNING'" in active_states
+    assert "'EXECUTING'" in active_states
+    assert "'WAITING_FOR_REASONING_PROVIDER'" not in active_states
+    assert "'WAITING_FOR_SOURCE_TRANSPORT'" not in active_states
+    assert "'HOLD'" not in active_states
+    assert "'SUPERSEDED'" not in active_states
 
 
 def test_mobile_lane_summary_wraps_long_blockers():

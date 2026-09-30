@@ -133,3 +133,53 @@ class ResourceOrchestrator:
 
     def select(self, backends: Iterable[ExecutionBackend], request: ExecutionRequest) -> Optional[str]:
         return next((item.backend_id for item in self.rank(backends, request) if item.eligible), None)
+
+    def classify_exhaustion(
+        self,
+        backends: Iterable[ExecutionBackend],
+        request: ExecutionRequest,
+    ) -> str:
+        """Explain why no backend was selectable without inventing an outage."""
+        ranks = self.rank(backends, request)
+        policy_or_contract_reasons = {
+            "CAPABILITY_MISMATCH",
+            "PAID_DEFAULT_DENIED",
+            "SCARCITY_POLICY_AVOIDED",
+            "LOCAL_QWEN_DISALLOWED",
+            "AGENTIC_PLANNING_DISALLOWED",
+            "CONTEXT_INADEQUATE",
+            "QUALITY_INADEQUATE",
+            "LATENCY_INADEQUATE",
+        }
+        relevant = [
+            item for item in ranks
+            if not policy_or_contract_reasons.intersection(item.reasons)
+        ]
+        if not relevant:
+            return "NO_ELIGIBLE_BACKEND"
+
+        resource_reason_prefixes = (
+            "HEALTH_UNAVAILABLE",
+            "AVAILABILITY_QUOTA_EXHAUSTED",
+            "AVAILABILITY_TEMPORARILY_UNAVAILABLE",
+            "AVAILABILITY_AUTH_UNAVAILABLE",
+            "SNAPSHOT_HEALTH_UNAVAILABLE",
+            "SNAPSHOT_HEALTH_QUOTA_EXHAUSTED",
+            "SNAPSHOT_CREDENTIAL_UNAVAILABLE",
+            "SNAPSHOT_LOCAL_SERVICE_UNAVAILABLE",
+        )
+        saw_resource_unavailable = False
+        for item in relevant:
+            reasons = set(item.reasons)
+            if "AVAILABILITY_CONTRACT_FAILURE" in reasons:
+                return "BACKEND_LOCAL"
+            if "SNAPSHOT_HEALTH_UNKNOWN" in reasons:
+                return "NO_ELIGIBLE_BACKEND"
+            if any(
+                reason.startswith(resource_reason_prefixes)
+                for reason in reasons
+            ):
+                saw_resource_unavailable = True
+                continue
+            return "NO_ELIGIBLE_BACKEND"
+        return "RESOURCE_UNAVAILABLE" if saw_resource_unavailable else "NO_ELIGIBLE_BACKEND"

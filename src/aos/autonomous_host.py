@@ -86,6 +86,8 @@ _ensure_repo_extensions_importable()
 
 from extensions.autonomy_fabric.execution_backend import (  # noqa: E402
     EvidenceClass,
+    ExecutionAvailabilitySnapshot,
+    ExecutionAvailabilityState,
     ExecutionBackend,
     ExecutionCapability,
     ExecutionCost,
@@ -756,6 +758,38 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
         )
         if quota_retry_epoch is not None:
             next_probe_epoch = max(next_probe_epoch, quota_retry_epoch)
+        backend_local_failures = [
+            item for item in attempts
+            if item.status == ProviderAttemptStatus.NON_RETRYABLE_FAILED
+        ]
+        if backend_local_failures:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_reasoner",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="DEGRADED",
+                exit_code=1,
+                workspace=request.workspace,
+                sanitized_errors=["REASONING_BACKEND_LOCAL_FAILURES_EXHAUSTED"],
+                evidence_payload={
+                    "failure_class": "REASONING_BACKEND_LOCAL_FAILURES_EXHAUSTED",
+                    "provider_attempts": [item.to_dict() for item in attempts],
+                    "backend_local_failure_classes": [
+                        str(item.error_class or "CONTRACT_FAILURE")
+                        for item in backend_local_failures
+                    ],
+                    "quota_decisions": quota_decisions,
+                },
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                availability=ExecutionAvailabilitySnapshot(
+                    ExecutionAvailabilityState.CONTRACT_FAILURE,
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    source="PROVIDER_ROUTE_EXHAUSTION",
+                    evidence={"reason": "BACKEND_LOCAL_FAILURE"},
+                ),
+            )
+
         return ExecutionResult(
             backend_id=self.backend_id,
             worker_id="model_reasoner",
@@ -780,6 +814,20 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 ),
             },
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            availability=ExecutionAvailabilitySnapshot(
+                (
+                    ExecutionAvailabilityState.QUOTA_EXHAUSTED
+                    if attempts and all(
+                        item.status == ProviderAttemptStatus.QUOTA_EXHAUSTED
+                        for item in attempts
+                    )
+                    else ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE
+                ),
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                retry_after_epoch=next_probe_epoch,
+                source="PROVIDER_ROUTE_EXHAUSTION",
+                evidence={"reason": "RESOURCE_UNAVAILABLE"},
+            ),
         )
 
 

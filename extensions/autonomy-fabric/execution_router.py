@@ -20,8 +20,12 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionHealth,
     ExecutionCost,
     EvidenceClass,
+    ExecutionAvailabilitySnapshot,
     ExecutionAvailabilityState,
+    ExecutionFailureDisposition,
     BackendClass,
+    classify_execution_failure,
+    execution_failure_class,
 )
 from extensions.autonomy_fabric.authority_router import AuthorityRouter, DecisionCategory
 from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
@@ -131,14 +135,13 @@ class ExecutionRouter:
         return self._backends.get(selected_id) if selected_id else None
 
     def execute_with_failover(self, request: ExecutionRequest) -> ExecutionResult:
-        """Dispatches request to optimal backend, automatically falling over if quota/degraded."""
+        """Try each finite eligible route once, preserving failure semantics."""
         attempts = 0
         tried_backend_ids: Set[str] = set()
-        last_degraded: Optional[ExecutionResult] = None
+        failed_results: List[Tuple[ExecutionResult, ExecutionFailureDisposition]] = []
         self.last_attempt_telemetry = []
 
-        while attempts < 3:
-            attempts += 1
+        while len(tried_backend_ids) < len(self._backends):
             # Temporarily filter out already tried backends
             available_backends = [
                 b for b in self._backends.values() if b.backend_id not in tried_backend_ids
@@ -154,6 +157,7 @@ class ExecutionRouter:
             if not selected:
                 break
 
+            attempts += 1
             tried_backend_ids.add(selected.backend_id)
             dispatch_request = request
             if (
@@ -215,21 +219,129 @@ class ExecutionRouter:
                         "final_selection": False,
                     })
 
-            # If result is degraded or quota exhausted, fail over to next eligible backend
-            if result.status == "DEGRADED":
+            if result.status != "SUCCESS":
+                disposition = classify_execution_failure(result)
+                for record in call_records:
+                    record["failure_disposition"] = disposition.value
+                    record["failure_class"] = execution_failure_class(result)
+                if disposition in {
+                    ExecutionFailureDisposition.RESOURCE_UNAVAILABLE,
+                    ExecutionFailureDisposition.BACKEND_LOCAL,
+                }:
+                    # Both classes are safe to route around.  Only a route made
+                    # entirely of resource failures may become provider wait.
+                    failed_results.append((result, disposition))
+                    self.last_attempt_telemetry.extend(call_records)
+                    continue
+
+                # Authority/security/global request-contract failures stop the
+                # route immediately and remain the final selection.
+                for record in call_records:
+                    record["final_selection"] = True
                 self.last_attempt_telemetry.extend(call_records)
-                last_degraded = result
-                continue
+                return result
 
             for record in call_records:
                 record["final_selection"] = True
             self.last_attempt_telemetry.extend(call_records)
             return result
 
-        # Preserve a structured non-terminal availability result when all
-        # compatible resources degraded. Project state must not become failure.
-        if last_degraded is not None:
-            return last_degraded
+        if failed_results:
+            if all(
+                disposition == ExecutionFailureDisposition.RESOURCE_UNAVAILABLE
+                for _result, disposition in failed_results
+            ):
+                remaining_backends = [
+                    backend for backend in self._backends.values()
+                    if backend.backend_id not in tried_backend_ids
+                ]
+                remaining_exhaustion = "NO_ELIGIBLE_BACKEND"
+                classify_exhaustion = getattr(self.orchestrator, "classify_exhaustion", None)
+                if remaining_backends and callable(classify_exhaustion):
+                    remaining_exhaustion = str(
+                        classify_exhaustion(remaining_backends, request)
+                    )
+                if remaining_exhaustion == "BACKEND_LOCAL":
+                    return ExecutionResult(
+                        backend_id="router",
+                        worker_id="router",
+                        task_id=request.task_id,
+                        request_id=request.request_id,
+                        status="DEGRADED",
+                        exit_code=1,
+                        workspace=request.workspace,
+                        sanitized_errors=["BACKEND_LOCAL_CONTRACT_ROUTE_UNAVAILABLE"],
+                        evidence_payload={
+                            "failure_class": "BACKEND_LOCAL_CONTRACT_ROUTE_UNAVAILABLE",
+                            "attempted_backend_ids": sorted(tried_backend_ids),
+                            "failure_disposition": ExecutionFailureDisposition.BACKEND_LOCAL.value,
+                        },
+                        evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                        availability=ExecutionAvailabilitySnapshot(
+                            state=ExecutionAvailabilityState.CONTRACT_FAILURE,
+                            observed_at="",
+                            source="ROUTER_ELIGIBILITY_EXHAUSTION",
+                        ),
+                    )
+                # Exhaustion is global only when every attempted compatible
+                # backend failed for an actual availability reason.
+                base = failed_results[-1][0]
+                evidence_payload = dict(base.evidence_payload or {})
+                evidence_payload.update({
+                    "failure_class": "ALL_ELIGIBLE_REASONING_RESOURCES_UNAVAILABLE",
+                    "attempted_backend_ids": sorted(tried_backend_ids),
+                    "backend_failure_classes": [
+                        execution_failure_class(item) for item, _ in failed_results
+                    ],
+                    "failure_disposition": ExecutionFailureDisposition.RESOURCE_UNAVAILABLE.value,
+                })
+                return ExecutionResult(
+                    backend_id=base.backend_id,
+                    worker_id=base.worker_id,
+                    task_id=base.task_id,
+                    request_id=base.request_id,
+                    status="WAITING_FOR_REASONING_PROVIDER",
+                    exit_code=base.exit_code,
+                    workspace=base.workspace,
+                    sanitized_errors=["ALL_ELIGIBLE_REASONING_RESOURCES_UNAVAILABLE"],
+                    resource_usage=dict(base.resource_usage or {}),
+                    evidence_class=base.evidence_class,
+                    evidence_payload=evidence_payload,
+                    availability=base.availability,
+                )
+
+            # A deterministic backend-local failure disproves a global resource
+            # outage.  Preserve its exact class for diagnosis and bounded retry.
+            return next(
+                result for result, disposition in reversed(failed_results)
+                if disposition == ExecutionFailureDisposition.BACKEND_LOCAL
+            )
+
+        exhaustion = "NO_ELIGIBLE_BACKEND"
+        classify_exhaustion = getattr(self.orchestrator, "classify_exhaustion", None)
+        if callable(classify_exhaustion):
+            exhaustion = str(classify_exhaustion(self._backends.values(), request))
+        if exhaustion == "RESOURCE_UNAVAILABLE":
+            return ExecutionResult(
+                backend_id="router",
+                worker_id="router",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="WAITING_FOR_REASONING_PROVIDER",
+                exit_code=1,
+                workspace=request.workspace,
+                sanitized_errors=["ALL_ELIGIBLE_REASONING_RESOURCES_UNAVAILABLE"],
+                evidence_payload={
+                    "failure_class": "ALL_ELIGIBLE_REASONING_RESOURCES_UNAVAILABLE",
+                    "failure_disposition": ExecutionFailureDisposition.RESOURCE_UNAVAILABLE.value,
+                },
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                availability=ExecutionAvailabilitySnapshot(
+                    state=ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+                    observed_at="",
+                    source="ROUTER_ELIGIBILITY_EXHAUSTION",
+                ),
+            )
 
         # No backend succeeded or all eligible backends were ineligible.
         return ExecutionResult(
@@ -241,5 +353,9 @@ class ExecutionRouter:
             exit_code=1,
             workspace=request.workspace,
             sanitized_errors=[f"No healthy eligible execution backend available for capabilities: {[c.value for c in request.required_capabilities]}"],
+            evidence_payload={
+                "failure_class": exhaustion,
+                "failure_disposition": ExecutionFailureDisposition.FAIL_CLOSED.value,
+            },
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
         )

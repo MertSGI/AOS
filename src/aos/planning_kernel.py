@@ -64,7 +64,10 @@ _ensure_repo_extensions_importable()
 
 from extensions.autonomy_fabric.execution_backend import (  # noqa: E402
     ExecutionCapability,
+    ExecutionFailureDisposition,
     ExecutionRequest,
+    classify_execution_failure,
+    execution_failure_class,
 )
 from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     NativeFileWorker,
@@ -1379,8 +1382,9 @@ def _reason(
     else:
         result = backend.execute(request)
     if result.status != "SUCCESS":
-        failure = str(result.evidence_payload.get("failure_class", result.status))
-        if result.status in ("DEGRADED", "WAITING_FOR_REASONING_PROVIDER") or "UNAVAILABLE" in failure.upper():
+        failure = execution_failure_class(result)
+        failure_disposition = classify_execution_failure(result)
+        if failure_disposition == ExecutionFailureDisposition.RESOURCE_UNAVAILABLE:
             decisions = result.evidence_payload.get("quota_decisions", [])
             blocking = [
                 item for item in decisions

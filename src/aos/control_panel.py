@@ -1906,12 +1906,8 @@ async function refreshStatus() {
     const laneKeys = Object.keys(lanes);
 
     const activeStates = new Set([
-      'QUEUED',
       'RUNNING',
-      'RECOVERING',
-      'EXECUTING',
-      'WAITING_FOR_REASONING_PROVIDER',
-      'WAITING_FOR_SOURCE_TRANSPORT'
+      'EXECUTING'
     ]);
 
     const activeLanesCount = laneKeys.filter(
