@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
+from aos.process_utils import run_headless
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json
 
@@ -63,11 +64,9 @@ def _read_mapping(path: Path) -> tuple[Optional[Dict[str, Any]], str]:
 
 def _git_sha(repo_root: Path, ref: str) -> Optional[str]:
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
-            check=False,
-            capture_output=True,
-            text=True,
+        completed = run_headless(
+            ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+            cwd=str(repo_root),
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
