@@ -12,6 +12,9 @@ from typing import Any, Callable, Mapping, Optional
 from aos import runtime_deploy
 from aos.autonomous_host import build_execution_router
 from aos.platform_recovery import SourceRepairResourceUnavailable
+from aos.knowledge.accepted_work import accepted_work_coverage
+from aos.knowledge.hooks import ledger_for_runtime
+from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 from aos.process_utils import run_headless
 from aos.source_repair_pipeline import (
     BranchPublisher,
@@ -357,6 +360,51 @@ def _make_certifier(
             timeout_seconds=ci_timeout_seconds,
             poll_interval_seconds=ci_poll_interval_seconds,
         )
+
+        knowledge_ledger = ledger_for_runtime(runtime_home)
+        coverage = accepted_work_coverage(
+            knowledge_ledger,
+            project_id="AOS",
+            result_sha=repair_sha,
+        )
+        if not coverage["covered"]:
+            base_sha = str(_git(workspace, "rev-parse", f"{repair_sha}^")).strip().lower()
+            if not _FULL_SHA.fullmatch(base_sha):
+                raise RuntimeError("source repair receipt base SHA could not be resolved")
+            changed_paths = [
+                line.strip().replace("\\", "/")
+                for line in str(
+                    _git(workspace, "diff", "--name-only", f"{base_sha}..{repair_sha}")
+                ).splitlines()
+                if line.strip()
+            ]
+            if not changed_paths:
+                raise RuntimeError("source repair receipt requires changed-path scope")
+            common = {
+                "project_id": "AOS",
+                "agent_class": "AOS_NATIVE",
+                "tool_name": "aos.source_repair_factory",
+                "base_sha": base_sha,
+                "result_sha": repair_sha,
+                "repository": repo,
+                "branch": branch,
+                "module_ids": ["PlatformRecovery", "RuntimeDeploy"],
+                "changed_paths": changed_paths,
+                "evidence_refs": [f"github-actions-run:{ci_run_id}"],
+            }
+            record_implementation_receipt(
+                knowledge_ledger,
+                idempotency_key=f"source-repair-implementation:{repair_sha}",
+                claims={"published_remote_sha": publication.get("remote_sha")},
+                **common,
+            )
+            record_verification_receipt(
+                knowledge_ledger,
+                idempotency_key=f"source-repair-verification:{repair_sha}:{ci_run_id}",
+                verification={"status": "SUCCESS", "ci_run_id": ci_run_id},
+                claims={"exact_sha_ci": True},
+                **common,
+            )
 
         staged = runtime_deploy.stage(
             runtime_home,

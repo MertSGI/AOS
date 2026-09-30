@@ -19,6 +19,8 @@ def main() -> int:
     mirror = (KNOWLEDGE / "mirror.py").read_text("utf-8")
     index = (KNOWLEDGE / "index.py").read_text("utf-8")
     context = (KNOWLEDGE / "context.py").read_text("utf-8")
+    accepted_work = (KNOWLEDGE / "accepted_work.py").read_text("utf-8")
+    hooks = (KNOWLEDGE / "hooks.py").read_text("utf-8")
     combined = "\n".join(path.read_text("utf-8") for path in KNOWLEDGE.glob("*.py"))
 
     require('open("ab")' in ledger, "ledger append mode was removed")
@@ -28,6 +30,14 @@ def main() -> int:
     require("DECISION_ACCEPTED" not in mirror, "mirror can create accepted decisions")
     require("operational_truth_must_be_refreshed" in index, "historical operational truth guard missing")
     require("FRESH_CURRENT_TRUTH_REQUIRED" in context, "fresh current-truth preflight guard missing")
+    require("IMPLEMENTATION_RECEIPT" in accepted_work and "VERIFICATION_RECEIPT" in accepted_work,
+            "accepted-work two-receipt coverage guard missing")
+    require("HANDOFF" not in accepted_work and "CURRENT_TRUTH_OBSERVATION" not in accepted_work,
+            "non-acceptance events entered accepted-work coverage")
+    require("disable_kcp" not in combined.lower() and "bypass_kcp" not in combined.lower(),
+            "permanent KCP disable escape hatch detected")
+    require("os.environ[" not in hooks and "os.environ.setdefault" not in hooks,
+            "process-global knowledge-home mutation detected")
     require('"NO_GO"' in model and '"DISABLED"' in model, "safety constants missing")
     require('production"] != "NO_GO"' in model, "production fail-closed validation missing")
     require('paid_fallback"] != "DISABLED"' in model, "paid fallback fail-closed validation missing")

@@ -197,9 +197,10 @@ class RuntimeSupervisor:
             if runtime_config_path
             else self.config_path.parent
         )
+        knowledge_ledger = ledger_for_runtime(runtime_home)
         self.slots = SlotManager(
             self.root,
-            knowledge_ledger=ledger_for_runtime(runtime_home),
+            knowledge_ledger=knowledge_ledger,
         )
         self.state_path = self.root / "supervisor-state.json"
         self.child: Optional[OwnedProcess] = None
@@ -212,7 +213,12 @@ class RuntimeSupervisor:
         self.panel_api_pid: Optional[int] = None
         self.singleton_name = str(self.config.get("singleton_name") or r"Local\AOS.RuntimeV1.Supervisor")
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
-        self.publisher = ControllerRelayPublisher(relay_dir, self.config, writer_instance_id=f"aos-supervisor-{os.getpid()}")
+        self.publisher = ControllerRelayPublisher(
+            relay_dir,
+            self.config,
+            writer_instance_id=f"aos-supervisor-{os.getpid()}",
+            knowledge_ledger=knowledge_ledger,
+        )
         self.relay_worker = AsyncControllerRelay(self.publisher)
         self.last_status: Optional[Dict[str, Any]] = None
         self.stop_event = threading.Event()

@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from aos.controlled_execution import ControlledExecutionEngine
+from aos.knowledge.accepted_work import accepted_work_coverage
+from aos.knowledge.ledger import KnowledgeLedger
 from aos.git_workspace import (
     GitWorkspace,
     enforce_aos_branch_namespace,
@@ -23,6 +25,12 @@ from aos.scope_guard import validate_scope
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document
 from aos.workers.base import WorkerAdapter, WorkerExecutionResult
+
+
+@pytest.fixture(autouse=True)
+def _mandatory_test_knowledge_home(tmp_path, monkeypatch):
+    """Successful controlled-execution tests use an isolated durable KCP."""
+    monkeypatch.setenv("AOS_KNOWLEDGE_HOME", str(tmp_path / "knowledge"))
 
 
 class MockSourceAdapter(ProjectSourceAdapter):
@@ -294,6 +302,100 @@ def mock_fail_verification_runner(argv, cwd, timeout, env):
 
 
 class TestControlledExecutionEngineFinalHardened:
+    def test_missing_kcp_holds_before_worker_mutation(self, monkeypatch):
+        monkeypatch.delenv("AOS_KNOWLEDGE_HOME", raising=False)
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        worker = MockTestDoubleWorkerAdapter()
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda _repo, _ref: source,
+            worker_adapter_factory=lambda: worker,
+            repo_identity_inspector=lambda _path: "GenericOrg/GenericRepo",
+        )
+
+        result = engine.execute(local_target_repo_path="/path/to/repo")
+
+        assert result["disposition"] == "HOLD"
+        assert worker.executed is False
+        assert any("KCP_REQUIRED_BUT_UNAVAILABLE" in error for error in result["errors"])
+        check = next(
+            item for item in result["verification_checks"]
+            if item["check_id"] == "knowledge_context_preflight"
+        )
+        assert check["status"] == "FAIL"
+
+    def test_explicit_ledger_injection_archives_verified_candidate_without_env(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("AOS_KNOWLEDGE_HOME", raising=False)
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        worker = MockTestDoubleWorkerAdapter()
+        workspace = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+        ledger = KnowledgeLedger(tmp_path / "explicit-knowledge")
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda _repo, _ref: source,
+            git_workspace_factory=lambda _repo, _base, _tid, _branch: workspace,
+            worker_adapter_factory=lambda: worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda _path: "GenericOrg/GenericRepo",
+            knowledge_ledger=ledger,
+        )
+
+        result = engine.execute(local_target_repo_path="/path/to/repo")
+
+        assert result["disposition"] == "VERIFIED_CANDIDATE"
+        assert "AOS_KNOWLEDGE_HOME" not in os.environ
+        assert accepted_work_coverage(
+            ledger,
+            project_id="generic_project",
+            result_sha=result["final_head_sha"],
+        )["covered"] is True
+        assert result["extensions"]["KCP_ARCHIVAL_STATUS"] == "KCP_ARCHIVED"
+        assert len(result["extensions"]["KCP_PREFLIGHT_HASH"]) == 64
+
+    def test_receipt_write_failure_cannot_return_verified_candidate(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("AOS_KNOWLEDGE_HOME", raising=False)
+        desc = make_generic_descriptor()
+        task = make_generic_task()
+        source = MockSourceAdapter("GenericOrg/GenericRepo", "control/main")
+        worker = MockTestDoubleWorkerAdapter()
+        workspace = MockGitWorkspace("repo", task["base_sha"], task["task_id"])
+        ledger = KnowledgeLedger(tmp_path / "failing-knowledge")
+        original_append = ledger.append
+
+        def fail_implementation(event_type, **kwargs):
+            value = getattr(event_type, "value", str(event_type))
+            if value == "IMPLEMENTATION_RECEIPT":
+                raise OSError("disk full")
+            return original_append(event_type, **kwargs)
+
+        monkeypatch.setattr(ledger, "append", fail_implementation)
+        engine = ControlledExecutionEngine(
+            desc, task,
+            source_adapter_factory=lambda _repo, _ref: source,
+            git_workspace_factory=lambda _repo, _base, _tid, _branch: workspace,
+            worker_adapter_factory=lambda: worker,
+            verification_runner=mock_pass_verification_runner,
+            repo_identity_inspector=lambda _path: "GenericOrg/GenericRepo",
+            knowledge_ledger=ledger,
+        )
+
+        result = engine.execute(local_target_repo_path="/path/to/repo")
+
+        assert result["disposition"] == "VERIFICATION_FAILED"
+        assert accepted_work_coverage(
+            ledger,
+            project_id="generic_project",
+            result_sha=task["base_sha"],
+        )["covered"] is False
+
     def test_valid_generic_r1_task_reaches_verified_candidate(self):
         """1. Full pipeline reaches VERIFIED_CANDIDATE with all check accounting PASS."""
         desc = make_generic_descriptor()

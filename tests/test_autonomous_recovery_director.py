@@ -13,6 +13,7 @@ from aos.platform_recovery import (
     SourceRepairResourceUnavailable,
     SourceRepairResult,
 )
+from aos.knowledge.ledger import KnowledgeLedger
 from aos.recovery_proof import RecoveryProofStore
 from aos.resource_snapshot import ResourceSnapshotStore
 from aos.resource_ledger import ResourceEventType, ResourceLedger
@@ -271,6 +272,7 @@ def test_platform_recovery_source_pipeline_stops_at_promotion_ready(tmp_path):
             activation_performed=False,
             evidence={"ci_run_id": "synthetic-test"},
         ),
+        knowledge_ledger=KnowledgeLedger(tmp_path / "knowledge"),
     )
     job = coordinator.process_finding(finding.finding_id)
     assert job["job_type"] == "SYSTEM_REPAIR_JOB"
@@ -294,6 +296,7 @@ def test_platform_recovery_resource_unavailable_is_a_typed_wait(tmp_path):
         repair,
         source_base_sha=SOURCE_SHA,
         source_repair_executor=unavailable,
+        knowledge_ledger=KnowledgeLedger(tmp_path / "knowledge"),
     )
     job = coordinator.process_finding(finding.finding_id)
 

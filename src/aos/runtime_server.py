@@ -50,6 +50,7 @@ from aos.secure_store import (
 )
 from aos.source_repair_factory import create_source_repair_executor_from_config
 from aos.current_truth import refresh_current_truth
+from aos.knowledge.hooks import ledger_for_runtime
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -157,6 +158,7 @@ class RuntimeEngine:
             self.config,
             writer_instance_id=f"aos-api-{os.getpid()}",
             source_repair_executor=source_repair_executor,
+            knowledge_ledger=ledger_for_runtime(self.runtime_home),
         )
         self.relay_worker = AsyncControllerRelay(self.publisher)
         self.recovery_thread = threading.Thread(target=self._recovery_loop, name="aos-runtime-recovery", daemon=True)

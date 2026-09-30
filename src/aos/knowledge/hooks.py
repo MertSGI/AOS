@@ -22,17 +22,68 @@ def ledger_for_runtime(runtime_home: Path) -> KnowledgeLedger:
     return KnowledgeLedger(knowledge_root_for_runtime(runtime_home))
 
 
+def resolve_knowledge_ledger(
+    *,
+    knowledge_ledger: Optional[KnowledgeLedger] = None,
+    runtime_home: Optional[Path | str] = None,
+    runtime_root: Optional[Path | str] = None,
+    runtime_config_path: Optional[Path | str] = None,
+    config: Optional[Mapping[str, Any]] = None,
+    knowledge_home: Optional[Path | str] = None,
+    allow_environment_override: bool = False,
+) -> Optional[KnowledgeLedger]:
+    """Resolve one Runtime V1 ledger without consulting cwd or a checkout.
+
+    Authority is deterministic and ordered: an injected ledger, explicit
+    runtime home, explicit runtime state root, a runtime config path, then an
+    explicitly supplied external knowledge home.  The environment is read only
+    when a caller opts into the compatibility override.
+    """
+    if knowledge_ledger is not None:
+        return knowledge_ledger
+
+    values = dict(config or {})
+    selected_runtime_home = runtime_home or values.get("runtime_home")
+    if selected_runtime_home:
+        return ledger_for_runtime(Path(str(selected_runtime_home)))
+
+    selected_runtime_root = runtime_root or values.get("runtime_root")
+    if selected_runtime_root:
+        return ledger_for_runtime(Path(str(selected_runtime_root)).expanduser().resolve().parent)
+
+    selected_config_path = runtime_config_path or values.get("runtime_config_path")
+    if selected_config_path:
+        path = Path(str(selected_config_path)).expanduser().resolve()
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+        if not isinstance(loaded, Mapping):
+            return None
+        loaded_runtime_home = loaded.get("runtime_home")
+        if loaded_runtime_home:
+            return ledger_for_runtime(Path(str(loaded_runtime_home)))
+        loaded_runtime_root = loaded.get("runtime_root")
+        if loaded_runtime_root:
+            return ledger_for_runtime(
+                Path(str(loaded_runtime_root)).expanduser().resolve().parent
+            )
+
+    selected_knowledge_home = knowledge_home
+    if selected_knowledge_home is None and allow_environment_override:
+        selected_knowledge_home = os.environ.get("AOS_KNOWLEDGE_HOME")
+    if selected_knowledge_home:
+        return KnowledgeLedger(Path(str(selected_knowledge_home)))
+    return None
+
+
 def configured_ledger() -> Optional[KnowledgeLedger]:
-    """Resolve opt-in integration for boundaries that do not own runtime_home."""
-    configured = os.environ.get("AOS_KNOWLEDGE_HOME")
-    return KnowledgeLedger(Path(configured)) if configured else None
+    """Compatibility resolver for external boundaries without Runtime V1 config."""
+    return resolve_knowledge_ledger(allow_environment_override=True)
 
 
 def ledger_from_runtime_config(config: Mapping[str, Any]) -> Optional[KnowledgeLedger]:
-    runtime_root = config.get("runtime_root")
-    if not runtime_root:
-        return None
-    return ledger_for_runtime(Path(str(runtime_root)).expanduser().resolve().parent)
+    return resolve_knowledge_ledger(config=config, allow_environment_override=True)
 
 
 def execution_context_preflight(

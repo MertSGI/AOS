@@ -110,6 +110,7 @@ def build_context_pack(
     pack = _bounded(pack, max(4096, min(int(byte_limit), MAX_CONTEXT_BYTES)))
     fingerprint_body = json.dumps(pack, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     pack["context_hash"] = hashlib.sha256(fingerprint_body).hexdigest()
+    pack["context_pack_hash"] = pack["context_hash"]
     if record_receipt:
         ledger.append(
             KnowledgeEventType.CONTEXT_PREFLIGHT_RECEIPT,

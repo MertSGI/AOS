@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, read_json
 from aos.knowledge.hooks import execution_context_preflight
+from aos.knowledge.accepted_work import assert_accepted_work_receipted
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_live_promotion_receipt, record_rollback_receipt
 
@@ -157,33 +158,38 @@ class SlotManager:
             raise ValueError("A bounded proof_id is required for promotion")
         pointer = self.read_pointer()
         candidate = self.read_slot(str(pointer["candidate_slot_id"]))
-        if self.knowledge_ledger is not None:
-            if not candidate.source_sha:
-                raise ValueError("candidate promotion requires exact source SHA")
-            execution_context_preflight(
-                self.knowledge_ledger,
-                project_id="AOS",
-                task_class="RUNTIME_PROMOTION",
-                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
-                paths=[str(self.pointer)],
-                base_sha=candidate.source_sha,
-            )
+        if self.knowledge_ledger is None:
+            raise ValueError("KCP_REQUIRED_BUT_UNAVAILABLE")
+        if not candidate.source_sha:
+            raise ValueError("candidate promotion requires exact source SHA")
+        execution_context_preflight(
+            self.knowledge_ledger,
+            project_id="AOS",
+            task_class="RUNTIME_PROMOTION",
+            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+            paths=[str(self.pointer)],
+            base_sha=candidate.source_sha,
+        )
+        assert_accepted_work_receipted(
+            self.knowledge_ledger,
+            project_id="AOS",
+            result_sha=candidate.source_sha,
+        )
         pointer["stable_slot_id"] = pointer["candidate_slot_id"]
         pointer["active"] = "stable"
         pointer["promotion_state"] = "STABLE"
         pointer["promotion_proof_id"] = proof_id
         pointer["updated_at"] = utc_now()
         atomic_json(self.pointer, pointer)
-        if self.knowledge_ledger is not None:
-            record_live_promotion_receipt(
-                self.knowledge_ledger,
-                project_id="AOS",
-                idempotency_key=f"slot-promotion:{proof_id}:{candidate.source_sha}",
-                agent_class="AOS_NATIVE",
-                tool_name="aos.runtime_slots",
-                result_sha=candidate.source_sha,
-                module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
-                evidence_refs=[proof_id],
-                claims={"promotion_state": "STABLE", "slot_id": candidate.slot_id},
-            )
+        record_live_promotion_receipt(
+            self.knowledge_ledger,
+            project_id="AOS",
+            idempotency_key=f"slot-promotion:{proof_id}:{candidate.source_sha}",
+            agent_class="AOS_NATIVE",
+            tool_name="aos.runtime_slots",
+            result_sha=candidate.source_sha,
+            module_ids=["RuntimeSupervisor", "RuntimeDeploy"],
+            evidence_refs=[proof_id],
+            claims={"promotion_state": "STABLE", "slot_id": candidate.slot_id},
+        )
         return pointer

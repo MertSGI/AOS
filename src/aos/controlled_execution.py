@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aos.process_utils import run_headless
-from aos.knowledge.hooks import configured_ledger, execution_context_preflight
+from aos.knowledge.accepted_work import assert_accepted_work_receipted
+from aos.knowledge.hooks import execution_context_preflight, resolve_knowledge_ledger
+from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 
 from aos.candidate_store import (
@@ -94,6 +96,9 @@ class ControlledExecutionEngine:
         worker_adapter_factory: Optional[Callable[[], WorkerAdapter]] = None,
         verification_runner: Optional[Callable[[List[str], str, int, Dict[str, str]], subprocess.CompletedProcess]] = None,
         repo_identity_inspector: Optional[Callable[[str], str]] = None,
+        knowledge_ledger: Optional[KnowledgeLedger] = None,
+        runtime_home: Optional[Path | str] = None,
+        knowledge_home: Optional[Path | str] = None,
     ):
         self.descriptor = project_descriptor
         self.task = canonical_task
@@ -102,6 +107,9 @@ class ControlledExecutionEngine:
         self.worker_adapter_factory = worker_adapter_factory or (lambda: AntigravityWorkerAdapter())
         self.verification_runner = verification_runner or self._default_verification_runner
         self.repo_identity_inspector = repo_identity_inspector or inspect_github_repository_identity
+        self.knowledge_ledger = knowledge_ledger
+        self.runtime_home = runtime_home
+        self.knowledge_home = knowledge_home
 
     def _default_verification_runner(
         self, argv: List[str], cwd: str, timeout_seconds: int, env: Dict[str, str]
@@ -379,28 +387,33 @@ class ControlledExecutionEngine:
                 err_list=[f"Execution base commit '{exec_base_sha}' does not exist or cannot be resolved in repository '{repo}': {e}"],
             )
 
-        # KCP is opt-in here because this generic engine does not own a Runtime
-        # V1 home. When configured, failure is fail-closed before mutation.
-        knowledge_ledger = configured_ledger()
-        if knowledge_ledger is not None:
-            try:
-                execution_context_preflight(
-                    knowledge_ledger,
-                    project_id=str(project_id),
-                    task_class=str(gate),
-                    module_ids=self.task.get("module_ids") or [str(project_id)],
-                    paths=self.task.get("allowed_scope", {}).get("paths") or [],
-                    base_sha=str(exec_base_sha),
-                )
-                _record_check("knowledge_context_preflight", "PASS")
-            except Exception as e:
-                _record_check("knowledge_context_preflight", "FAIL", str(e))
-                return _build_and_validate_result(
-                    "HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha,
-                    err_list=[f"Knowledge context preflight failed: {e}"],
-                )
-        else:
-            _record_check("knowledge_context_preflight", "PASS", "KCP runtime home not configured")
+        # Controlled execution is a mutation/acceptance engine. Durable KCP
+        # authority is mandatory before a worker can begin.
+        try:
+            knowledge_ledger = resolve_knowledge_ledger(
+                knowledge_ledger=self.knowledge_ledger,
+                runtime_home=self.runtime_home,
+                knowledge_home=self.knowledge_home,
+                allow_environment_override=True,
+            )
+            if knowledge_ledger is None:
+                raise RuntimeError("KCP_REQUIRED_BUT_UNAVAILABLE")
+            knowledge_preflight = execution_context_preflight(
+                knowledge_ledger,
+                project_id=str(project_id),
+                task_class=str(gate),
+                module_ids=self.task.get("module_ids") or [str(project_id)],
+                paths=self.task.get("allowed_scope", {}).get("paths") or [],
+                base_sha=str(exec_base_sha),
+            )
+            _record_check("knowledge_context_preflight", "PASS")
+        except Exception as e:
+            detail = str(e) or e.__class__.__name__
+            _record_check("knowledge_context_preflight", "FAIL", detail)
+            return _build_and_validate_result(
+                "HOLD", control_sha=live_control_sha, exec_base_sha=exec_base_sha,
+                err_list=[f"KCP_REQUIRED_BUT_UNAVAILABLE: {detail}"],
+            )
 
 
         # 9. Checkpoint B: Immediately before worker (live_guard_pre_execution)
@@ -1000,30 +1013,36 @@ class ControlledExecutionEngine:
                 changed_paths=final_changed_paths,
                 source_repo_path=local_target_repo_path,
             )
-            if knowledge_ledger is not None:
-                receipt_common = {
-                    "project_id": str(project_id),
-                    "agent_class": "AOS_NATIVE",
-                    "tool_name": "aos.controlled_execution",
-                    "base_sha": str(exec_base_sha),
-                    "result_sha": str(final_head),
-                    "module_ids": self.task.get("module_ids") or [str(project_id)],
-                    "changed_paths": final_changed_paths,
-                    "evidence_refs": [str(candidate_metadata.get("candidate_id"))],
-                }
-                record_implementation_receipt(
-                    knowledge_ledger,
-                    idempotency_key=f"controlled-implementation:{task_id}:{final_head}",
-                    claims={"attempted": True, "candidate_id": candidate_metadata.get("candidate_id")},
-                    **receipt_common,
-                )
-                record_verification_receipt(
-                    knowledge_ledger,
-                    idempotency_key=f"controlled-verification:{task_id}:{final_head}",
-                    verification={"status": "PASS", "required_checks": req_checks},
-                    claims={"candidate_persisted": True},
-                    **receipt_common,
-                )
+            receipt_common = {
+                "project_id": str(project_id),
+                "agent_class": "AOS_NATIVE",
+                "tool_name": "aos.controlled_execution",
+                "base_sha": str(exec_base_sha),
+                "result_sha": str(final_head),
+                "module_ids": self.task.get("module_ids") or [str(project_id)],
+                "changed_paths": final_changed_paths,
+                "evidence_refs": [str(candidate_metadata.get("candidate_id"))],
+                "repository": str(repo),
+                "branch": str(worker_branch),
+            }
+            implementation_receipt = record_implementation_receipt(
+                knowledge_ledger,
+                idempotency_key=f"controlled-implementation:{task_id}:{final_head}",
+                claims={"attempted": True, "candidate_id": candidate_metadata.get("candidate_id")},
+                **receipt_common,
+            )
+            verification_receipt = record_verification_receipt(
+                knowledge_ledger,
+                idempotency_key=f"controlled-verification:{task_id}:{final_head}",
+                verification={"status": "PASS", "required_checks": req_checks},
+                claims={"candidate_persisted": True},
+                **receipt_common,
+            )
+            coverage = assert_accepted_work_receipted(
+                knowledge_ledger,
+                project_id=str(project_id),
+                result_sha=str(final_head),
+            )
             _record_check("candidate_persistence", "PASS", f"Persisted candidate {candidate_metadata.get('candidate_id')}")
         except Exception as e:
             _record_check("candidate_persistence", "FAIL", str(e))
@@ -1049,7 +1068,15 @@ class ControlledExecutionEngine:
         workspace.cleanup()
 
         # 22. All checks passed -> VERIFIED_CANDIDATE with candidate extension & diagnostics
-        res_extensions: Dict[str, Any] = {"candidate": candidate_metadata}
+        res_extensions: Dict[str, Any] = {
+            "candidate": candidate_metadata,
+            "KCP_ARCHIVAL_STATUS": "KCP_ARCHIVED",
+            "KCP_IMPLEMENTATION_RECEIPT_ID": implementation_receipt["event_id"],
+            "KCP_VERIFICATION_RECEIPT_ID": verification_receipt["event_id"],
+            "KCP_LEDGER_SEQUENCE": coverage["ledger_sequence"],
+            "KCP_RESULT_SHA": final_head,
+            "KCP_PREFLIGHT_HASH": knowledge_preflight["context_pack_hash"],
+        }
         if verification_diagnostics:
             res_extensions["verification_diagnostics"] = verification_diagnostics
 

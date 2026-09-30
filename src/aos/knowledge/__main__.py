@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from aos.knowledge.audit import list_unresolved_audit_findings, record_audit_finding, resolve_audit_finding
+from aos.knowledge.accepted_work import accepted_work_coverage
 from aos.knowledge.bootstrap import DEFAULT_CANONICAL_INPUTS, bootstrap_canonical_sources
 from aos.knowledge.context import build_context_pack
 from aos.knowledge.index import rebuild_index, record_module_relationship
+from aos.knowledge.ingress import ingest_accepted_work
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.materialize import materialize_documents
 from aos.knowledge.mirror import LocalOutboxMirror, read_sync_status, sync_materialized_documents
@@ -45,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     context = sub.add_parser("context")
     context.add_argument("--task-class", required=True)
-    context.add_argument("--module", action="append", default=[])
+    context.add_argument("--module", "--module-id", dest="module", action="append", default=[])
     context.add_argument("--path", action="append", default=[])
     context.add_argument("--base-sha", required=True)
     context.add_argument("--record-receipt", action="store_true")
@@ -69,6 +71,35 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--finding-id", required=True)
     resolve.add_argument("--resolution", required=True)
     resolve.add_argument("--source-sha", required=True)
+
+    def add_work_arguments(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--agent-class", required=True, choices=[item.value for item in AgentClass])
+        command.add_argument("--tool-name", required=True)
+        command.add_argument("--base-sha", required=True)
+        command.add_argument("--result-sha", required=True)
+        command.add_argument("--repository", required=True)
+        command.add_argument("--branch", required=True)
+        command.add_argument("--module-id", action="append", default=[])
+        command.add_argument("--changed-path", action="append", default=[])
+        command.add_argument("--evidence-ref", action="append", default=[])
+        command.add_argument("--verification-status", required=True)
+        command.add_argument("--canonical-next-action", required=True)
+        command.add_argument("--idempotency-key", required=True)
+        command.add_argument("--task-id")
+        command.add_argument("--objective-id")
+        command.add_argument("--session-id")
+        command.add_argument("--decision-id", action="append", default=[])
+        command.add_argument("--blocker", action="append", default=[])
+        command.add_argument("--open-question", action="append", default=[])
+        command.add_argument("--preflight-hash")
+
+    add_work_arguments(sub.add_parser("ingest-work"))
+    add_work_arguments(sub.add_parser("bootstrap-work"))
+
+    coverage = sub.add_parser("coverage")
+    coverage.add_argument("--result-sha", required=True)
+    coverage.add_argument("--module-id", action="append", default=[])
+    coverage.add_argument("--changed-path", action="append", default=[])
     return parser
 
 
@@ -122,6 +153,39 @@ def main(argv: Optional[list[str]] = None) -> int:
         result = resolve_audit_finding(
             ledger, project_id=args.project_id, finding_id=args.finding_id,
             resolution=args.resolution, source_sha=args.source_sha,
+        )
+    elif args.command in {"ingest-work", "bootstrap-work"}:
+        result = ingest_accepted_work(
+            ledger,
+            project_id=args.project_id,
+            agent_class=args.agent_class,
+            tool_name=args.tool_name,
+            base_sha=args.base_sha,
+            result_sha=args.result_sha,
+            repository=args.repository,
+            branch=args.branch,
+            module_ids=args.module_id,
+            changed_paths=args.changed_path,
+            evidence_refs=args.evidence_ref,
+            verification_status=args.verification_status,
+            canonical_next_action=args.canonical_next_action,
+            idempotency_key=args.idempotency_key,
+            task_id=args.task_id,
+            objective_id=args.objective_id,
+            session_id=args.session_id,
+            decision_ids=args.decision_id,
+            blockers=args.blocker,
+            open_questions=args.open_question,
+            preflight_hash=args.preflight_hash,
+            bootstrap_transition=args.command == "bootstrap-work",
+        )
+    elif args.command == "coverage":
+        result = accepted_work_coverage(
+            ledger,
+            project_id=args.project_id,
+            result_sha=args.result_sha,
+            module_ids=args.module_id,
+            changed_paths=args.changed_path,
         )
     else:
         raise AssertionError(args.command)

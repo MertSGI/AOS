@@ -22,6 +22,7 @@ from aos.runtime_maintenance import persist_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.runtime_store import atomic_json, read_json
 from aos.knowledge.hooks import execution_context_preflight, ledger_for_runtime
+from aos.knowledge.accepted_work import assert_accepted_work_receipted
 from aos.knowledge.receipts import (
     record_candidate_materialization_receipt,
     record_live_promotion_receipt,
@@ -95,6 +96,12 @@ def _load_materializer(repo_root: Path) -> Any:
 
 def stage(runtime_home: Path, repo_root: Path, source_sha: str, ci_run_id: int, repo: str) -> Dict[str, Any]:
     runtime_home = runtime_home.expanduser().resolve()
+    knowledge_ledger = ledger_for_runtime(runtime_home)
+    assert_accepted_work_receipted(
+        knowledge_ledger,
+        project_id="AOS",
+        result_sha=source_sha,
+    )
     module = _load_materializer(repo_root.expanduser().resolve())
     candidate = module.materialize(
         source_sha,
@@ -105,7 +112,7 @@ def stage(runtime_home: Path, repo_root: Path, source_sha: str, ci_run_id: int, 
     )
     result = validate(runtime_home, source_sha)
     record_candidate_materialization_receipt(
-        ledger_for_runtime(runtime_home),
+        knowledge_ledger,
         project_id="AOS",
         idempotency_key=f"runtime-materialization:{source_sha}:{ci_run_id}",
         agent_class="AOS_NATIVE",
@@ -675,6 +682,11 @@ def activate(
         module_ids=["RuntimeDeploy", "RuntimeSupervisor", "CandidateManifest"],
         paths=["runtime-config.json", "supervisor/active-slot.json"],
         base_sha=source_sha,
+    )
+    assert_accepted_work_receipted(
+        knowledge_ledger,
+        project_id="AOS",
+        result_sha=source_sha,
     )
     runtime_root = Path(config["runtime_root"]).expanduser().resolve()
     persist_maintenance(runtime_root, paused=True, reason="candidate_activation_default")

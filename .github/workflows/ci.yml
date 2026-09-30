@@ -64,6 +64,8 @@ jobs:
         run: |
           python scripts/validate_knowledge_continuity.py
           python -m pytest -v --tb=short tests/test_knowledge_continuity.py
+          python -m pytest -v --tb=short tests/test_kcp_enforcement.py
+          python -m pytest -v --tb=short tests/test_controlled_execution.py -k "missing_kcp_holds_before_worker_mutation or explicit_ledger_injection_archives_verified_candidate_without_env"
 
       - name: Run offline/non-Postgres pytest suite
         run: |

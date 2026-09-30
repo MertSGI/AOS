@@ -37,6 +37,21 @@ These invariants are mandatory: `KNOWLEDGE_LEDGER != SECOND_BRAIN_MIRROR`,
 `AUDIT_FINDING -> KNOWLEDGE_EVENT`, and
 `SUPERSEDED_FACT != CURRENT_FACT`.
 
+The `MANDATORY_ARCHIVAL_GATE` adds the following acceptance invariants:
+
+- `MEANINGFUL_ACCEPTED_WORK_WITHOUT_KNOWLEDGE_RECEIPT = FORBIDDEN`
+- `BRANCH_PUSH != ACCEPTED_WORK`
+- `CI_SUCCESS != KCP_ARCHIVED`
+- `NOTEBOOK_SYNC != ACCEPTED_WORK`
+- `KCP_RECEIPT != GIT_AUTHORITY`
+- `ACCEPTED_WORK_REQUIRES_KCP_COVERAGE`
+
+Accepted-work coverage is exact-SHA bound. It requires both an
+`IMPLEMENTATION_RECEIPT` and a successful `VERIFICATION_RECEIPT` for the same
+project and result SHA. A handoff, second-brain event, historical
+`CURRENT_TRUTH` observation, branch push, or CI result alone never satisfies
+this gate.
+
 ## Runtime layout
 
 KCP stores machine-local data under `<runtime-home>/knowledge/`:
@@ -70,7 +85,64 @@ acceptance or promotion from reporting success. External mirror failure instead
 records `SECOND_BRAIN_SYNC_PENDING` or degraded state and preserves the local
 ledger and product execution.
 
+Controlled execution resolves KCP through explicit dependency/runtime-home
+injection or the bounded external `AOS_KNOWLEDGE_HOME` compatibility override.
+It returns `HOLD` with `KCP_REQUIRED_BUT_UNAVAILABLE` before worker mutation if
+no durable ledger can be resolved. Runtime-owned processes resolve the ledger
+from explicit `runtime_home`, `runtime_root`, or by loading the explicit
+`runtime_config_path`; cwd and arbitrary product or Git workspaces are never
+ledger authority.
+
+Immutable Runtime V1 staging, activation, and promotion verify accepted-work
+coverage for the exact source SHA before crossing their acceptance boundary.
+There is no permanent disable flag.
+
 KCP never mutates product command state merely to record or read knowledge.
+
+## External agent protocol
+
+Codex, Cline, externally invoked Antigravity, Controller, human operators, and
+other models follow one provider-independent protocol:
+
+```text
+PREFLIGHT -> WORK -> VERIFY -> INGEST -> ACCEPT
+```
+
+Preflight is deterministic and does not require Notebook availability:
+
+```powershell
+python -m aos.knowledge --runtime-home C:\Path\runtime-v1 --project-id AOS context `
+  --task-class SOURCE_CHANGE --module-id KCP --path src/aos/knowledge `
+  --base-sha <exact-base-sha> --record-receipt
+```
+
+The context output includes `context_pack_hash`, ledger sequence/head, accepted
+decisions, invariants, module relationships, blockers, audit findings, recent
+relevant receipts, and canonical next action. The producer should retain the
+hash as `KCP_PREFLIGHT_HASH`.
+
+After successful verification, external mutation evidence is archived with:
+
+```powershell
+python -m aos.knowledge --runtime-home C:\Path\runtime-v1 --project-id AOS ingest-work `
+  --agent-class CODEX --tool-name codex --base-sha <base-sha> `
+  --result-sha <result-sha> --repository MertSGI/AOS --branch fix/example `
+  --module-id KCP --changed-path src/aos/knowledge/example.py `
+  --evidence-ref ci-run:123 --verification-status SUCCESS `
+  --canonical-next-action "Review exact-SHA candidate" `
+  --idempotency-key external-work-123 --preflight-hash <context-pack-hash>
+```
+
+Completion reports use `KCP_ARCHIVAL_STATUS`,
+`KCP_IMPLEMENTATION_RECEIPT_ID`, `KCP_VERIFICATION_RECEIPT_ID`,
+`KCP_LEDGER_SEQUENCE`, and `KCP_RESULT_SHA`. These receipts archive work and
+evidence; they do not grant Git, decision, product-command, admission,
+activation, or production authority.
+
+The initial enforcement transition uses the explicit `bootstrap-work` command
+with exact SHA and evidence. It writes the same durable implementation and
+verification coverage with provenance `BOOTSTRAP_ACCEPTED_EXTERNAL_WORK`; it is
+not a bypass and creates no persistent exemption.
 
 ## Materialized second brain
 
@@ -88,6 +160,14 @@ local outbox and pending manifest when no external transport is configured.
 No OAuth token or provider secret belongs in source or materialized documents.
 Notebook responses are advisory candidates only; normal governance is required
 before any decision can become accepted.
+
+The only flow into the second brain is:
+
+```text
+External Agent -> KCP Ledger -> Materialized Docs -> Drive/Notebook Mirror
+```
+
+Notebook content never flows directly into an accepted decision.
 
 ## Bootstrap and audit
 

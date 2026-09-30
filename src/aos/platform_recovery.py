@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.runtime_store import atomic_json, exclusive_file_lock, read_json
 from aos.knowledge.audit import record_audit_finding
+from aos.knowledge.accepted_work import assert_accepted_work_receipted
 from aos.knowledge.hooks import execution_context_preflight
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
@@ -235,7 +236,14 @@ class PlatformRecoveryCoordinator:
                     blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE",
                 )
                 return self._persist(job)
-            if self.knowledge_ledger is not None:
+            if self.knowledge_ledger is None:
+                job.update(
+                    disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                    blocker="KCP_REQUIRED_BUT_UNAVAILABLE",
+                    execution_started=False,
+                )
+                return self._persist(job)
+            try:
                 execution_context_preflight(
                     self.knowledge_ledger,
                     project_id="AOS",
@@ -244,6 +252,15 @@ class PlatformRecoveryCoordinator:
                     paths=list(proposed.get("files_likely_affected") or ()),
                     base_sha=self.source_base_sha,
                 )
+            except Exception as exc:
+                job.update(
+                    disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                    blocker="KCP_CONTEXT_PREFLIGHT_FAILED",
+                    execution_started=False,
+                    error_class=exc.__class__.__name__,
+                    error=str(exc)[:500],
+                )
+                return self._persist(job)
             try:
                 result = self.source_repair_executor({
                     "job_id": job_id,
@@ -300,15 +317,8 @@ class PlatformRecoveryCoordinator:
                 and not result.promotion_performed
                 and not result.activation_performed
             )
-            job.update(
-                disposition=(
-                    RepairDisposition.PROMOTION_READY.value
-                    if safe
-                    else RepairDisposition.FAILED_VERIFICATION.value
-                ),
-                source_repair=evidence,
-            )
-            if safe and self.knowledge_ledger is not None:
+            job.update(source_repair=evidence)
+            if safe:
                 common = {
                     "project_id": "AOS",
                     "agent_class": "AOS_NATIVE",
@@ -319,19 +329,36 @@ class PlatformRecoveryCoordinator:
                     "changed_paths": list(proposed.get("files_likely_affected") or ()),
                     "evidence_refs": [result.git_diff_sha256],
                 }
-                record_implementation_receipt(
-                    self.knowledge_ledger,
-                    idempotency_key=f"recovery-implementation:{job_id}:{result.repair_sha}",
-                    claims={"finding_id": finding_id, "promotion_performed": False},
-                    **common,
-                )
-                record_verification_receipt(
-                    self.knowledge_ledger,
-                    idempotency_key=f"recovery-verification:{job_id}:{result.repair_sha}",
-                    verification={"status": result.exact_sha_ci_status, "tests_passed": result.tests_passed},
-                    claims={"finding_id": finding_id, "candidate_materialized": True},
-                    **common,
-                )
+                try:
+                    record_implementation_receipt(
+                        self.knowledge_ledger,
+                        idempotency_key=f"recovery-implementation:{job_id}:{result.repair_sha}",
+                        claims={"finding_id": finding_id, "promotion_performed": False},
+                        **common,
+                    )
+                    record_verification_receipt(
+                        self.knowledge_ledger,
+                        idempotency_key=f"recovery-verification:{job_id}:{result.repair_sha}",
+                        verification={"status": result.exact_sha_ci_status, "tests_passed": result.tests_passed},
+                        claims={"finding_id": finding_id, "candidate_materialized": True},
+                        **common,
+                    )
+                    assert_accepted_work_receipted(
+                        self.knowledge_ledger,
+                        project_id="AOS",
+                        result_sha=result.repair_sha,
+                    )
+                except Exception as exc:
+                    job.update(
+                        disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                        blocker="KCP_RECEIPT_WRITE_FAILED",
+                        error_class=exc.__class__.__name__,
+                        error=str(exc)[:500],
+                    )
+                    return self._persist(job)
+                job.update(disposition=RepairDisposition.PROMOTION_READY.value)
+            else:
+                job.update(disposition=RepairDisposition.FAILED_VERIFICATION.value)
             return self._persist(job)
 
         if authority == AUTHORITY_AUTO_REPAIR_ELIGIBLE:
@@ -341,7 +368,14 @@ class PlatformRecoveryCoordinator:
                     blocker="BOUNDED_LIVE_NOT_ENABLED",
                 )
                 return self._persist(job)
-            if self.knowledge_ledger is not None:
+            if self.knowledge_ledger is None:
+                job.update(
+                    disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                    blocker="KCP_REQUIRED_BUT_UNAVAILABLE",
+                    execution_started=False,
+                )
+                return self._persist(job)
+            try:
                 execution_context_preflight(
                     self.knowledge_ledger,
                     project_id="AOS",
@@ -350,17 +384,18 @@ class PlatformRecoveryCoordinator:
                     paths=list(proposed.get("files_likely_affected") or ()),
                     base_sha=self.source_base_sha,
                 )
+            except Exception as exc:
+                job.update(
+                    disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                    blocker="KCP_CONTEXT_PREFLIGHT_FAILED",
+                    execution_started=False,
+                    error_class=exc.__class__.__name__,
+                    error=str(exc)[:500],
+                )
+                return self._persist(job)
             success, stage, repair = self.repair_engine.attempt_autonomous_repair(finding_id)
-            job.update(
-                disposition=(
-                    RepairDisposition.REPAIRED_VERIFIED.value
-                    if success
-                    else RepairDisposition.FAILED_VERIFICATION.value
-                ),
-                repair_stage=stage,
-                repair_record=repair,
-            )
-            if success and self.knowledge_ledger is not None:
+            job.update(repair_stage=stage, repair_record=repair)
+            if success:
                 common = {
                     "project_id": "AOS",
                     "agent_class": "AOS_NATIVE",
@@ -370,20 +405,37 @@ class PlatformRecoveryCoordinator:
                     "module_ids": [str(finding.get("component") or "PlatformRecovery")],
                     "changed_paths": list(proposed.get("files_likely_affected") or ()),
                 }
-                record_implementation_receipt(
-                    self.knowledge_ledger,
-                    idempotency_key=f"runtime-repair:{job_id}:{stage}",
-                    runtime_evidence={"repair_stage": stage, "repair_record": repair},
-                    claims={"finding_id": finding_id, "runtime_repair": True},
-                    **common,
-                )
-                record_verification_receipt(
-                    self.knowledge_ledger,
-                    idempotency_key=f"runtime-repair-verification:{job_id}:{stage}",
-                    verification={"status": "PASS", "repair_stage": stage},
-                    claims={"finding_id": finding_id, "postcondition_verified": True},
-                    **common,
-                )
+                try:
+                    record_implementation_receipt(
+                        self.knowledge_ledger,
+                        idempotency_key=f"runtime-repair:{job_id}:{stage}",
+                        runtime_evidence={"repair_stage": stage, "repair_record": repair},
+                        claims={"finding_id": finding_id, "runtime_repair": True},
+                        **common,
+                    )
+                    record_verification_receipt(
+                        self.knowledge_ledger,
+                        idempotency_key=f"runtime-repair-verification:{job_id}:{stage}",
+                        verification={"status": "PASS", "repair_stage": stage},
+                        claims={"finding_id": finding_id, "postcondition_verified": True},
+                        **common,
+                    )
+                    assert_accepted_work_receipted(
+                        self.knowledge_ledger,
+                        project_id="AOS",
+                        result_sha=self.source_base_sha,
+                    )
+                except Exception as exc:
+                    job.update(
+                        disposition=RepairDisposition.FAILED_VERIFICATION.value,
+                        blocker="KCP_RECEIPT_WRITE_FAILED",
+                        error_class=exc.__class__.__name__,
+                        error=str(exc)[:500],
+                    )
+                    return self._persist(job)
+                job.update(disposition=RepairDisposition.REPAIRED_VERIFIED.value)
+            else:
+                job.update(disposition=RepairDisposition.FAILED_VERIFICATION.value)
             return self._persist(job)
 
         job.update(disposition=RepairDisposition.HUMAN_REQUIRED.value)

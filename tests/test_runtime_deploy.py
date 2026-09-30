@@ -9,12 +9,28 @@ import aos.runtime_deploy as runtime_deploy
 from aos.runtime_deploy import DeploymentError, activate, rollback, validate, validate_startup_ownership
 from aos.runtime_maintenance import PAUSED_SAFE, read_maintenance
 from aos.runtime_slots import SlotManager, SlotRecord
+from aos.knowledge.hooks import ledger_for_runtime
+from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 from aos.runtime_store import atomic_json
 from aos.validate import validate_file
 
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE_SHA = "ab1e1d248820dd10b7900f8117cd1e0b48687be3"
+
+
+def _record_accepted_source(runtime_home: Path) -> None:
+    ledger = ledger_for_runtime(runtime_home)
+    record_implementation_receipt(
+        ledger, project_id="AOS", idempotency_key="runtime-deploy-test-impl",
+        agent_class="CODEX", tool_name="pytest", base_sha="a" * 40,
+        result_sha=BASE_SHA, changed_paths=["src/aos/runtime_deploy.py"],
+    )
+    record_verification_receipt(
+        ledger, project_id="AOS", idempotency_key="runtime-deploy-test-verify",
+        agent_class="CODEX", tool_name="pytest", result_sha=BASE_SHA,
+        changed_paths=["src/aos/runtime_deploy.py"], verification={"status": "PASS"},
+    )
 
 
 def test_candidate_validation_rebinds_maintenance_descriptor(tmp_path: Path, monkeypatch):
@@ -160,6 +176,7 @@ def test_transactional_activation_defaults_paused_and_rolls_back(tmp_path: Path,
     slots.initialize(stable_slot_id=stable.slot_id, candidate_slot_id=stable.slot_id, active="stable")
 
     startup = tmp_path / "Startup"
+    _record_accepted_source(runtime_home)
     result = activate(runtime_home, BASE_SHA, startup, launch=False)
     assert result["activation"] == "STAGED_MAINTENANCE"
     assert read_maintenance(runtime_root)["state"] == PAUSED_SAFE
@@ -314,6 +331,7 @@ def test_activation_rejects_nested_trial_candidate(tmp_path: Path, monkeypatch):
     })
 
     startup = tmp_path / "Startup"
+    _record_accepted_source(runtime_home)
 
     with pytest.raises(
         DeploymentError,

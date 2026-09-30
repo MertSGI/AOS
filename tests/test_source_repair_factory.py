@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 import aos.source_repair_factory as factory
+from aos.knowledge.hooks import ledger_for_runtime
+from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
 from aos.platform_recovery import SourceRepairResourceUnavailable
 
 
@@ -214,6 +216,17 @@ def test_certifier_polls_then_invokes_real_stage_materializer_under_runtime_home
     runtime_home = tmp_path / "runtime-v1"
     workspace = tmp_path / "repair-worktree"
     workspace.mkdir()
+    ledger = ledger_for_runtime(runtime_home)
+    record_implementation_receipt(
+        ledger, project_id="AOS", idempotency_key="certifier-test-impl",
+        agent_class="CODEX", tool_name="pytest", base_sha=OTHER_SHA,
+        result_sha=REPAIR_SHA, changed_paths=["src/aos/example.py"],
+    )
+    record_verification_receipt(
+        ledger, project_id="AOS", idempotency_key="certifier-test-verify",
+        agent_class="CODEX", tool_name="pytest", result_sha=REPAIR_SHA,
+        changed_paths=["src/aos/example.py"], verification={"status": "SUCCESS"},
+    )
     worker = _Worker([
         _result(
             status="DEGRADED",
@@ -334,6 +347,17 @@ def test_ci_success_alone_cannot_claim_candidate_materialization(monkeypatch, tm
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("materialization failed")
         ),
+    )
+    ledger = ledger_for_runtime(tmp_path / "runtime-v1")
+    record_implementation_receipt(
+        ledger, project_id="AOS", idempotency_key="failed-stage-impl",
+        agent_class="CODEX", tool_name="pytest", base_sha=OTHER_SHA,
+        result_sha=REPAIR_SHA, changed_paths=["src/aos/example.py"],
+    )
+    record_verification_receipt(
+        ledger, project_id="AOS", idempotency_key="failed-stage-verify",
+        agent_class="CODEX", tool_name="pytest", result_sha=REPAIR_SHA,
+        changed_paths=["src/aos/example.py"], verification={"status": "SUCCESS"},
     )
 
     certifier = factory._make_certifier(worker, tmp_path / "runtime-v1")

@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 import pytest
 
 from aos.controlled_execution import ControlledExecutionEngine
+from aos.knowledge.ledger import KnowledgeLedger
 from aos.git_workspace import GitWorkspace
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_document
@@ -2157,6 +2158,7 @@ class TestAntigravityCapabilityV028:
             worker_adapter_factory=lambda: adapter_instance,
             verification_runner=mock_verif_runner,
             repo_identity_inspector=lambda path: "MertSGI/AOS",
+            knowledge_ledger=KnowledgeLedger(tmp_path / "knowledge"),
         )
 
         res = engine.execute(local_target_repo_path=str(tmp_path))
@@ -2293,6 +2295,7 @@ class TestAntigravityCapabilityV028:
             worker_adapter_factory=lambda: adapter_instance,
             verification_runner=mock_verif_runner,
             repo_identity_inspector=lambda path: "MertSGI/AOS",
+            knowledge_ledger=KnowledgeLedger(tmp_path / "knowledge"),
         )
 
         res = engine.execute(local_target_repo_path=str(tmp_path))
