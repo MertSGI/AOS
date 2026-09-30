@@ -445,10 +445,6 @@ def _terminal_state(disposition: str) -> str:
 
 
 def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
-    # Bind generic execution hooks to this worker's actual Runtime V1 home.
-    os.environ["AOS_KNOWLEDGE_HOME"] = str(
-        runtime_root.expanduser().resolve().parent / "knowledge"
-    )
     store = RuntimeStore(runtime_root)
     raw = store.read_command(command_id)
     if not raw:
