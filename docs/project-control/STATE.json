@@ -71,6 +71,12 @@
   "next_action": "AOS-5 is MAIN_INTEGRATED_CLOSED_PROVEN. Before any AOS-6 LARI-related operation, obtain current-state guidance from the separate LARI controller/project conversation and reconcile the current LARI control head, branch, safe state, and authorized next action. Do not mutate LARI from the AOS controller before that cross-controller coordination is complete.",
   "implementation_started": true,
   "extensions": {
+    "truth_authority": {
+      "state_json_role": "ACCEPTED_PROGRAM_GATE_GOVERNANCE_STATE",
+      "live_runtime_state": false,
+      "operational_current_truth": "GENERATED_AT_READ_TIME_OUTSIDE_GIT",
+      "operational_projection_command": "python -m aos.current_truth --runtime-home <runtime-home> --repo-root <repo-root>"
+    },
     "aos5_distributed_coordination": {
       "status": "MAIN_INTEGRATED_CLOSED_PROVEN",
       "control_branch": "feature/aos-5-distributed-coordination",

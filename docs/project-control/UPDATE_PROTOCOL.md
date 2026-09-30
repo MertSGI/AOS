@@ -3,6 +3,14 @@
 **Version:** 0.1.0
 **Default posture:** canonical state changes require explicit versioned updates.
 
+## Three update classes
+
+1. **Canonical governance updates** are versioned changes to accepted program/gate state, policy, roadmap, or decisions. `STATE.json` belongs to this class; it is not live runtime telemetry.
+2. **Immutable evidence updates** append evidence for a specific revision, environment, and observation time. Historical evidence remains historical and is never promoted into current-machine truth by naming or age.
+3. **Operational observation/projection** is generated at read time with `python -m aos.current_truth --runtime-home <runtime-home> --repo-root <repo-root>` and atomically persisted to `<runtime-home>/current-truth.json`. It is machine-local telemetry, not canonical Git history.
+
+Runtime transitions, health changes, slot changes, and command/admission changes MUST refresh the operational projection. They MUST NOT create Git commits solely to synchronize an embedded "current SHA" or other mutable runtime field in a tracked document.
+
 ## A control-plane update is required when
 
 1. A gate changes state.

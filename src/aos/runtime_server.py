@@ -50,6 +50,7 @@ from aos.secure_store import (
     resolve_credential_env_var,
 )
 from aos.source_repair_factory import create_source_repair_executor
+from aos.current_truth import refresh_current_truth
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -123,6 +124,13 @@ class RuntimeEngine:
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = validate_runtime_config(config)
         self.runtime_root = Path(self.config["runtime_root"])
+        self.runtime_home = self.runtime_root.parent
+        configured_repo_root = self.config.get("authoritative_repo_path")
+        self.current_truth_repo_root = (
+            Path(str(configured_repo_root)).expanduser().resolve()
+            if configured_repo_root
+            else self.runtime_home
+        )
         self.store = RuntimeStore(self.runtime_root)
         self.admissions = CommandAdmissionStore(self.runtime_root)
         self.recovery_proofs = RecoveryProofStore(self.runtime_root)
@@ -1209,7 +1217,34 @@ class RuntimeEngine:
                         self._status_cache = (
                             previous
                         )
+            self._refresh_current_truth()
             self.stop_event.wait(5.0)
+
+    def _refresh_current_truth(self) -> None:
+        """Refresh machine-local truth without affecting command execution."""
+        try:
+            projection = refresh_current_truth(
+                self.runtime_home,
+                self.current_truth_repo_root,
+                runtime_observation=self.health(),
+                query_runtime=False,
+            )
+            refresh_state = str(projection.get("refresh_status") or "DEGRADED")
+            overall_state = str(projection.get("overall_status") or "UNKNOWN")
+            error_class = None
+        except Exception as exc:
+            # A persistence failure cannot be represented in the projection
+            # itself. Surface it through the existing status telemetry path.
+            refresh_state = "DEGRADED"
+            overall_state = "UNKNOWN"
+            error_class = exc.__class__.__name__
+        with self._status_lock:
+            self._status_cache.update({
+                "current_truth_refresh_status": refresh_state,
+                "current_truth_overall_status": overall_state,
+                "current_truth_path": str(self.runtime_home / "current-truth.json"),
+                "current_truth_error_class": error_class,
+            })
 
     def _collect_detailed_status(self) -> Dict[str, Any]:
         """Slow bounded-history enrichment. Never executes in an HTTP request thread."""

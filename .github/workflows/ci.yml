@@ -2,7 +2,7 @@ name: AOS CI
 
 on:
   push:
-    branches: [ main, 'feature/**', 'aos/**' ]
+    branches: [ main, 'feature/**', 'fix/**', 'aos/**' ]
   pull_request:
     branches: [ main ]
 
@@ -55,6 +55,10 @@ jobs:
           except Exception:
               raise RuntimeError('PostgreSQL connectivity check failed')
           "
+
+      - name: Prevent static current-truth regression
+        run: |
+          python -m pytest -v --tb=short tests/test_current_truth.py
 
       - name: Run offline/non-Postgres pytest suite
         run: |
