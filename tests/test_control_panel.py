@@ -1,4 +1,5 @@
 import json
+import subprocess
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -49,6 +50,27 @@ def _job(tmp_path: Path):
     }
 
 
+def _git_repository(path: Path) -> str:
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    (path / "authority.txt").write_text("aos source authority\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "authority.txt"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(path), "-c", "user.name=AOS Tests",
+            "-c", "user.email=aos-tests@example.invalid", "commit", "-q",
+            "-m", "test authority",
+        ],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def test_submit_job_queues_valid_envelope(tmp_path):
     cfg = _config(tmp_path)
     result = submit_job(_job(tmp_path), cfg)
@@ -58,16 +80,19 @@ def test_submit_job_queues_valid_envelope(tmp_path):
     assert (Path(cfg["runtime_root"]) / "inbox" / "panel-job-1.aosjob.json").is_file()
 
 
-def test_control_panel_normal_construction_wires_source_repair_executor(
+def test_control_panel_normal_construction_uses_aos_source_authority(
     tmp_path, monkeypatch
 ):
     runtime_root = tmp_path / "runtime-v1" / "state"
     runtime_root.mkdir(parents=True)
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / ".git").mkdir()
-    policy = tmp_path / "policy.json"
-    policy.write_text("{}", encoding="utf-8")
+    lari_workspace = tmp_path / "lari-workspace"
+    lari_workspace.mkdir()
+    repository = tmp_path / "aos-operations"
+    source_sha = _git_repository(repository)
+    product_policy = tmp_path / "lari-policy.json"
+    product_policy.write_text("{}", encoding="utf-8")
+    maintenance_policy = tmp_path / "aos-maintenance-policy.json"
+    maintenance_policy.write_text("{}", encoding="utf-8")
     host_config = tmp_path / "control-panel-host-config.json"
     host_config.write_text(json.dumps({
         "schema_version": "1.0.0",
@@ -75,25 +100,29 @@ def test_control_panel_normal_construction_wires_source_repair_executor(
         "runtime_root": str(runtime_root),
         "production": "NO_GO",
         "ag_backend_enabled": False,
-        "default_project": "aos",
+        "default_project": "lari",
+        "default_project_id": "lari",
+        "operations_repo_path": str(repository),
+        "candidate_source_sha": source_sha,
         "projects": {
-            "aos": {
-                "workspace": str(workspace),
-                "routing_policy_path": str(policy),
-            }
+            "lari": {
+                "workspace": str(lari_workspace),
+                "routing_policy_path": str(product_policy),
+            },
+            "aos-maintenance": {
+                "workspace": str(tmp_path / "maintenance-workspace"),
+                "routing_policy_path": str(maintenance_policy),
+            },
         },
     }), encoding="utf-8")
     panel_config = tmp_path / "control-panel-config.json"
-    runtime_home = tmp_path / "runtime-v1"
     sentinel = object()
     captured = {}
 
     monkeypatch.setattr(
-        control_panel,
-        "create_source_repair_executor",
+        "aos.source_repair_factory.create_source_repair_executor",
         lambda **kwargs: captured.update(kwargs) or sentinel,
     )
-    monkeypatch.setattr(control_panel, "default_runtime_home", lambda: runtime_home)
     monkeypatch.setattr(
         control_panel,
         "serve",
@@ -113,9 +142,11 @@ def test_control_panel_normal_construction_wires_source_repair_executor(
     ])
 
     assert result == 0
-    assert captured["repository"] == workspace.resolve()
+    assert captured["repository"] == repository.resolve()
+    assert captured["repository"] != lari_workspace.resolve()
+    assert captured["policy_path"] == maintenance_policy.resolve()
     assert captured["runtime_dir"] == runtime_root.resolve()
-    assert captured["runtime_home"] == runtime_home
+    assert captured["runtime_home"] == runtime_root.resolve().parent
     assert captured["served_executor"] is sentinel
 
 

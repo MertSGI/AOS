@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,136 @@ from aos.platform_recovery import SourceRepairResourceUnavailable
 
 REPAIR_SHA = "a" * 40
 OTHER_SHA = "b" * 40
+
+
+def _authority_config(tmp_path: Path):
+    operations_repo = tmp_path / "aos-operations"
+    authoritative_repo = tmp_path / "aos-authoritative"
+    lari_workspace = tmp_path / "lari-workspace"
+    maintenance_workspace = tmp_path / "maintenance-workspace"
+    for path in (
+        operations_repo,
+        authoritative_repo,
+        lari_workspace,
+        maintenance_workspace,
+    ):
+        path.mkdir()
+    product_policy = tmp_path / "lari-policy.json"
+    product_policy.write_text("{}", encoding="utf-8")
+    maintenance_policy = tmp_path / "aos-maintenance-policy.json"
+    maintenance_policy.write_text("{}", encoding="utf-8")
+    return {
+        "runtime_root": str(tmp_path / "runtime-v1" / "state"),
+        "operations_repo_path": str(operations_repo),
+        "authoritative_repo_path": str(authoritative_repo),
+        "candidate_source_sha": REPAIR_SHA,
+        "default_project": "lari",
+        "projects": {
+            "lari": {
+                "workspace": str(lari_workspace),
+                "routing_policy_path": str(product_policy),
+            },
+            "lari-ui-v2": {
+                "workspace": str(tmp_path / "lari-ui-v2-workspace"),
+                "routing_policy_path": str(product_policy),
+            },
+            "aos-maintenance": {
+                "workspace": str(maintenance_workspace),
+                "routing_policy_path": str(maintenance_policy),
+            },
+        },
+        "production": "NO_GO",
+        "paid_api_fallback": "DISABLED",
+    }
+
+
+def test_source_repair_authority_prefers_operations_repo_and_maintenance_policy(
+    monkeypatch, tmp_path
+):
+    config = _authority_config(tmp_path)
+    original = deepcopy(config)
+    git_calls = []
+    monkeypatch.setattr(
+        factory,
+        "_git",
+        lambda repository, *args, **_kwargs: (
+            git_calls.append((repository, args)) or "true\n"
+        ),
+    )
+    captured = {}
+    sentinel = object()
+    monkeypatch.setattr(
+        factory,
+        "create_source_repair_executor",
+        lambda **kwargs: captured.update(kwargs) or sentinel,
+    )
+
+    result = factory.create_source_repair_executor_from_config(config)
+
+    operations_repo = Path(config["operations_repo_path"]).resolve()
+    lari_workspace = Path(config["projects"]["lari"]["workspace"]).resolve()
+    maintenance_policy = Path(
+        config["projects"]["aos-maintenance"]["routing_policy_path"]
+    ).resolve()
+    assert result is sentinel
+    assert captured["repository"] == operations_repo
+    assert captured["repository"] != lari_workspace
+    assert captured["policy_path"] == maintenance_policy
+    assert git_calls == [
+        (operations_repo, ("rev-parse", "--is-inside-work-tree")),
+        (operations_repo, ("cat-file", "-e", f"{REPAIR_SHA}^{{commit}}")),
+    ]
+    assert config == original
+    assert config["production"] == "NO_GO"
+    assert config["paid_api_fallback"] == "DISABLED"
+
+
+def test_source_repair_authority_fails_closed_without_repository(monkeypatch, tmp_path):
+    config = _authority_config(tmp_path)
+    config.pop("operations_repo_path")
+    config.pop("authoritative_repo_path")
+    monkeypatch.setattr(
+        factory,
+        "create_source_repair_executor",
+        lambda **_kwargs: pytest.fail("factory must not run without AOS authority"),
+    )
+
+    assert factory.create_source_repair_executor_from_config(config) is None
+
+
+def test_source_repair_authority_fails_closed_when_base_sha_is_absent(
+    monkeypatch, tmp_path
+):
+    config = _authority_config(tmp_path)
+
+    def fake_git(_repository, *args, **_kwargs):
+        if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+            return "true\n"
+        raise RuntimeError("missing commit")
+
+    monkeypatch.setattr(factory, "_git", fake_git)
+    monkeypatch.setattr(
+        factory,
+        "create_source_repair_executor",
+        lambda **_kwargs: pytest.fail("factory must not run for absent base SHA"),
+    )
+
+    assert factory.create_source_repair_executor_from_config(config) is None
+
+
+@pytest.mark.parametrize("product_id", ["lari", "lari-ui-v2"])
+def test_source_repair_authority_rejects_product_workspace_identity(
+    monkeypatch, tmp_path, product_id
+):
+    config = _authority_config(tmp_path)
+    config["operations_repo_path"] = config["projects"][product_id]["workspace"]
+    monkeypatch.setattr(
+        factory,
+        "_git",
+        lambda *_args, **_kwargs: pytest.fail("product repository must be rejected before git"),
+    )
+
+    assert factory.create_source_repair_executor_from_config(config) is None
 
 
 def _result(*, status, evidence, errors=None):

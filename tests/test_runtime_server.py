@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +43,27 @@ def _config(tmp_path: Path):
     }
 
 
+def _git_repository(path: Path) -> str:
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    (path / "authority.txt").write_text("aos source authority\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "authority.txt"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(path), "-c", "user.name=AOS Tests",
+            "-c", "user.email=aos-tests@example.invalid", "commit", "-q",
+            "-m", "test authority",
+        ],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypatch):
     engine = RuntimeEngine(_config(tmp_path))
     spawned = []
@@ -63,29 +86,50 @@ def test_runtime_engine_accepts_only_goal_for_default_project(tmp_path, monkeypa
         engine.shutdown()
 
 
-def test_runtime_engine_normal_construction_wires_source_repair_executor(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("authority_key", ["operations_repo_path", "authoritative_repo_path"])
+def test_runtime_engine_normal_construction_uses_aos_source_authority(
+    tmp_path, monkeypatch, authority_key
 ):
     cfg = _config(tmp_path)
-    workspace = Path(cfg["projects"]["lari"]["workspace"])
-    (workspace / ".git").mkdir()
-    runtime_home = tmp_path / "runtime-v1"
+    lari_workspace = Path(cfg["projects"]["lari"]["workspace"])
+    repository = tmp_path / "aos-operations"
+    source_sha = _git_repository(repository)
+    maintenance_workspace = tmp_path / "maintenance-workspace"
+    maintenance_workspace.mkdir()
+    maintenance_policy = tmp_path / "aos-maintenance-policy.json"
+    maintenance_policy.write_text("{}", encoding="utf-8")
+    cfg["projects"]["aos-maintenance"] = {
+        **cfg["projects"]["lari"],
+        "project_id": "aos-maintenance",
+        "workspace": str(maintenance_workspace),
+        "routing_policy_path": str(maintenance_policy),
+    }
+    cfg[authority_key] = str(repository)
+    cfg["candidate_source_sha"] = source_sha
+    cfg["paid_api_fallback"] = "DISABLED"
     sentinel = object()
     captured = {}
+    original_config = json.loads(json.dumps(cfg))
+    lari_entries = list(lari_workspace.iterdir())
 
     def fake_factory(**kwargs):
         captured.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr("aos.runtime_server.create_source_repair_executor", fake_factory)
-    monkeypatch.setattr("aos.runtime_server.default_runtime_home", lambda: runtime_home)
+    monkeypatch.setattr("aos.source_repair_factory.create_source_repair_executor", fake_factory)
 
     engine = RuntimeEngine(cfg)
     try:
         assert engine.publisher.platform_recovery.source_repair_executor is sentinel
-        assert captured["repository"] == workspace.resolve()
+        assert captured["repository"] == repository.resolve()
+        assert captured["repository"] != lari_workspace.resolve()
+        assert captured["policy_path"] == maintenance_policy.resolve()
         assert captured["runtime_dir"] == Path(cfg["runtime_root"]).resolve()
-        assert captured["runtime_home"] == runtime_home
+        assert captured["runtime_home"] == Path(cfg["runtime_root"]).resolve().parent
+        assert cfg == original_config
+        assert list(lari_workspace.iterdir()) == lari_entries
+        assert engine.config["production"] == "NO_GO"
+        assert engine.config["paid_api_fallback"] == "DISABLED"
     finally:
         engine.shutdown()
 

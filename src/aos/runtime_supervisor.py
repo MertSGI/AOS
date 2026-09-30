@@ -222,7 +222,7 @@ class RuntimeSupervisor:
         projects = runtime_config.get("projects", {}) if isinstance(runtime_config, dict) else {}
         default_id = runtime_config.get("default_project")
         default_project = projects.get(default_id, {}) if isinstance(projects, dict) else {}
-        atomic_json(host_config_path, {
+        host_config = {
             "schema_version": "1.0.0",
             "production": "NO_GO",
             "ag_backend_enabled": False,
@@ -233,8 +233,18 @@ class RuntimeSupervisor:
             "default_project": default_project,
             "default_project_id": default_id,
             "projects": projects,
-            "authoritative_repo_path": runtime_config.get("authoritative_repo_path", "C:/Projects/AOS-lane-b"),
-        })
+        }
+        for key in (
+            "authoritative_repo_path",
+            "operations_repo_path",
+            "operations_ref",
+            "candidate_source_sha",
+            "runtime_source_sha",
+            "runtime_home",
+        ):
+            if runtime_config.get(key):
+                host_config[key] = runtime_config[key]
+        atomic_json(host_config_path, host_config)
         if not panel_config_path.exists():
             atomic_json(panel_config_path, {
                 "schema_version": "1.0.0",
@@ -275,10 +285,22 @@ class RuntimeSupervisor:
                 panel_pid = int(health.get("pid"))
             except (TypeError, ValueError):
                 owner = panel_pid = -1
-            if owner == os.getpid() and panel_pid > 0:
-                self.panel_api_pid = panel_pid
-                return True
-            if owner > 0 and not pid_alive(owner) and panel_pid > 0:
+            if owner == os.getpid():
+                if panel_pid <= 0 or panel_pid == owner:
+                    return False
+                if health.get("runtime_source_sha") == (source_sha or ""):
+                    self.panel_api_pid = panel_pid
+                    return True
+                # This supervisor owns the panel, but it represents a stale
+                # runtime source. Stop only that proven-owned panel and replace it.
+                _terminate_pid(panel_pid)
+                self.panel_child = None
+                self.panel_api_pid = None
+            else:
+                if owner <= 0 or panel_pid <= 0 or pid_alive(owner):
+                    # A live unrelated owner or malformed ownership identity is
+                    # a hard conflict. Do not kill it or contend for its port.
+                    return False
                 _terminate_pid(panel_pid)
 
         if self.panel_child is not None and self.panel_child.poll() is None:

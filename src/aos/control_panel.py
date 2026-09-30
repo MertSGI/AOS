@@ -20,7 +20,6 @@ from urllib.parse import urlparse
 
 from aos.local_host import _atomic_json, load_config, validate_job
 from aos.runtime_contract import cumulative_completed_batch_count
-from aos.runtime_deploy import default_runtime_home
 from aos.secure_store import (
     credential_is_configured,
     delete_provider_secret,
@@ -55,7 +54,7 @@ from aos.self_repair import (
     classify_defect_repair_authority,
 )
 from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
-from aos.source_repair_factory import create_source_repair_executor
+from aos.source_repair_factory import create_source_repair_executor_from_config
 
 
 def _controller_relay_root(config: Dict[str, Any]) -> Path:
@@ -4408,33 +4407,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         panel_config_path = Path(args.panel_config).expanduser().resolve()
         host_config = load_config(host_config_path)
 
-        # Construct governed source repair executor when configuration is sufficient.
-        # Fail closed: if any required capability is missing, leave executor as None
-        # so PlatformRecoveryCoordinator reports WAITING_FOR_RESOURCE with
-        # blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE".
-        source_repair_executor = None
-        try:
-            default_project_id = host_config.get("default_project", "")
-            projects = host_config.get("projects", {})
-            default_project = projects.get(default_project_id)
-            if default_project:
-                repository = Path(default_project["workspace"]).expanduser().resolve()
-                policy_path = Path(default_project["routing_policy_path"]).expanduser().resolve()
-                runtime_root = Path(host_config["runtime_root"]).expanduser().resolve()
-                worktree_root = (runtime_root / "worktrees").resolve()
-                runtime_dir = runtime_root
-                # Verify repository is a valid git repository before constructing executor
-                if (repository / ".git").exists():
-                    source_repair_executor = create_source_repair_executor(
-                        repository=repository,
-                        worktree_root=worktree_root,
-                        policy_path=policy_path,
-                        runtime_dir=runtime_dir,
-                        runtime_home=default_runtime_home(),
-                    )
-        except Exception:
-            # Configuration or resource capability unavailable - fail closed
-            source_repair_executor = None
+        # Use the same verified AOS authority semantics as RuntimeEngine.
+        source_repair_executor = create_source_repair_executor_from_config(host_config)
 
         return serve(
             host_config_path,

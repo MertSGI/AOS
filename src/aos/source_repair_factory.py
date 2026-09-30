@@ -5,8 +5,9 @@ import json
 import math
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from aos import runtime_deploy
 from aos.autonomous_host import build_execution_router
@@ -39,6 +40,18 @@ _TERMINAL_FAILURE_CONCLUSIONS = {
 }
 
 
+@dataclass(frozen=True)
+class SourceRepairAuthority:
+    """Resolved AOS-system authority for Platform Recovery source repair."""
+
+    repository: Path
+    policy_path: Path
+    worktree_root: Path
+    runtime_dir: Path
+    runtime_home: Path
+    source_sha: str
+
+
 def _git(repository: Path, *args: str, text: bool = True) -> Any:
     result = run_headless(
         ["git", "-C", str(repository), *args],
@@ -52,6 +65,108 @@ def _git(repository: Path, *args: str, text: bool = True) -> Any:
             detail = detail.decode("utf-8", errors="replace")
         raise RuntimeError(str(detail).strip()[:1000])
     return result.stdout
+
+
+def resolve_source_repair_authority(
+    config: Mapping[str, Any],
+) -> Optional[SourceRepairAuthority]:
+    """Resolve and verify Platform Recovery authority without product fallback.
+
+    The operations repository is authoritative when explicitly configured;
+    otherwise the authoritative repository is used. A configured higher-priority
+    path that is invalid does not silently fall through to another identity.
+    """
+    try:
+        raw_repository = config.get("operations_repo_path")
+        if not isinstance(raw_repository, str) or not raw_repository.strip():
+            raw_repository = config.get("authoritative_repo_path")
+        if not isinstance(raw_repository, str) or not raw_repository.strip():
+            return None
+        repository = Path(raw_repository).expanduser().resolve()
+
+        projects = config.get("projects")
+        if not isinstance(projects, Mapping):
+            return None
+        maintenance = projects.get("aos-maintenance")
+        if not isinstance(maintenance, Mapping):
+            return None
+        raw_policy = maintenance.get("routing_policy_path")
+        if not isinstance(raw_policy, str) or not raw_policy.strip():
+            return None
+        policy_path = Path(raw_policy).expanduser().resolve()
+        if not policy_path.is_file():
+            return None
+
+        # Explicit AOS authority must never alias either named product workspace
+        # or whichever product happens to be the default project.
+        excluded_project_ids = {"lari", "lari-ui-v2"}
+        default_project = config.get("default_project_id") or config.get("default_project")
+        if isinstance(default_project, str) and default_project != "aos-maintenance":
+            excluded_project_ids.add(default_project)
+        for project_id in excluded_project_ids:
+            project = projects.get(project_id)
+            if not isinstance(project, Mapping):
+                continue
+            raw_workspace = project.get("workspace")
+            if (
+                isinstance(raw_workspace, str)
+                and raw_workspace.strip()
+                and Path(raw_workspace).expanduser().resolve() == repository
+            ):
+                return None
+
+        source_sha = str(
+            config.get("candidate_source_sha")
+            or config.get("runtime_source_sha")
+            or ""
+        )
+        if not _FULL_SHA.fullmatch(source_sha):
+            return None
+
+        raw_runtime_root = config.get("runtime_root")
+        if not isinstance(raw_runtime_root, str) or not raw_runtime_root.strip():
+            return None
+        runtime_dir = Path(raw_runtime_root).expanduser().resolve()
+        raw_runtime_home = config.get("runtime_home")
+        runtime_home = (
+            Path(raw_runtime_home).expanduser().resolve()
+            if isinstance(raw_runtime_home, str) and raw_runtime_home.strip()
+            else runtime_dir.parent
+        )
+
+        if str(_git(repository, "rev-parse", "--is-inside-work-tree")).strip() != "true":
+            return None
+        _git(repository, "cat-file", "-e", f"{source_sha}^{{commit}}")
+
+        return SourceRepairAuthority(
+            repository=repository,
+            policy_path=policy_path,
+            worktree_root=(runtime_dir / "worktrees").resolve(),
+            runtime_dir=runtime_dir,
+            runtime_home=runtime_home,
+            source_sha=source_sha,
+        )
+    except Exception:
+        return None
+
+
+def create_source_repair_executor_from_config(
+    config: Mapping[str, Any],
+) -> Optional[IsolatedSourceRepairPipeline]:
+    """Build the governed executor only from verified AOS source authority."""
+    authority = resolve_source_repair_authority(config)
+    if authority is None:
+        return None
+    try:
+        return create_source_repair_executor(
+            repository=authority.repository,
+            worktree_root=authority.worktree_root,
+            policy_path=authority.policy_path,
+            runtime_dir=authority.runtime_dir,
+            runtime_home=authority.runtime_home,
+        )
+    except Exception:
+        return None
 
 
 def _make_publisher(

@@ -43,13 +43,12 @@ from aos.recovery_proof import RecoveryProofStore, TERMINAL_STATES
 from aos.quota_governor import QuotaGovernor
 from aos.resource_ledger import ResourceEventType, ResourceLedger
 from aos.runtime_assets import resolve_active_runtime_artifact
-from aos.runtime_deploy import default_runtime_home
 from aos.secure_store import (
     credential_is_configured,
     provider_presence,
     resolve_credential_env_var,
 )
-from aos.source_repair_factory import create_source_repair_executor
+from aos.source_repair_factory import create_source_repair_executor_from_config
 from aos.current_truth import refresh_current_truth
 
 MAX_BODY_BYTES = 64 * 1024
@@ -148,32 +147,9 @@ class RuntimeEngine:
             "production": "NO_GO",
         }
 
-        # Construct governed source repair executor when configuration is sufficient.
-        # Fail closed: if any required capability is missing, leave executor as None
-        # so PlatformRecoveryCoordinator reports WAITING_FOR_RESOURCE with
-        # blocker="SOURCE_REPAIR_EXECUTOR_UNAVAILABLE".
-        source_repair_executor = None
-        try:
-            default_project_id = self.config.get("default_project", "")
-            projects = self.config.get("projects", {})
-            default_project = projects.get(default_project_id)
-            if default_project:
-                repository = Path(default_project["workspace"]).expanduser().resolve()
-                policy_path = Path(default_project["routing_policy_path"]).expanduser().resolve()
-                worktree_root = (self.runtime_root / "worktrees").resolve()
-                runtime_dir = self.runtime_root
-                # Verify repository is a valid git repository before constructing executor
-                if (repository / ".git").exists():
-                    source_repair_executor = create_source_repair_executor(
-                        repository=repository,
-                        worktree_root=worktree_root,
-                        policy_path=policy_path,
-                        runtime_dir=runtime_dir,
-                        runtime_home=default_runtime_home(),
-                    )
-        except Exception:
-            # Configuration or resource capability unavailable - fail closed
-            source_repair_executor = None
+        # Platform Recovery is bound only to verified AOS source authority and
+        # the AOS maintenance routing policy. Missing authority fails closed.
+        source_repair_executor = create_source_repair_executor_from_config(self.config)
 
         relay_dir = Path(self.config.get("controller_relay_dir") or "C:/Projects/AOS/.aos-runtime/controller-relay")
         self.publisher = ControllerRelayPublisher(
