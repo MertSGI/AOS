@@ -523,22 +523,41 @@ def test_mcp_server_tool_allowlist_and_actuator_absence():
     assert "browser" not in tool_names
 
 
-# 12. Default Routing Policy Unchanged
-def test_default_routing_policy_unchanged():
+# 12. Default Routing Policy Uses Canonical Zero-Cost Pool
+def test_default_routing_policy_uses_canonical_zero_cost_pool():
+    import json
     from pathlib import Path
 
     policy_path = Path(__file__).parent.parent / "descriptors" / "lari.planner-policy.json"
     registry = load_routing_policy(str(policy_path))
 
-    # Invariant: Nemotron is NOT in the default preferred route
     r0_route = registry.risk_routes.get("R0", {})
     preferred = r0_route.get("preferred_providers", [])
-    assert "nemotron" not in preferred
-    assert preferred == ["gemini", "groq", "ollama"]
+    assert preferred == [
+        "nemotron",
+        "gemini",
+        "groq",
+        "cloudflare",
+        "openrouter_free",
+        "cerebras",
+        "huggingface_router",
+        "freellmapi_local",
+        "ollama",
+        "openai_paid_safety",
+    ]
+    assert registry.allow_paid_fallback is False
+
+    raw_policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if "paid_fallback_enabled" in raw_policy:
+        assert raw_policy["paid_fallback_enabled"] is False
+    if "paid_daily_budget_usd" in raw_policy:
+        assert raw_policy["paid_daily_budget_usd"] == 0
+    if "paid_monthly_budget_usd" in raw_policy:
+        assert raw_policy["paid_monthly_budget_usd"] == 0
 
 
-# 13. Dedicated Opt-in Nemotron Policy Router Selection
-def test_opt_in_nemotron_policy_router_selection(monkeypatch):
+# 13. Nemotron Compatibility Policy Preserves Canonical First Route
+def test_nemotron_compatibility_policy_preserves_canonical_first_route(monkeypatch):
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
     from pathlib import Path
 
@@ -546,11 +565,19 @@ def test_opt_in_nemotron_policy_router_selection(monkeypatch):
     registry = load_routing_policy(str(policy_path))
     router = ProviderRouter(registry)
 
-    # When using opt-in policy with credential available, nemotron is selected as first preferred
+    # When using compatibility policy with credential available, nemotron is selected as first preferred
     res = router.select(risk_class="R0")
     assert res is not None
     assert res.selected_provider_id == "nemotron"
     assert res.selected_model_id == "nvidia/nemotron-3-ultra-550b-a55b"
+
+    # Compare preferred provider sequence against canonical descriptors/lari.planner-policy.json
+    lari_policy_path = Path(__file__).parent.parent / "descriptors" / "lari.planner-policy.json"
+    lari_registry = load_routing_policy(str(lari_policy_path))
+    assert (
+        registry.risk_routes.get("R0", {}).get("preferred_providers", [])
+        == lari_registry.risk_routes.get("R0", {}).get("preferred_providers", [])
+    )
 
 
 # 14. Pruning Explicit Nulls in Optional Schema Properties
