@@ -274,14 +274,10 @@ class QuotaGovernor:
                     )
             else:
                 # No authoritative deadline: use AOS policy revalidation window
-                if observation.classification in ("QUOTA_EXHAUSTED", "CREDIT_EXHAUSTED"):
-                    policy_window = 21600.0
-                elif observation.evidence_source == ObservationSource.ADAPTIVE_ESTIMATE.value:
-                    policy_window = 900.0
-                else:
-                    policy_window = self.POLICY_REVALIDATION_WINDOWS.get(
-                        observation.classification, 120.0
-                    )
+                policy_window = self.POLICY_REVALIDATION_WINDOWS.get(
+                    observation.classification,
+                    120.0,
+                )
                 observed_epoch = _parse_observed_at(observation.observed_at)
                 synthetic_revalidation_at = (
                     observed_epoch + policy_window
@@ -315,7 +311,7 @@ class QuotaGovernor:
             return QuotaDecision(
                 QuotaState.CONSTRAINED.value,
                 True,
-                deadline,
+                authoritative_deadline,
                 "LOW_REMAINING",
                 observation.evidence_source,
                 key,

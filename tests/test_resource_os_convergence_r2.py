@@ -267,7 +267,7 @@ def test_f_quota_governor_default_revalidation_windows():
     now_iso = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc).isoformat()
     governor = QuotaGovernor(clock=lambda: now)
 
-    # 1. Provider metadata with 429 and no deadline -> 120s
+    # 1. RATE_LIMITED with no deadline -> 120s (regardless of evidence source)
     obs_meta = RateLimitObservation(
         provider_id="prov1",
         model_id="mod1",
@@ -282,7 +282,6 @@ def test_f_quota_governor_default_revalidation_windows():
     assert dec1.state == QuotaState.EXHAUSTED.value
     assert dec1.retry_at_epoch == 10000.0 + 120.0
 
-    # 2. Adaptive estimate with 429 and no deadline -> 900s
     obs_adapt = RateLimitObservation(
         provider_id="prov2",
         model_id="mod2",
@@ -295,10 +294,10 @@ def test_f_quota_governor_default_revalidation_windows():
     )
     dec2 = governor.record(obs_adapt)
     assert dec2.state == QuotaState.EXHAUSTED.value
-    assert dec2.retry_at_epoch == 10000.0 + 900.0
+    assert dec2.retry_at_epoch == 10000.0 + 120.0
 
-    # 3. Quota exhausted daily limit with no deadline -> 21600s
-    obs_daily = RateLimitObservation(
+    # 2. QUOTA_EXHAUSTED with no deadline -> 900s
+    obs_quota = RateLimitObservation(
         provider_id="prov3",
         model_id="mod3",
         task_class="structured_planning",
@@ -308,9 +307,24 @@ def test_f_quota_governor_default_revalidation_windows():
         retry_at_epoch=None,
         evidence_source=ObservationSource.PROVIDER_METADATA.value,
     )
-    dec3 = governor.record(obs_daily)
+    dec3 = governor.record(obs_quota)
     assert dec3.state == QuotaState.EXHAUSTED.value
-    assert dec3.retry_at_epoch == 10000.0 + 21600.0
+    assert dec3.retry_at_epoch == 10000.0 + 900.0
+
+    # 3. CREDIT_EXHAUSTED with no deadline -> 21600s
+    obs_credit = RateLimitObservation(
+        provider_id="prov4",
+        model_id="mod4",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=402,
+        classification="CREDIT_EXHAUSTED",
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec4 = governor.record(obs_credit)
+    assert dec4.state == QuotaState.EXHAUSTED.value
+    assert dec4.retry_at_epoch == 10000.0 + 21600.0
 
 
 # Test G: Quota governor record_success supersedes stale exhausted state
@@ -516,26 +530,32 @@ def test_k_provider_failover_success_clears_stale_quota_barrier(tmp_path):
 
 # Test L: Provider failover preserves typed failure mapping
 def test_l_provider_failover_preserves_typed_failure_mapping(tmp_path):
+    from aos.planner import PlannerTransientError
+    from aos.provider_observation import FailureFamily
+
     policy = _sample_policy()
     policy["allow_provider_fallback"] = False
     registry = ProviderRegistry(policy)
     router = ProviderRouter(registry)
 
-    class RateLimitedProvider:
+    # 1. Deterministic SERVER_CAPACITY failure without RateLimitObservation
+    class ServerCapacityProvider:
         execution_provenance = "LOCAL_OFFLINE"
 
         def generate_plan(self, prompt, schema):
-            from aos.planner import PlannerTransientError
-            raise PlannerTransientError("429 Too Many Requests")
+            raise PlannerTransientError(
+                "sanitized capacity",
+                failure_family=FailureFamily.SERVER_CAPACITY,
+            )
 
-    backend = ProviderFailoverReasoningBackend(
+    backend1 = ProviderFailoverReasoningBackend(
         router,
-        provider_factory=lambda pid, mid: RateLimitedProvider(),
-        attempt_journal=tmp_path / "attempts.jsonl",
+        provider_factory=lambda pid, mid: ServerCapacityProvider(),
+        attempt_journal=tmp_path / "attempts_capacity.jsonl",
     )
 
-    req = ExecutionRequest(
-        task_id="task-typed-failure",
+    req1 = ExecutionRequest(
+        task_id="task-typed-capacity",
         project_id="test",
         workspace=str(tmp_path),
         operation_class="REASONING",
@@ -548,10 +568,58 @@ def test_l_provider_failover_preserves_typed_failure_mapping(tmp_path):
         },
     )
 
-    result = backend.execute(req)
-    assert result.status == "DEGRADED"
-    assert result.evidence_payload["failure_class"] == "ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE"
-    assert result.evidence_payload["provider_attempts"][0]["error_class"] == "RATE_LIMITED"
+    result1 = backend1.execute(req1)
+    assert result1.status == "DEGRADED"
+    attempt1 = result1.evidence_payload["provider_attempts"][0]
+    assert attempt1["error_class"] == "SERVER_CAPACITY"
+    assert attempt1["error_class"] != "NETWORK_UNAVAILABLE"
+
+    # 2. Deterministic CREDIT_EXHAUSTED with typed observation
+    credit_obs = RateLimitObservation(
+        provider_id="gemini",
+        model_id="gemini-2.5-flash",
+        task_class="structured_planning",
+        observed_at="2026-10-01T00:00:00Z",
+        http_status=402,
+        classification="CREDIT_EXHAUSTED",
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+
+    class CreditExhaustedProvider:
+        execution_provenance = "LOCAL_OFFLINE"
+
+        def generate_plan(self, prompt, schema):
+            raise PlannerTransientError(
+                "sanitized credit",
+                failure_family=FailureFamily.SERVER_CAPACITY,
+                rate_limit_observation=credit_obs,
+            )
+
+    backend2 = ProviderFailoverReasoningBackend(
+        router,
+        provider_factory=lambda pid, mid: CreditExhaustedProvider(),
+        attempt_journal=tmp_path / "attempts_credit.jsonl",
+    )
+
+    req2 = ExecutionRequest(
+        task_id="task-typed-credit",
+        project_id="test",
+        workspace=str(tmp_path),
+        operation_class="REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH",
+        payload={
+            "prompt": "generate plan",
+            "schema": {"type": "object"},
+            "ignore_credentials": True,
+        },
+    )
+
+    result2 = backend2.execute(req2)
+    assert result2.status == "DEGRADED"
+    attempt2 = result2.evidence_payload["provider_attempts"][0]
+    assert attempt2["error_class"] == "CREDIT_EXHAUSTED"
 
 
 # Test M: Agentic planning bridge cost class is QUOTA_LIMITED
@@ -707,6 +775,127 @@ def test_p_q_antigravity_backend_planning_mode(tmp_path):
     assert res.transient_structured_output == valid_plan
 
 
+# Test P.2: Antigravity backend planning mode fails with ANTIGRAVITY_PLANNING_OUTPUT_UNAVAILABLE when response is missing
+def test_ag_planning_missing_output_fails_closed(tmp_path):
+    adapter = FakeAntigravityAdapter()
+    cid = "conv-missing-resp"
+    adapter.set_canned_response(
+        cid,
+        AntigravityResponse(
+            conversation_id=cid,
+            status=AntigravityStatus.SUCCESS,
+            mapped_aos_status=RunStatus.COMPLETED,
+            raw_response="{}",
+            parsed_json={"conversation_id": cid, "status": "SUCCESS"},  # No "response" key
+        ),
+    )
+
+    backend = AntigravityAgenticExecutionBackend(
+        adapter=adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+    )
+
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "ag@test.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "AG Test"], cwd=tmp_path, check=True)
+    (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    source_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    req = ExecutionRequest(
+        task_id="task-missing-output",
+        project_id="test",
+        workspace=str(tmp_path),
+        operation_class="AGENTIC",
+        required_capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK],
+        authority_id="AUTH",
+        payload={
+            "prompt": "give plan",
+            "planning_mode": True,
+            "source_sha": source_sha,
+            "conversation_id": cid,
+        },
+    )
+
+    res = backend.execute(req)
+    assert res.status != "SUCCESS"
+    assert res.status == "DEGRADED"
+    assert res.evidence_payload.get("failure_class") == "ANTIGRAVITY_PLANNING_OUTPUT_UNAVAILABLE"
+
+
+# Test P.3: Non-planning AG execution still uses stream-json
+def test_ag_non_planning_uses_stream_json(tmp_path):
+    adapter = FakeAntigravityAdapter()
+    cid = "conv-non-planning"
+    adapter.set_canned_response(
+        cid,
+        AntigravityResponse(
+            conversation_id=cid,
+            status=AntigravityStatus.SUCCESS,
+            mapped_aos_status=RunStatus.COMPLETED,
+            raw_response="done",
+            parsed_json={"conversation_id": cid, "status": "SUCCESS"},
+        ),
+    )
+
+    backend = AntigravityAgenticExecutionBackend(
+        adapter=adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+    )
+
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "ag@test.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "AG Test"], cwd=tmp_path, check=True)
+    (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    source_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    req = ExecutionRequest(
+        task_id="task-non-planning",
+        project_id="test",
+        workspace=str(tmp_path),
+        operation_class="AGENTIC",
+        required_capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK],
+        authority_id="AUTH",
+        payload={
+            "prompt": "do coding task",
+            "planning_mode": False,
+            "source_sha": source_sha,
+            "conversation_id": cid,
+        },
+    )
+
+    res = backend.execute(req)
+    assert res.status == "SUCCESS"
+    assert adapter.invocations[0]["output_format"] == "stream-json"
+
+
+# Test Q.2: ExecutionResult.to_dict() must NOT serialize transient_structured_output
+def test_execution_result_to_dict_omits_transient_structured_output():
+    result = ExecutionResult(
+        backend_id="antigravity",
+        worker_id="worker1",
+        task_id="t1",
+        request_id="r1",
+        status="SUCCESS",
+        exit_code=0,
+        workspace="/tmp/test",
+        transient_structured_output={"secret_plan": "do not serialize"},
+        evidence_payload={"public_key": "val"},
+    )
+    serialized = result.to_dict()
+    assert "transient_structured_output" not in serialized
+    assert "secret_plan" not in json.dumps(serialized)
+
+
 # Test R: lari policy schema validation
 def test_r_lari_policy_schema_validation():
     repo_root = Path(__file__).resolve().parents[1]
@@ -725,6 +914,34 @@ def test_s_nemotron_policy_schema_validation():
     assert code == 0
 
 
+# Test Policy Semantic Equality: lari vs nemotron mirror
+def test_policy_mirror_semantic_equality_and_parser_default():
+    repo_root = Path(__file__).resolve().parents[1]
+    lari_raw = json.loads((repo_root / "descriptors" / "lari.planner-policy.json").read_text(encoding="utf-8"))
+    nemotron_raw = json.loads((repo_root / "descriptors" / "nemotron.planner-policy.json").read_text(encoding="utf-8"))
+
+    surfaces = [
+        "routing_mode",
+        "allow_paid_fallback",
+        "paid_fallback_enabled",
+        "paid_daily_budget_usd",
+        "paid_monthly_budget_usd",
+        "allow_provider_fallback",
+        "data_classification",
+        "risk_routes",
+        "providers",
+    ]
+
+    for key in surfaces:
+        assert lari_raw.get(key) == nemotron_raw.get(key), f"Semantic divergence on key: {key}"
+
+    # Also assert autonomous_host build_parser default is descriptors/lari.planner-policy.json
+    from aos.autonomous_host import build_parser
+    parser = build_parser()
+    default_policy = parser.get_default("routing_policy")
+    assert str(default_policy).replace("\\", "/") == "descriptors/lari.planner-policy.json"
+
+
 # Test T: Runtime store exclusive lock regression
 def test_t_runtime_store_exclusive_lock_regression(tmp_path):
     from aos.runtime_store import exclusive_file_lock
@@ -737,8 +954,8 @@ def test_t_runtime_store_exclusive_lock_regression(tmp_path):
         assert lock_file.exists()
 
 
-# Test U: Full fallback progression through all tiers
-def test_u_full_fallback_progression_through_all_tiers(tmp_path):
+# Test U: Free provider pool progression (renamed from full fallback progression through all tiers)
+def test_u_free_provider_pool_progression(tmp_path):
     policy = {
         "routing_mode": "PREFER_FREE",
         "allow_paid_fallback": False,
@@ -865,3 +1082,248 @@ def test_u_full_fallback_progression_through_all_tiers(tmp_path):
     assert attempts[2]["status"] == ProviderAttemptStatus.NON_RETRYABLE_FAILED.value
     assert attempts[3]["provider_id"] == "p_success"
     assert attempts[3]["status"] == ProviderAttemptStatus.SUCCESS.value
+
+
+# ======================================================================
+# Top-Level Resource Orchestrator Tests: TOP-A, TOP-B, TOP-C, TOP-D
+# ======================================================================
+def _build_test_top_level_backends(
+    *,
+    qwen_healthy: bool = True,
+    provider_available: bool = True,
+    ag_healthy: bool = True,
+):
+    from extensions.autonomy_fabric.llama_cpp_reasoning_backend import LlamaCppQwenReasoningBackend
+    from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
+
+    # 1. LlamaCppQwenReasoningBackend
+    qwen = LlamaCppQwenReasoningBackend(
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        health_reader=lambda: qwen_healthy,
+    )
+
+    # 2. ProviderFailoverReasoningBackend double
+    policy = {
+        "routing_mode": "PREFER_FREE",
+        "allow_paid_fallback": False,
+        "allow_provider_fallback": True,
+        "data_classification": "PUBLIC",
+        "risk_routes": {"R0": {"preferred_providers": ["fake_free"]}},
+        "providers": {
+            "fake_free": {
+                "provider_id": "fake_free",
+                "model_id": "fake-model",
+                "credential_env_var": None,
+                "billing_class": "FREE_TIER",
+                "structured_output": True,
+                "cloud_local": "CLOUD",
+                "enabled": True,
+                "allowed_data_classifications": ["PUBLIC"],
+                "model_context_tokens": 128000,
+                "quality_tier": 3,
+            }
+        },
+    }
+    registry = ProviderRegistry(policy)
+    router = ProviderRouter(registry)
+
+    class FakeProvider:
+        execution_provenance = "LOCAL_OFFLINE"
+
+        def generate_plan(self, prompt, schema):
+            if not provider_available:
+                from aos.planner import PlannerTransientError
+                raise PlannerTransientError("429 Rate limited")
+            return {"plan": "free_provider"}, "ok", {"tokens": 10}
+
+    provider_backend = ProviderFailoverReasoningBackend(
+        router,
+        provider_factory=lambda pid, mid: FakeProvider(),
+    )
+    if not provider_available:
+        provider_backend.get_availability = lambda: ExecutionAvailabilitySnapshot(
+            ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+            "2026-10-01T00:00:00Z",
+            source="TEST",
+            evidence={"reason": "UNAVAILABLE"},
+        )
+
+    # 3. AgenticStructuredPlanningBridge around healthy AG execution backend double
+    class FakeAgenticBackend(ExecutionBackend):
+        backend_id = "antigravity"
+        resource_id = "local_ag"
+        backend_class = BackendClass.AGENTIC_EXECUTION_BACKEND
+        trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
+        cost = ExecutionCost.SUBSCRIPTION_INCLUDED
+        supported_capabilities = {
+            ExecutionCapability.MODEL_REASONING,
+            ExecutionCapability.LONG_HORIZON_AGENTIC_WORK,
+            ExecutionCapability.ANTIGRAVITY,
+        }
+
+        def execute(self, request):
+            if not ag_healthy:
+                return ExecutionResult(
+                    backend_id="antigravity",
+                    worker_id="w",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="DEGRADED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                )
+            return ExecutionResult(
+                backend_id="antigravity",
+                worker_id="w",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="SUCCESS",
+                exit_code=0,
+                workspace=request.workspace,
+                transient_structured_output={"plan": "ag"},
+            )
+
+        def get_health(self):
+            return ExecutionHealth.HEALTHY if ag_healthy else ExecutionHealth.UNAVAILABLE
+
+        def get_availability(self):
+            state = ExecutionAvailabilityState.AVAILABLE if ag_healthy else ExecutionAvailabilityState.CONTRACT_FAILURE
+            return ExecutionAvailabilitySnapshot(
+                state, "2026-10-01T00:00:00Z", source="TEST", evidence={}
+            )
+
+    ag_backend = FakeAgenticBackend()
+    ag_bridge = AgenticStructuredPlanningBridge(ag_backend)
+
+    orchestrator = ResourceOrchestrator()
+    return qwen, provider_backend, ag_bridge, ag_backend, orchestrator
+
+
+# CASE TOP-A: Qwen eligible and ranks before free cloud pool (FREE_LOCAL preferred)
+def test_top_a_qwen_ranks_before_free_cloud_pool():
+    qwen, provider, ag_bridge, _, orchestrator = _build_test_top_level_backends()
+    req = ExecutionRequest(
+        task_id="top-a",
+        project_id="test",
+        workspace="/tmp/test",
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH",
+        payload={
+            "prompt": "short plan",
+            "resource_requirements": {
+                "task_class": "structured_planning",
+                "context_tokens": 500,
+                "request_token_budget": 1500,
+                "minimum_quality": 1,
+                "local_qwen_allowed": True,
+                "agentic_planning_allowed": True,
+            },
+        },
+    )
+
+    ranks = orchestrator.rank([qwen, provider, ag_bridge], req)
+    eligible_ranks = [r for r in ranks if r.eligible]
+    assert len(eligible_ranks) == 3
+    # Qwen (FREE_LOCAL cost 10) must rank first
+    assert eligible_ranks[0].backend_id == qwen.backend_id
+    # Provider failover (FREE_TIER_CLOUD cost 30) ranks second
+    assert eligible_ranks[1].backend_id == provider.backend_id
+    # Agentic bridge (QUOTA_LIMITED cost 90) ranks third
+    assert eligible_ranks[2].backend_id == ag_bridge.backend_id
+
+    selected = orchestrator.select([qwen, provider, ag_bridge], req)
+    assert selected == qwen.backend_id
+
+
+# CASE TOP-B: minimum_quality = 3 makes Qwen ineligible; free cloud provider ranks first
+def test_top_b_free_cloud_pool_selected_before_ag_bridge():
+    qwen, provider, ag_bridge, _, orchestrator = _build_test_top_level_backends()
+    req = ExecutionRequest(
+        task_id="top-b",
+        project_id="test",
+        workspace="/tmp/test",
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH",
+        payload={
+            "prompt": "high quality plan",
+            "resource_requirements": {
+                "task_class": "structured_planning",
+                "context_tokens": 1000,
+                "request_token_budget": 3200,
+                "minimum_quality": 3,
+                "local_qwen_allowed": True,
+                "agentic_planning_allowed": True,
+            },
+        },
+    )
+
+    ranks = orchestrator.rank([qwen, provider, ag_bridge], req)
+    qwen_rank = next(r for r in ranks if r.backend_id == qwen.backend_id)
+    assert qwen_rank.eligible is False
+    assert "QUALITY_INADEQUATE" in qwen_rank.reasons
+
+    selected = orchestrator.select([qwen, provider, ag_bridge], req)
+    assert selected == provider.backend_id
+    assert selected != ag_bridge.backend_id
+
+
+# CASE TOP-C: Qwen and free provider unavailable -> AG bridge becomes selected (zero-cost-first without making AG unavailable)
+def test_top_c_ag_bridge_fallback_when_qwen_and_free_unavailable():
+    qwen, provider, ag_bridge, _, orchestrator = _build_test_top_level_backends(
+        qwen_healthy=False,
+        provider_available=False,
+        ag_healthy=True,
+    )
+    req = ExecutionRequest(
+        task_id="top-c",
+        project_id="test",
+        workspace="/tmp/test",
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH",
+        payload={
+            "prompt": "fallback plan",
+            "resource_requirements": {
+                "task_class": "structured_planning",
+                "context_tokens": 1000,
+                "request_token_budget": 3200,
+                "minimum_quality": 1,
+                "local_qwen_allowed": True,
+                "agentic_planning_allowed": True,
+            },
+        },
+    )
+
+    selected = orchestrator.select([qwen, provider, ag_bridge], req)
+    assert selected == ag_bridge.backend_id
+
+
+# CASE TOP-D: Direct request requiring LONG_HORIZON_AGENTIC_WORK remains eligible for direct agentic backend
+def test_top_d_direct_agentic_capability_selection():
+    qwen, provider, ag_bridge, ag_backend, orchestrator = _build_test_top_level_backends()
+    req = ExecutionRequest(
+        task_id="top-d",
+        project_id="test",
+        workspace="/tmp/test",
+        operation_class="AGENTIC",
+        required_capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK],
+        authority_id="AUTH",
+        payload={"prompt": "multi-file refactoring"},
+    )
+
+    ranks = orchestrator.rank([qwen, provider, ag_backend], req)
+    qwen_rank = next(r for r in ranks if r.backend_id == qwen.backend_id)
+    provider_rank = next(r for r in ranks if r.backend_id == provider.backend_id)
+    ag_rank = next(r for r in ranks if r.backend_id == ag_backend.backend_id)
+
+    assert qwen_rank.eligible is False
+    assert "CAPABILITY_MISMATCH" in qwen_rank.reasons
+
+    assert provider_rank.eligible is False
+    assert "CAPABILITY_MISMATCH" in provider_rank.reasons
+
+    assert ag_rank.eligible is True
+    selected = orchestrator.select([qwen, provider, ag_backend], req)
+    assert selected == ag_backend.backend_id

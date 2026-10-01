@@ -167,3 +167,129 @@ def test_backend_skips_quota_blocked_provider_without_calling_it(tmp_path):
     assert first_attempt["error_class"] == "RATE_LIMITED"
     assert first_attempt["quota_decision"]["retry_at_epoch"] == 1120.0
     assert "raw" not in json.dumps(first_attempt).lower()
+
+
+def test_quota_revalidation_rate_limited_120_no_deadline():
+    import datetime as dt
+    now = [1000.0]
+    governor = QuotaGovernor(clock=lambda: now[0])
+    now_iso = dt.datetime.fromtimestamp(now[0], tz=dt.timezone.utc).isoformat()
+    obs = RateLimitObservation(
+        provider_id="prov_rl",
+        model_id="mod_rl",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=429,
+        classification="RATE_LIMITED",
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec0 = governor.record(obs)
+    assert dec0.state == QuotaState.EXHAUSTED.value
+    assert dec0.eligible is False
+    assert dec0.retry_at_epoch == 1000.0 + 120.0
+
+    now[0] = 1000.0 + 120.0
+    dec_after = governor.decision("prov_rl", "mod_rl", "structured_planning")
+    assert dec_after.state == QuotaState.CONSTRAINED.value
+    assert dec_after.eligible is True
+    assert dec_after.reason == "REVALIDATION_DUE"
+
+
+def test_quota_revalidation_quota_exhausted_900_no_deadline():
+    import datetime as dt
+    now = [1000.0]
+    governor = QuotaGovernor(clock=lambda: now[0])
+    now_iso = dt.datetime.fromtimestamp(now[0], tz=dt.timezone.utc).isoformat()
+    obs = RateLimitObservation(
+        provider_id="prov_qe",
+        model_id="mod_qe",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=429,
+        classification="QUOTA_EXHAUSTED",
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec0 = governor.record(obs)
+    assert dec0.state == QuotaState.EXHAUSTED.value
+    assert dec0.eligible is False
+    assert dec0.retry_at_epoch == 1000.0 + 900.0
+
+    now[0] = 1000.0 + 900.0
+    dec_after = governor.decision("prov_qe", "mod_qe", "structured_planning")
+    assert dec_after.state == QuotaState.CONSTRAINED.value
+    assert dec_after.eligible is True
+    assert dec_after.reason == "REVALIDATION_DUE"
+
+
+def test_quota_revalidation_credit_exhausted_21600_no_deadline():
+    import datetime as dt
+    now = [1000.0]
+    governor = QuotaGovernor(clock=lambda: now[0])
+    now_iso = dt.datetime.fromtimestamp(now[0], tz=dt.timezone.utc).isoformat()
+    obs = RateLimitObservation(
+        provider_id="prov_ce",
+        model_id="mod_ce",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=429,
+        classification="CREDIT_EXHAUSTED",
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec0 = governor.record(obs)
+    assert dec0.state == QuotaState.EXHAUSTED.value
+    assert dec0.eligible is False
+    assert dec0.retry_at_epoch == 1000.0 + 21600.0
+
+    now[0] = 1000.0 + 21600.0
+    dec_after = governor.decision("prov_ce", "mod_ce", "structured_planning")
+    assert dec_after.state == QuotaState.CONSTRAINED.value
+    assert dec_after.eligible is True
+    assert dec_after.reason == "REVALIDATION_DUE"
+
+
+def test_quota_low_remaining_authoritative_deadline():
+    import datetime as dt
+    now = [1000.0]
+    governor = QuotaGovernor(clock=lambda: now[0])
+    now_iso = dt.datetime.fromtimestamp(now[0], tz=dt.timezone.utc).isoformat()
+
+    # 1. With authoritative deadline
+    obs_with_deadline = RateLimitObservation(
+        provider_id="prov_low",
+        model_id="mod_low",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=200,
+        classification="AVAILABLE",
+        request_limit=100,
+        request_remaining=5,
+        retry_at_epoch=1500.0,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec1 = governor.record(obs_with_deadline)
+    assert dec1.state == QuotaState.CONSTRAINED.value
+    assert dec1.eligible is True
+    assert dec1.reason == "LOW_REMAINING"
+    assert dec1.retry_at_epoch == 1500.0
+
+    # 2. Without authoritative deadline
+    obs_no_deadline = RateLimitObservation(
+        provider_id="prov_low2",
+        model_id="mod_low2",
+        task_class="structured_planning",
+        observed_at=now_iso,
+        http_status=200,
+        classification="AVAILABLE",
+        request_limit=100,
+        request_remaining=5,
+        retry_at_epoch=None,
+        evidence_source=ObservationSource.PROVIDER_METADATA.value,
+    )
+    dec2 = governor.record(obs_no_deadline)
+    assert dec2.state == QuotaState.CONSTRAINED.value
+    assert dec2.eligible is True
+    assert dec2.reason == "LOW_REMAINING"
+    assert dec2.retry_at_epoch is None
