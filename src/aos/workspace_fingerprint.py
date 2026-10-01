@@ -15,6 +15,11 @@ class WorkspaceFingerprintError(RuntimeError):
     pass
 
 
+RUNTIME_OWNED_ROOT_LOCK_PATH = ".aos_workspace_active.lock"
+_RUNTIME_OWNED_ROOT_LOCK_PATH_BYTES = RUNTIME_OWNED_ROOT_LOCK_PATH.encode("ascii")
+_RUNTIME_OWNED_ROOT_LOCK_STATUS_RECORD = b"? " + _RUNTIME_OWNED_ROOT_LOCK_PATH_BYTES
+
+
 @dataclass(frozen=True)
 class WorkspaceFingerprint:
     sha256: str
@@ -57,6 +62,27 @@ def _record(digest: "hashlib._Hash", tag: bytes, *values: bytes) -> None:
 
 def _nul_paths(raw: bytes) -> List[bytes]:
     return [value for value in raw.split(b"\0") if value]
+
+
+def _without_runtime_owned_untracked_status(raw: bytes) -> bytes:
+    """Remove only the exact porcelain-v2 untracked root-lock record.
+
+    Rename/copy records have a second NUL-delimited path field.  Preserve that
+    field even if its bytes resemble a status record.
+    """
+    filtered: List[bytes] = []
+    rename_source = False
+    for record in raw.split(b"\0"):
+        if rename_source:
+            filtered.append(record)
+            rename_source = False
+            continue
+        if record == _RUNTIME_OWNED_ROOT_LOCK_STATUS_RECORD:
+            continue
+        filtered.append(record)
+        if record.startswith(b"2 "):
+            rename_source = True
+    return b"\0".join(filtered)
 
 
 def _stage_entries(raw: bytes) -> Dict[bytes, Tuple[bytes, bytes]]:
@@ -126,6 +152,20 @@ def compute_workspace_fingerprint(
     tracked = _nul_paths(_git(root, "ls-files", "-z"))
     untracked = _nul_paths(_git(root, "ls-files", "--others", "--exclude-standard", "-z"))
     index_entries = _stage_entries(stage)
+
+    # Runtime V1 holds this exact root-relative file open while a workspace is
+    # active.  It is operational coordination state, not workspace content.
+    # Filter both identity inputs only when Git proves it is untracked; a
+    # tracked file with the same name remains fully fingerprinted.
+    if (
+        _RUNTIME_OWNED_ROOT_LOCK_PATH_BYTES in untracked
+        and _RUNTIME_OWNED_ROOT_LOCK_PATH_BYTES not in tracked
+    ):
+        untracked = [
+            path for path in untracked
+            if path != _RUNTIME_OWNED_ROOT_LOCK_PATH_BYTES
+        ]
+        status = _without_runtime_owned_untracked_status(status)
 
     digest = hashlib.sha256()
     _record(

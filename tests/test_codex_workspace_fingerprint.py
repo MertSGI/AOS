@@ -2,6 +2,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+import aos.workspace_fingerprint as workspace_fingerprint
+from aos.runtime_store import exclusive_file_lock
 from aos.workspace_fingerprint import compute_workspace_fingerprint
 
 
@@ -138,3 +142,69 @@ def test_initialized_submodule_content_changes_parent_identity(tmp_path):
 
     assert baseline.initialized_submodule_count == 1
     assert changed.sha256 != baseline.sha256
+
+
+def test_exact_untracked_runtime_lock_is_excluded_while_other_content_remains_sensitive(tmp_path):
+    root = _repo(tmp_path)
+    clean = compute_workspace_fingerprint(root, source_sha=_git(root, "rev-parse", "HEAD"))
+    lock_path = root / ".aos_workspace_active.lock"
+
+    lock_path.write_bytes(b"0")
+    unlocked = compute_workspace_fingerprint(root, source_sha=clean.source_sha)
+    assert unlocked.sha256 == clean.sha256
+    assert unlocked.entry_count == clean.entry_count
+
+    with exclusive_file_lock(lock_path):
+        held = compute_workspace_fingerprint(root, source_sha=clean.source_sha)
+        assert held.sha256 == clean.sha256
+
+        other = root / "new-product-input.txt"
+        other.write_text("first\n", encoding="utf-8")
+        other_first = compute_workspace_fingerprint(root, source_sha=clean.source_sha)
+        assert other_first.sha256 != clean.sha256
+        other.write_text("second\n", encoding="utf-8")
+        assert compute_workspace_fingerprint(root, source_sha=clean.source_sha).sha256 != other_first.sha256
+
+        (root / "tracked.txt").write_text("tracked change\n", encoding="utf-8")
+        tracked_changed = compute_workspace_fingerprint(root, source_sha=clean.source_sha)
+        assert tracked_changed.sha256 not in {clean.sha256, other_first.sha256}
+
+
+def test_nested_runtime_lock_name_is_not_excluded(tmp_path):
+    root = _repo(tmp_path)
+    baseline = _fingerprint(root)
+    nested = root / "some" / "path" / ".aos_workspace_active.lock"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"0")
+
+    assert _fingerprint(root) != baseline
+
+
+def test_tracked_root_runtime_lock_name_remains_fingerprinted(tmp_path):
+    root = _repo(tmp_path)
+    lock_path = root / ".aos_workspace_active.lock"
+    lock_path.write_text("tracked baseline\n", encoding="utf-8")
+    _git(root, "add", ".aos_workspace_active.lock")
+    _git(root, "commit", "-m", "track lock-shaped product file")
+    baseline = _fingerprint(root)
+
+    lock_path.write_text("tracked changed\n", encoding="utf-8")
+
+    assert _fingerprint(root) != baseline
+
+
+def test_other_unreadable_file_errors_are_not_ignored(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    blocked = root / "blocked-product.bin"
+    blocked.write_bytes(b"product")
+    original = workspace_fingerprint._stream_sha256
+
+    def fail_only_for_blocked(path):
+        if path == blocked:
+            raise PermissionError("deterministic unreadable product fixture")
+        return original(path)
+
+    monkeypatch.setattr(workspace_fingerprint, "_stream_sha256", fail_only_for_blocked)
+
+    with pytest.raises(PermissionError):
+        _fingerprint(root)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,9 @@ from aos.planning_kernel import (
 from aos.runtime_admission import AdmissionState
 from aos.runtime_contract import ContinueProjectCommand, ProjectProfile
 from aos.runtime_server import RuntimeEngine
+from aos.runtime_store import exclusive_file_lock
+from aos.resource_snapshot import ResourceSnapshotStore
+from aos.workspace_fingerprint import compute_workspace_fingerprint
 from extensions.autonomy_fabric.agentic_planning_bridge import (
     AgenticStructuredPlanningBridge,
 )
@@ -38,6 +42,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionTrustZone,
 )
 from extensions.autonomy_fabric.execution_router import ExecutionRouter
+from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
 
 
 SCHEMA = {
@@ -128,6 +133,25 @@ class _ReasoningBackend(ExecutionBackend):
                 source="TEST_DOUBLE",
             ),
         )
+
+
+class _UnavailableReasoningBackend(_ReasoningBackend):
+    def __init__(self, backend_id, state):
+        super().__init__(backend_id, cost=ExecutionCost.SUBSCRIPTION_INCLUDED)
+        self.state = state
+
+    def get_health(self):
+        return ExecutionHealth.UNAVAILABLE
+
+    def get_availability(self):
+        return ExecutionAvailabilitySnapshot(
+            self.state,
+            "2026-09-30T00:00:00Z",
+            source="TEST_DOUBLE",
+        )
+
+    def execute(self, request):
+        raise AssertionError(f"ineligible backend {self.backend_id} must not execute")
 
 
 class _AgenticPlanner(AgenticExecutionBackend):
@@ -232,6 +256,23 @@ def _planning_request(tmp_path: Path, *, task_id="plan") -> ExecutionRequest:
         request_id=f"request-{task_id}",
         payload={"prompt": "Return a plan", "schema": SCHEMA, "source_sha": "a" * 40},
     )
+
+
+def _git_repo(root: Path) -> str:
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "throughput@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Throughput Test"], cwd=root, check=True)
+    (root / "product.txt").write_text("bounded product state\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def test_cline_prelaunch_contract_failure_routes_to_direct_reasoner(tmp_path):
@@ -357,6 +398,97 @@ def test_backend_local_contract_failure_is_not_provider_outage(tmp_path):
             workspace=tmp_path,
         )
     assert not isinstance(raised.value, WaitingForReasoningProvider)
+
+
+def test_real_resource_orchestrator_fails_over_to_cline_while_runtime_lock_is_held(tmp_path):
+    workspace = tmp_path / "workspace"
+    source_sha = _git_repo(workspace)
+    baseline = compute_workspace_fingerprint(workspace, source_sha=source_sha).sha256
+
+    qwen = _ReasoningBackend("qwen3_4b_llama_cpp", cost=ExecutionCost.FREE_LOCAL)
+    qwen.context_window_tokens = 4_096
+    qwen.quality_tier = 1
+    provider = _ReasoningBackend(
+        "provider_failover_reasoning_backend",
+        failure_class="ALL_ELIGIBLE_REASONING_PROVIDERS_UNAVAILABLE",
+        availability_state=ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+    )
+    antigravity = _UnavailableReasoningBackend(
+        "antigravity_planning_bridge",
+        ExecutionAvailabilityState.CONTRACT_FAILURE,
+    )
+    codex = _UnavailableReasoningBackend(
+        "codex_planning_bridge",
+        ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+    )
+    cline_calls = []
+
+    def cline_runner(argv, cwd, prompt, timeout, env):
+        cline_calls.append((argv, cwd, prompt, timeout, env))
+        output = json.dumps({
+            "type": "run_result",
+            "finishReason": "completed",
+            "text": json.dumps({"answer": "cline"}),
+            "usage": {"inputTokens": 100, "outputTokens": 20, "totalCost": 0},
+            "taskId": "cline-live-envelope",
+        })
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    cline_backend = ClineAgenticExecutionBackend(
+        runner=cline_runner,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        executable_identity=CLINE_IDENTITY,
+        data_dir=str(tmp_path / "cline-data"),
+        config_dir=str(tmp_path / "cline-config"),
+        underlying_cost_class="SUBSCRIPTION_INCLUDED",
+    )
+    cline = AgenticStructuredPlanningBridge(cline_backend)
+    orchestrator = ResourceOrchestrator(
+        ResourceSnapshotStore(tmp_path / "runtime" / "resource-snapshots.json")
+    )
+    router = ExecutionRouter(
+        [qwen, provider, antigravity, codex, cline],
+        orchestrator=orchestrator,
+    )
+    request = _planning_request(workspace, task_id="plan-dag")
+    request.payload["source_sha"] = source_sha
+    request.payload["resource_requirements"] = {
+        "task_class": "structured_planning",
+        "complexity_class": "MEDIUM",
+        "context_tokens": 10_940,
+        "minimum_quality": 2,
+        "maximum_latency_ms": 15_000,
+        "local_qwen_allowed": False,
+        "agentic_planning_allowed": True,
+        "scarcity_policy": "ALLOW_SCARCE",
+    }
+
+    lock_path = workspace / ".aos_workspace_active.lock"
+    with exclusive_file_lock(lock_path):
+        result = router.execute_with_failover(request)
+        locked_fingerprint = compute_workspace_fingerprint(workspace, source_sha=source_sha)
+
+    top_level_attempts = [
+        item["backend_id"]
+        for item in router.last_attempt_telemetry
+        if "underlying" not in item["attempt_id"]
+    ]
+    assert result.status == "SUCCESS"
+    assert result.evidence_payload["proposal"] == {"answer": "cline"}
+    assert result.changed_paths == []
+    assert top_level_attempts == [
+        "provider_failover_reasoning_backend",
+        "cline_planning_bridge",
+    ]
+    assert [item["backend_id"] for item in router.last_attempt_telemetry] == [
+        "provider_failover_reasoning_backend",
+        "cline_planning_bridge",
+        "cline",
+    ]
+    assert len(provider.calls) == 1
+    assert qwen.calls == []
+    assert len(cline_calls) == 1
+    assert locked_fingerprint.sha256 == baseline
 
 
 @pytest.mark.parametrize(

@@ -1,11 +1,15 @@
 """Comprehensive Proofs A-O for Cline Agentic Execution Backend."""
+import importlib
 import json
 import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from extensions.autonomy_fabric.cline_agentic_backend import (
     ClineAgenticExecutionBackend,
+    WorkspaceFingerprintError,
     build_cline_argv,
     parse_cline_stream_output,
 )
@@ -60,12 +64,12 @@ def _request(tmp_path: Path, source_sha: str, *, task_id: str = "work-1") -> Exe
     )
 
 
-def _success_output(session_id: str = SESSION_ID) -> str:
+def _success_output(session_id: str = SESSION_ID, *, text: str | None = None) -> str:
     return "\n".join([
         json.dumps({"ts": "2026-09-25T00:00:00Z", "type": "hook_event", "hookEventName": "agent_start", "taskId": session_id}),
         json.dumps({"ts": "2026-09-25T00:00:01Z", "type": "agent_event", "event": {"type": "iteration_start", "iteration": 1}}),
         json.dumps({"ts": "2026-09-25T00:00:02Z", "type": "agent_event", "event": {"type": "tool_call", "name": "read_file"}}),
-        json.dumps({"ts": "2026-09-25T00:00:03Z", "type": "run_result", "finishReason": "complete", "usage": {"inputTokens": 100, "outputTokens": 25, "totalCost": 0}}),
+        json.dumps({"ts": "2026-09-25T00:00:03Z", "type": "run_result", "finishReason": "completed", "usage": {"inputTokens": 100, "outputTokens": 25, "totalCost": 0}, "text": text}),
     ])
 
 
@@ -93,11 +97,12 @@ def test_proof_a_b_executable_identity_and_version():
 
 # Proof C: structured JSON/NDJSON parses deterministically
 def test_proof_c_structured_ndjson_parsing():
-    raw_stdout = _success_output(SESSION_ID)
+    raw_stdout = _success_output(SESSION_ID, text='{"answer":"bounded"}')
     outcome = parse_cline_stream_output(raw_stdout, "", returncode=0)
     assert outcome.valid is True
     assert outcome.session_id == SESSION_ID
-    assert outcome.finish_reason == "complete"
+    assert outcome.finish_reason == "completed"
+    assert outcome.result_text == '{"answer":"bounded"}'
     assert outcome.usage["totalCost"] == 0
     assert outcome.usage["inputTokens"] == 100
 
@@ -130,7 +135,7 @@ def test_proof_d_e_f_g_h_i_execution_lifecycle(tmp_path):
     assert result.agentic_identity is not None
     assert result.agentic_identity.session_or_thread_id == SESSION_ID
     assert "allowed/result.txt" in result.changed_paths
-    assert result.evidence_payload["finish_reason"] == "complete"
+    assert result.evidence_payload["finish_reason"] == "completed"
     assert len(calls) == 1
     argv = calls[0][0]
     assert "--json" in argv
@@ -234,3 +239,61 @@ def test_proof_o_zero_paid_calls_contract():
     availability = backend.get_availability()
     assert availability.evidence["paid_fallback"] == "DISABLED"
     assert availability.evidence["cost_class"] == "FREE_LOCAL"
+
+
+def test_prelaunch_failure_identifies_source_sha_resolution_without_raw_error(tmp_path):
+    backend = _backend(
+        lambda *_args: pytest.fail("runner must not launch"),
+        data_dir=str(tmp_path / "data"),
+        config_dir=str(tmp_path / "config"),
+    )
+    result = backend.execute(_request(tmp_path, "not-a-sha"))
+
+    assert result.evidence_payload == {
+        "failure_class": "CLINE_PRELAUNCH_CONTRACT_FAILURE",
+        "prelaunch_operation": "SOURCE_SHA_RESOLUTION",
+        "exception_class": "ValueError",
+    }
+
+
+def test_prelaunch_failure_identifies_workspace_fingerprint_without_raw_error(tmp_path, monkeypatch):
+    backend = _backend(
+        lambda *_args: pytest.fail("runner must not launch"),
+        data_dir=str(tmp_path / "data"),
+        config_dir=str(tmp_path / "config"),
+    )
+
+    def fail_fingerprint(*_args, **_kwargs):
+        raise WorkspaceFingerprintError("sensitive path must not be persisted")
+
+    backend_module = importlib.import_module(
+        "extensions.autonomy-fabric.cline_agentic_backend"
+    )
+    monkeypatch.setattr(backend_module, "compute_workspace_fingerprint", fail_fingerprint)
+    result = backend.execute(_request(tmp_path, "a" * 40))
+
+    assert result.evidence_payload == {
+        "failure_class": "CLINE_PRELAUNCH_CONTRACT_FAILURE",
+        "prelaunch_operation": "WORKSPACE_FINGERPRINT",
+        "exception_class": "WorkspaceFingerprintError",
+    }
+    assert "sensitive" not in json.dumps(result.to_dict())
+
+
+def test_prelaunch_failure_identifies_prompt_construction_without_raw_error(tmp_path):
+    source_sha = _repo(tmp_path)
+    backend = _backend(
+        lambda *_args: pytest.fail("runner must not launch"),
+        data_dir=str(tmp_path / "data"),
+        config_dir=str(tmp_path / "config"),
+    )
+    request = _request(tmp_path, source_sha)
+    request.payload["prompt"] = "x" * 64_001
+
+    result = backend.execute(request)
+
+    assert result.evidence_payload == {
+        "failure_class": "CLINE_PRELAUNCH_CONTRACT_FAILURE",
+        "prelaunch_operation": "PROMPT_CONSTRUCTION",
+        "exception_class": "ValueError",
+    }

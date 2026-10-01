@@ -20,7 +20,11 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
 from aos.process_utils import popen_headless, run_headless
-from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
+from aos.workspace_fingerprint import (
+    RUNTIME_OWNED_ROOT_LOCK_PATH,
+    WorkspaceFingerprintError,
+    compute_workspace_fingerprint,
+)
 from aos.workers.cline_cli_probe import (
     CLINE_ADAPTER_CONTRACT_VERSION,
     build_cline_child_environment,
@@ -58,6 +62,7 @@ class ClineJsonOutcome:
     failure_class: Optional[str] = None
     event_count: int = 0
     raw_error: Optional[str] = None
+    result_text: Optional[str] = None
 
 
 def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> ClineJsonOutcome:
@@ -67,6 +72,7 @@ def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> C
     usage: Dict[str, Any] = {}
     failure_class: Optional[str] = None
     raw_error: Optional[str] = None
+    result_text: Optional[str] = None
     count = 0
 
     all_text = f"{stdout}\n{stderr}"
@@ -91,6 +97,8 @@ def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> C
         event_type = event.get("type")
         if event_type == "run_result":
             finish_reason = event.get("finishReason")
+            if isinstance(event.get("text"), str):
+                result_text = event["text"]
             raw_usage = event.get("usage") or {}
             if isinstance(raw_usage, dict):
                 usage = {k: v for k, v in raw_usage.items() if k in _ALLOWED_USAGE}
@@ -107,7 +115,11 @@ def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> C
             else:
                 failure_class = "CONTRACT_FAILURE"
 
-    valid = bool(returncode == 0 and finish_reason in {"complete", "success"} and not failure_class)
+    valid = bool(
+        returncode == 0
+        and finish_reason in {"complete", "completed", "success"}
+        and not failure_class
+    )
     if not valid and failure_class is None:
         if returncode != 0:
             failure_class = "EXECUTION_NONZERO_EXIT"
@@ -122,6 +134,7 @@ def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> C
         failure_class=failure_class,
         event_count=count,
         raw_error=raw_error,
+        result_text=result_text,
     )
 
 
@@ -317,13 +330,22 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             ["git", "-C", workspace, "diff", "--name-only", "-z", "HEAD"],
             ["git", "-C", workspace, "ls-files", "--others", "--exclude-standard", "-z"],
         )
-        raw = b""
-        for command in commands:
+        changed: Set[str] = set()
+        for index, command in enumerate(commands):
             result = run_headless(command, timeout=30, text=False)
             if result.returncode:
                 raise WorkspaceFingerprintError("unable to inspect Cline workspace mutations")
-            raw += result.stdout
-        return sorted({os.fsdecode(item).replace("\\", "/") for item in raw.split(b"\0") if item})
+            paths = {
+                os.fsdecode(item).replace("\\", "/")
+                for item in result.stdout.split(b"\0")
+                if item
+            }
+            if index == 1:
+                # Match fingerprint semantics: only the exact untracked root
+                # Runtime V1 lock is pre-existing coordination state.
+                paths.discard(RUNTIME_OWNED_ROOT_LOCK_PATH)
+            changed.update(paths)
+        return sorted(changed)
 
     @staticmethod
     def _in_scope(path: str, scopes: List[str]) -> bool:
@@ -371,7 +393,10 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         availability: ExecutionAvailabilitySnapshot,
         *,
         status: str = "DEGRADED",
+        evidence: Optional[Dict[str, Any]] = None,
     ) -> ExecutionResult:
+        evidence_payload = {"failure_class": failure_class}
+        evidence_payload.update(dict(evidence or {}))
         return ExecutionResult(
             backend_id=self.backend_id,
             worker_id="cline_cli",
@@ -381,7 +406,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             exit_code=1,
             workspace=request.workspace,
             sanitized_errors=[failure_class],
-            evidence_payload={"failure_class": failure_class},
+            evidence_payload=evidence_payload,
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             availability=availability,
         )
@@ -409,17 +434,29 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         executable = self._identity()
         if executable is None:
             return self._failure(request, "CLINE_EXECUTABLE_UNAVAILABLE", availability)
+        prelaunch_operation = "SOURCE_SHA_RESOLUTION"
         try:
             source_sha = self._source_sha(request, prior)
+            prelaunch_operation = "WORKSPACE_FINGERPRINT"
             before = compute_workspace_fingerprint(request.workspace, source_sha=source_sha)
+            prelaunch_operation = "PROMPT_CONSTRUCTION"
             prompt = self._prompt(request, context_pack)
-        except (ValueError, OSError, WorkspaceFingerprintError):
+        except (ValueError, OSError, WorkspaceFingerprintError) as exc:
+            safe_evidence = {
+                "prelaunch_operation": prelaunch_operation,
+                "exception_class": exc.__class__.__name__,
+            }
             failed = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.CONTRACT_FAILURE,
                 self._now_iso(), source="CLINE_PRELAUNCH_GATE",
-                evidence={"reason": "PRELAUNCH_CONTRACT_FAILURE"},
+                evidence={"reason": "PRELAUNCH_CONTRACT_FAILURE", **safe_evidence},
             )
-            return self._failure(request, "CLINE_PRELAUNCH_CONTRACT_FAILURE", failed)
+            return self._failure(
+                request,
+                "CLINE_PRELAUNCH_CONTRACT_FAILURE",
+                failed,
+                evidence=safe_evidence,
+            )
 
         if prior is not None:
             if request.task_id in prior.completed_work_unit_ids:
@@ -547,7 +584,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             workspace=request.workspace,
             changed_paths=changed,
             artifact_hashes=artifacts,
-            stdout_digest="Cline completed a verified structured turn",
+            stdout_digest=outcome.result_text or "Cline completed a verified structured turn",
             resource_usage=outcome.usage,
             evidence_payload={
                 "finish_reason": outcome.finish_reason,
@@ -556,6 +593,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "underlying_provider": self.underlying_provider,
                 "underlying_model": self.underlying_model,
                 "cost_class": self.underlying_cost_class,
+                **({"raw_output": outcome.result_text} if outcome.result_text is not None else {}),
             },
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             agentic_identity=identity,
