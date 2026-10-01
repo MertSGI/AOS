@@ -78,13 +78,21 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def _identity(self) -> Optional[Dict[str, str]]:
-        return self._injected_identity or resolve_executable_identity("agy")
+        if self._injected_identity is not None:
+            return self._injected_identity
+        try:
+            cli_path = AntigravityCLIAdapter.discover_cli_binary()
+        except (ValueError, OSError):
+            return None
+        return resolve_executable_identity(cli_path)
 
     def _capability_status(self) -> str:
         if self._capability_status_provider is not None:
             return str(self._capability_status_provider())
         identity = self._identity()
-        return resolve_capability_status("agy", identity=identity)
+        if identity is None:
+            return "UNPROVEN"
+        return resolve_capability_status(identity["path"], identity=identity)
 
     def get_availability(self) -> ExecutionAvailabilitySnapshot:
         capability = self._capability_status()

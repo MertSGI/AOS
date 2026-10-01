@@ -3,10 +3,12 @@ import subprocess
 from pathlib import Path
 
 from extensions.autonomy_fabric.antigravity_adapter import (
+    AntigravityCLIAdapter,
     AntigravityResponse,
     AntigravityStatus,
     FakeAntigravityAdapter,
 )
+from extensions.autonomy_fabric import antigravity_agentic_backend as backend_mod
 from extensions.autonomy_fabric.antigravity_agentic_backend import (
     AntigravityAgenticExecutionBackend,
 )
@@ -391,4 +393,161 @@ def test_regression_g_unrelated_workspace_mutation_fails_closed(tmp_path):
 
     assert res.status == "FAILED"
     assert "ANTIGRAVITY_WRITE_SCOPE_VIOLATION" in res.sanitized_errors
+
+
+# Regression Tests for Managed CLI Identity Discovery (A through F)
+def test_identity_regression_a_injected_identity_preserved():
+    custom_identity = {
+        "path": "/custom/injected/antigravity",
+        "filename": "antigravity",
+        "sha256": "b" * 64,
+        "version": "2.0.0",
+    }
+    backend = AntigravityAgenticExecutionBackend(executable_identity=custom_identity)
+    assert backend._identity() == custom_identity
+
+
+def test_identity_regression_b_managed_executable_resolved_when_agy_absent(monkeypatch, tmp_path):
+    fake_managed = tmp_path / "antigravity.exe"
+    fake_managed.write_text("binary content", encoding="utf-8")
+
+    monkeypatch.setattr("shutil.which", lambda cmd, **kwargs: None)
+    monkeypatch.setattr(
+        AntigravityCLIAdapter,
+        "discover_cli_binary",
+        staticmethod(lambda *args, **kwargs: str(fake_managed)),
+    )
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_executable_identity",
+        lambda path, **kwargs: {
+            "path": str(fake_managed),
+            "filename": "antigravity.exe",
+            "sha256": "c" * 64,
+            "version": "1.2.10",
+        } if path == str(fake_managed) else None,
+    )
+
+    backend = AntigravityAgenticExecutionBackend()
+    identity = backend._identity()
+    assert identity is not None
+    assert identity["path"] == str(fake_managed)
+    assert identity["filename"] == "antigravity.exe"
+
+
+def test_identity_regression_c_matching_attestation_yields_available_with_managed_discovery(monkeypatch, tmp_path):
+    fake_managed = tmp_path / "antigravity.exe"
+    fake_managed.write_text("binary content", encoding="utf-8")
+    expected_identity = {
+        "path": str(fake_managed),
+        "filename": "antigravity.exe",
+        "sha256": "d" * 64,
+        "version": "1.2.10",
+    }
+
+    monkeypatch.setattr(
+        AntigravityCLIAdapter,
+        "discover_cli_binary",
+        staticmethod(lambda *args, **kwargs: str(fake_managed)),
+    )
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_executable_identity",
+        lambda path, **kwargs: expected_identity if path == str(fake_managed) else None,
+    )
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_capability_status",
+        lambda path, identity=None, **kwargs: "PROVEN" if identity == expected_identity else "UNPROVEN",
+    )
+
+    backend = AntigravityAgenticExecutionBackend()
+    availability = backend.get_availability()
+    assert availability.state.value == "AVAILABLE"
+    assert availability.evidence["capability_status"] == "PROVEN"
+
+
+def test_identity_regression_d_discovery_failure_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        AntigravityCLIAdapter,
+        "discover_cli_binary",
+        staticmethod(lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("CLI_BINARY_NOT_FOUND"))),
+    )
+
+    backend = AntigravityAgenticExecutionBackend()
+    assert backend._identity() is None
+    assert backend._capability_status() == "UNPROVEN"
+    availability = backend.get_availability()
+    assert availability.state.value == "CONTRACT_FAILURE"
+
+
+def test_identity_regression_e_adapter_and_backend_identity_refer_to_same_binary(monkeypatch, tmp_path):
+    fake_managed = tmp_path / "antigravity.exe"
+    fake_managed.write_text("binary content", encoding="utf-8")
+    resolved_id = {
+        "path": str(fake_managed),
+        "filename": "antigravity.exe",
+        "sha256": "e" * 64,
+        "version": "1.2.10",
+    }
+
+    monkeypatch.setattr(
+        AntigravityCLIAdapter,
+        "discover_cli_binary",
+        staticmethod(lambda *args, **kwargs: str(fake_managed)),
+    )
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_executable_identity",
+        lambda path, **kwargs: resolved_id if path == str(fake_managed) else None,
+    )
+
+    backend = AntigravityAgenticExecutionBackend()
+    identity = backend._identity()
+    adapter = backend._adapter_instance()
+
+    assert identity is not None
+    assert adapter.cli_binary_path == identity["path"]
+
+
+def test_identity_regression_f_no_literal_agy_dependency_in_backend(monkeypatch, tmp_path):
+    fake_managed = tmp_path / "antigravity.exe"
+    fake_managed.write_text("binary content", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(
+        AntigravityCLIAdapter,
+        "discover_cli_binary",
+        staticmethod(lambda *args, **kwargs: str(fake_managed)),
+    )
+    def fake_resolve_identity(path, **kwargs):
+        calls.append(("identity", path))
+        return {
+            "path": str(fake_managed),
+            "filename": "antigravity.exe",
+            "sha256": "f" * 64,
+            "version": "1.2.10",
+        }
+    def fake_resolve_capability(path, identity=None, **kwargs):
+        calls.append(("capability", path))
+        return "PROVEN"
+
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_executable_identity",
+        fake_resolve_identity,
+    )
+    monkeypatch.setattr(
+        backend_mod,
+        "resolve_capability_status",
+        fake_resolve_capability,
+    )
+
+    backend = AntigravityAgenticExecutionBackend()
+    backend.get_availability()
+
+    for call_type, target in calls:
+        assert target != "agy", f"Literal 'agy' passed to {call_type}"
+        assert target == str(fake_managed)
+
 
