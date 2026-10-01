@@ -525,6 +525,22 @@ class RuntimeSupervisor:
             runtime_api_pid=None,
             panel_pid=None,
         )
+        self._acknowledge_shutdown_request()
+
+    def _acknowledge_shutdown_request(self) -> None:
+        request = read_json(self.control_path, {})
+        if not isinstance(request, dict) or str(request.get("action") or "").upper() != "SHUTDOWN":
+            return
+        acknowledged = {
+            "contract_version": CONTRACT_VERSION,
+            "action": "IDLE",
+            "last_consumed_action": "SHUTDOWN",
+            "last_requested_at": request.get("requested_at"),
+            "last_requested_by": request.get("requested_by"),
+            "acknowledged_at": utc_now(),
+            "acknowledged_by": "runtime_supervisor",
+        }
+        atomic_json(self.control_path, acknowledged)
 
     def _run_owned_loop(self) -> int:
         while not self.stop_event.is_set():

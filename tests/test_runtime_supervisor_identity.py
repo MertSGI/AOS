@@ -278,3 +278,93 @@ def test_supervisor_fails_closed_for_healthy_panel_owned_by_live_other_process(
     assert supervisor._ensure_panel("a" * 40) is False
     assert terminated == []
     assert supervisor.panel_child is None
+
+
+def test_shutdown_control_request_is_consumed_after_owned_shutdown(tmp_path: Path):
+    runtime_config = tmp_path / "runtime-config.json"
+    runtime_config.write_text(json.dumps({
+        "port": 18770,
+        "runtime_root": str(tmp_path / "state"),
+        "authorized_roots": [str(tmp_path)],
+        "projects": {},
+        "default_project": None,
+    }), encoding="utf-8")
+    supervisor_config = tmp_path / "supervisor-config.json"
+    supervisor_config.write_text(json.dumps({
+        "supervisor_root": str(tmp_path / "supervisor"),
+        "runtime_config_path": str(runtime_config),
+        "panel_host_config_path": str(tmp_path / "panel-host.json"),
+        "panel_config_path": str(tmp_path / "panel.json"),
+        "controller_relay_dir": str(tmp_path / "relay"),
+    }), encoding="utf-8")
+
+    supervisor = RuntimeSupervisor(supervisor_config)
+    try:
+        control_payload = {
+            "contract_version": "1.0.0",
+            "action": "SHUTDOWN",
+            "requested_by": "runtime_authenticated_api",
+            "requested_at": "2026-10-01T14:10:28+00:00",
+        }
+        supervisor.control_path.write_text(json.dumps(control_payload), encoding="utf-8")
+
+        assert supervisor._shutdown_requested() is True
+
+        supervisor._shutdown_owned()
+
+        control_data = json.loads(supervisor.control_path.read_text(encoding="utf-8"))
+        assert control_data["action"] == "IDLE"
+        assert control_data["last_consumed_action"] == "SHUTDOWN"
+        assert control_data["last_requested_by"] == "runtime_authenticated_api"
+        assert control_data["last_requested_at"] == "2026-10-01T14:10:28+00:00"
+        assert control_data["acknowledged_by"] == "runtime_supervisor"
+        assert bool(control_data.get("acknowledged_at")) is True
+        assert control_data.get("contract_version") == "1.0.0"
+
+        assert supervisor._shutdown_requested() is False
+
+        restarted = RuntimeSupervisor(supervisor_config)
+        try:
+            assert restarted._shutdown_requested() is False
+        finally:
+            restarted.relay_worker.close()
+    finally:
+        supervisor.relay_worker.close()
+
+
+def test_shutdown_acknowledgement_is_idempotent_for_idle_action(tmp_path: Path):
+    runtime_config = tmp_path / "runtime-config.json"
+    runtime_config.write_text(json.dumps({
+        "port": 18770,
+        "runtime_root": str(tmp_path / "state"),
+        "authorized_roots": [str(tmp_path)],
+        "projects": {},
+        "default_project": None,
+    }), encoding="utf-8")
+    supervisor_config = tmp_path / "supervisor-config.json"
+    supervisor_config.write_text(json.dumps({
+        "supervisor_root": str(tmp_path / "supervisor"),
+        "runtime_config_path": str(runtime_config),
+        "panel_host_config_path": str(tmp_path / "panel-host.json"),
+        "panel_config_path": str(tmp_path / "panel.json"),
+        "controller_relay_dir": str(tmp_path / "relay"),
+    }), encoding="utf-8")
+
+    supervisor = RuntimeSupervisor(supervisor_config)
+    try:
+        control_payload = {
+            "contract_version": "1.0.0",
+            "action": "IDLE",
+            "last_consumed_action": "SHUTDOWN",
+            "requested_by": "runtime_authenticated_api",
+            "requested_at": "2026-10-01T14:10:28+00:00",
+        }
+        supervisor.control_path.write_text(json.dumps(control_payload), encoding="utf-8")
+
+        supervisor._acknowledge_shutdown_request()
+
+        control_data = json.loads(supervisor.control_path.read_text(encoding="utf-8"))
+        assert control_data["action"] == "IDLE"
+        assert supervisor._shutdown_requested() is False
+    finally:
+        supervisor.relay_worker.close()
