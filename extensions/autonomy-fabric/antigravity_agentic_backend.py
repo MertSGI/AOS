@@ -14,6 +14,7 @@ from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
 from aos.process_utils import run_headless
 from aos.workspace_fingerprint import (
+    RUNTIME_OWNED_ROOT_LOCK_PATH,
     WorkspaceFingerprintError,
     compute_workspace_fingerprint,
 )
@@ -162,12 +163,18 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         )
         if tracked.returncode or untracked.returncode:
             raise WorkspaceFingerprintError("unable to inspect Antigravity workspace mutations")
-        paths = {
+        tracked_paths = {
             os.fsdecode(raw).replace("\\", "/")
-            for raw in (tracked.stdout + untracked.stdout).split(b"\0")
+            for raw in tracked.stdout.split(b"\0")
             if raw
         }
-        return sorted(paths)
+        untracked_paths = {
+            os.fsdecode(raw).replace("\\", "/")
+            for raw in untracked.stdout.split(b"\0")
+            if raw
+        }
+        untracked_paths.discard(RUNTIME_OWNED_ROOT_LOCK_PATH)
+        return sorted(tracked_paths | untracked_paths)
 
     @staticmethod
     def _in_scope(path: str, allowed: List[str]) -> bool:

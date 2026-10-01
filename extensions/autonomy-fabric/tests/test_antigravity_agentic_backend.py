@@ -228,3 +228,167 @@ def test_interrupt_delegates_to_owned_adapter_process():
     backend = _backend(adapter)
     backend.interrupt("execution-1")
     assert adapter.interrupted is True
+
+
+# Regression Tests A-G for Runtime-Owned Root Lock
+def test_regression_a_untracked_root_lock_not_returned_by_changed_paths(tmp_path):
+    _repo(tmp_path)
+    lock_file = tmp_path / ".aos_workspace_active.lock"
+    lock_file.write_bytes(b"0")
+
+    changed = AntigravityAgenticExecutionBackend._changed_paths(str(tmp_path))
+    assert ".aos_workspace_active.lock" not in changed
+    assert changed == []
+
+
+def test_regression_b_actively_held_root_lock_succeeds(tmp_path):
+    from aos.runtime_store import exclusive_file_lock
+
+    source_sha = _repo(tmp_path)
+    lock_file = tmp_path / ".aos_workspace_active.lock"
+    lock_file.write_bytes(b"0")
+
+    with exclusive_file_lock(lock_file):
+        changed = AntigravityAgenticExecutionBackend._changed_paths(str(tmp_path))
+        assert changed == []
+
+        adapter = FakeAntigravityAdapter()
+        backend = _backend(adapter)
+        req = _request(tmp_path, source_sha, write_scope=[])
+        result = backend.execute(req)
+        assert result.status == "SUCCESS"
+        assert ".aos_workspace_active.lock" not in result.changed_paths
+
+
+def test_regression_c_different_untracked_product_file_remains_visible(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / ".aos_workspace_active.lock").write_bytes(b"0")
+    (tmp_path / "new_product.py").write_text("print('hello')\n", encoding="utf-8")
+
+    changed = AntigravityAgenticExecutionBackend._changed_paths(str(tmp_path))
+    assert ".aos_workspace_active.lock" not in changed
+    assert "new_product.py" in changed
+    assert changed == ["new_product.py"]
+
+
+def test_regression_d_tracked_lock_named_file_remains_visible_when_modified(tmp_path):
+    _repo(tmp_path)
+    lock_file = tmp_path / ".aos_workspace_active.lock"
+    lock_file.write_text("initial lock content\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".aos_workspace_active.lock"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "track lock file"], cwd=tmp_path, check=True)
+
+    # Modify the tracked lock file
+    lock_file.write_text("modified lock content\n", encoding="utf-8")
+
+    changed = AntigravityAgenticExecutionBackend._changed_paths(str(tmp_path))
+    assert ".aos_workspace_active.lock" in changed
+
+
+def test_regression_e_nested_lock_named_file_remains_visible(tmp_path):
+    _repo(tmp_path)
+    (tmp_path / ".aos_workspace_active.lock").write_bytes(b"0")
+    nested_dir = tmp_path / "nested"
+    nested_dir.mkdir(parents=True)
+    nested_lock = nested_dir / ".aos_workspace_active.lock"
+    nested_lock.write_bytes(b"0")
+
+    changed = AntigravityAgenticExecutionBackend._changed_paths(str(tmp_path))
+    assert ".aos_workspace_active.lock" not in changed
+    assert "nested/.aos_workspace_active.lock" in changed
+
+
+def test_regression_f_planning_bridge_with_lock_held_returns_success_empty_changed_paths(tmp_path):
+    from aos.runtime_store import exclusive_file_lock
+    from extensions.autonomy_fabric.agentic_planning_bridge import AgenticStructuredPlanningBridge
+
+    source_sha = _repo(tmp_path)
+    lock_file = tmp_path / ".aos_workspace_active.lock"
+    lock_file.write_bytes(b"0")
+
+    valid_json = '{"answer": "valid plan"}'
+    adapter = FakeAntigravityAdapter()
+    adapter.default_status = AntigravityStatus.SUCCESS
+    # Return response containing JSON
+    cid = "conv-planning-1"
+    adapter.set_canned_response(
+        cid,
+        AntigravityResponse(
+            conversation_id=cid,
+            status=AntigravityStatus.SUCCESS,
+            mapped_aos_status=RunStatus.COMPLETED,
+            raw_response=f"Here is the plan:\n```json\n{valid_json}\n```",
+            parsed_json={"conversation_id": cid, "status": "SUCCESS"},
+            duration_seconds=0.1,
+            turn_count=1,
+        ),
+    )
+    class PlanningAntigravityBackend(AntigravityAgenticExecutionBackend):
+        def _run(self, request, context_pack, prior):
+            res = super()._run(request, context_pack, prior)
+            if res.status == "SUCCESS":
+                res.stdout_digest = valid_json
+                res.evidence_payload["raw_output"] = valid_json
+            return res
+
+    backend = PlanningAntigravityBackend(
+        adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        executable_identity=IDENTITY,
+    )
+    bridge = AgenticStructuredPlanningBridge(backend)
+
+    schema = {
+        "type": "object",
+        "required": ["answer"],
+        "properties": {"answer": {"type": "string"}},
+    }
+
+    req = ExecutionRequest(
+        task_id="plan-with-lock",
+        project_id="test-ag-planning",
+        workspace=str(tmp_path),
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH-PLAN-1",
+        payload={
+            "prompt": "Produce execution plan",
+            "schema": schema,
+            "source_sha": source_sha,
+            "conversation_id": cid,
+        },
+    )
+
+    with exclusive_file_lock(lock_file):
+        res = bridge.execute(req)
+        assert res.status == "SUCCESS"
+        assert res.changed_paths == []
+        assert "ANTIGRAVITY_WRITE_SCOPE_VIOLATION" not in res.sanitized_errors
+        assert res.evidence_payload["proposal"] == {"answer": "valid plan"}
+
+
+def test_regression_g_unrelated_workspace_mutation_fails_closed(tmp_path):
+    source_sha = _repo(tmp_path)
+    (tmp_path / ".aos_workspace_active.lock").write_bytes(b"0")
+
+    adapter = FakeAntigravityAdapter()
+    backend = _backend(adapter)
+
+    class MutatingBackend(AntigravityAgenticExecutionBackend):
+        def _run(self, request, context_pack, prior):
+            # Mutate unauthorized file during execution
+            (Path(request.workspace) / "unauthorized_mutation.txt").write_text("mutated\n", encoding="utf-8")
+            return super()._run(request, context_pack, prior)
+
+    mutating_backend = MutatingBackend(
+        adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        executable_identity=IDENTITY,
+    )
+
+    req = _request(tmp_path, source_sha, write_scope=["allowed_dir/"])
+    res = mutating_backend.execute(req)
+
+    assert res.status == "FAILED"
+    assert "ANTIGRAVITY_WRITE_SCOPE_VIOLATION" in res.sanitized_errors
+
