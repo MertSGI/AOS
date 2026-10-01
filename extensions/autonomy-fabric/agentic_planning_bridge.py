@@ -95,7 +95,7 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
 
     @property
     def cost(self) -> ExecutionCost:
-        return self.underlying_backend.cost
+        return ExecutionCost.QUOTA_LIMITED
 
     def get_health(self) -> ExecutionHealth:
         return self.underlying_backend.get_health()
@@ -183,6 +183,7 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
                 "planning_mode": True,
                 "schema": schema,
                 "source_sha": request.payload.get("source_sha", "0" * 40),
+                **({"conversation_id": request.payload["conversation_id"]} if "conversation_id" in request.payload else {}),
             },
             agentic_identity=request.agentic_identity,
             context_pack=request.context_pack,
@@ -233,16 +234,28 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        # Extract structured proposal from output
+        # Extract structured proposal from output in exact order
         output_text = agentic_result.stdout_digest or ""
-        if hasattr(agentic_result, "evidence_payload"):
-            # If underlying backend provided raw output in evidence payload or stdout
-            raw = agentic_result.evidence_payload.get("raw_output") or agentic_result.evidence_payload.get("proposal")
-            if isinstance(raw, dict):
-                proposal = raw
+        proposal: Optional[Dict[str, Any]] = None
+
+        # 1. agentic_result.transient_structured_output if it is a dict
+        if isinstance(getattr(agentic_result, "transient_structured_output", None), dict):
+            proposal = agentic_result.transient_structured_output
+        elif hasattr(agentic_result, "evidence_payload") and isinstance(agentic_result.evidence_payload, dict):
+            # 2. existing evidence_payload["proposal"] if dict
+            raw_prop = agentic_result.evidence_payload.get("proposal")
+            if isinstance(raw_prop, dict):
+                proposal = raw_prop
             else:
-                proposal = extract_json_object(str(raw or output_text))
-        else:
+                # 3. existing evidence_payload["raw_output"] if supported
+                raw_out = agentic_result.evidence_payload.get("raw_output")
+                if isinstance(raw_out, dict):
+                    proposal = raw_out
+                elif raw_out:
+                    proposal = extract_json_object(str(raw_out))
+
+        # 4. stdout parsing compatibility path
+        if not proposal and output_text:
             proposal = extract_json_object(output_text)
 
         if not proposal:

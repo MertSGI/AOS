@@ -193,6 +193,43 @@ class QuotaGovernor:
             quota_scope=observation.quota_scope,
         )
 
+    def record_success(
+        self,
+        provider_id: str,
+        model_id: Optional[str],
+        task_class: str,
+    ) -> None:
+        """Record success to supersede stale transient rate/quota state."""
+        canonical_task = canonical_task_class(task_class)
+        now = self.clock()
+        matching_scopes: set[str] = set()
+        for observation in self._observations.values():
+            if (
+                observation.provider_id == provider_id
+                and observation.model_id in (None, model_id)
+                and observation.task_class == canonical_task
+            ):
+                matching_scopes.add(observation.quota_scope)
+
+        scopes_to_update = matching_scopes if matching_scopes else {"UNKNOWN"}
+        for scope in sorted(scopes_to_update):
+            available_obs = RateLimitObservation(
+                provider_id=provider_id,
+                model_id=model_id,
+                task_class=canonical_task,
+                observed_at=dt.datetime.fromtimestamp(now, tz=dt.timezone.utc).isoformat(),
+                classification="AVAILABLE",
+                quota_scope=scope,
+                evidence_source=ObservationSource.OBSERVED_RUNTIME.value,
+            )
+            self.record(available_obs)
+
+    POLICY_REVALIDATION_WINDOWS = {
+        "RATE_LIMITED": 120.0,
+        "QUOTA_EXHAUSTED": 900.0,
+        "CREDIT_EXHAUSTED": 21600.0,
+    }
+
     @staticmethod
     def _deadline(observation: RateLimitObservation) -> Optional[float]:
         values = [
@@ -206,7 +243,7 @@ class QuotaGovernor:
 
     def _decision_for(self, key: str, observation: RateLimitObservation) -> QuotaDecision:
         now = self.clock()
-        deadline = self._deadline(observation)
+        authoritative_deadline = self._deadline(observation)
         remaining_values = [
             value for value in (observation.request_remaining, observation.token_remaining)
             if value is not None
@@ -214,24 +251,61 @@ class QuotaGovernor:
         exhausted_marker = observation.classification in {
             "RATE_LIMITED", "QUOTA_EXHAUSTED", "CREDIT_EXHAUSTED"
         } or any(value == 0 for value in remaining_values)
-        if exhausted_marker and (deadline is None or deadline > now):
-            return QuotaDecision(
-                QuotaState.EXHAUSTED.value,
-                False,
-                deadline,
-                observation.classification,
-                observation.evidence_source,
-                key,
-            )
-        if exhausted_marker and deadline is not None and deadline <= now:
-            return QuotaDecision(
-                QuotaState.AVAILABLE.value,
-                True,
-                None,
-                "WINDOW_EXPIRED",
-                observation.evidence_source,
-                key,
-            )
+
+        if exhausted_marker:
+            if authoritative_deadline is not None:
+                if authoritative_deadline > now:
+                    return QuotaDecision(
+                        QuotaState.EXHAUSTED.value,
+                        False,
+                        authoritative_deadline,
+                        observation.classification,
+                        observation.evidence_source,
+                        key,
+                    )
+                else:
+                    return QuotaDecision(
+                        QuotaState.AVAILABLE.value,
+                        True,
+                        None,
+                        "WINDOW_EXPIRED",
+                        observation.evidence_source,
+                        key,
+                    )
+            else:
+                # No authoritative deadline: use AOS policy revalidation window
+                if observation.classification in ("QUOTA_EXHAUSTED", "CREDIT_EXHAUSTED"):
+                    policy_window = 21600.0
+                elif observation.evidence_source == ObservationSource.ADAPTIVE_ESTIMATE.value:
+                    policy_window = 900.0
+                else:
+                    policy_window = self.POLICY_REVALIDATION_WINDOWS.get(
+                        observation.classification, 120.0
+                    )
+                observed_epoch = _parse_observed_at(observation.observed_at)
+                synthetic_revalidation_at = (
+                    observed_epoch + policy_window
+                    if observed_epoch != float("-inf")
+                    else now + policy_window
+                )
+                if now < synthetic_revalidation_at:
+                    return QuotaDecision(
+                        QuotaState.EXHAUSTED.value,
+                        False,
+                        synthetic_revalidation_at,
+                        observation.classification,
+                        observation.evidence_source,
+                        key,
+                    )
+                else:
+                    return QuotaDecision(
+                        QuotaState.CONSTRAINED.value,
+                        True,
+                        None,
+                        "REVALIDATION_DUE",
+                        observation.evidence_source,
+                        key,
+                    )
         ratios = []
         if observation.request_limit and observation.request_remaining is not None:
             ratios.append(observation.request_remaining / observation.request_limit)
@@ -310,6 +384,30 @@ class QuotaGovernor:
                 self._observations[item.key].observed_at if item.key else ""
             ),
         )
+
+    def latest_observation(
+        self,
+        provider_id: str,
+        model_id: Optional[str],
+        task_class: str,
+        *,
+        quota_scope: Optional[str] = None,
+    ) -> Optional[RateLimitObservation]:
+        """Return the latest RateLimitObservation for a provider/model/task_class."""
+        if self._corrupt:
+            return None
+        canonical_task = canonical_task_class(task_class)
+        matches = [
+            observation
+            for observation in self._observations.values()
+            if observation.provider_id == provider_id
+            and observation.model_id in (None, model_id)
+            and observation.task_class == canonical_task
+            and (quota_scope is None or observation.quota_scope == quota_scope)
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda item: _parse_observed_at(item.observed_at))
 
     def earliest_retry(
         self,

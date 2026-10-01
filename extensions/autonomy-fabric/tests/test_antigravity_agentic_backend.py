@@ -320,7 +320,7 @@ def test_regression_f_planning_bridge_with_lock_held_returns_success_empty_chang
             status=AntigravityStatus.SUCCESS,
             mapped_aos_status=RunStatus.COMPLETED,
             raw_response=f"Here is the plan:\n```json\n{valid_json}\n```",
-            parsed_json={"conversation_id": cid, "status": "SUCCESS"},
+            parsed_json={"conversation_id": cid, "status": "SUCCESS", "response": valid_json},
             duration_seconds=0.1,
             turn_count=1,
         ),

@@ -2,53 +2,218 @@
   "schema_version": "0.1.0",
   "routing_mode": "DETERMINISTIC",
   "allow_paid_fallback": false,
+  "paid_fallback_enabled": false,
+  "paid_daily_budget_usd": 0,
+  "paid_monthly_budget_usd": 0,
   "allow_provider_fallback": true,
   "data_classification": "PUBLIC",
   "risk_routes": {
     "R0": {
-      "preferred_providers": ["gemini", "groq", "ollama"]
+      "preferred_providers": [
+        "nemotron",
+        "gemini",
+        "groq",
+        "cloudflare",
+        "openrouter_free",
+        "cerebras",
+        "huggingface_router",
+        "freellmapi_local",
+        "ollama",
+        "openai_paid_safety"
+      ]
     }
   },
   "providers": {
+    "nemotron": {
+      "provider_id": "nemotron",
+      "display_name": "NVIDIA / Nemotron",
+      "provider_console_url": "https://ngc.nvidia.com/",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "credential_env_var": "NVIDIA_API_KEY",
+      "billing_class": "FREE_TIER",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 1048576,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
+    },
     "gemini": {
       "provider_id": "gemini",
+      "display_name": "Google Gemini",
+      "provider_console_url": "https://aistudio.google.com/app/apikey",
       "model_id": "gemini-3.6-flash",
       "credential_env_var": "GEMINI_API_KEY",
       "billing_class": "FREE_TIER",
       "structured_output": true,
       "cloud_local": "CLOUD",
       "enabled": true,
-      "allowed_data_classifications": ["PUBLIC"]
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 1048576,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
     },
     "groq": {
       "provider_id": "groq",
+      "display_name": "Groq",
+      "provider_console_url": "https://console.groq.com/keys",
       "model_id": "openai/gpt-oss-120b",
       "credential_env_var": "GROQ_API_KEY",
       "billing_class": "FREE_TIER",
       "structured_output": true,
       "cloud_local": "CLOUD",
       "enabled": true,
-      "allowed_data_classifications": ["PUBLIC"]
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
+    },
+    "cloudflare": {
+      "provider_id": "cloudflare",
+      "display_name": "Cloudflare Workers AI",
+      "provider_console_url": "https://dash.cloudflare.com/",
+      "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "credential_env_var": "CLOUDFLARE_API_TOKEN",
+      "additional_nonsecret_env_vars": [
+        "CLOUDFLARE_ACCOUNT_ID"
+      ],
+      "billing_class": "FREE_DAILY_QUOTA",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 24000,
+      "quality_tier": 2,
+      "scarcity_class": "LIMITED"
+    },
+    "openrouter_free": {
+      "provider_id": "openrouter_free",
+      "display_name": "OpenRouter Free",
+      "provider_console_url": "https://openrouter.ai/keys",
+      "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model_id": "openrouter/free",
+      "credential_env_var": "OPENROUTER_API_KEY",
+      "billing_class": "FREE",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 200000,
+      "quality_tier": 2,
+      "scarcity_class": "SCARCE"
+    },
+    "cerebras": {
+      "provider_id": "cerebras",
+      "display_name": "Cerebras Free Trial",
+      "provider_console_url": "https://cloud.cerebras.ai/",
+      "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "https://api.cerebras.ai/v1",
+      "model_id": "gpt-oss-120b",
+      "credential_env_var": "CEREBRAS_API_KEY",
+      "billing_class": "FREE_TRIAL",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
+    },
+    "huggingface_router": {
+      "provider_id": "huggingface_router",
+      "display_name": "Hugging Face Inference Router",
+      "provider_console_url": "https://huggingface.co/settings/tokens",
+      "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "https://router.huggingface.co/v1",
+      "model_id": "openai/gpt-oss-120b:fastest",
+      "credential_env_var": "HF_TOKEN",
+      "billing_class": "FREE",
+      "structured_output": true,
+      "cloud_local": "CLOUD",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "SCARCE"
+    },
+    "freellmapi_local": {
+      "provider_id": "freellmapi_local",
+      "display_name": "FreeLLMAPI (Local Meta-Provider)",
+      "adapter_type": "FREELLMAPI_LOCAL",
+      "api_protocol": "OPENAI_CHAT_COMPLETIONS",
+      "base_url": "http://127.0.0.1:3000/v1",
+      "readiness_url": "http://127.0.0.1:3000/readyz",
+      "readiness_timeout_seconds": 1.5,
+      "upstream_commit_sha": "15c30081d2ce832bea16d804d9edac4ed87c7bc3",
+      "model_id": "auto:reliable",
+      "credential_env_var": "FREELLMAPI_LOCAL_API_KEY",
+      "billing_class": "FREE",
+      "structured_output": true,
+      "cloud_local": "LOCAL",
+      "enabled": true,
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ],
+      "model_context_tokens": null,
+      "quality_tier": 2,
+      "scarcity_class": "NORMAL"
     },
     "ollama": {
       "provider_id": "ollama",
+      "display_name": "Ollama (Local)",
       "model_id": "llama3.3:70b",
       "credential_env_var": null,
       "billing_class": "LOCAL",
       "structured_output": true,
       "cloud_local": "LOCAL",
       "enabled": true,
-      "allowed_data_classifications": ["PUBLIC", "INTERNAL", "CONFIDENTIAL"]
+      "allowed_data_classifications": [
+        "PUBLIC",
+        "INTERNAL",
+        "CONFIDENTIAL"
+      ],
+      "model_context_tokens": null,
+      "quality_tier": 2,
+      "scarcity_class": "NORMAL"
     },
-    "openai": {
-      "provider_id": "openai",
-      "model_id": "gpt-5.6-sol",
+    "openai_paid_safety": {
+      "provider_id": "openai_paid_safety",
+      "display_name": "OpenAI Paid Safety Net (Disabled)",
+      "provider_console_url": "https://platform.openai.com/api-keys",
+      "adapter_type": "GENERIC_OPENAI_COMPATIBLE",
+      "api_protocol": "OPENAI_RESPONSES",
+      "base_url": "https://api.openai.com/v1",
+      "model_id": "gpt-5.6-luna",
       "credential_env_var": "OPENAI_API_KEY",
       "billing_class": "PAID",
       "structured_output": true,
       "cloud_local": "CLOUD",
       "enabled": true,
-      "allowed_data_classifications": ["PUBLIC", "INTERNAL"]
+      "allowed_data_classifications": [
+        "PUBLIC"
+      ]
     }
   }
 }

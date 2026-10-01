@@ -246,6 +246,9 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             exit_code=1,
             workspace=request.workspace,
             sanitized_errors=[reason],
+            evidence_payload={
+                "failure_class": reason,
+            },
             availability=availability,
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
         )
@@ -309,11 +312,14 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         try:
             adapter = self._adapter_instance()
             self._active_execution_ids.add(request.request_id)
+            is_planning_mode = bool(request.payload.get("planning_mode", False))
+            format_to_use = "json" if is_planning_mode else "stream-json"
+            conv_id = (prior.session_or_thread_id if prior else None) or request.payload.get("conversation_id")
             response = adapter.execute_prompt(
                 self._prompt(request, context_pack),
-                conversation_id=(prior.session_or_thread_id if prior else None),
+                conversation_id=conv_id,
                 workspace_path=request.workspace,
-                output_format="stream-json",
+                output_format=format_to_use,
                 continue_conversation=prior is not None,
             )
         except Exception:
@@ -347,6 +353,30 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                 evidence={"terminal_status": response.status.value},
             )
             return self._failure(request, "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE", failed)
+
+        transient_structured_output: Optional[Dict[str, Any]] = None
+        if is_planning_mode:
+            raw_parsed = (response.parsed_json or {}).get("response")
+            parsed_dict: Optional[Dict[str, Any]] = None
+            if isinstance(raw_parsed, dict):
+                parsed_dict = raw_parsed
+            elif isinstance(raw_parsed, str) and raw_parsed.strip():
+                try:
+                    loaded = json.loads(raw_parsed)
+                    if isinstance(loaded, dict):
+                        parsed_dict = loaded
+                except (json.JSONDecodeError, ValueError):
+                    parsed_dict = None
+
+            if parsed_dict is None:
+                failed = ExecutionAvailabilitySnapshot(
+                    ExecutionAvailabilityState.CONTRACT_FAILURE,
+                    self._now_iso(),
+                    source="ANTIGRAVITY_STRUCTURED_RESULT",
+                    evidence={"reason": "ANTIGRAVITY_PLANNING_OUTPUT_UNAVAILABLE"},
+                )
+                return self._failure(request, "ANTIGRAVITY_PLANNING_OUTPUT_UNAVAILABLE", failed)
+            transient_structured_output = parsed_dict
 
         try:
             changed_paths = self._changed_paths(request.workspace)
@@ -432,6 +462,7 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             agentic_identity=identity,
             availability=availability,
+            transient_structured_output=transient_structured_output,
         )
 
     def interrupt(self, execution_id: str) -> None:

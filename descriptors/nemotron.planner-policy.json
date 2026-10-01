@@ -36,7 +36,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 1048576,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
     },
     "gemini": {
       "provider_id": "gemini",
@@ -50,7 +53,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 1048576,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
     },
     "groq": {
       "provider_id": "groq",
@@ -64,7 +70,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
     },
     "cloudflare": {
       "provider_id": "cloudflare",
@@ -84,7 +93,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 24000,
+      "quality_tier": 2,
+      "scarcity_class": "LIMITED"
     },
     "openrouter_free": {
       "provider_id": "openrouter_free",
@@ -101,7 +113,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 200000,
+      "quality_tier": 2,
+      "scarcity_class": "SCARCE"
     },
     "cerebras": {
       "provider_id": "cerebras",
@@ -118,7 +133,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "LIMITED"
     },
     "huggingface_router": {
       "provider_id": "huggingface_router",
@@ -135,9 +153,11 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": 131072,
+      "quality_tier": 3,
+      "scarcity_class": "SCARCE"
     },
-
     "freellmapi_local": {
       "provider_id": "freellmapi_local",
       "display_name": "FreeLLMAPI (Local Meta-Provider)",
@@ -155,7 +175,10 @@
       "enabled": true,
       "allowed_data_classifications": [
         "PUBLIC"
-      ]
+      ],
+      "model_context_tokens": null,
+      "quality_tier": 2,
+      "scarcity_class": "NORMAL"
     },
     "ollama": {
       "provider_id": "ollama",
@@ -170,7 +193,10 @@
         "PUBLIC",
         "INTERNAL",
         "CONFIDENTIAL"
-      ]
+      ],
+      "model_context_tokens": null,
+      "quality_tier": 2,
+      "scarcity_class": "NORMAL"
     },
     "openai_paid_safety": {
       "provider_id": "openai_paid_safety",

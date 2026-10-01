@@ -35,6 +35,10 @@ class ProviderEntry:
     readiness_url: Optional[str] = None
     readiness_timeout_seconds: Optional[float] = None
     upstream_commit_sha: Optional[str] = None
+    model_context_tokens: Optional[int] = None
+    quality_tier: Optional[int] = None
+    expected_latency_ms: Optional[int] = None
+    scarcity_class: str = "UNKNOWN"
 
 
 @dataclass
@@ -95,6 +99,10 @@ class ProviderRegistry:
                 readiness_url=pdata.get("readiness_url"),
                 readiness_timeout_seconds=pdata.get("readiness_timeout_seconds"),
                 upstream_commit_sha=pdata.get("upstream_commit_sha"),
+                model_context_tokens=pdata.get("model_context_tokens"),
+                quality_tier=pdata.get("quality_tier"),
+                expected_latency_ms=pdata.get("expected_latency_ms"),
+                scarcity_class=pdata.get("scarcity_class", "UNKNOWN"),
             )
 
 

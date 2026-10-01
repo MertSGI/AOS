@@ -191,9 +191,11 @@ class ExecutionResult:
     evidence_payload: Dict[str, Any] = field(default_factory=dict)
     agentic_identity: Optional[AgenticSessionIdentity] = None
     availability: Optional[ExecutionAvailabilitySnapshot] = None
+    transient_structured_output: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        d.pop("transient_structured_output", None)
         d["evidence_class"] = self.evidence_class.value
         if self.availability is not None:
             d["availability"]["state"] = self.availability.state.value

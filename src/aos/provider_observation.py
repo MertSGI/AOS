@@ -340,7 +340,23 @@ def merge_rate_limit_observations(
         values[name] = new_value if choose_new else old_value
         if choose_new:
             sources[name] = new_source
-    newest = incoming if incoming.observed_at >= current.observed_at else current
+
+    # If incoming is newer and AVAILABLE, clear stale transient exhausted state
+    is_newer = incoming.observed_at >= current.observed_at
+    if is_newer and incoming.classification == "AVAILABLE":
+        values["retry_after_seconds"] = None
+        values["retry_at_epoch"] = None
+        values["request_reset_epoch"] = None
+        values["token_reset_epoch"] = None
+        values["request_remaining"] = None
+        values["token_remaining"] = None
+        for k in (
+            "retry_after_seconds", "retry_at_epoch", "request_reset_epoch",
+            "token_reset_epoch", "request_remaining", "token_remaining"
+        ):
+            sources.pop(k, None)
+
+    newest = incoming if is_newer else current
     return replace(
         newest,
         field_sources=sources,

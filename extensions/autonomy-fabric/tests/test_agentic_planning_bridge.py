@@ -91,7 +91,7 @@ def test_bridge_contract_and_capabilities():
     bridge = AgenticStructuredPlanningBridge(underlying)
     assert bridge.backend_class == BackendClass.REASONING_BACKEND
     assert bridge.supported_capabilities == {ExecutionCapability.MODEL_REASONING}
-    assert bridge.cost == ExecutionCost.SUBSCRIPTION_INCLUDED
+    assert bridge.cost == ExecutionCost.QUOTA_LIMITED
     assert bridge.get_health() == ExecutionHealth.HEALTHY
 
 

@@ -1272,7 +1272,25 @@ def build_planning_resource_requirements(
 ) -> Dict[str, Any]:
     """Derive truthful planning capability envelope from task class, prompt, and schema complexity."""
     c_task_class = canonical_task_class(task_class)
-    estimated_tokens = max(100, (len(prompt) + len(json.dumps(schema or {}))) // 4)
+    context_tokens = max(100, (len(prompt) + len(json.dumps(schema or {}))) // 4)
+
+    # Schema-sensitive output token reserve
+    schema_str = json.dumps(schema or {}).lower()
+    schema_title = str((schema or {}).get("title", "")).lower()
+    if "objective" in schema_title or "objective" in schema_str and "select" in schema_str:
+        output_token_reserve = 1000
+    elif "completion" in schema_title or "evaluation" in schema_title or "completion" in schema_str and "evaluate" in schema_str:
+        output_token_reserve = 1000
+    elif (
+        (schema or {}).get("properties", {}).get("tasks") is not None
+        or "tasks" in (schema or {}).get("required", [])
+        or "task" in schema_title and "plan" in schema_title
+    ):
+        output_token_reserve = 3200
+    else:
+        output_token_reserve = 2200
+
+    request_token_budget = context_tokens + output_token_reserve
 
     # Architectural / long context / high complexity markers
     prompt_lower = prompt.lower()
@@ -1281,17 +1299,19 @@ def build_planning_resource_requirements(
         or "architecture" in prompt_lower
         or "refactor" in prompt_lower
         or (c_task_class != TaskClass.STRUCTURED_PLANNING.value and "design intelligence" in prompt_lower)
-        or (c_task_class != TaskClass.STRUCTURED_PLANNING.value and estimated_tokens > 4000)
+        or (c_task_class != TaskClass.STRUCTURED_PLANNING.value and context_tokens > 4000)
     )
     is_small_reasoning = (
         c_task_class == TaskClass.SMALL_REASONING.value
-        or (estimated_tokens <= 1500 and not is_high_complexity)
+        or (context_tokens <= 1500 and not is_high_complexity)
     )
 
     if is_small_reasoning:
         return {
             "task_class": c_task_class,
-            "context_tokens": estimated_tokens,
+            "context_tokens": context_tokens,
+            "output_token_reserve": output_token_reserve,
+            "request_token_budget": request_token_budget,
             "minimum_quality": 1,
             "complexity_class": "LOW",
             "local_qwen_allowed": True,
@@ -1302,10 +1322,12 @@ def build_planning_resource_requirements(
     elif is_high_complexity:
         return {
             "task_class": c_task_class,
-            "context_tokens": estimated_tokens,
+            "context_tokens": context_tokens,
+            "output_token_reserve": output_token_reserve,
+            "request_token_budget": request_token_budget,
             "minimum_quality": 3,
             "complexity_class": "HIGH",
-            "local_qwen_allowed": False,
+            "local_qwen_allowed": True,
             "agentic_planning_allowed": True,
             "maximum_latency_ms": 30000,
             "scarcity_policy": "ALLOW_SCARCE",
@@ -1313,10 +1335,12 @@ def build_planning_resource_requirements(
     else:  # GENERAL / MEDIUM
         return {
             "task_class": c_task_class,
-            "context_tokens": estimated_tokens,
+            "context_tokens": context_tokens,
+            "output_token_reserve": output_token_reserve,
+            "request_token_budget": request_token_budget,
             "minimum_quality": 2,
             "complexity_class": "MEDIUM",
-            "local_qwen_allowed": estimated_tokens <= 3000,
+            "local_qwen_allowed": True,
             "agentic_planning_allowed": True,
             "maximum_latency_ms": 15000,
             "scarcity_policy": "ALLOW_SCARCE",

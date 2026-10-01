@@ -161,6 +161,23 @@
                 "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII_SENSITIVE"]
               },
               "minItems": 1
+            },
+            "model_context_tokens": {
+              "type": ["integer", "null"],
+              "minimum": 1024
+            },
+            "quality_tier": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 5
+            },
+            "expected_latency_ms": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "scarcity_class": {
+              "type": "string",
+              "enum": ["NORMAL", "LIMITED", "SCARCE", "UNKNOWN"]
             }
           }
         }

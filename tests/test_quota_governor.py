@@ -163,6 +163,7 @@ def test_backend_skips_quota_blocked_provider_without_calling_it(tmp_path):
     assert calls == ["gemini"]
     first_attempt = result.evidence_payload["provider_attempts"][0]
     assert first_attempt["provider_id"] == "nemotron"
-    assert first_attempt["status"] == "QUOTA_EXHAUSTED"
+    assert first_attempt["status"] == "SKIPPED"
+    assert first_attempt["error_class"] == "RATE_LIMITED"
     assert first_attempt["quota_decision"]["retry_at_epoch"] == 1120.0
     assert "raw" not in json.dumps(first_attempt).lower()

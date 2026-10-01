@@ -38,10 +38,12 @@ from aos.freellmapi_lifecycle import FreeLLMAPIConfig, FreeLLMAPILifecycle
 from aos.planner import PlannerContractError, PlannerCredentialError, PlannerTransientError
 from aos.provider_observation import (
     ContractFailureSubtype,
+    FailureFamily,
     RateLimitObservation,
     TaskClass,
     canonical_task_class,
 )
+from aos.provider_adequacy import ProviderAdequacyDecision, evaluate_provider_adequacy
 from aos.provider_circuit import CircuitState, ProviderCircuitBreakerRegistry
 from aos.provider_registry import ProviderRegistry, ProviderRouter, load_routing_policy
 from aos.providers import (
@@ -131,6 +133,7 @@ class ProviderAttemptStatus(str, Enum):
     QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
     TIMED_OUT = "TIMED_OUT"
     DENIED = "DENIED"
+    SKIPPED = "SKIPPED"
 
 
 @dataclass
@@ -246,7 +249,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
     supported_capabilities = {ExecutionCapability.MODEL_REASONING}
     cost = ExecutionCost.FREE_TIER_CLOUD
     quality_tier: int = 3
-    context_window_tokens: int = 128000
+    context_window_tokens: Optional[int] = None
     expected_latency_ms: int = 1500
 
     def __init__(
@@ -408,9 +411,17 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             request.payload.get("task_class", TaskClass.STRUCTURED_PLANNING.value)
         )
         ignore_credentials = bool(request.payload.get("ignore_credentials", False))
+        resource_requirements = dict(request.payload.get("resource_requirements", {}) or {})
+        if "context_tokens" not in resource_requirements and "request_token_budget" not in resource_requirements:
+            ctx_tokens = int(request.payload.get("context_tokens", 0) or 0)
+            if not ctx_tokens:
+                ctx_tokens = max(100, (len(prompt) + len(json.dumps(schema or {}))) // 4)
+            resource_requirements["context_tokens"] = ctx_tokens
+            resource_requirements["request_token_budget"] = ctx_tokens + 2200
         tried: List[str] = []
         attempts: List[ProviderAttempt] = []
         quota_decisions: List[Dict[str, Any]] = []
+        provider_decisions: List[Dict[str, Any]] = []
         failed_provider: Optional[str] = None
 
         provider_limit = max(1, len(self.provider_router.registry.list_providers()))
@@ -430,6 +441,10 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
             ledger_attempt_id = self._ledger_attempt_id(
                 request, provider_id, model_id, task_class
             )
+
+            entry = self.provider_router.registry.get_provider(provider_id)
+            if entry is None:
+                continue
 
             quota_decision = (
                 self.quota_governor.decision(provider_id, model_id, task_class)
@@ -452,21 +467,37 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                     f"quota-decision:{quota_decision_hash}",
                     quota_decision_payload,
                 )
-                if not quota_decision.eligible:
-                    attempt = ProviderAttempt(
-                        provider_id=provider_id,
-                        model_id=model_id,
-                        status=ProviderAttemptStatus.QUOTA_EXHAUSTED,
-                        error_class="QUOTA_EXHAUSTED",
-                        message=None,
-                        timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        task_class=task_class,
-                        quota_decision=quota_decision.to_dict(),
-                    )
-                    attempts.append(attempt)
-                    self._record_attempt(attempt)
-                    failed_provider = provider_id
-                    continue
+
+            latest_rate_obs = (
+                self.quota_governor.latest_observation(provider_id, model_id, task_class)
+                if self.quota_governor is not None else None
+            )
+
+            adequacy = evaluate_provider_adequacy(
+                entry,
+                resource_requirements,
+                quota_decision,
+                latest_rate_obs,
+                now_epoch=self.quota_governor.clock() if self.quota_governor is not None else time.time(),
+            )
+            provider_decisions.append(adequacy.to_dict())
+
+            if not adequacy.eligible:
+                primary_reason = adequacy.reasons[0] if adequacy.reasons else "INADEQUATE"
+                attempt = ProviderAttempt(
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    status=ProviderAttemptStatus.SKIPPED,
+                    error_class=primary_reason,
+                    message=None,
+                    timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    task_class=task_class,
+                    quota_decision=(quota_decision.to_dict() if quota_decision is not None else None),
+                )
+                attempts.append(attempt)
+                self._record_attempt(attempt)
+                failed_provider = provider_id
+                continue
 
             half_open_probe = False
             if self.circuit_registry is not None:
@@ -556,6 +587,14 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                         self.circuit_registry.record_probe(provider_id)
                     if len(attempts) > 1:
                         self.circuit_registry.record_failover(provider_id)
+
+                if self.quota_governor is not None:
+                    self.quota_governor.record_success(
+                        provider_id,
+                        model_id,
+                        task_class,
+                    )
+
                 return ExecutionResult(
                     backend_id=self.backend_id,
                     worker_id="model_reasoner",
@@ -575,6 +614,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                         "fallback_used": len(attempts) > 1,
                         "circuit_summary": self.circuit_registry.summarize() if self.circuit_registry else {},
                         "quota_decisions": quota_decisions,
+                        "provider_decisions": provider_decisions,
                     },
                     evidence_class=evidence_class,
                 )
@@ -595,31 +635,58 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 safe_detail = None
                 rate_observation = None
             except PlannerTransientError as exc:
-                raw = str(exc).upper()
-                if "LOCAL_GATEWAY_UNAVAILABLE" in raw:
-                    status = ProviderAttemptStatus.UNAVAILABLE
-                    failure_class = "LOCAL_GATEWAY_UNAVAILABLE"
-                elif "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE" in raw:
-                    status = ProviderAttemptStatus.UNAVAILABLE
-                    failure_class = "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE"
-                elif "UPSTREAM_ROUTE_UNAVAILABLE" in raw:
-                    status = ProviderAttemptStatus.RETRYABLE_FAILED
-                    failure_class = "UPSTREAM_ROUTE_UNAVAILABLE"
-                elif "CREDIT_EXHAUSTED" in raw or "PAYMENT REQUIRED" in raw:
-                    status = ProviderAttemptStatus.RETRYABLE_FAILED
-                    failure_class = "CREDIT_EXHAUSTED"
-                elif "QUOTA" in raw or "RESOURCE_EXHAUSTED" in raw:
-                    status = ProviderAttemptStatus.QUOTA_EXHAUSTED
-                    failure_class = "QUOTA_EXHAUSTED"
-                elif "RATE_LIMIT" in raw or "RATE LIMIT" in raw or "429" in raw:
+                family = getattr(exc, "failure_family", None)
+                rate_obs = getattr(exc, "rate_limit_observation", None)
+                classification = getattr(rate_obs, "classification", None) if rate_obs is not None else None
+
+                if classification == "RATE_LIMITED":
                     status = ProviderAttemptStatus.RETRYABLE_FAILED
                     failure_class = "RATE_LIMITED"
-                elif any(code in raw for code in ("CAPACITY", "500", "502", "503", "504", "OVERLOAD")):
+                elif classification == "QUOTA_EXHAUSTED":
+                    status = ProviderAttemptStatus.QUOTA_EXHAUSTED
+                    failure_class = "QUOTA_EXHAUSTED"
+                elif classification == "CREDIT_EXHAUSTED":
+                    status = ProviderAttemptStatus.RETRYABLE_FAILED
+                    failure_class = "CREDIT_EXHAUSTED"
+                elif family == FailureFamily.TIMEOUT or (isinstance(family, str) and family.upper() == "TIMEOUT"):
+                    status = ProviderAttemptStatus.TIMED_OUT
+                    failure_class = "TIMEOUT"
+                elif family == FailureFamily.NETWORK or (isinstance(family, str) and family.upper() == "NETWORK"):
+                    status = ProviderAttemptStatus.UNAVAILABLE
+                    failure_class = "NETWORK_UNAVAILABLE"
+                elif family == FailureFamily.SERVER_CAPACITY or (isinstance(family, str) and family.upper() == "SERVER_CAPACITY"):
                     status = ProviderAttemptStatus.RETRYABLE_FAILED
                     failure_class = "SERVER_CAPACITY"
+                elif family == FailureFamily.LOCAL_SERVICE or (isinstance(family, str) and family.upper() == "LOCAL_SERVICE"):
+                    status = ProviderAttemptStatus.UNAVAILABLE
+                    failure_class = "LOCAL_GATEWAY_UNAVAILABLE"
                 else:
-                    status = ProviderAttemptStatus.RETRYABLE_FAILED
-                    failure_class = "NETWORK_UNAVAILABLE"
+                    # Fallback string parsing ONLY when failure_family is UNKNOWN or absent
+                    raw = str(exc).upper()
+                    if "LOCAL_GATEWAY_UNAVAILABLE" in raw:
+                        status = ProviderAttemptStatus.UNAVAILABLE
+                        failure_class = "LOCAL_GATEWAY_UNAVAILABLE"
+                    elif "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE" in raw:
+                        status = ProviderAttemptStatus.UNAVAILABLE
+                        failure_class = "LOCAL_GATEWAY_NO_UPSTREAM_ROUTE"
+                    elif "UPSTREAM_ROUTE_UNAVAILABLE" in raw:
+                        status = ProviderAttemptStatus.RETRYABLE_FAILED
+                        failure_class = "UPSTREAM_ROUTE_UNAVAILABLE"
+                    elif "CREDIT_EXHAUSTED" in raw or "PAYMENT REQUIRED" in raw:
+                        status = ProviderAttemptStatus.RETRYABLE_FAILED
+                        failure_class = "CREDIT_EXHAUSTED"
+                    elif "QUOTA" in raw or "RESOURCE_EXHAUSTED" in raw:
+                        status = ProviderAttemptStatus.QUOTA_EXHAUSTED
+                        failure_class = "QUOTA_EXHAUSTED"
+                    elif "RATE_LIMIT" in raw or "RATE LIMIT" in raw or "429" in raw:
+                        status = ProviderAttemptStatus.RETRYABLE_FAILED
+                        failure_class = "RATE_LIMITED"
+                    elif any(code in raw for code in ("CAPACITY", "500", "502", "503", "504", "OVERLOAD")):
+                        status = ProviderAttemptStatus.RETRYABLE_FAILED
+                        failure_class = "SERVER_CAPACITY"
+                    else:
+                        status = ProviderAttemptStatus.RETRYABLE_FAILED
+                        failure_class = "NETWORK_UNAVAILABLE"
                 error_class = failure_class
                 message = None
                 contract_subtype = None
@@ -780,6 +847,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                         for item in backend_local_failures
                     ],
                     "quota_decisions": quota_decisions,
+                    "provider_decisions": provider_decisions,
                 },
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
                 availability=ExecutionAvailabilitySnapshot(
@@ -806,6 +874,7 @@ class ProviderFailoverReasoningBackend(ExecutionBackend):
                 "next_probe_at": next_probe_epoch,
                 "quota_retry_after_epoch": quota_retry_epoch,
                 "quota_decisions": quota_decisions,
+                "provider_decisions": provider_decisions,
                 "local_reasoning_result": (
                     "LOCAL_REASONING_UNAVAILABLE"
                     if any(a.provider_id == "ollama" for a in attempts)
@@ -1134,7 +1203,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-batches", type=int, default=12)
     parser.add_argument(
         "--routing-policy",
-        default="descriptors/nemotron.planner-policy.json",
+        default="descriptors/lari.planner-policy.json",
         help="Provider routing policy JSON",
     )
     parser.add_argument("--max-iterations", type=int, default=20)
