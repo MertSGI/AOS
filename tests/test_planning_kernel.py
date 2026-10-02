@@ -209,7 +209,9 @@ def test_reasoning_projection_is_bounded_without_weakening_durable_situation():
 def test_worker_contract_summary_is_compact_and_complete():
     summary = _worker_contract_summary()
     assert len(summary) < 5000
-    assert all(name in summary for name in ("NativeFileWorker", "NativeProcessWorker", "NativeGitWorker"))
+    assert all(name in summary for name in ("NativeFileWorker", "NativeProcessWorker", "NativeGitWorker", "AgenticExecution"))
+    assert '"run_type":"AGENTIC"' in summary
+    assert "provider-neutral LONG_HORIZON_AGENTIC_WORK" in summary
     assert "force push" in summary
     assert '"run_type":"FILE"' in summary
     assert '"run_type":"PROCESS"' in summary
@@ -502,6 +504,143 @@ def test_completed_action_signatures_are_bounded_for_provider_prompt():
     assert len(json.dumps(bounded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))) <= 1800
 
 
+def _implementation_objective():
+    return Objective.from_dict({
+        **_objective(),
+        "objective_id": "obj-impl",
+        "title": "Implement Phase 7 Node 2 Discovery Marketplace",
+        "description": "Implement a server-authoritative discovery marketplace from the accepted execution base.",
+        "scope_tags": ["phase7", "node2", "discovery-marketplace", "implementation"],
+        "completion_criteria": ["Server-authoritative discovery implementation and verification are evidenced."],
+    })
+
+
+def _agentic_implementation_plan():
+    plan = _plan()
+    plan["objective_id"] = "obj-impl"
+    plan["tasks"] = [{
+        "node_id": "implement-discovery-marketplace",
+        "run_type": "AGENTIC",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": True,
+        "dependencies": [],
+        "scope_tags": ["phase7", "node2", "discovery-marketplace"],
+        "write_scope": ["supabase/migrations", "scripts", "supabase/tests/program-v2/phase7-live"],
+        "payload": {
+            "prompt": (
+                "Implement the bounded Phase 7 Node 2 server-authoritative discovery marketplace contract. "
+                "Ground changes in existing tenant/profile/branch/service/review domain models, preserve production NO_GO, "
+                "and add static/live verification."
+            )
+        },
+        "expected_artifacts": [
+            "supabase/migrations/20261005_phase7_node2_discovery_marketplace.sql",
+            "scripts/test-phase7-node2-discovery-marketplace-contracts.mjs",
+            "supabase/tests/program-v2/phase7-live/test-phase7-node2-discovery-marketplace-behavioral-matrix.mjs",
+        ],
+        "tests": ["Static contracts and disposable PostgreSQL live behavioral matrix pass."],
+        "evidence_requirements": ["Changed paths remain in scope and acceptance tests produce passing evidence."],
+        "completion_criteria": ["Node 2 server-authoritative discovery contract is implemented and verified."],
+    }]
+    plan["parallel_safe_groups"] = [["implement-discovery-marketplace"]]
+    plan["rollback_strategy"] = "Discard the bounded candidate changes if verification fails."
+    return plan
+
+
+def test_plan_schema_exposes_provider_neutral_agentic_run_type_only():
+    run_type = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["run_type"]
+    assert "AGENTIC" in set(run_type["enum"])
+    assert "ANTIGRAVITY" not in set(run_type["enum"])
+    assert "CODEX" not in set(run_type["enum"])
+
+
+def test_plan_rejects_checkout_only_implementation_batch():
+    plan = _plan()
+    plan["objective_id"] = "obj-impl"
+    plan["tasks"] = [{
+        **plan["tasks"][0],
+        "node_id": "checkout-base-only",
+        "run_type": "GIT",
+        "mutating": True,
+        "payload": {"action": "checkout", "args": ["c" * 40]},
+        "write_scope": [],
+        "expected_artifacts": [],
+        "tests": [],
+        "evidence_requirements": [],
+        "completion_criteria": [],
+    }]
+    plan["parallel_safe_groups"] = [["checkout-base-only"]]
+    with pytest.raises(Exception, match="Implementation objective requires"):
+        _validate_plan_shape(plan, _implementation_objective(), _situation())
+
+
+def test_plan_compiler_repairs_checkout_only_implementation_batch(tmp_path):
+    invalid = _plan()
+    invalid["objective_id"] = "obj-impl"
+    invalid["tasks"] = [{
+        **invalid["tasks"][0],
+        "node_id": "checkout-base-only",
+        "run_type": "GIT",
+        "mutating": True,
+        "payload": {"action": "checkout", "args": ["c" * 40]},
+        "write_scope": [],
+        "expected_artifacts": [],
+        "tests": [],
+        "evidence_requirements": [],
+        "completion_criteria": [],
+    }]
+    invalid["parallel_safe_groups"] = [["checkout-base-only"]]
+    backend = QueueBackend([invalid, _agentic_implementation_plan()])
+    result = compile_execution_plan(
+        _situation(), _implementation_objective(), tmp_path / "policy.json",
+        tmp_path / "runtime", backend_override=backend, workspace=tmp_path, batch_number=9,
+    )
+    assert result["tasks"][0]["run_type"] == "AGENTIC"
+    assert backend.calls == 2
+    assert "IMPLEMENTATION_REPAIR_RULE" in backend.requests[1].payload["prompt"]
+
+
+def test_agentic_implementation_task_requires_artifacts_and_evidence():
+    plan = _agentic_implementation_plan()
+    plan["tasks"][0]["expected_artifacts"] = []
+    with pytest.raises(Exception, match="requires non-empty expected_artifacts"):
+        _validate_plan_shape(plan, _implementation_objective(), _situation())
+    plan = _agentic_implementation_plan()
+    plan["tasks"][0]["evidence_requirements"] = []
+    with pytest.raises(Exception, match="requires non-empty evidence_requirements"):
+        _validate_plan_shape(plan, _implementation_objective(), _situation())
+
+
+def test_agentic_expected_artifacts_must_stay_inside_write_scope():
+    plan = _agentic_implementation_plan()
+    plan["tasks"][0]["expected_artifacts"].append("outside-scope.txt")
+    with pytest.raises(Exception, match="outside declared write_scope"):
+        _validate_plan_shape(plan, _implementation_objective(), _situation())
+
+
+def test_agentic_implementation_plan_is_accepted():
+    result = _validate_plan_shape(_agentic_implementation_plan(), _implementation_objective(), _situation())
+    assert result["tasks"][0]["run_type"] == "AGENTIC"
+    assert result["tasks"][0]["expected_artifacts"]
+
+
+def test_checkout_fetch_switch_and_worktree_are_preparatory_readiness_tasks():
+    for action in ("checkout", "fetch", "switch", "worktree", "status", "diff", "log", "ls-files"):
+        assert planning_kernel._is_generic_readiness_task({
+            "run_type": "GIT", "payload": {"action": action, "args": []},
+        })
+
+
+def test_design_remediation_accepts_bounded_agentic_source_mutation(tmp_path):
+    plan = _agentic_implementation_plan()
+    planning_kernel._validate_design_remediation_plan(
+        plan,
+        {"outcome": "DESIGN_REMEDIATION_REQUIRED"},
+        tmp_path,
+    )
+
+
 def test_plan_compiler_rejects_generic_readiness_only_batch(tmp_path):
     generic = _plan()
     first = generic["tasks"][0]
@@ -595,7 +734,7 @@ def test_plan_schema_constrains_canonical_run_types():
     assert PLAN_SCHEMA["properties"]["tasks"]["maxItems"] == 4
     run_type = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["run_type"]
     assert set(run_type["enum"]) == {
-        "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING",
+        "FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING", "AGENTIC",
     }
     assert "NATIVE_PROCESS" not in run_type["enum"]
     payload = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["payload"]

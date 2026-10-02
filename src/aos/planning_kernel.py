@@ -98,8 +98,8 @@ DEFAULT_RED_LINES = (
     "material scope outside standing authority",
 )
 
-_MUTATING_RUN_TYPES = {"FILE", "PROCESS", "GIT", "BUILD"}
-_ALLOWED_RUN_TYPES = {"FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING"}
+_MUTATING_RUN_TYPES = {"FILE", "PROCESS", "GIT", "BUILD", "AGENTIC"}
+_ALLOWED_RUN_TYPES = {"FILE", "PROCESS", "GIT", "TEST", "BUILD", "CI", "BROWSER", "MODEL_REASONING", "AGENTIC"}
 _ALLOWED_GIT_ACTIONS = {
     "status", "diff", "log", "show", "rev-parse", "branch", "remote", "ls-files",
     "fetch", "add", "commit", "push", "checkout", "switch", "tag", "merge",
@@ -441,6 +441,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
                             {"required": ["sha"]},
                             {"required": ["url"]},
                             {"required": ["prompt", "schema"]},
+                            {"required": ["prompt"]},
                         ],
                     },
                     "expected_artifacts": {"type": "array", "items": {"type": "string"}},
@@ -769,6 +770,19 @@ def _worker_contract_summary() -> str:
                 "payload": {"action": {"enum": sorted(_ALLOWED_GIT_ACTIONS)}, "args": "argv array"},
                 "prohibited_subcommands": sorted(NativeGitWorker.PROHIBITED_SUBCOMMANDS),
                 "safety": "force push and prohibited subcommands are denied",
+            },
+            "AgenticExecution": {
+                "run_type": "AGENTIC",
+                "payload": {"prompt": "bounded repository implementation instruction"},
+                "requirements": {
+                    "mutating": True,
+                    "write_scope": "non-empty bounded workspace-relative paths",
+                    "expected_artifacts": "non-empty concrete workspace-relative paths",
+                    "evidence_requirements": "non-empty verification evidence",
+                    "completion_criteria": "non-empty task completion contract",
+                },
+                "routing": "provider-neutral LONG_HORIZON_AGENTIC_WORK; resource orchestrator selects the eligible backend",
+                "safety": "canonical source lineage, workspace fingerprint, declared write_scope, and post-execution artifact verification remain enforced",
             },
         },
         ensure_ascii=False,
@@ -1234,7 +1248,11 @@ def _is_generic_readiness_task(task: Mapping[str, Any]) -> bool:
     if not isinstance(payload, Mapping):
         return False
     if run_type == "GIT":
-        return str(payload.get("action", "")).lower() in {"status", "rev-parse", "branch", "remote"}
+        # Repository preparation/inspection is useful, but it is not product implementation.
+        return str(payload.get("action", "")).lower() in {
+            "status", "diff", "log", "show", "rev-parse", "branch", "remote",
+            "ls-files", "fetch", "checkout", "switch", "worktree",
+        }
     if run_type in {"PROCESS", "TEST", "BUILD"}:
         cmd = payload.get("cmd", [])
         return (
@@ -1243,6 +1261,79 @@ def _is_generic_readiness_task(task: Mapping[str, Any]) -> bool:
             and any(str(arg).lower() in {"--version", "-v", "version"} for arg in cmd)
         )
     return False
+
+
+_IMPLEMENTATION_OBJECTIVE_MARKERS = {
+    "implement", "implementation", "build", "create", "add", "fix", "harden",
+    "remediate", "migrate", "migration", "integrate", "integration", "productize",
+}
+
+
+def _objective_requires_product_implementation(objective: Objective) -> bool:
+    text = " ".join((objective.title, *objective.scope_tags)).lower()
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    return bool(tokens & _IMPLEMENTATION_OBJECTIVE_MARKERS)
+
+
+def _is_product_mutation_task(task: Mapping[str, Any]) -> bool:
+    if not bool(task.get("mutating")):
+        return False
+    run_type = str(task.get("run_type", "")).upper()
+    payload = task.get("payload", {})
+    if not isinstance(payload, Mapping):
+        return False
+    if run_type == "AGENTIC":
+        return True
+    if run_type == "FILE":
+        return str(payload.get("action", "")).lower() in {"write_file", "apply_patch"}
+    if run_type == "GIT":
+        return str(payload.get("action", "")).lower() in {"merge", "cherry-pick"}
+    return False
+
+
+def _validate_semantic_plan_quality(tasks: Sequence[Mapping[str, Any]], objective: Objective) -> None:
+    # UI objectives have a dedicated Design Intelligence planning/remediation gate.
+    # Do not impose the generic backend/product implementation gate a second time: UI
+    # planning may legitimately begin with a bounded source read or verification batch.
+    if _objective_task_class(objective) == TaskClass.REPO_UI_PLANNING.value:
+        return
+
+    # Schema-valid is not enough: a non-UI implementation objective must contain actual product work.
+    if not _objective_requires_product_implementation(objective):
+        return
+
+    product_mutations = [task for task in tasks if _is_product_mutation_task(task)]
+    if not product_mutations:
+        raise PlanningKernelError(
+            "Implementation objective requires at least one product-mutating FILE, AGENTIC, merge, "
+            "or cherry-pick task; preparatory git/readiness actions cannot satisfy implementation"
+        )
+
+    for task in product_mutations:
+        run_type = str(task.get("run_type", "")).upper()
+        if run_type not in {"FILE", "AGENTIC"}:
+            continue
+        node_id = str(task.get("node_id", ""))
+        if not task.get("expected_artifacts"):
+            raise PlanningKernelError(f"Implementation task {node_id} requires non-empty expected_artifacts")
+        if not task.get("evidence_requirements"):
+            raise PlanningKernelError(f"Implementation task {node_id} requires non-empty evidence_requirements")
+        if not task.get("completion_criteria"):
+            raise PlanningKernelError(f"Implementation task {node_id} requires non-empty completion_criteria")
+
+    verification_present = any(
+        (
+            str(task.get("run_type", "")).upper() in {"TEST", "BUILD", "CI", "PROCESS"}
+            and (task.get("tests") or task.get("evidence_requirements"))
+        )
+        or bool(task.get("tests"))
+        for task in tasks
+    )
+    if not verification_present:
+        raise PlanningKernelError(
+            "Implementation objective requires explicit verification/tests and evidence; "
+            "artifact creation alone is not objective satisfaction"
+        )
 
 
 def _available_process_binaries() -> List[str]:
@@ -1964,8 +2055,10 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
         task["dependencies"] = _string_list(task.get("dependencies", []), "dependencies", 64, 120)
         task["scope_tags"] = _string_list(task.get("scope_tags", []), "scope_tags", 32, 120)
         task["write_scope"] = _string_list(task.get("write_scope", []), "write_scope", 64, 500)
-        if run_type == "FILE" and task["mutating"] and not task["write_scope"]:
-            raise PlanningKernelError(f"Task {node_id} mutating FILE task requires non-empty write_scope")
+        if run_type in {"FILE", "AGENTIC"} and task["mutating"] and not task["write_scope"]:
+            raise PlanningKernelError(
+                f"Task {node_id} mutating {run_type} task requires non-empty write_scope"
+            )
         if not isinstance(task.get("payload"), dict):
             raise PlanningKernelError(f"Task {node_id} payload must be object")
         _validate_worker_payload(node_id, run_type, task["payload"])
@@ -1991,6 +2084,18 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
                 raise PlanningKernelError(f"Task {node_id} FILE target is outside declared write_scope")
         for key in ("expected_artifacts", "tests", "evidence_requirements", "completion_criteria"):
             task[key] = _string_list(task.get(key, []), key, 64, 500)
+        if run_type == "AGENTIC" and task["mutating"]:
+            for artifact in task["expected_artifacts"]:
+                normalized_artifact = artifact.replace("\\", "/").strip("/")
+                if not any(
+                    normalized_artifact == scope.replace("\\", "/").strip("/")
+                    or normalized_artifact.startswith(scope.replace("\\", "/").strip("/") + "/")
+                    for scope in task["write_scope"]
+                    if scope.strip("/")
+                ):
+                    raise PlanningKernelError(
+                        f"Task {node_id} AGENTIC expected artifact is outside declared write_scope: {artifact}"
+                    )
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
             # Git read operations exist, but planner must explicitly mark mutation truthfully.
             payload_text = json.dumps(task["payload"], sort_keys=True).lower()
@@ -2002,6 +2107,7 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
             if dep not in seen:
                 raise PlanningKernelError(f"Task {task['node_id']} depends on unknown node {dep}")
     _assert_acyclic(tasks)
+    _validate_semantic_plan_quality(tasks, objective)
     normalized = dict(plan)
     normalized["tasks"] = tasks
     normalized["project_id"] = situation.project_id
@@ -2072,6 +2178,11 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
             for arg in args
         ):
             raise PlanningKernelError(f"Task {node_id} requests prohibited force push")
+        return
+
+    if run_type == "AGENTIC":
+        if not str(payload.get("prompt", "")).strip():
+            raise PlanningKernelError(f"Task {node_id} AGENTIC payload requires non-empty prompt")
         return
 
     if run_type == "CI" and not str(payload.get("sha", "")).strip():
@@ -2166,10 +2277,23 @@ def _validate_design_remediation_plan(
         )
     root = workspace.resolve()
     for task in plan.get("tasks", []):
-        if not isinstance(task, Mapping) or task.get("run_type") != "FILE":
+        if not isinstance(task, Mapping):
             continue
+        run_type = str(task.get("run_type", "")).upper()
         payload = task.get("payload", {})
         if not isinstance(payload, Mapping):
+            continue
+
+        # A provider-neutral AGENTIC task is a valid bounded source remediation
+        # when it carries explicit mutation intent and write scope. The coordinator
+        # still binds it to LONG_HORIZON_AGENTIC_WORK and enforces scope/fingerprint
+        # contracts before and after execution.
+        if run_type == "AGENTIC":
+            if bool(task.get("mutating")) and bool(task.get("write_scope")):
+                return
+            continue
+
+        if run_type != "FILE":
             continue
         action = payload.get("action")
         if bool(task.get("mutating")) and action in {"write_file", "apply_patch"}:
@@ -2402,6 +2526,13 @@ def compile_execution_plan(
         "A changed file or source generation is a new read identity and may be read again.\n"
         "PROGRESS_RULE=Do not repeat a completed action under a new task id. A batch made entirely of generic "
         "git identity/status checks and runtime version probes is invalid because it does not advance product work.\n"
+        "IMPLEMENTATION_PLAN_RULE=When the selected objective is implementation, preparatory GIT actions such as "
+        "fetch/checkout/switch/worktree/status do not satisfy it. Include real bounded product mutation plus concrete "
+        "expected_artifacts, completion criteria, tests/verification, and evidence requirements.\n"
+        "AGENTIC_EXECUTION_RULE=For high-value multi-file repository implementation or architecture-sensitive work, "
+        "prefer provider-neutral AGENTIC rather than inventing isolated files. AGENTIC requires a non-empty bounded "
+        "write_scope, concrete expected_artifacts, a self-contained prompt, verification/evidence, and completion criteria. "
+        "Never name or force a specific agentic backend; Resource Orchestrator selects the eligible resource.\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
@@ -2449,6 +2580,18 @@ def compile_execution_plan(
                     "If a downstream task must read an artifact created earlier in the same DAG, the producer MUST declare that exact workspace-relative path in expected_artifacts "
                     "and the reader MUST depend transitively on that producer. "
                     "If the correct repository location or architecture is uncertain, return a bounded discovery/read batch against existing paths instead of guessing a mutation path."
+                )
+            elif (
+                "Implementation objective requires" in validation_error
+                or "Implementation task" in validation_error
+                or "AGENTIC expected artifact" in validation_error
+            ):
+                python_guidance = (
+                    "\nIMPLEMENTATION_REPAIR_RULE: The previous plan was structurally executable but semantically insufficient "
+                    "for an implementation objective. Preparatory checkout/fetch/status work cannot satisfy implementation. "
+                    "Return a forward product plan with bounded source mutation (or provider-neutral AGENTIC for multi-file work), "
+                    "concrete expected_artifacts, explicit verification/tests, evidence requirements, and completion criteria. "
+                    "AGENTIC tasks must keep every expected artifact inside declared write_scope and must never hardcode a provider."
                 )
             elif "repeats completed FILE read target" in validation_error or "repeats completed action signatures" in validation_error or "repeats completed task identities" in validation_error:
                 python_guidance = (
