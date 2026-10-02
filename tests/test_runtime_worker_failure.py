@@ -144,3 +144,40 @@ def test_continuous_validation_churn_escalates_once_then_holds(tmp_path, monkeyp
     assert len(calls) == 3
     assert calls[0]["strategy_generation"] == 0
     assert calls[2]["strategy_generation"] == 1
+
+def test_runtime_worker_backend_local_reasoning_failure_holds_lineage(tmp_path, monkeypatch):
+    root = tmp_path / "runtime"
+    store = RuntimeStore(root)
+    command = _command(tmp_path)
+    store.create_command(command.to_dict())
+
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: (_ for _ in ()).throw(
+            runtime_worker.BackendLocalReasoningFailure(
+                "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE",
+                task_class="structured_planning",
+            )
+        ),
+    )
+
+    result = runtime_worker.execute_command(root, command.command_id)
+
+    state = store.read_state(command.command_id)
+    persisted = store.read_result(command.command_id)
+    events = store.read_events(command.command_id)
+
+    assert result["state"] == "TECHNICAL_HOLD"
+    assert persisted["state"] == "TECHNICAL_HOLD"
+    assert state["state"] == "TECHNICAL_HOLD"
+    assert state["failure_class"] == "BACKEND_LOCAL_REASONING_FAILURE"
+
+    receipt = persisted["receipt"]
+    assert receipt["lineage_preserved"] is True
+    assert receipt["backend_failure_class"] == "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE"
+    assert receipt["required_task_class"] == "structured_planning"
+
+    assert events[-1]["event_type"] == "run.technical_hold"
+    assert events[-1]["payload"]["lineage_preserved"] is True

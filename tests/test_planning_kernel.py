@@ -2271,7 +2271,7 @@ def test_plan_compiler_missing_read_target_repair_prompt_is_repository_grounded(
     assert "bounded discovery/read batch" in repair_prompt
 
 
-def test_reason_backend_local_failure_waits_instead_of_failing_project(tmp_path, monkeypatch):
+def test_reason_backend_local_failure_is_distinct_from_provider_wait(tmp_path, monkeypatch):
     class BackendLocalFailure:
         def execute_with_failover(self, request):
             return SimpleNamespace(
@@ -2294,7 +2294,7 @@ def test_reason_backend_local_failure_waits_instead_of_failing_project(tmp_path,
         lambda result: planning_kernel.ExecutionFailureDisposition.BACKEND_LOCAL,
     )
 
-    with pytest.raises(planning_kernel.WaitingForReasoningProvider) as exc:
+    with pytest.raises(planning_kernel.BackendLocalReasoningFailure) as exc:
         planning_kernel._reason(
             _situation(),
             tmp_path / "policy.json",
@@ -2307,4 +2307,6 @@ def test_reason_backend_local_failure_waits_instead_of_failing_project(tmp_path,
             workspace=tmp_path,
         )
 
+    assert not isinstance(exc.value, planning_kernel.WaitingForReasoningProvider)
+    assert exc.value.failure_class == "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE"
     assert "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE" in str(exc.value)

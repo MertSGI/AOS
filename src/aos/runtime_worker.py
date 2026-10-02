@@ -21,6 +21,7 @@ from aos.planning_kernel import (
     AuthorityDenied,
     CanonicalDrift,
     HumanRequired,
+    BackendLocalReasoningFailure,
     run_autonomous_project,
 )
 from extensions.autonomy_fabric.native_workers import redact_secrets
@@ -414,6 +415,8 @@ def _safe_exception_message(exc: BaseException) -> str:
 
 def _classify_exception(exc: BaseException) -> tuple[str, str]:
     message = _safe_exception_message(exc).lower()
+    if isinstance(exc, BackendLocalReasoningFailure):
+        return "TECHNICAL_HOLD", "BACKEND_LOCAL_REASONING_FAILURE"
     if isinstance(exc, (HumanRequired, AuthorityDenied, CanonicalDrift)):
         return "HUMAN_REQUIRED", exc.__class__.__name__.upper()
     canonical_markers = (
@@ -979,6 +982,11 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 "error_class": exc.__class__.__name__,
                 "structured_runtime_failure": True,
             }
+            if state == "TECHNICAL_HOLD":
+                failure_receipt["lineage_preserved"] = True
+                if isinstance(exc, BackendLocalReasoningFailure):
+                    failure_receipt["backend_failure_class"] = exc.failure_class
+                    failure_receipt["required_task_class"] = exc.task_class
             checkpoint = read_json(project_runtime / "planning-kernel-checkpoint.json")
             completed = cumulative_completed_batch_count(checkpoint)
             result = RuntimeResult(
@@ -1008,12 +1016,22 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
             if watcher is not None:
                 watcher.join(timeout=2.0)
                 watcher = None
-            store.append_event(command_id, "run.human_required" if state == "HUMAN_REQUIRED" else "run.failed", {
+            event_type = (
+                "run.human_required"
+                if state == "HUMAN_REQUIRED"
+                else (
+                    "run.technical_hold"
+                    if state == "TECHNICAL_HOLD"
+                    else "run.failed"
+                )
+            )
+            store.append_event(command_id, event_type, {
                 "error_class": exc.__class__.__name__,
                 "failure_class": failure_class,
                 "message": message[:1000],
+                "lineage_preserved": state == "TECHNICAL_HOLD",
             })
-            if state == "HUMAN_REQUIRED":
+            if state in ("HUMAN_REQUIRED", "TECHNICAL_HOLD"):
                 return result
             raise
         finally:

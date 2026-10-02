@@ -193,6 +193,23 @@ class WaitingForReasoningProvider(PlanningKernelError):
         self.quota_key = quota_key
 
 
+class BackendLocalReasoningFailure(PlanningKernelError):
+    """A deterministic/local reasoning backend failure after finite routing.
+
+    This is explicitly NOT a provider/resource outage and MUST NOT be
+    represented as WaitingForReasoningProvider.
+    """
+
+    def __init__(
+        self,
+        failure_class: str,
+        task_class: str = TaskClass.STRUCTURED_PLANNING.value,
+    ):
+        super().__init__(failure_class)
+        self.failure_class = str(failure_class)
+        self.task_class = canonical_task_class(task_class)
+
+
 class PlannerValidationExhausted(PlanningKernelError):
     pass
 
@@ -1408,10 +1425,7 @@ def _reason(
     if result.status != "SUCCESS":
         failure = execution_failure_class(result)
         failure_disposition = classify_execution_failure(result)
-        if failure_disposition in (
-            ExecutionFailureDisposition.RESOURCE_UNAVAILABLE,
-            ExecutionFailureDisposition.BACKEND_LOCAL,
-        ):
+        if failure_disposition == ExecutionFailureDisposition.RESOURCE_UNAVAILABLE:
             decisions = result.evidence_payload.get("quota_decisions", [])
             blocking = [
                 item for item in decisions
@@ -1424,6 +1438,11 @@ def _reason(
                 task_class=task_class,
                 retry_after_epoch=(float(retry) if retry is not None else None),
                 quota_key=(str(quota_key) if quota_key else None),
+            )
+        if failure_disposition == ExecutionFailureDisposition.BACKEND_LOCAL:
+            raise BackendLocalReasoningFailure(
+                failure,
+                task_class=task_class,
             )
         raise PlanningKernelError(f"Reasoning failed: {failure}")
     proposal = result.evidence_payload.get("proposal")
