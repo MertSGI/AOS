@@ -2192,3 +2192,119 @@ def test_design_intelligence_browser_capture_failure_reports_typed_disposition(t
     assert "Playwright is not installed" in di_evidence["error"]
     assert plan.get("design_intelligence_outcome") == "DESIGN_EVIDENCE_UNAVAILABLE"
     assert (runtime_dir / "design-intelligence-pre-0003.json").exists()
+def test_workspace_manifest_prioritizes_objective_relevant_nested_paths(tmp_path, monkeypatch):
+    tracked = "\n".join([
+        "README.md",
+        "package.json",
+        "types.ts",
+        "docs/architecture.md",
+        "supabase/migrations/20261002_phase7_verified_reviews_foundation.sql",
+        "supabase/tests/program-v2/phase7-live/test-phase7-verified-reviews-behavioral-matrix.mjs",
+        "scripts/test-phase7-node1-verified-reviews-contracts.mjs",
+        *[f"docs/misc/item-{index:03d}.md" for index in range(80)],
+    ]) + "\n"
+
+    monkeypatch.setattr(
+        "aos.planning_kernel.run_headless",
+        lambda *args, **kwargs: SimpleNamespace(stdout=tracked),
+    )
+
+    objective = Objective.from_dict({
+        **_objective(),
+        "title": "Phase 7 Verified Reviews Supabase Postgres",
+        "description": "Implement tenant-aware verified reviews with Supabase migrations and behavioral tests.",
+        "scope_tags": ["verified-reviews", "supabase", "postgres", "tenant"],
+        "completion_criteria": [
+            "Supabase migration and Program V2 verified reviews behavioral matrix exist"
+        ],
+    })
+
+    manifest = _bounded_workspace_file_manifest(
+        tmp_path,
+        objective,
+        max_chars=700,
+    )
+
+    paths = manifest["representative_existing_paths"]
+
+    assert "supabase/migrations/20261002_phase7_verified_reviews_foundation.sql" in paths
+    assert "supabase/tests/program-v2/phase7-live/test-phase7-verified-reviews-behavioral-matrix.mjs" in paths
+    assert "scripts/test-phase7-node1-verified-reviews-contracts.mjs" in paths
+
+
+def test_plan_compiler_missing_read_target_repair_prompt_is_repository_grounded(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "node_id": "invented-review-read",
+        "run_type": "FILE",
+        "mutating": False,
+        "payload": {
+            "action": "read_file",
+            "path": "src/migrations/invented_reviews.sql",
+        },
+        "write_scope": [],
+        "expected_artifacts": [],
+        "tests": [],
+    })
+
+    backend = QueueBackend([invalid, _plan()])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=7,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+
+    repair_prompt = backend.requests[1].payload["prompt"]
+
+    assert "FILE_PATH_REPAIR_RULE" in repair_prompt
+    assert "Do not invent replacement paths" in repair_prompt
+    assert "expected_artifacts" in repair_prompt
+    assert "write_file" in repair_prompt
+    assert "bounded discovery/read batch" in repair_prompt
+
+
+def test_reason_backend_local_failure_waits_instead_of_failing_project(tmp_path, monkeypatch):
+    class BackendLocalFailure:
+        def execute_with_failover(self, request):
+            return SimpleNamespace(
+                status="FAILED",
+                evidence_payload={
+                    "failure_class": "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE",
+                    "quota_decisions": [],
+                },
+            )
+
+    monkeypatch.setattr(
+        planning_kernel,
+        "execution_failure_class",
+        lambda result: "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE",
+    )
+
+    monkeypatch.setattr(
+        planning_kernel,
+        "classify_execution_failure",
+        lambda result: planning_kernel.ExecutionFailureDisposition.BACKEND_LOCAL,
+    )
+
+    with pytest.raises(planning_kernel.WaitingForReasoningProvider) as exc:
+        planning_kernel._reason(
+            _situation(),
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            "structured-planning-test",
+            "Return a bounded structured plan.",
+            planning_kernel.OBJECTIVE_SCHEMA,
+            "DECISION-020",
+            backend_override=BackendLocalFailure(),
+            workspace=tmp_path,
+        )
+
+    assert "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE" in str(exc.value)

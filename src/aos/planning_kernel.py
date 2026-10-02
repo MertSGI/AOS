@@ -764,7 +764,7 @@ def _bounded_workspace_file_manifest(
     workspace: Optional[Path],
     objective: Objective,
     *,
-    max_chars: int = 800,
+    max_chars: int = 3500,
 ) -> Dict[str, Any]:
     """Return a compact path-only view of the tracked workspace for the planner.
 
@@ -804,7 +804,7 @@ def _bounded_workspace_file_manifest(
         lowered = path.lower()
         root_rank = 0 if "/" not in path else 1
         match_count = sum(1 for token in tokens if token in lowered)
-        return (root_rank, -match_count, lowered)
+        return (-match_count, root_rank, lowered)
 
     ordered = sorted(paths, key=priority)
     manifest: Dict[str, Any] = {
@@ -1408,7 +1408,10 @@ def _reason(
     if result.status != "SUCCESS":
         failure = execution_failure_class(result)
         failure_disposition = classify_execution_failure(result)
-        if failure_disposition == ExecutionFailureDisposition.RESOURCE_UNAVAILABLE:
+        if failure_disposition in (
+            ExecutionFailureDisposition.RESOURCE_UNAVAILABLE,
+            ExecutionFailureDisposition.BACKEND_LOCAL,
+        ):
             decisions = result.evidence_payload.get("quota_decisions", [])
             blocking = [
                 item for item in decisions
@@ -2418,6 +2421,15 @@ def compile_execution_plan(
                     f"\nPROCESS_BINARY_RULE: The requested binary is unavailable on this host. "
                     f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
                     "Do not plan tasks for npm, npx, node, or any binary not in that list."
+                )
+            elif "FILE read target does not exist" in validation_error:
+                python_guidance = (
+                    "\nFILE_PATH_REPAIR_RULE: The rejected plan referenced a nonexistent workspace path. "
+                    "Do not invent replacement paths. Use only exact representative_existing_paths from WORKSPACE_FILE_MANIFEST for reads. "
+                    "If the plan creates a brand-new file, use FILE write_file rather than apply_patch against a nonexistent target. "
+                    "If a downstream task must read an artifact created earlier in the same DAG, the producer MUST declare that exact workspace-relative path in expected_artifacts "
+                    "and the reader MUST depend transitively on that producer. "
+                    "If the correct repository location or architecture is uncertain, return a bounded discovery/read batch against existing paths instead of guessing a mutation path."
                 )
             elif "repeats completed FILE read target" in validation_error or "repeats completed action signatures" in validation_error or "repeats completed task identities" in validation_error:
                 python_guidance = (
