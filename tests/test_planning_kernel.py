@@ -730,6 +730,67 @@ def test_replanning_prompt_receives_fresh_completed_read_context(tmp_path):
     assert 'FILE:{\\"action\\":\\"read_file\\",\\"path\\":\\"ROADMAP.md\\"}' not in plan_prompt
 
 
+
+def test_plan_schema_documents_run_type_payload_contract():
+    task_schema = PLAN_SCHEMA["properties"]["tasks"]["items"]
+    payload = task_schema["properties"]["payload"]
+    assert "description" in payload
+    assert "GIT requires payload.action" in payload["description"]
+    assert "AGENTIC requires payload.prompt" in payload["description"]
+    assert "MODEL_REASONING requires payload.prompt plus payload.schema" in payload["description"]
+
+
+def test_plan_compiler_repairs_git_payload_missing_action_with_worker_contract_guidance(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "GIT",
+        "mutating": False,
+        "payload": {"cmd": ["git", "diff", "--check"]},
+    })
+    valid = _plan()
+    backend = QueueBackend([invalid, valid])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert result["tasks"][0]["payload"]["cmd"] == ["git", "diff", "--check"]
+    assert backend.calls == 2
+    repair_prompt = backend.requests[1].payload["prompt"]
+    assert "WORKER_PAYLOAD_REPAIR_RULE" in repair_prompt
+    assert "GIT -> payload.action is required" in repair_prompt
+    assert "PROCESS/TEST/BUILD -> payload.cmd is required" in repair_prompt
+
+
+def test_plan_compiler_repairs_model_reasoning_payload_missing_schema_with_worker_contract_guidance(tmp_path):
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "MODEL_REASONING",
+        "mutating": False,
+        "payload": {"prompt": "Return a bounded verification assessment."},
+    })
+    valid = _plan()
+    backend = QueueBackend([invalid, valid])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+    )
+
+    assert result["tasks"][0]["run_type"] == "TEST"
+    assert backend.calls == 2
+    repair_prompt = backend.requests[1].payload["prompt"]
+    assert "WORKER_PAYLOAD_REPAIR_RULE" in repair_prompt
+    assert "MODEL_REASONING -> payload.prompt and payload.schema are both required" in repair_prompt
+
 def test_plan_schema_constrains_canonical_run_types():
     assert PLAN_SCHEMA["properties"]["tasks"]["maxItems"] == 4
     run_type = PLAN_SCHEMA["properties"]["tasks"]["items"]["properties"]["run_type"]

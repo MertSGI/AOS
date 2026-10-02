@@ -400,6 +400,13 @@ PLAN_SCHEMA: Dict[str, Any] = {
                     "write_scope": {"type": "array", "items": {"type": "string"}},
                     "payload": {
                         "type": "object",
+                        "description": (
+                            "Run-type dispatch contract: FILE requires payload.action; "
+                            "GIT requires payload.action; PROCESS/TEST/BUILD require payload.cmd; "
+                            "CI requires payload.sha; BROWSER requires payload.url; "
+                            "MODEL_REASONING requires payload.prompt plus payload.schema; "
+                            "AGENTIC requires payload.prompt. Local validation rejects cross-type payloads."
+                        ),
                         "minProperties": 1,
                         "additionalProperties": False,
                         "properties": {
@@ -738,6 +745,28 @@ def synthesize_project_situation(
     )
 
 
+
+def _run_type_payload_contract_guidance() -> str:
+    """Planner-visible exact run-type to payload mapping.
+
+    Keep the provider schema broadly compatible across free structured-output
+    backends, while making the dispatch contract unambiguous in the prompt.
+    Local validation remains the fail-closed authority.
+    """
+    return (
+        "RUN_TYPE_PAYLOAD_CONTRACT="
+        "FILE -> payload.action is required and must be read_file/write_file/apply_patch; "
+        "GIT -> payload.action is required and must be one NativeGitWorker action, with payload.args as an argv array; "
+        "PROCESS/TEST/BUILD -> payload.cmd is required and must be a non-empty argv array; "
+        "CI -> payload.sha is required; "
+        "BROWSER -> payload.url is required; "
+        "MODEL_REASONING -> payload.prompt and payload.schema are both required; "
+        "AGENTIC -> payload.prompt is required. "
+        "Do not mix payload contracts across run types. "
+        "A verification command expressed as argv (including git diff/status commands) must use PROCESS/TEST/BUILD with payload.cmd; "
+        "use GIT only when dispatching a NativeGitWorker subcommand through payload.action."
+    )
+
 def _worker_contract_summary() -> str:
     """Return the planner-visible worker payload contract without source bloat."""
     return json.dumps(
@@ -761,6 +790,7 @@ def _worker_contract_summary() -> str:
             },
             "NativeProcessWorker": {
                 "run_type": "PROCESS",
+                "verification_run_types": ["TEST", "BUILD"],
                 "payload": {"cmd": "non-empty argv array", "env": "non-secret string map"},
                 "allowed_binaries": sorted(NativeProcessWorker.ALLOWED_BINARIES),
                 "safety": "non-mutating verification only; shell=False; Python -c and -m are forbidden; invoke an available binary directly or pass Python an existing workspace-relative script path; bounded timeout; clean environment",
@@ -2533,6 +2563,7 @@ def compile_execution_plan(
         "prefer provider-neutral AGENTIC rather than inventing isolated files. AGENTIC requires a non-empty bounded "
         "write_scope, concrete expected_artifacts, a self-contained prompt, verification/evidence, and completion criteria. "
         "Never name or force a specific agentic backend; Resource Orchestrator selects the eligible resource.\n"
+        f"{_run_type_payload_contract_guidance()}\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
@@ -2580,6 +2611,21 @@ def compile_execution_plan(
                     "If a downstream task must read an artifact created earlier in the same DAG, the producer MUST declare that exact workspace-relative path in expected_artifacts "
                     "and the reader MUST depend transitively on that producer. "
                     "If the correct repository location or architecture is uncertain, return a bounded discovery/read batch against existing paths instead of guessing a mutation path."
+                )
+            elif any(
+                marker in validation_error
+                for marker in (
+                    "payload must not be empty",
+                    "payload must be object",
+                    "payload requires",
+                    "payload has unsupported action",
+                    "requests unsupported git action",
+                )
+            ):
+                python_guidance = (
+                    "\nWORKER_PAYLOAD_REPAIR_RULE: The previous plan used a payload that does not match its run_type. "
+                    "Correct the full plan using this exact dispatch mapping and do not preserve the mismatched payload shape. "
+                    + _run_type_payload_contract_guidance()
                 )
             elif (
                 "Implementation objective requires" in validation_error
