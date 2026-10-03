@@ -3775,7 +3775,7 @@ def run_autonomous_project(
                     for t in plan.get("tasks", [])
                     if isinstance(t, Mapping) and str(t.get("node_id")) in completed_now
                 )
-                status_check = run_headless(["git", "status", "--porcelain=v1"], cwd=str(workspace))
+                status_check = run_headless(["git", "status", "--porcelain=v1"], cwd=str(workspace), timeout=30)
                 is_dirty = bool([l for l in (status_check.stdout or "").splitlines() if l.strip() and not l.strip().endswith(".lock")])
 
                 if has_mutation or is_dirty:
@@ -3915,6 +3915,24 @@ def run_autonomous_project(
             "backend_attempt_metrics": dict(recent_receipt.get("backend_attempt_metrics", {}) or {}),
             "production": "NO_GO",
         })
+    situation = synth(
+        descriptor_path=descriptor_path,
+        workspace=workspace,
+        goal=goal,
+        constraints=constraints,
+        red_lines=red_lines,
+    )
+    result = _final_result(
+        situation, batch_number, completed_batches, "BOUNDED_RUN_EXHAUSTED",
+        "Batch bound reached; resume from durable planning checkpoint without user task injection.",
+        recent_receipt, runtime_dir,
+        total_completed_batch_count=total_completed_batch_count,
+        successful_batch_count=successful_batch_count,
+        failed_batch_count=failed_batch_count,
+    )
+    _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
+    return result
+
 
 def delivery_closure(
     *,
@@ -3944,7 +3962,7 @@ def delivery_closure(
     state = read_delivery_state(runtime_dir)
     if state is None:
         # Check git status for uncommitted changes
-        status_proc = run_headless(["git", "status", "--porcelain=v1"], cwd=str(ws))
+        status_proc = run_headless(["git", "status", "--porcelain=v1"], cwd=str(ws), timeout=30)
         status_lines = [
             l for l in (status_proc.stdout or "").splitlines()
             if l.strip() and not l.strip().endswith(".lock")
@@ -3955,7 +3973,7 @@ def delivery_closure(
         delivery_id = f"delivery-{hashlib.sha256(f'{situation.project_id}:{objective.objective_id}:{batch_number}'.encode('utf-8')).hexdigest()[:12]}"
 
         # Determine push target branch from git or situation
-        branch_proc = run_headless(["git", "branch", "--show-current"], cwd=str(ws))
+        branch_proc = run_headless(["git", "branch", "--show-current"], cwd=str(ws), timeout=30)
         push_branch = (branch_proc.stdout or "").strip()
         if not push_branch:
             push_branch = "feature/phase7-node2-discovery-marketplace-r1-20261003"
@@ -3973,7 +3991,7 @@ def delivery_closure(
 
     # 2. Stage changes if in PREPARING
     if state.stage == "PREPARING":
-        run_headless(["git", "add", "-A"], cwd=str(ws))
+        run_headless(["git", "add", "-A"], cwd=str(ws), timeout=60)
         state = advance_delivery_stage(runtime_dir, "STAGED")
 
     # 3. Commit changes if in STAGED
@@ -3987,11 +4005,12 @@ def delivery_closure(
                 "commit", "-m", msg,
             ],
             cwd=str(ws),
+            timeout=60,
         )
         state = advance_delivery_stage(runtime_dir, "COMMITTED")
 
     # 4. Resolve exact SHA
-    head_proc = run_headless(["git", "rev-parse", "HEAD"], cwd=str(ws))
+    head_proc = run_headless(["git", "rev-parse", "HEAD"], cwd=str(ws), timeout=30)
     candidate_sha = (head_proc.stdout or "").strip().lower()
     if not candidate_sha or len(candidate_sha) != 40:
         raise ValueError(f"Failed to resolve candidate SHA after commit: {candidate_sha!r}")
@@ -4022,25 +4041,6 @@ def delivery_closure(
         }
 
     return {"disposition": "WAITING_FOR_CI", "candidate_sha": state.candidate_sha}
-
-
-    situation = synth(
-        descriptor_path=descriptor_path,
-        workspace=workspace,
-        goal=goal,
-        constraints=constraints,
-        red_lines=red_lines,
-    )
-    result = _final_result(
-        situation, batch_number, completed_batches, "BOUNDED_RUN_EXHAUSTED",
-        "Batch bound reached; resume from durable planning checkpoint without user task injection.",
-        recent_receipt, runtime_dir,
-        total_completed_batch_count=total_completed_batch_count,
-        successful_batch_count=successful_batch_count,
-        failed_batch_count=failed_batch_count,
-    )
-    _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
-    return result
 
 
 def _final_result(
