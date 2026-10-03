@@ -90,6 +90,8 @@ def build_recovery_fingerprint(
         "failure_family": recovery_failure_family(state, checkpoint),
         "objective_id": checkpoint.get("objective_id") or None,
         "workspace_source_generation": generation,
+        "candidate_sha": state.get("candidate_sha") or checkpoint.get("candidate_sha") or None,
+        "delivery_stage": state.get("delivery_stage") or checkpoint.get("delivery_stage") or None,
     }
     encoded = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return {**fields, "fingerprint_sha256": hashlib.sha256(encoded).hexdigest()}
@@ -444,6 +446,10 @@ def _terminal_state(disposition: str) -> str:
         return "RUNNING"
     if disposition == "TECHNICAL_HOLD":
         return "TECHNICAL_HOLD"
+    if disposition == "WAITING_FOR_CI":
+        return "WAITING_FOR_CI"
+    if disposition == "DELIVERING":
+        return "DELIVERING"
     return "FAILED"
 
 
@@ -597,6 +603,40 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         continue
                     receipt = dict(receipt)
                     receipt["canonical_reconciliation"] = repair
+
+                if disposition in ("WAITING_FOR_CI", "DELIVERING"):
+                    candidate_sha = receipt.get("candidate_sha")
+                    ci_workflow = receipt.get("ci_workflow_identity") or "lari-ci.yml"
+                    store.write_state(
+                        command_id,
+                        state=_terminal_state(disposition),
+                        disposition=disposition,
+                        completed_batch_count=completed,
+                        canonical_source_sha=receipt.get("canonical_source_sha"),
+                        canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
+                        worker_pid=None,
+                        candidate_sha=candidate_sha,
+                        ci_workflow_identity=ci_workflow,
+                        delivery_stage=disposition,
+                        retry_after_epoch=time.time() + 15.0 if disposition == "WAITING_FOR_CI" else 0,
+                        source_transport_failure_count=0,
+                        failure_class=None,
+                        error_class=None,
+                        error=None,
+                    )
+                    store.append_event(command_id, "continuation.cycle_result", {
+                        "cycle": cycle,
+                        "disposition": disposition,
+                        "completed_batch_count": completed,
+                        "candidate_sha": candidate_sha,
+                    })
+                    return {
+                        "command_id": command_id,
+                        "disposition": disposition,
+                        "state": disposition,
+                        "candidate_sha": candidate_sha,
+                        "completed_batch_count": completed,
+                    }
 
                 store.write_state(
                     command_id,

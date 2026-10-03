@@ -212,6 +212,13 @@ def _command_observations(runtime_root: Path) -> tuple[Dict[str, Any], Dict[str,
                 "command-admission.json",
             )
         command_states[label]["command_id"] = command_id
+        if state and isinstance(state, dict):
+            if state.get("candidate_sha"):
+                command_states[label]["candidate_sha"] = state["candidate_sha"]
+            if state.get("ci_workflow_identity"):
+                command_states[label]["ci_workflow_identity"] = state["ci_workflow_identity"]
+            if state.get("disposition"):
+                command_states[label]["disposition"] = state["disposition"]
         command_admissions[label]["command_id"] = command_id
     admission_store = (
         _known("READABLE", "command-admission.json")

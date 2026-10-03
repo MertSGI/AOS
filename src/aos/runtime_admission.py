@@ -177,6 +177,52 @@ class CommandAdmissionStore:
             atomic_json(self.path, document)
         return [self.get(command_id) for command_id in selected]
 
+    def activate_system_defect_remediated(
+        self,
+        command_id: str,
+        *,
+        defect_class: str,
+        repaired_runtime_sha: str,
+        prior_terminal_state: str,
+        prior_failure_class: str,
+        canonical_authority_valid: bool,
+        production: str,
+    ) -> AdmissionRecord:
+        """Bounded reactivation of a command stopped by a known system defect."""
+        allowed_defects = {"RECOVERY_CHURN_GUARD", "DELIVERY_CLOSURE_MISSING"}
+        if defect_class not in allowed_defects:
+            raise ValueError(f"defect_class must be one of {allowed_defects}, got: {defect_class}")
+        if prior_terminal_state != "HUMAN_REQUIRED":
+            raise ValueError(f"prior_terminal_state must be HUMAN_REQUIRED, got: {prior_terminal_state}")
+        if prior_failure_class != defect_class:
+            raise ValueError(f"prior_failure_class ({prior_failure_class}) must match defect_class ({defect_class})")
+        if not canonical_authority_valid:
+            raise ValueError("canonical_authority_valid must be True")
+        if production != "NO_GO":
+            raise ValueError(f"production must be NO_GO, got: {production}")
+        if not repaired_runtime_sha or len(repaired_runtime_sha) < 7:
+            raise ValueError("repaired_runtime_sha is required")
+
+        # Update command state file to RECOVERING so worker resumes from checkpoint
+        cmd_state_path = self.runtime_root / "commands" / command_id / "state.json"
+        if cmd_state_path.is_file():
+            state_data = read_json(cmd_state_path, {})
+            state_data["state"] = "RECOVERING"
+            state_data["disposition"] = "SYSTEM_DEFECT_REMEDIATED"
+            state_data["repaired_runtime_sha"] = repaired_runtime_sha
+            state_data["defect_class"] = defect_class
+            state_data["updated_at"] = utc_now()
+            atomic_json(cmd_state_path, state_data)
+
+        # Update admission store
+        return self.set_state(
+            command_id,
+            AdmissionState.ACTIVE,
+            authority="SYSTEM_DEFECT_REMEDIATED",
+            reason=f"System defect remediated: {defect_class} via runtime SHA {repaired_runtime_sha}",
+            recovery_proof_id=None,
+        )
+
     def snapshot(self) -> Dict[str, Any]:
         document = self._load()
         return {

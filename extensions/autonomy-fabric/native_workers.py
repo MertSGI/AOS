@@ -666,6 +666,9 @@ class GitHubCIWorker(ExecutionBackend):
         sha = request.payload.get("sha")
         repo = request.payload.get("repo", "MertSGI/AOS")
 
+        req_workflow = request.payload.get("required_workflow")
+        req_jobs = request.payload.get("required_jobs")
+
         # Explicit target SHA is required for CI acceptance; HEAD cannot be treated as authoritative evidence
         if not sha or sha == "HEAD":
             return ExecutionResult(
@@ -687,6 +690,7 @@ class GitHubCIWorker(ExecutionBackend):
             conclusion = data.get("conclusion")
             status_val = data.get("status")
             mock_sha = data.get("sha")
+            workflow_name = data.get("workflow_name") or data.get("name")
             # Fail closed on missing or mismatched SHA
             if not mock_sha or mock_sha != sha:
                 return ExecutionResult(
@@ -699,6 +703,22 @@ class GitHubCIWorker(ExecutionBackend):
                     workspace=request.workspace,
                     stdout_digest=f"CI SHA mismatch: requested {sha}, mock has {mock_sha}",
                     sanitized_errors=[f"MOCK_CI_SHA_MISMATCH: requested {sha}, got {mock_sha}"],
+                    evidence_payload=data,
+                    evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
+                )
+
+            # Check workflow name if required
+            if req_workflow and workflow_name and req_workflow not in workflow_name and workflow_name not in req_workflow:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="ci_observer",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"CI workflow mismatch: requested {req_workflow}, mock has {workflow_name}",
+                    sanitized_errors=[f"MOCK_CI_WORKFLOW_MISMATCH: requested {req_workflow}, got {workflow_name}"],
                     evidence_payload=data,
                     evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
                 )
@@ -721,12 +741,14 @@ class GitHubCIWorker(ExecutionBackend):
         gh_path = shutil.which("gh")
         if gh_path:
             try:
-                cmd = ["gh", "run", "list", "--repo", repo, "--commit", sha or "HEAD", "--json", "status,conclusion,databaseId,headSha"]
+                cmd = ["gh", "run", "list", "--repo", repo, "--commit", sha or "HEAD", "--json", "status,conclusion,databaseId,headSha,name,workflowName"]
                 proc = run_headless(cmd, timeout=30)
                 if proc.returncode == 0 and proc.stdout.strip():
                     runs = json.loads(proc.stdout)
                     if sha:
                         runs = [r for r in runs if r.get("headSha") == sha or r.get("head_sha") == sha]
+                    if req_workflow:
+                        runs = [r for r in runs if req_workflow in (r.get("workflowName") or r.get("name") or "")]
                     if runs:
                         target = runs[0]
                         conclusion = target.get("conclusion")
@@ -741,7 +763,7 @@ class GitHubCIWorker(ExecutionBackend):
                             exit_code=0 if exec_status == "SUCCESS" else 1,
                             workspace=request.workspace,
                             stdout_digest=f"CI run status via gh: status={status_val}, conclusion={conclusion}",
-                            evidence_payload={"runs": runs, "conclusion": conclusion, "status": status_val},
+                            evidence_payload={"runs": runs, "conclusion": conclusion, "status": status_val, "workflow_name": target.get("name") or target.get("workflowName")},
                             evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
                         )
             except Exception:
@@ -770,6 +792,8 @@ class GitHubCIWorker(ExecutionBackend):
             # Filter exact head_sha if specified
             if sha:
                 runs = [r for r in runs if r.get("head_sha") == sha]
+            if req_workflow:
+                runs = [r for r in runs if req_workflow in (r.get("name") or r.get("path") or "")]
 
             if not runs:
                 return ExecutionResult(
@@ -780,7 +804,7 @@ class GitHubCIWorker(ExecutionBackend):
                     status="FAILED",
                     exit_code=1,
                     workspace=request.workspace,
-                    stdout_digest=f"No CI workflow runs found bound to SHA {sha}",
+                    stdout_digest=f"No CI workflow runs found bound to SHA {sha} (filter: {req_workflow})",
                     sanitized_errors=[f"NO_BOUND_CI_RUN_FOR_SHA: {sha}"],
                     evidence_payload={"sha": sha, "conclusion": "NO_RUNS"},
                     evidence_class=EvidenceClass.CI_RUNTIME_PROOF,
@@ -806,6 +830,7 @@ class GitHubCIWorker(ExecutionBackend):
                     "sha": sha,
                     "status": status_val,
                     "conclusion": conclusion,
+                    "workflow_name": target_run.get("name"),
                     "html_url": target_run.get("html_url"),
                     "runs": runs,
                 },

@@ -73,6 +73,20 @@ def _tracked_text(root: Path, rel: str) -> str:
 
 
 def derive_latest_accepted_product_sha(control: Path, product_workspace: Path) -> Tuple[str, str, int]:
+    # 1. Prefer structured acceptance receipts if present
+    try:
+        from aos.acceptance_receipt import read_latest_acceptance_receipt
+        receipt = read_latest_acceptance_receipt(control)
+        if receipt and receipt.candidate_sha:
+            sha = receipt.candidate_sha.lower()
+            exists = _git(["cat-file", "-e", f"{sha}^{{commit}}"], cwd=product_workspace, check=False).returncode == 0
+            if exists:
+                slug = receipt.slice_id.replace("/", "-").replace(" ", "-").lower()
+                rel_path = f"docs/project-control/acceptance-receipt-{slug}.json"
+                return sha, rel_path, 999
+    except Exception:
+        pass
+
     files = [x.strip() for x in (_git(["ls-files"], cwd=control).stdout or "").splitlines() if x.strip()]
     candidates = []
     for rel in files:
@@ -340,3 +354,156 @@ def reconcile_missing_execution_base(
     }
     _atomic_json(runtime_dir / "canonical-repair.json", result)
     return result
+
+
+def validate_canonical_coherence(state: Mapping[str, Any]) -> None:
+    """Validate semantic agreement among canonical fields in STATE.json.
+
+    Prevents contradictions such as status=R2 while next_action describes R1 work.
+    """
+    status = str(state.get("current_status") or "").upper()
+    milestone = str(state.get("current_milestone") or "").upper()
+    next_action = str(state.get("next_action") or "").upper()
+    execution_base = str(state.get("canonical_refs", {}).get("program_v2_canonical_base", {}).get("sha") or "")
+
+    # Contradiction: status is R2 or R3 but next_action still says R1
+    if "R2" in status or "R3" in status or "R2" in milestone:
+        if "IMPLEMENT PHASE 7 NODE 2 R1" in next_action or "NODE 2 R1" in next_action:
+            raise CanonicalReconciliationError(
+                f"Canonical semantic contradiction: status '{status}' contradicts next_action '{next_action[:60]}...'"
+            )
+
+    if "R3" in status:
+        if "IMPLEMENT PHASE 7 NODE 2 R2" in next_action:
+            raise CanonicalReconciliationError(
+                f"Canonical semantic contradiction: status '{status}' contradicts next_action '{next_action[:60]}...'"
+            )
+
+
+def record_slice_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_evidence: Mapping[str, Any],
+    slice_id: str,
+    acceptance_receipt: Any,
+) -> Dict[str, Any]:
+    """Execute atomic forward-only canonical control-plane acceptance transition."""
+    from aos.acceptance_receipt import write_acceptance_receipt
+
+    control, control_ref = _ensure_control_clone(descriptor_path, runtime_dir)
+    state_path = find_state_json(control)
+    current_state = _read_json(state_path)
+
+    # 1. Validate semantic coherence before update
+    validate_canonical_coherence(current_state)
+
+    # 2. Build updated state atomically
+    updated_state = dict(current_state)
+    updated_state["current_status"] = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY"
+    updated_state["current_milestone"] = "Program V2 Phase 7 — Node 2 Discovery Marketplace R3"
+    updated_state["next_action"] = (
+        f"Implement Phase 7 Node 2 R3 — Customer-facing Discovery / Portfolio UI "
+        f"from accepted R2 execution base {candidate_sha} under DECISION-022. "
+        f"Consume accepted R1 server-authoritative Discovery Marketplace RPCs and R2 application service contracts. "
+        f"Production remains NO_GO."
+    )
+
+    # Update candidate release/acceptance evidence
+    candidate_rel = updated_state.get("candidate_release") or {}
+    if isinstance(candidate_rel, dict):
+        candidate_rel["accepted_product_sha"] = candidate_sha
+        candidate_rel["next_action_execution_base_sha"] = candidate_sha
+        updated_state["candidate_release"] = candidate_rel
+
+    # Add to accepted_gates
+    accepted_gates = list(updated_state.get("accepted_gates") or [])
+    gate_record = {
+        "gate": f"P7N2-{slice_id.upper()}",
+        "status": "CLOSED_PROVEN",
+        "evidence_level": "E2_EXECUTABLE_EXACT_SHA_CI",
+        "tested_sha": candidate_sha,
+        "run_ids": [str(ci_evidence.get("run_id") or "")],
+        "closed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "reopen_condition": "Failed contract verification or CI regression",
+    }
+    accepted_gates.append(gate_record)
+    updated_state["accepted_gates"] = accepted_gates
+    updated_state["updated_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    # 3. Write structured acceptance receipt
+    write_acceptance_receipt(control, acceptance_receipt)
+
+    # 4. Update capability registry if present
+    registry_path = control / "docs" / "project-control" / "PROGRAM_V2_CAPABILITY_REGISTRY.json"
+    if registry_path.is_file():
+        try:
+            reg = _read_json(registry_path)
+            for item in reg.get("current_live_commercial_registry", []):
+                if item.get("key") == "discovery_marketplace":
+                    item["program_maturity"] = "REAL_CODE_NOT_LIVE_VERIFIED"
+                    item["accepted_r2_sha"] = candidate_sha
+                    item["delivery_slice"] = "R2_ACCEPTED_R3_UI_READY"
+            _atomic_json(registry_path, reg)
+            _git(["add", "--", str(registry_path)], cwd=control)
+        except Exception:
+            pass
+
+    _atomic_json(state_path, updated_state)
+    _git(["add", "--", str(state_path)], cwd=control)
+    receipt_files = list((control / "docs" / "project-control").glob("acceptance-receipt-*.json"))
+    for rf in receipt_files:
+        _git(["add", "--", str(rf)], cwd=control)
+
+    # 5. Verify only expected files changed
+    diff_names = (_git(["diff", "--name-only", "--cached"], cwd=control).stdout or "").splitlines()
+    for f in diff_names:
+        if not f.startswith("docs/project-control/"):
+            raise CanonicalReconciliationError(f"Unexpected file staged for canonical acceptance: {f}")
+
+    # 6. Check for concurrent remote drift
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=60)
+    remote_now = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip()
+    local_base = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip()
+    if remote_now != local_base:
+        raise CanonicalReconciliationError(
+            f"Concurrent control drift detected: local {local_base} != remote {remote_now}"
+        )
+
+    # 7. Forward-only commit and fast-forward push
+    msg = f"control(lari): reconcile Phase 7 Node 2 {slice_id.upper()} acceptance and bind R3"
+    _git(
+        ["-c", "user.name=AOS Canonical Reconciler", "-c", "user.email=aos-reconciler@users.noreply.github.com",
+         "commit", "-m", msg],
+        cwd=control,
+    )
+    new_control_sha = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip()
+    _git(["push", "origin", f"HEAD:{control_ref}"], cwd=control, timeout=300)
+
+    # 8. Verify remote SHA matches
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=60)
+    remote_after = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip()
+    if remote_after != new_control_sha:
+        raise CanonicalReconciliationError(
+            f"Remote SHA verification failed after push: expected {new_control_sha}, got {remote_after}"
+        )
+
+    # 9. Evaluate downstream dependency gates (e.g. UI V2 continue-61be4ab1af53cfa646d773ce)
+    try:
+        from aos.cross_lane_coordinator import evaluate_downstream_gates
+        from aos.runtime_admission import CommandAdmissionStore
+        admission_store = CommandAdmissionStore(runtime_dir.parent.parent if runtime_dir.name == "project-runtime" else runtime_dir)
+        evaluate_downstream_gates(control, admission_store)
+    except Exception:
+        pass
+
+    return {
+        "status": "ACCEPTED",
+        "slice_id": slice_id,
+        "candidate_sha": candidate_sha,
+        "control_transition_sha": new_control_sha,
+        "next_status": updated_state["current_status"],
+    }

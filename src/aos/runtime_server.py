@@ -744,12 +744,104 @@ class RuntimeEngine:
                 })
             return proc.pid
 
+    def _poll_ci_for_command(self, command_id: str, state: Dict[str, Any]) -> None:
+        """Lightweight native CI polling for candidate exact SHA without consuming agentic quota."""
+        candidate_sha = state.get("candidate_sha")
+        ci_workflow = state.get("ci_workflow_identity") or "lari-phase5-postgres-acceptance.yml"
+        if not candidate_sha:
+            self.store.write_state(command_id, retry_after_epoch=time.time() + 30.0)
+            return
+
+        command = self.store.read_command(command_id) or {}
+        project = command.get("project") or {}
+        repo = "MertSGI/Randapp-main"
+
+        # Query GitHub REST API or gh CLI natively
+        conclusion = None
+        status_val = None
+        run_id = None
+        try:
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            api_url = f"https://api.github.com/repos/{repo}/actions/runs?head_sha={candidate_sha}"
+            req_api = urllib.request.Request(api_url, headers={"User-Agent": "AOS-Runtime-Server"})
+            with urllib.request.urlopen(req_api, context=ctx, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            runs = data.get("workflow_runs", [])
+            # Filter by candidate_sha and required workflow identity if available
+            matching = [
+                r for r in runs
+                if (r.get("head_sha") or r.get("headSha")) == candidate_sha
+                and (not ci_workflow or ci_workflow in str(r.get("path", "")) or ci_workflow in str(r.get("name", "")))
+            ]
+            if matching:
+                target = matching[0]
+                status_val = str(target.get("status") or "").lower()
+                conclusion = str(target.get("conclusion") or "").lower()
+                run_id = target.get("id") or target.get("databaseId")
+        except Exception:
+            pass
+
+        if conclusion == "success":
+            self.store.append_event(command_id, "delivery.ci_observed_success", {
+                "candidate_sha": candidate_sha,
+                "workflow": ci_workflow,
+                "run_id": run_id,
+            })
+            self.store.write_state(
+                command_id,
+                state="DELIVERING",
+                disposition="ACCEPTANCE_READY",
+                delivery_stage="CI_COMPLETE",
+                ci_conclusion="success",
+                ci_run_id=run_id,
+                retry_after_epoch=0,
+            )
+            # Spawn worker to execute acceptance transition
+            self._spawn_worker(command_id, recovered=True)
+            return
+
+        if conclusion in ("failure", "cancelled", "timed_out"):
+            self.store.append_event(command_id, "delivery.ci_observed_failure", {
+                "candidate_sha": candidate_sha,
+                "workflow": ci_workflow,
+                "conclusion": conclusion,
+                "run_id": run_id,
+            })
+            self.store.write_state(
+                command_id,
+                state="RUNNING",
+                disposition="CI_REPAIR_REQUIRED",
+                ci_conclusion=conclusion,
+                ci_run_id=run_id,
+                retry_after_epoch=0,
+            )
+            # Spawn worker for bounded repair
+            self._spawn_worker(command_id, recovered=True)
+            return
+
+        # Still queued / in progress / not found yet: wait and poll again natively
+        self.store.write_state(
+            command_id,
+            state="WAITING_FOR_CI",
+            retry_after_epoch=time.time() + 20.0,
+        )
+
     def _recover_one(self, command_id: str) -> None:
         if self.is_paused or not self.admissions.is_active(command_id):
             return
         state = self.store.read_state(command_id)
         current = str(state.get("state") or "")
         if current in ("PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"):
+            return
+        if current == "TECHNICAL_HOLD" and str(state.get("failure_class") or "") == "RECOVERY_CHURN_GUARD":
+            return
+        if current == "WAITING_FOR_CI":
+            retry = float(state.get("retry_after_epoch", 0) or 0)
+            if retry and time.time() < retry:
+                return
+            self._poll_ci_for_command(command_id, state)
             return
         if current in (
             "WAITING_FOR_REASONING_PROVIDER",
