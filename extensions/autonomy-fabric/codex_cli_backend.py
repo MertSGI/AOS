@@ -16,7 +16,11 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
 from aos.process_utils import popen_headless, run_headless
-from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
+from aos.workspace_fingerprint import (
+    RUNTIME_OWNED_ROOT_LOCK_PATH,
+    WorkspaceFingerprintError,
+    compute_workspace_fingerprint,
+)
 from aos.workers.codex_cli_probe import (
     CODEX_ADAPTER_CONTRACT_VERSION,
     build_codex_child_environment,
@@ -60,6 +64,7 @@ class CodexJsonlOutcome:
     usage: Dict[str, int] = field(default_factory=dict)
     failure_class: Optional[str] = None
     event_count: int = 0
+    assistant_text: Optional[str] = None
 
 
 def _structured_failure_class(value: Any) -> str:
@@ -81,6 +86,7 @@ def parse_codex_exec_jsonl(stdout: str, *, returncode: int) -> CodexJsonlOutcome
     count = 0
     malformed = False
     thread_started_count = 0
+    assistant_messages: List[str] = []
     for line in stdout.splitlines():
         if not line.strip():
             continue
@@ -121,6 +127,12 @@ def parse_codex_exec_jsonl(stdout: str, *, returncode: int) -> CodexJsonlOutcome
                 for key, value in raw_usage.items():
                     if key in _ALLOWED_USAGE and isinstance(value, int) and value >= 0:
                         usage[key] = value
+        if event_type == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    assistant_messages.append(text)
     valid = bool(
         not malformed
         and returncode == 0
@@ -137,6 +149,7 @@ def parse_codex_exec_jsonl(stdout: str, *, returncode: int) -> CodexJsonlOutcome
         usage=usage,
         failure_class=failure_class,
         event_count=count,
+        assistant_text="\n".join(assistant_messages) if assistant_messages else None,
     )
 
 
@@ -318,13 +331,21 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             ["git", "-C", workspace, "diff", "--name-only", "-z", "HEAD"],
             ["git", "-C", workspace, "ls-files", "--others", "--exclude-standard", "-z"],
         )
-        raw = b""
-        for command in commands:
+        changed: Set[str] = set()
+        for index, command in enumerate(commands):
             result = run_headless(command, timeout=30, text=False)
             if result.returncode:
                 raise WorkspaceFingerprintError("unable to inspect Codex workspace mutations")
-            raw += result.stdout
-        return sorted({os.fsdecode(item).replace("\\", "/") for item in raw.split(b"\0") if item})
+            paths = {
+                os.fsdecode(item).replace("\\", "/")
+                for item in result.stdout.split(b"\0") if item
+            }
+            if index == 1:
+                # Runtime V1 owns this exact untracked root lock. It is
+                # coordination state, not a mutation made by Codex.
+                paths.discard(RUNTIME_OWNED_ROOT_LOCK_PATH)
+            changed.update(paths)
+        return sorted(changed)
 
     @staticmethod
     def _in_scope(path: str, scopes: List[str]) -> bool:
@@ -461,7 +482,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             if completed.returncode == 124:
                 outcome = CodexJsonlOutcome(
                     False, outcome.thread_id, outcome.terminal_event, outcome.usage,
-                    "TEMPORARILY_UNAVAILABLE", outcome.event_count,
+                    "TEMPORARILY_UNAVAILABLE", outcome.event_count, outcome.assistant_text,
                 )
         except Exception:
             failed = ExecutionAvailabilitySnapshot(
@@ -474,7 +495,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
         if prior is not None and outcome.thread_id and outcome.thread_id != prior.session_or_thread_id.lower():
             outcome = CodexJsonlOutcome(
                 False, outcome.thread_id, outcome.terminal_event, outcome.usage,
-                "CONTRACT_FAILURE", outcome.event_count,
+                "CONTRACT_FAILURE", outcome.event_count, outcome.assistant_text,
             )
         if not outcome.valid:
             state = {
@@ -538,7 +559,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             artifact_hashes=all_artifacts,
             superseded_session_ids=list(prior.superseded_session_ids if prior else seed.get("superseded_session_ids", [])),
         )
-        return ExecutionResult(
+        result = ExecutionResult(
             backend_id=self.backend_id,
             worker_id="codex_cli",
             task_id=request.task_id,
@@ -560,6 +581,12 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             agentic_identity=identity,
             availability=availability,
         )
+        # The assistant message can contain a structured planning proposal. Keep
+        # it transient so the bridge can consume it without persisting model
+        # output in execution receipts or evidence payloads.
+        if outcome.assistant_text:
+            setattr(result, "transient_raw_output", outcome.assistant_text)
+        return result
 
     def interrupt(self, execution_id: str) -> None:
         with self._process_lock:

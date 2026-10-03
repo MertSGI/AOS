@@ -153,7 +153,9 @@ def test_quota_or_unproven_auth_is_nonterminal_and_never_invoked(tmp_path):
 
 
 def test_parser_requires_one_thread_and_one_success_terminal():
-    assert parse_codex_exec_jsonl(_success_output(), returncode=0).valid
+    parsed = parse_codex_exec_jsonl(_success_output(), returncode=0)
+    assert parsed.valid
+    assert parsed.assistant_text == "secret output"
     assert parse_codex_exec_jsonl(_success_output(THREAD_ID_V7), returncode=0).valid
     cases = [
         ("not json", 0, "CONTRACT_FAILURE"),
@@ -170,6 +172,33 @@ def test_parser_requires_one_thread_and_one_success_terminal():
         outcome = parse_codex_exec_jsonl(output, returncode=code)
         assert not outcome.valid
         assert outcome.failure_class == failure
+
+
+def test_success_exposes_assistant_output_only_transiently(tmp_path):
+    source_sha = _repo(tmp_path)
+
+    def runner(argv, cwd, prompt, timeout, env):
+        return subprocess.CompletedProcess(argv, 0, _success_output(), "")
+
+    result = _backend(runner).execute(_request(tmp_path, source_sha))
+
+    assert result.status == "SUCCESS"
+    assert result.transient_raw_output == "secret output"
+    assert "secret output" not in json.dumps(result.to_dict())
+    assert "transient_raw_output" not in result.to_dict()
+
+
+def test_runtime_owned_root_lock_is_not_reported_as_codex_mutation(tmp_path):
+    source_sha = _repo(tmp_path)
+    (tmp_path / ".aos_workspace_active.lock").write_text("runtime-owned\n", encoding="utf-8")
+
+    def runner(argv, cwd, prompt, timeout, env):
+        return subprocess.CompletedProcess(argv, 0, _success_output(), "")
+
+    result = _backend(runner).execute(_request(tmp_path, source_sha))
+
+    assert result.status == "SUCCESS"
+    assert result.changed_paths == []
 
 
 def test_write_scope_escape_fails_closed(tmp_path):

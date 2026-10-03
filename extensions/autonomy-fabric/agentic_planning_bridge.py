@@ -241,6 +241,10 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
         # 1. agentic_result.transient_structured_output if it is a dict
         if isinstance(getattr(agentic_result, "transient_structured_output", None), dict):
             proposal = agentic_result.transient_structured_output
+        elif isinstance(getattr(agentic_result, "transient_raw_output", None), str):
+            # Agentic CLI adapters keep raw model output transient so it can be
+            # validated here without leaking into durable execution evidence.
+            proposal = extract_json_object(agentic_result.transient_raw_output)
         elif hasattr(agentic_result, "evidence_payload") and isinstance(agentic_result.evidence_payload, dict):
             # 2. existing evidence_payload["proposal"] if dict
             raw_prop = agentic_result.evidence_payload.get("proposal")

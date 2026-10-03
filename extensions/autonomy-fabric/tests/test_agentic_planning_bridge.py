@@ -25,10 +25,11 @@ class DummyAgenticBackend(AgenticExecutionBackend):
     supported_capabilities = {ExecutionCapability.LONG_HORIZON_AGENTIC_WORK}
     cost = ExecutionCost.SUBSCRIPTION_INCLUDED
 
-    def __init__(self, response_text: str = "", fail: bool = False, mutates: bool = False):
+    def __init__(self, response_text: str = "", fail: bool = False, mutates: bool = False, transient: bool = False):
         self.response_text = response_text
         self.fail = fail
         self.mutates = mutates
+        self.transient = transient
         self.last_request = None
 
     def get_health(self) -> ExecutionHealth:
@@ -56,7 +57,7 @@ class DummyAgenticBackend(AgenticExecutionBackend):
                 evidence_payload={"failure_class": "DUMMY_ERROR"},
             )
         changed = ["mutated_file.txt"] if self.mutates else []
-        return ExecutionResult(
+        result = ExecutionResult(
             backend_id=self.backend_id,
             worker_id="dummy",
             task_id=request.task_id,
@@ -68,6 +69,11 @@ class DummyAgenticBackend(AgenticExecutionBackend):
             stdout_digest=self.response_text,
             evidence_payload={"raw_output": self.response_text},
         )
+        if self.transient:
+            result.stdout_digest = "Agentic CLI completed a verified structured turn"
+            result.evidence_payload = {}
+            setattr(result, "transient_raw_output", self.response_text)
+        return result
 
     def resume(self, request, identity, context_pack):
         return self.start(request, context_pack)
@@ -118,6 +124,30 @@ def test_bridge_successful_structured_planning_request():
     assert res.transient_structured_output == res.evidence_payload["proposal"]
     # Check underlying request received empty write_scope
     assert underlying.last_request.write_scope == []
+
+
+def test_bridge_consumes_transient_agentic_cli_output():
+    valid_json = '{"title": "Transient Plan", "tasks": ["task-1"]}'
+    underlying = DummyAgenticBackend(response_text=valid_json, transient=True)
+    bridge = AgenticStructuredPlanningBridge(underlying)
+    req = ExecutionRequest(
+        task_id="plan-transient",
+        project_id="test",
+        workspace=".",
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="AUTH-1",
+        payload={"prompt": "Create plan", "schema": SCHEMA},
+    )
+
+    res = bridge.execute(req)
+
+    assert res.status == "SUCCESS"
+    assert res.transient_structured_output == {
+        "title": "Transient Plan",
+        "tasks": ["task-1"],
+    }
+    assert "Transient Plan" not in res.stdout_digest
 
 
 def test_bridge_denies_write_authority():
