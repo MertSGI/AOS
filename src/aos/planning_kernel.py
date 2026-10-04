@@ -315,11 +315,15 @@ class Objective:
 
 
 def _objective_task_class(objective: "Objective") -> str:
-    text = " ".join((objective.title, objective.description, *objective.scope_tags)).lower()
-    markers = ("ui", "frontend", "browser", "react", "tsx", "css", "visual")
+    # The title and scope tags express the work being requested.  The longer
+    # description also carries exclusion clauses (for example, "do not begin
+    # UI"), so treating every description substring as positive task intent
+    # routes backend-only work through the UI planning contract.
+    tokens = set(re.findall(r"[a-z0-9]+", " ".join((objective.title, *objective.scope_tags)).lower()))
+    markers = {"ui", "frontend", "browser", "react", "tsx", "css", "visual"}
     return (
         TaskClass.REPO_UI_PLANNING.value
-        if any(marker in text for marker in markers)
+        if tokens & markers
         else TaskClass.STRUCTURED_PLANNING.value
     )
 

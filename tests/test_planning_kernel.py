@@ -25,6 +25,7 @@ from aos.planning_kernel import (
     _bounded_task_signatures_for_prompt,
     _bounded_workspace_file_manifest,
     _bounded_workspace_declared_symbols,
+    _objective_task_class,
     _receipt_sha256,
     _recover_waiting_objective,
     _situation_prompt_payload,
@@ -240,6 +241,23 @@ def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, m
     assert len(manifest["path_set_sha256"]) == 64
     assert "package.json" in manifest["representative_existing_paths"]
     assert all("content" not in path.lower() for path in manifest["representative_existing_paths"])
+
+
+def test_objective_task_class_does_not_treat_ui_exclusion_as_ui_work():
+    objective = Objective.from_dict({
+        **_objective(),
+        "title": "Implement Discovery Marketplace Application Service / Adapter Integration",
+        "description": "Implement the backend adapter. Do not begin customer-facing UI.",
+        "scope_tags": ["application-service", "adapter-integration"],
+    })
+    assert _objective_task_class(objective) == "structured_planning"
+
+    ui_objective = Objective.from_dict({
+        **_objective(),
+        "title": "Implement Discovery Marketplace UI",
+        "scope_tags": ["frontend", "react"],
+    })
+    assert _objective_task_class(ui_objective) == "repo_ui_planning"
 
 
 def test_workspace_declared_symbols_extracts_exact_sql_functions(tmp_path):
