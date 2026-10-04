@@ -30,6 +30,11 @@ CODEX_SENSITIVE_ENV_VARS = {
     "OPENAI_ORG_ID",
     "OPENAI_PROJECT_ID",
 }
+CODEX_PARENT_SESSION_ENV_VARS = {
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_THREAD_ID",
+}
 
 
 def get_codex_capability_store_path() -> Path:
@@ -266,7 +271,8 @@ def resolve_codex_capability_status(
 
 def build_codex_child_environment(parent: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     source = parent or dict(os.environ)
-    return {key: value for key, value in source.items() if key.upper() not in CODEX_SENSITIVE_ENV_VARS}
+    excluded = CODEX_SENSITIVE_ENV_VARS | CODEX_PARENT_SESSION_ENV_VARS
+    return {key: value for key, value in source.items() if key.upper() not in excluded}
 
 
 def run_codex_cli_probe(

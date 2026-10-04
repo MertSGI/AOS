@@ -92,5 +92,8 @@ def test_child_environment_removes_all_api_credentials():
         "AZURE_OPENAI_API_KEY": "secret",
         "OPENAI_ORG_ID": "secret",
         "OPENAI_PROJECT_ID": "secret",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "parent-host",
+        "CODEX_PERMISSION_PROFILE": ":read-only",
+        "CODEX_THREAD_ID": "parent-thread",
     })
     assert env == {"PATH": "safe"}
