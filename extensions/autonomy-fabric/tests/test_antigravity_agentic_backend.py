@@ -145,6 +145,23 @@ def test_write_scope_is_verified_after_agentic_turn(tmp_path):
     assert result.sanitized_errors == ["ANTIGRAVITY_WRITE_SCOPE_VIOLATION"]
 
 
+def test_mutating_task_cannot_succeed_without_workspace_mutation(tmp_path):
+    source_sha = _repo(tmp_path)
+    request = _request(
+        tmp_path,
+        source_sha,
+        write_scope=["base.txt"],
+        expected_artifacts=["base.txt"],
+    )
+
+    result = _backend(FakeAntigravityAdapter()).execute(request)
+
+    assert result.status == "DEGRADED"
+    assert result.sanitized_errors == [
+        "ANTIGRAVITY_CONTRACT_FAILURE:NO_WORKSPACE_MUTATION"
+    ]
+
+
 def test_supervisor_supersedes_stale_session_and_waits_without_project_failure(tmp_path):
     source_sha = _repo(tmp_path)
     adapter = FakeAntigravityAdapter()
@@ -549,5 +566,4 @@ def test_identity_regression_f_no_literal_agy_dependency_in_backend(monkeypatch,
     for call_type, target in calls:
         assert target != "agy", f"Literal 'agy' passed to {call_type}"
         assert target == str(fake_managed)
-
 

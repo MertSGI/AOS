@@ -401,6 +401,16 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                 request, "ANTIGRAVITY_POST_EXECUTION_VERIFICATION_FAILED", availability,
                 status="FAILED",
             )
+        if (
+            request.write_scope
+            and request.expected_artifacts
+            and after.sha256 == before.sha256
+        ):
+            return self._failure(
+                request,
+                "ANTIGRAVITY_CONTRACT_FAILURE:NO_WORKSPACE_MUTATION",
+                availability,
+            )
 
         seed = handoff_seed(context_pack) if prior is None else {}
         completed_ids = sorted(set(

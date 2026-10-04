@@ -238,6 +238,23 @@ def test_runtime_owned_root_lock_is_not_reported_as_codex_mutation(tmp_path):
     assert result.changed_paths == []
 
 
+def test_mutating_task_cannot_succeed_without_workspace_mutation(tmp_path):
+    source_sha = _repo(tmp_path)
+
+    def runner(argv, cwd, prompt, timeout, env):
+        return subprocess.CompletedProcess(argv, 0, _success_output(), "")
+
+    request = _request(tmp_path, source_sha)
+    request.write_scope = ["base.txt"]
+    request.expected_artifacts = ["base.txt"]
+    result = _backend(runner).execute(request)
+
+    assert result.status == "DEGRADED"
+    assert result.sanitized_errors == [
+        "CODEX_CONTRACT_FAILURE:NO_WORKSPACE_MUTATION"
+    ]
+
+
 def test_write_scope_escape_fails_closed(tmp_path):
     source_sha = _repo(tmp_path)
 
