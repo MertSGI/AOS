@@ -108,7 +108,15 @@ def test_system_defect_reactivation(tmp_path: Path):
     cmd_dir = tmp_path / 'commands' / 'continue-b181ddc574c25c2aa0f2a6b9'
     cmd_dir.mkdir(parents=True)
     (cmd_dir / 'command.json').write_text(json.dumps({'project': {'project_id': 'lari'}}), encoding='utf-8')
-    (cmd_dir / 'state.json').write_text(json.dumps({'state': 'HUMAN_REQUIRED', 'failure_class': 'RECOVERY_CHURN_GUARD'}), encoding='utf-8')
+    (cmd_dir / 'state.json').write_text(json.dumps({
+        'state': 'HUMAN_REQUIRED',
+        'failure_class': 'RECOVERY_CHURN_GUARD',
+        'same_fingerprint_respawns': 3,
+        'recovery_disposition': 'RECOVERY_CHURN_GUARD',
+        'retry_after_epoch': 42,
+        'worker_pid': 1234,
+        'recovery_fingerprint_sha256': 'f' * 64,
+    }), encoding='utf-8')
 
     with pytest.raises(ValueError):
         store.activate_system_defect_remediated(
@@ -148,6 +156,11 @@ def test_system_defect_reactivation(tmp_path: Path):
     st = json.loads((cmd_dir / 'state.json').read_text(encoding='utf-8'))
     assert st['state'] == 'RECOVERING'
     assert st['disposition'] == 'SYSTEM_DEFECT_REMEDIATED'
+    assert st['same_fingerprint_respawns'] == 0
+    assert st['recovery_disposition'] == 'SYSTEM_DEFECT_REMEDIATED'
+    assert st['retry_after_epoch'] == 0
+    assert st['worker_pid'] is None
+    assert st['recovery_fingerprint_sha256'] == 'f' * 64
 
 
 def test_ui_v2_downstream_gate(tmp_path: Path):

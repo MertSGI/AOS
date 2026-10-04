@@ -211,6 +211,13 @@ class CommandAdmissionStore:
             state_data["disposition"] = "SYSTEM_DEFECT_REMEDIATED"
             state_data["repaired_runtime_sha"] = repaired_runtime_sha
             state_data["defect_class"] = defect_class
+            # A proven runtime repair is a new recovery condition. Preserve the
+            # historical fingerprint for forensics, but reset only its bounded
+            # respawn counter so the supervisor can make one fresh attempt.
+            state_data["same_fingerprint_respawns"] = 0
+            state_data["recovery_disposition"] = "SYSTEM_DEFECT_REMEDIATED"
+            state_data["retry_after_epoch"] = 0
+            state_data["worker_pid"] = None
             state_data["updated_at"] = utc_now()
             atomic_json(cmd_state_path, state_data)
 
