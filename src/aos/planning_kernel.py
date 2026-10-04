@@ -882,6 +882,87 @@ def _bounded_workspace_file_manifest(
     return manifest
 
 
+def _bounded_workspace_declared_symbols(
+    workspace: Optional[Path],
+    file_manifest: Mapping[str, Any],
+    *,
+    max_chars: int = 1800,
+) -> Dict[str, Any]:
+    """Expose exact SQL function names from the planner's relevant path set.
+
+    The file manifest intentionally remains path-only.  This companion view
+    gives the planner enough source-grounded identity to consume an accepted
+    RPC without inventing a similarly named contract.
+    """
+    if workspace is None or file_manifest.get("status") != "AVAILABLE":
+        return {"status": "UNAVAILABLE", "reason": "workspace_not_bound"}
+
+    root = workspace.resolve()
+    result: Dict[str, Any] = {"status": "AVAILABLE", "sources": []}
+    declaration = re.compile(
+        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"
+        r"(?:(?P<schema>[a-zA-Z_][a-zA-Z0-9_]*)\.)?"
+        r"(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
+        re.IGNORECASE,
+    )
+    for relative in file_manifest.get("representative_existing_paths", []):
+        if not isinstance(relative, str) or Path(relative).suffix.lower() != ".sql":
+            continue
+        target = (root / relative).resolve()
+        if (target != root and root not in target.parents) or not target.is_file():
+            continue
+        try:
+            with target.open("r", encoding="utf-8", errors="ignore") as handle:
+                source = handle.read(256 * 1024)
+        except OSError:
+            continue
+        symbols = sorted({
+            ".".join(part for part in (match.group("schema"), match.group("name")) if part)
+            for match in declaration.finditer(source)
+        })
+        if not symbols:
+            continue
+        result["sources"].append({"path": relative, "declared_sql_functions": symbols[:32]})
+        if len(json.dumps(result, ensure_ascii=False, separators=(",", ":"))) > max_chars:
+            result["sources"].pop()
+            break
+    return result
+
+
+def _validate_existing_rpc_references(
+    tasks: Sequence[Mapping[str, Any]],
+    declared_symbols: Mapping[str, Any],
+) -> None:
+    known = {
+        str(symbol).split(".")[-1].lower()
+        for source in declared_symbols.get("sources", [])
+        if isinstance(source, Mapping)
+        for symbol in source.get("declared_sql_functions", [])
+        if isinstance(symbol, str)
+    }
+    if not known:
+        return
+    for task in tasks:
+        if str(task.get("run_type", "")).upper() != "AGENTIC":
+            continue
+        payload = task.get("payload")
+        prompt = str(payload.get("prompt", "")) if isinstance(payload, Mapping) else ""
+        lowered = prompt.lower()
+        if "rpc" not in lowered or not re.search(r"\b(consum\w*|call\w*|reuse\w*)\b", lowered):
+            continue
+        candidates = {
+            token.lower()
+            for token in re.findall(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b", lowered)
+            if token.lower().startswith(("get_", "search_", "list_", "fetch_"))
+        }
+        missing = sorted(candidates - known)
+        if missing:
+            raise PlanningKernelError(
+                f"Task {task.get('node_id')} references existing RPC symbols absent from the bound workspace: "
+                f"{missing}; declared SQL functions include {sorted(known)[:32]}"
+            )
+
+
 def _bounded_completed_read_context(
     runtime_dir: Path,
     workspace: Path,
@@ -2384,6 +2465,7 @@ def compile_execution_plan(
         str(item) for item in forbidden_task_signatures if str(item).strip()
     }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
+    workspace_declared_symbols = _bounded_workspace_declared_symbols(workspace, workspace_manifest)
     available_process_binaries = _available_process_binaries()
 
     # If the workspace contains no Python scripts, remove python/py from available binaries and inject rule
@@ -2568,6 +2650,9 @@ def compile_execution_plan(
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
         f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
+        "EXISTING_RPC_RULE=When consuming accepted or existing SQL RPCs, use only exact declarations in "
+        "WORKSPACE_DECLARED_SYMBOLS; never invent a similar RPC name.\n"
+        f"WORKSPACE_DECLARED_SYMBOLS={json.dumps(workspace_declared_symbols, ensure_ascii=False, sort_keys=True)}\n"
         "PROCESS_BINARY_RULE=Use PROCESS/TEST/BUILD only when cmd[0] is listed in AVAILABLE_PROCESS_BINARIES; "
         "an allowlisted but unavailable binary is not executable and must not be planned. Never use python -c or "
         "python -m; Python may only receive an existing workspace-relative script path.\n"
@@ -2874,6 +2959,7 @@ def compile_execution_plan(
                         )
                 for task in normalized["tasks"]:
                     _validate_process_workspace_inputs(task, workspace_root)
+                _validate_existing_rpc_references(normalized["tasks"], workspace_declared_symbols)
             duplicates = sorted(
                 task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
             )

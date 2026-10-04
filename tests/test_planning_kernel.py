@@ -24,10 +24,12 @@ from aos.planning_kernel import (
     _bounded_completed_read_context,
     _bounded_task_signatures_for_prompt,
     _bounded_workspace_file_manifest,
+    _bounded_workspace_declared_symbols,
     _receipt_sha256,
     _recover_waiting_objective,
     _situation_prompt_payload,
     _validate_plan_shape,
+    _validate_existing_rpc_references,
     _worker_contract_summary,
     compile_execution_plan,
     detect_completion,
@@ -238,6 +240,55 @@ def test_workspace_file_manifest_is_bounded_hash_bound_and_path_only(tmp_path, m
     assert len(manifest["path_set_sha256"]) == 64
     assert "package.json" in manifest["representative_existing_paths"]
     assert all("content" not in path.lower() for path in manifest["representative_existing_paths"])
+
+
+def test_workspace_declared_symbols_extracts_exact_sql_functions(tmp_path):
+    migration = tmp_path / "supabase" / "migrations" / "discovery.sql"
+    migration.parent.mkdir(parents=True)
+    migration.write_text(
+        "CREATE OR REPLACE FUNCTION public.get_discovery_marketplace_listings(p_limit integer) "
+        "RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;\n"
+        "CREATE FUNCTION public.get_discovery_marketplace_detail(p_slug text) "
+        "RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;\n",
+        encoding="utf-8",
+    )
+
+    symbols = _bounded_workspace_declared_symbols(
+        tmp_path,
+        {"status": "AVAILABLE", "representative_existing_paths": ["supabase/migrations/discovery.sql"]},
+    )
+
+    assert symbols == {
+        "status": "AVAILABLE",
+        "sources": [{
+            "path": "supabase/migrations/discovery.sql",
+            "declared_sql_functions": [
+                "public.get_discovery_marketplace_detail",
+                "public.get_discovery_marketplace_listings",
+            ],
+        }],
+    }
+
+
+def test_existing_rpc_reference_validation_rejects_invented_contract_name():
+    symbols = {
+        "status": "AVAILABLE",
+        "sources": [{
+            "path": "supabase/migrations/discovery.sql",
+            "declared_sql_functions": ["public.get_discovery_marketplace_listings"],
+        }],
+    }
+    task = {
+        "node_id": "implement-adapter",
+        "run_type": "AGENTIC",
+        "payload": {"prompt": "Consume the accepted RPC get_public_discovery_marketplace from R1."},
+    }
+
+    with pytest.raises(planning_kernel.PlanningKernelError, match="absent from the bound workspace"):
+        _validate_existing_rpc_references([task], symbols)
+
+    task["payload"]["prompt"] = "Consume the accepted RPC get_discovery_marketplace_listings from R1."
+    _validate_existing_rpc_references([task], symbols)
 
 
 def test_completed_read_context_fresh_reads_only_completed_safe_text_tasks(tmp_path):
