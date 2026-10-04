@@ -276,3 +276,111 @@ def test_host_registers_codex_outside_provider_factories(tmp_path):
     assert isinstance(backend, CodexCliExecutionBackend)
     assert backend.cost.value == "SUBSCRIPTION_INCLUDED"
     assert "codex_cli" not in _PROVIDER_FACTORIES
+
+
+def test_missing_executable_identity_returns_auth_unavailable_despite_proven_capability():
+    backend = CodexCliExecutionBackend(
+        capability_status_provider=lambda: "PROVEN",
+        quota_snapshot_provider=lambda: {
+            "state": "AVAILABLE",
+            "source": "CODEX_APP_SERVER",
+            "primary_used_percent": 10.0,
+            "secondary_used_percent": 5.0,
+        },
+        executable_identity={},  # Evaluates to None in _identity()
+    )
+    assert backend._identity() is None
+    avail = backend.get_availability()
+    assert avail.state.value == "AUTH_UNAVAILABLE"
+    assert avail.source == "CODEX_EXECUTABLE_IDENTITY"
+    assert avail.evidence.get("executable_absent") is True
+    assert avail.evidence.get("api_key_fallback") == "DISABLED"
+
+
+def test_planning_bridge_inherits_unavailability_when_codex_executable_is_absent():
+    from extensions.autonomy_fabric.agentic_planning_bridge import AgenticStructuredPlanningBridge
+
+    underlying = CodexCliExecutionBackend(
+        capability_status_provider=lambda: "PROVEN",
+        quota_snapshot_provider=lambda: {"state": "AVAILABLE", "source": "CODEX_APP_SERVER"},
+        executable_identity={},
+    )
+    bridge = AgenticStructuredPlanningBridge(underlying)
+    bridge_avail = bridge.get_availability()
+    assert bridge_avail.state.value == "AUTH_UNAVAILABLE"
+    assert bridge_avail.source == "CODEX_EXECUTABLE_IDENTITY"
+    assert bridge_avail.evidence.get("executable_absent") is True
+
+
+def test_router_does_not_select_codex_or_bridge_when_executable_identity_is_absent(tmp_path):
+    from aos.autonomous_host import build_execution_router
+    from extensions.autonomy_fabric.execution_backend import ExecutionRequest, ExecutionCapability
+
+    policy = Path(__file__).resolve().parents[3] / "descriptors" / "nemotron.planner-policy.json"
+    router = build_execution_router(policy, tmp_path / "runtime")
+
+    # Inject missing executable identity into codex_cli and its bridge
+    codex_backend = router.get_backend("codex_cli")
+    codex_backend._injected_identity = {}
+
+    agentic_req = ExecutionRequest(
+        task_id="test-agentic",
+        project_id="lari",
+        workspace=str(tmp_path),
+        operation_class="AGENTIC",
+        required_capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK],
+        authority_id="DECISION-022",
+        request_id="req-agentic-1",
+        write_scope=["allowed.txt"],
+        payload={"prompt": "do work", "source_sha": "a" * 40},
+    )
+    selected_agentic = router.select_backend(agentic_req)
+    assert selected_agentic is None or selected_agentic.backend_id != "codex_cli"
+
+    planning_req = ExecutionRequest(
+        task_id="test-planning",
+        project_id="lari",
+        workspace=str(tmp_path),
+        operation_class="MODEL_REASONING",
+        required_capabilities=[ExecutionCapability.MODEL_REASONING],
+        authority_id="DECISION-022",
+        request_id="req-planning-1",
+        payload={
+            "prompt": "plan",
+            "schema": {"type": "object"},
+            "risk_class": "R0",
+            "task_class": "structured_planning",
+            "resource_requirements": {
+                "task_class": "structured_planning",
+                "agentic_planning_allowed": True,
+                "local_qwen_allowed": False,
+                "complexity_class": "HIGH",
+                "minimum_quality": 3,
+            },
+        },
+    )
+    ranks = router.orchestrator.rank(router._backends.values(), planning_req)
+    codex_bridge_rank = next((r for r in ranks if r.backend_id == "codex_cli_planning_bridge"), None)
+    assert codex_bridge_rank is not None
+    assert codex_bridge_rank.eligible is False
+    assert "AVAILABILITY_AUTH_UNAVAILABLE" in codex_bridge_rank.reasons
+
+
+def test_existing_behavior_unchanged_when_valid_codex_executable_identity_exists():
+    backend = CodexCliExecutionBackend(
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        quota_snapshot_provider=lambda: {
+            "state": "AVAILABLE",
+            "source": "TEST",
+            "primary_used_percent": 15.0,
+            "secondary_used_percent": 2.0,
+        },
+        executable_identity=IDENTITY,
+    )
+    assert backend._identity() == IDENTITY
+    avail = backend.get_availability()
+    assert avail.state.value == "AVAILABLE"
+    assert avail.source == "TEST"
+    assert avail.evidence.get("auth_mode") == "chatgpt"
+    assert avail.evidence.get("api_key_fallback") == "DISABLED"
+

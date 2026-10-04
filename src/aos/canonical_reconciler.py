@@ -427,12 +427,12 @@ def record_slice_acceptance(
         "evidence_level": "E2_EXECUTABLE_EXACT_SHA_CI",
         "tested_sha": candidate_sha,
         "run_ids": [str(ci_evidence.get("run_id") or "")],
-        "closed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "closed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "reopen_condition": "Failed contract verification or CI regression",
     }
     accepted_gates.append(gate_record)
     updated_state["accepted_gates"] = accepted_gates
-    updated_state["updated_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    updated_state["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
     # 3. Write structured acceptance receipt
     write_acceptance_receipt(control, acceptance_receipt)

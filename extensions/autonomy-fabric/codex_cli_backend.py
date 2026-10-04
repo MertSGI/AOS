@@ -241,6 +241,14 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             return {}
 
     def get_availability(self) -> ExecutionAvailabilitySnapshot:
+        executable = self._identity()
+        if executable is None:
+            return ExecutionAvailabilitySnapshot(
+                ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+                self._now_iso(),
+                source="CODEX_EXECUTABLE_IDENTITY",
+                evidence={"executable_absent": True, "api_key_fallback": "DISABLED"},
+            )
         capability = self._capability_status()
         if capability not in {"PROVEN", "TEST_DOUBLE"}:
             return ExecutionAvailabilitySnapshot(
