@@ -309,6 +309,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
         )
         with self._process_lock:
             self._active_processes[request_id] = process

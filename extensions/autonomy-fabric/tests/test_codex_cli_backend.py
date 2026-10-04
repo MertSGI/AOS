@@ -1,3 +1,4 @@
+import importlib
 import json
 import subprocess
 from pathlib import Path
@@ -186,6 +187,42 @@ def test_success_exposes_assistant_output_only_transiently(tmp_path):
     assert result.transient_raw_output == "secret output"
     assert "secret output" not in json.dumps(result.to_dict())
     assert "transient_raw_output" not in result.to_dict()
+
+
+def test_default_runner_forces_utf8_prompt_transport(monkeypatch):
+    captured = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, *, input=None, timeout=None):
+            captured["input"] = input
+            captured["timeout"] = timeout
+            return _success_output(), ""
+
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    module = importlib.import_module("extensions.autonomy_fabric.codex_cli_backend")
+    monkeypatch.setattr(module, "popen_headless", fake_popen)
+    backend = _backend(None)
+
+    completed = backend._default_runner(
+        ["codex", "exec"], ".", "R2 — keşif", 30, {}, "request-utf8",
+    )
+
+    assert completed.returncode == 0
+    assert captured["input"] == "R2 — keşif"
+    assert captured["kwargs"]["text"] is True
+    assert captured["kwargs"]["encoding"] == "utf-8"
 
 
 def test_runtime_owned_root_lock_is_not_reported_as_codex_mutation(tmp_path):
