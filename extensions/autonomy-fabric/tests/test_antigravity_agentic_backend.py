@@ -567,3 +567,54 @@ def test_identity_regression_f_no_literal_agy_dependency_in_backend(monkeypatch,
         assert target != "agy", f"Literal 'agy' passed to {call_type}"
         assert target == str(fake_managed)
 
+
+def test_antigravity_model_separation_and_quota_independence(tmp_path):
+    source_sha = _repo(tmp_path)
+    adapter = FakeAntigravityAdapter()
+
+    gemini_backend = AntigravityAgenticExecutionBackend(
+        adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        executable_identity=IDENTITY,
+        underlying_model="gemini-3.8-flash-high",
+        backend_id="antigravity_gemini",
+    )
+    claude_backend = AntigravityAgenticExecutionBackend(
+        adapter,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        executable_identity=IDENTITY,
+        underlying_model="claude-sonnet-4-6",
+        backend_id="antigravity_claude",
+    )
+
+    assert gemini_backend.get_availability().state.value == "AVAILABLE"
+    assert claude_backend.get_availability().state.value == "AVAILABLE"
+
+    # Make gemini return quota exhausted
+    cid = "conv-quota-1"
+    adapter.set_canned_response(
+        cid,
+        AntigravityResponse(
+            conversation_id=cid,
+            status=AntigravityStatus.ERROR,
+            mapped_aos_status=RunStatus.FAILED,
+            raw_response="RESOURCE_EXHAUSTED: Quota exceeded for model gemini",
+            error_message="RESOURCE_EXHAUSTED: 429 Quota exceeded",
+        ),
+    )
+
+    req_gemini = _request(tmp_path, source_sha)
+    req_gemini.payload["conversation_id"] = cid
+    res_gemini = gemini_backend.execute(req_gemini)
+    assert res_gemini.status == "DEGRADED"
+    assert "ANTIGRAVITY_QUOTA_EXHAUSTED" in res_gemini.sanitized_errors
+    assert gemini_backend.get_availability().state.value == "QUOTA_EXHAUSTED"
+
+    # Critical Invariant: Claude backend on the same AG harness remains AVAILABLE and runnable!
+    assert claude_backend.get_availability().state.value == "AVAILABLE"
+    req_claude = _request(tmp_path, source_sha, task_id="work-claude")
+    res_claude = claude_backend.execute(req_claude)
+    assert res_claude.status == "SUCCESS"
+    assert adapter.invocations[-1]["model"] == "claude-sonnet-4-6"
+
+

@@ -175,3 +175,28 @@ def test_task_aware_profiles_no_adequate_backend_returns_none():
     assert orch.select([qwen], req) is None
     ranks = orch.rank([qwen], req)
     assert not any(r.eligible for r in ranks)
+
+
+def test_codex_quota_exhaustion_does_not_affect_nemotron_or_native_routes():
+    from extensions.autonomy_fabric.codex_cli_backend import CodexCliExecutionBackend
+
+    codex = CodexCliExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "PROVEN",
+        quota_snapshot_provider=lambda: {"state": "QUOTA_EXHAUSTED"},
+        executable_identity={"path": "c", "filename": "c", "sha256": "0" * 64, "version": "1"},
+    )
+    nemotron = Backend("nemotron", ExecutionCost.FREE_TIER_CLOUD, context=32768, quality=3, health=ExecutionHealth.HEALTHY)
+    native_worker = Backend("native_file_worker", ExecutionCost.FREE_LOCAL, context=0, quality=1, health=ExecutionHealth.HEALTHY)
+
+    # Test Matrix Item 2: Codex quota exhausted => no effect on Nemotron/Cline/native routes
+    orch = ResourceOrchestrator()
+    req_reasoning = request(context_tokens=4000, minimum_quality=2)
+    ranks = orch.rank([codex, nemotron, native_worker], req_reasoning)
+
+    codex_rank = next(r for r in ranks if r.backend_id == "codex_cli")
+    nemotron_rank = next(r for r in ranks if r.backend_id == "nemotron")
+    assert codex_rank.eligible is False
+    assert nemotron_rank.eligible is True
+    assert orch.select([codex, nemotron, native_worker], req_reasoning) == "nemotron"
+

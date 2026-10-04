@@ -65,13 +65,24 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         *,
         capability_status_provider: Optional[Callable[[], str]] = None,
         executable_identity: Optional[Dict[str, str]] = None,
+        underlying_model: Optional[str] = None,
+        model_resource_id: Optional[str] = None,
+        backend_id: Optional[str] = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        if backend_id:
+            self.backend_id = backend_id
+        self.underlying_model = underlying_model
+        if model_resource_id:
+            self.resource_id = model_resource_id
+        elif underlying_model:
+            self.resource_id = f"antigravity_{underlying_model}"
         self._adapter = adapter
         self._clock = clock
         self._injected_identity = dict(executable_identity or {}) or None
         self._capability_status_provider = capability_status_provider
         self._active_execution_ids: Set[str] = set()
+        self._model_quota_exhausted: bool = False
 
     @staticmethod
     def _now_iso() -> str:
@@ -101,16 +112,23 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             state = ExecutionAvailabilityState.CONTRACT_FAILURE
         elif identity is None and capability != "TEST_DOUBLE":
             state = ExecutionAvailabilityState.CONTRACT_FAILURE
+        elif self._model_quota_exhausted:
+            state = ExecutionAvailabilityState.QUOTA_EXHAUSTED
         else:
             state = ExecutionAvailabilityState.AVAILABLE
+        evidence = {
+            "capability_status": capability,
+            "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
+        }
+        if self.underlying_model:
+            evidence["underlying_model"] = self.underlying_model
+        if self._model_quota_exhausted:
+            evidence["reason"] = "QUOTA_EXHAUSTED"
         return ExecutionAvailabilitySnapshot(
             state=state,
             observed_at=self._now_iso(),
             source="MACHINE_LOCAL_CAPABILITY_ATTESTATION",
-            evidence={
-                "capability_status": capability,
-                "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
-            },
+            evidence=evidence,
         )
 
     def get_health(self) -> ExecutionHealth:
@@ -315,12 +333,14 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             is_planning_mode = bool(request.payload.get("planning_mode", False))
             format_to_use = "json" if is_planning_mode else "stream-json"
             conv_id = (prior.session_or_thread_id if prior else None) or request.payload.get("conversation_id")
+            model_to_use = request.payload.get("model") or self.underlying_model
             response = adapter.execute_prompt(
                 self._prompt(request, context_pack),
                 conversation_id=conv_id,
                 workspace_path=request.workspace,
                 output_format=format_to_use,
                 continue_conversation=prior is not None,
+                model=model_to_use,
             )
         except Exception:
             failed = ExecutionAvailabilitySnapshot(
@@ -335,11 +355,15 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
 
         error_upper = str(response.error_message or "").upper()
         if any(token in error_upper for token in ("QUOTA", "RESOURCEEXHAUSTED", "429")):
+            self._model_quota_exhausted = True
             exhausted = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.QUOTA_EXHAUSTED,
                 self._now_iso(),
                 source="ANTIGRAVITY_STRUCTURED_RESULT",
-                evidence={"reason": "QUOTA_EXHAUSTED"},
+                evidence={
+                    "reason": "QUOTA_EXHAUSTED",
+                    **({"underlying_model": self.underlying_model} if self.underlying_model else {}),
+                },
             )
             return self._failure(request, "ANTIGRAVITY_QUOTA_EXHAUSTED", exhausted)
         if (

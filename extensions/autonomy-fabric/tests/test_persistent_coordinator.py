@@ -134,3 +134,58 @@ def test_completed_read_observation_is_hash_bound_redacted_and_restartable(tmp_p
         workspace_source_generation=generation,
     )
     assert restarted.state.completed_read_observations == [observation]
+
+
+def test_waiting_for_reasoning_provider_is_non_terminal_and_does_not_fail_task(tmp_path):
+    from extensions.autonomy_fabric.execution_backend import (
+        ExecutionBackend, ExecutionCapability, ExecutionCost, ExecutionResult,
+        ExecutionTrustZone,
+    )
+
+    class WaitingBackend(ExecutionBackend):
+        backend_id = "waiting_test_backend"
+        trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
+        cost = ExecutionCost.FREE_TIER_CLOUD
+        supported_capabilities = {ExecutionCapability.MODEL_REASONING}
+
+        def get_health(self):
+            from extensions.autonomy_fabric.execution_backend import ExecutionHealth
+            return ExecutionHealth.HEALTHY
+
+        def execute(self, request):
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="test_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="WAITING_FOR_REASONING_PROVIDER",
+                exit_code=1,
+                workspace=request.workspace,
+                sanitized_errors=["PROVIDER_WAIT_RESOURCE_UNAVAILABLE"],
+            )
+
+    registry = AgentRunRegistry()
+    dag = TaskDAG("proj-wait-test", registry)
+    dag.add_node("plan-task", "REASONING", "auth-1")
+
+    router = ExecutionRouter(backends=[WaitingBackend()])
+    checkpoint_file = tmp_path / "coordinator-checkpoint.json"
+    coordinator = PersistentCoordinator(
+        project_id="proj-wait-test",
+        workspace_path=str(tmp_path),
+        dag=dag,
+        router=router,
+        registry=registry,
+        checkpoint_file=str(checkpoint_file),
+    )
+
+    results = coordinator.execute_next_batch(max_tasks=1)
+    assert len(results) == 1
+    assert results[0].status == "WAITING_FOR_REASONING_PROVIDER"
+    # Invariant: Must NOT be in failed_task_ids
+    assert "plan-task" not in coordinator.state.failed_task_ids
+    assert "plan-task" not in coordinator.state.completed_task_ids
+    runs = registry.list_runs(project_id="proj-wait-test")
+    assert len(runs) == 1
+    assert runs[0].status == RunStatus.WAITING_AGENT
+

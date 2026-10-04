@@ -394,8 +394,13 @@ def record_slice_acceptance(
     """Execute atomic forward-only canonical control-plane acceptance transition."""
     from aos.acceptance_receipt import write_acceptance_receipt
 
-    control, control_ref = _ensure_control_clone(descriptor_path, runtime_dir)
-    state_path = find_state_json(control)
+    descriptor = _read_json(descriptor_path)
+    project_id = str(descriptor.get("project_id") or "")
+    repository = str(descriptor.get("repository") or "")
+    control_ref = str(descriptor.get("control_ref") or "")
+
+    control, control_sha = _ensure_control_clone(repository, control_ref, runtime_dir)
+    state_path = find_state_json(control, project_id)
     current_state = _read_json(state_path)
 
     # 1. Validate semantic coherence before update

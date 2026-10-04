@@ -65,6 +65,7 @@ class BaseAntigravityAdapter:
         workspace_path: Optional[str] = None,
         output_format: str = "json",
         continue_conversation: bool = False,
+        model: Optional[str] = None,
     ) -> AntigravityResponse:
         raise NotImplementedError
 
@@ -87,6 +88,7 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
         workspace_path: Optional[str] = None,
         output_format: str = "json",
         continue_conversation: bool = False,
+        model: Optional[str] = None,
     ) -> AntigravityResponse:
         cid = conversation_id or f"conv-fake-{len(self.invocations) + 1}"
         self.invocations.append({
@@ -95,6 +97,7 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
             "workspace_path": workspace_path,
             "output_format": output_format,
             "continue_conversation": continue_conversation,
+            "model": model,
             "timestamp": time.time(),
         })
 
@@ -171,12 +174,15 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         conversation_id: Optional[str] = None,
         output_format: str = "json",
         continue_conversation: bool = False,
+        model: Optional[str] = None,
     ) -> List[str]:
         cmd = [self.cli_binary_path, "--output-format", output_format]
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
         if continue_conversation:
             cmd.append("--continue")
+        if model:
+            cmd.extend(["--model", model])
         cmd.extend(["--prompt", prompt])
         return cmd
 
@@ -310,12 +316,13 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         workspace_path: Optional[str] = None,
         output_format: str = "json",
         continue_conversation: bool = False,
+        model: Optional[str] = None,
     ) -> AntigravityResponse:
         # Workspace Fail-Closed: If workspace_path is explicitly supplied but does not exist, fail immediately before invoking CLI
         if workspace_path and not os.path.isdir(workspace_path):
             raise ValueError(f"Workspace path '{workspace_path}' does not exist or is not a directory")
 
-        cmd = self.build_cmd(prompt, conversation_id, output_format, continue_conversation)
+        cmd = self.build_cmd(prompt, conversation_id, output_format, continue_conversation, model=model)
         t0 = time.time()
 
         try:

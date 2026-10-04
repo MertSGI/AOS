@@ -543,7 +543,7 @@ class PersistentCoordinator:
                 self._record_completed_read(node, res)
                 if node.gate_type != NodeGateType.NONE:
                     self.dag.pass_gate(node.node_id)
-            elif res.status in ("DEGRADED", "WAITING"):
+            elif res.status in ("DEGRADED", "WAITING", "WAITING_FOR_REASONING_PROVIDER"):
                 self.registry.transition(
                     run.run_id,
                     RunStatus.WAITING_AGENT,
@@ -571,7 +571,7 @@ class PersistentCoordinator:
                     else:
                         bucket = (
                             "RESOURCE_WAIT"
-                            if res.status in ("DEGRADED", "WAITING")
+                            if res.status in ("DEGRADED", "WAITING", "WAITING_FOR_REASONING_PROVIDER")
                             else "TERMINAL_FAILURE"
                         )
                         self.integrity_reconciler.release(
