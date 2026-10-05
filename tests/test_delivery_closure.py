@@ -84,6 +84,39 @@ def test_acceptance_receipt_roundtrip(tmp_path: Path):
     assert read_back is not None
     assert read_back.candidate_sha == '9999999999999999999999999999999999999999'
     assert read_back.slice_id == 'phase7-node2-r2'
+    assert read_back.control_sha_before == 'c' * 40
+    assert read_back.canonical_control_transition_sha == 'c' * 40
+
+
+def test_legacy_acceptance_receipt_parses_without_rewrite(tmp_path: Path):
+    control_dir = tmp_path / 'control'
+    receipt_dir = control_dir / 'docs' / 'project-control'
+    receipt_dir.mkdir(parents=True)
+    path = receipt_dir / 'acceptance-receipt-legacy.json'
+    legacy = {
+        'receipt_id': 'legacy',
+        'project_id': 'lari',
+        'lane': 'lari',
+        'slice_id': 'legacy',
+        'execution_base_sha': 'a' * 40,
+        'candidate_sha': 'b' * 40,
+        'ci_workflow_name': 'legacy.yml',
+        'ci_run_id': 1,
+        'ci_conclusion': 'success',
+        'acceptance_result': 'ACCEPTED',
+        'controller_authority': 'LEGACY',
+        'canonical_control_transition_sha': 'c' * 40,
+        'created_at': '2026-10-01T00:00:00Z',
+        'production': 'NO_GO',
+    }
+    original = json.dumps(legacy, indent=2).encode()
+    path.write_bytes(original)
+
+    parsed = read_latest_acceptance_receipt(control_dir, 'lari')
+
+    assert parsed is not None
+    assert parsed.control_sha_before == 'c' * 40
+    assert path.read_bytes() == original
 
 
 def test_canonical_coherence_fails_closed_on_drift():
@@ -183,9 +216,57 @@ def test_ui_v2_downstream_gate(tmp_path: Path):
         'current_status': 'PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY',
         'current_milestone': 'Program V2 Phase 7 — Node 2 Discovery Marketplace R3',
         'next_action': 'Implement Phase 7 Node 2 R3',
+        'phase7_node2_contract': {
+            'delivery_slices': {'R1': 'ACCEPTED_PROVEN', 'R2': 'ACCEPTED_PROVEN'},
+        },
+        'phase7_accepted_execution_chain': {'node2_r2': 'b' * 40},
+        'accepted_gates': [{
+            'gate': 'P7N2-DISCOVERY-MARKETPLACE_R2',
+            'status': 'CLOSED_PROVEN',
+            'tested_sha': 'b' * 40,
+        }],
     }), encoding='utf-8')
     res2 = evaluate_downstream_gates(control_dir, store)
     assert len(res2) == 1
     assert res2[0].command_id == ui_cmd_id
     assert res2[0].state == AdmissionState.ACTIVE.value
     assert res2[0].authority == 'DOWNSTREAM_GATE_SATISFIED'
+
+
+@pytest.mark.parametrize('state', [
+    {
+        'current_status': 'PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY',
+        'current_milestone': 'R3 planned',
+        'next_action': 'Implement R3',
+    },
+    {
+        'current_status': 'UNRELATED_R2_R3_MARKETING_TEXT',
+        'phase7_node2_contract': {'delivery_slices': {'R1': 'ACCEPTED_PROVEN'}},
+    },
+    {
+        'phase7_node2_contract': {
+            'delivery_slices': {'R1': 'ACCEPTED_PROVEN', 'R2': 'ACCEPTED_PROVEN'},
+        },
+        'phase7_accepted_execution_chain': {'node2_r2': 'b' * 40},
+        'accepted_gates': [],
+    },
+])
+def test_ui_v2_downstream_gate_rejects_text_or_missing_structured_evidence(
+    tmp_path: Path,
+    state: dict,
+):
+    store = CommandAdmissionStore(tmp_path)
+    command_id = 'continue-61be4ab1af53cfa646d773ce'
+    command_dir = tmp_path / 'commands' / command_id
+    command_dir.mkdir(parents=True)
+    (command_dir / 'command.json').write_text(
+        json.dumps({'project': {'project_id': 'lari'}}),
+        encoding='utf-8',
+    )
+    control_dir = tmp_path / 'control'
+    control_path = control_dir / 'docs' / 'project-control'
+    control_path.mkdir(parents=True)
+    (control_path / 'STATE.json').write_text(json.dumps(state), encoding='utf-8')
+
+    assert evaluate_downstream_gates(control_dir, store) == []
+    assert store.get(command_id).state == AdmissionState.HOLD.value

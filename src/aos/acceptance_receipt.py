@@ -40,7 +40,8 @@ class AcceptanceReceipt:
     ci_conclusion: str
     acceptance_result: str
     controller_authority: str
-    canonical_control_transition_sha: str
+    control_sha_before: Optional[str] = None
+    canonical_control_transition_sha: Optional[str] = None
     created_at: str = dataclasses.field(default_factory=_utc_now)
     production: str = "NO_GO"
 
@@ -49,6 +50,18 @@ class AcceptanceReceipt:
             raise ValueError("production must always be NO_GO")
         if self.acceptance_result not in ("ACCEPTED", "REJECTED"):
             raise ValueError(f"Invalid acceptance_result: {self.acceptance_result}")
+        before = self.control_sha_before or self.canonical_control_transition_sha
+        if not before:
+            raise ValueError("acceptance receipt requires control_sha_before")
+        if (
+            self.control_sha_before
+            and self.canonical_control_transition_sha
+            and self.control_sha_before != self.canonical_control_transition_sha
+        ):
+            raise ValueError("legacy transition SHA must equal control_sha_before")
+        self.control_sha_before = before
+        # Retain the legacy field as a pre-transition alias for old consumers.
+        self.canonical_control_transition_sha = before
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -65,6 +78,8 @@ def write_acceptance_receipt(control_dir: Path, receipt: AcceptanceReceipt) -> P
     target_dir.mkdir(parents=True, exist_ok=True)
     slug = receipt.slice_id.replace("/", "-").replace(" ", "-").lower()
     target_path = target_dir / f"acceptance-receipt-{slug}.json"
+    if target_path.exists():
+        raise FileExistsError(f"acceptance receipt is immutable: {target_path.name}")
     _atomic_json(target_path, receipt.to_dict())
     return target_path
 

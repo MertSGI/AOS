@@ -1,6 +1,8 @@
 import copy
+import io
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -23,11 +25,43 @@ from aos.canonical_reconciler import (
     reconcile_missing_execution_base,
     record_slice_acceptance,
 )
+from aos.knowledge.ingress import ingest_accepted_work
+from aos.knowledge.ledger import KnowledgeLedger
+from aos.knowledge.receipts import (
+    record_implementation_receipt,
+    record_verification_receipt,
+)
 
 
 R1_SHA = "814e3ca0c09c3a484e20869f1a47a3545259f6db"
 R2_SHA = PHASE7_NODE2_R2_ACCEPTED_SHA
 R3_SHA = PHASE7_NODE2_R3_ACCEPTED_SHA
+
+
+def _accepted_work_ledger(
+    tmp_path: Path,
+    candidate_sha: str,
+    *,
+    project_id: str = "lari",
+) -> KnowledgeLedger:
+    ledger = KnowledgeLedger(tmp_path / f"knowledge-{candidate_sha[:8]}")
+    ingest_accepted_work(
+        ledger,
+        project_id=project_id,
+        agent_class="CODEX",
+        tool_name="pytest",
+        base_sha="a" * 40,
+        result_sha=candidate_sha,
+        repository="MertSGI/Randapp-main",
+        branch="test/accepted-work",
+        module_ids=["canonical-acceptance"],
+        changed_paths=["product/candidate.py"],
+        evidence_refs=["ci-run:123"],
+        verification_status="SUCCESS",
+        canonical_next_action="Canonical acceptance",
+        idempotency_key=f"accepted-{candidate_sha}",
+    )
+    return ledger
 
 
 def _partial_r2_state() -> dict:
@@ -619,6 +653,7 @@ def test_record_r3_acceptance_writes_exact_four_control_files(tmp_path: Path, mo
         execution_base_sha=R2_SHA,
         ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
         controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        knowledge_ledger=_accepted_work_ledger(tmp_path, R3_SHA),
     )
 
     changed = set(_git(control, "show", "--pretty=format:", "--name-only", "HEAD").splitlines())
@@ -631,6 +666,7 @@ def test_record_r3_acceptance_writes_exact_four_control_files(tmp_path: Path, mo
     assert receipt["candidate_sha"] == R3_SHA
     assert receipt["ci_run_id"] == PHASE7_NODE2_R3_CI_RUN_ID
     assert receipt["controller_authority"] == PHASE7_NODE2_R3_CONTROLLER_DECISION
+    assert receipt["control_sha_before"] == cr.PHASE7_NODE2_R3_CONTROL_BASE_SHA
     assert receipt["canonical_control_transition_sha"] == cr.PHASE7_NODE2_R3_CONTROL_BASE_SHA
     assert receipt["production"] == "NO_GO"
     decisions = (state_path.parent / "DECISIONS.md").read_text(encoding="utf-8")
@@ -661,6 +697,7 @@ def test_record_r3_acceptance_starting_control_drift_fails_before_mutation(tmp_p
             execution_base_sha=R2_SHA,
             ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
             controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+            knowledge_ledger=_accepted_work_ledger(tmp_path, R3_SHA),
         )
 
     assert {path: path.read_bytes() for path in state_path.parent.iterdir()} == before
@@ -715,8 +752,22 @@ def test_record_slice_acceptance_writes_complete_r3_frontier(tmp_path: Path, mon
     monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, control_sha))
     monkeypatch.setattr(cr, "_git", fake_git)
     monkeypatch.setattr(acceptance_receipt, "write_acceptance_receipt", lambda *args: state_path)
-    monkeypatch.setattr(cross_lane_coordinator, "evaluate_downstream_gates", lambda *args: None)
+    monkeypatch.setattr(cross_lane_coordinator, "evaluate_downstream_gates", lambda *args: [])
 
+    receipt = acceptance_receipt.AcceptanceReceipt(
+        receipt_id="receipt-r2",
+        project_id="lari",
+        lane="lane-b",
+        slice_id="discovery-marketplace_r2",
+        execution_base_sha=R1_SHA,
+        candidate_sha=candidate_sha,
+        ci_workflow_name="test.yml",
+        ci_run_id=123,
+        ci_conclusion="success",
+        acceptance_result="ACCEPTED",
+        controller_authority="TEST-CONTROLLER",
+        control_sha_before=control_sha,
+    )
     result = record_slice_acceptance(
         descriptor_path=descriptor_path,
         product_workspace=tmp_path / "product",
@@ -725,12 +776,15 @@ def test_record_slice_acceptance_writes_complete_r3_frontier(tmp_path: Path, mon
         execution_base_sha=R1_SHA,
         ci_evidence={"run_id": "123"},
         slice_id="discovery-marketplace_r2",
-        acceptance_receipt=object(),
+        acceptance_receipt=receipt,
+        knowledge_ledger=_accepted_work_ledger(tmp_path, candidate_sha),
     )
 
     written = json.loads(state_path.read_text(encoding="utf-8"))
     assert result["status"] == "ACCEPTED"
     assert result["control_transition_sha"] == transition_sha
+    assert result["control_sha_before"] == control_sha
+    assert result["control_sha_after"] == transition_sha
     assert written["current_status"] == "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY"
     assert candidate_sha in written["next_action"]
     assert written["next_action_execution_base_sha"] == candidate_sha
@@ -748,3 +802,340 @@ def test_record_slice_acceptance_writes_complete_r3_frontier(tmp_path: Path, mon
         "R3": "BOUND_READY_FOR_IMPLEMENTATION",
     }
     assert written["phase7_node2_contract"]["ui_v2"] == "RELEASED_ACTIVE"
+
+
+def test_acceptance_without_kcp_coverage_cannot_touch_control_repo(tmp_path: Path, monkeypatch):
+    from aos import acceptance_receipt, canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    control.mkdir()
+    sentinel = control / "sentinel.txt"
+    sentinel.write_text("unchanged", encoding="utf-8")
+    descriptor = tmp_path / "lari.json"
+    descriptor.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    clone_called = False
+
+    def forbidden_clone(*_args, **_kwargs):
+        nonlocal clone_called
+        clone_called = True
+        return control, "d" * 40
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", forbidden_clone)
+    receipt = acceptance_receipt.AcceptanceReceipt(
+        receipt_id="missing-kcp",
+        project_id="lari",
+        lane="lane-b",
+        slice_id="r2",
+        execution_base_sha=R1_SHA,
+        candidate_sha="c" * 40,
+        ci_workflow_name="test.yml",
+        ci_run_id=123,
+        ci_conclusion="success",
+        acceptance_result="ACCEPTED",
+        controller_authority="TEST",
+        control_sha_before="d" * 40,
+    )
+
+    with pytest.raises(CanonicalReconciliationError, match="KCP_ACCEPTED_WORK_COVERAGE_REQUIRED"):
+        record_slice_acceptance(
+            descriptor_path=descriptor,
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha="c" * 40,
+            execution_base_sha=R1_SHA,
+            ci_evidence={"run_id": "123"},
+            slice_id="r2",
+            acceptance_receipt=receipt,
+            knowledge_ledger=KnowledgeLedger(tmp_path / "empty-knowledge"),
+        )
+
+    assert clone_called is False
+    assert sentinel.read_text(encoding="utf-8") == "unchanged"
+    assert list(control.iterdir()) == [sentinel]
+
+
+@pytest.mark.parametrize("receipt_kind", ["wrong_sha", "implementation_only", "verification_only"])
+def test_acceptance_kcp_gate_requires_both_exact_sha_receipts(
+    tmp_path: Path,
+    receipt_kind: str,
+):
+    from aos import canonical_reconciler as cr
+
+    candidate_sha = "c" * 40
+    ledger = KnowledgeLedger(tmp_path / receipt_kind)
+    common = {
+        "project_id": "lari",
+        "agent_class": "CODEX",
+        "tool_name": "pytest",
+        "base_sha": "a" * 40,
+        "result_sha": candidate_sha,
+        "module_ids": ["acceptance"],
+        "changed_paths": ["product/candidate.py"],
+        "evidence_refs": ["ci-run:123"],
+        "canonical_next_action": "Canonical acceptance",
+    }
+    if receipt_kind == "wrong_sha":
+        ledger = _accepted_work_ledger(tmp_path, "b" * 40)
+    elif receipt_kind == "implementation_only":
+        record_implementation_receipt(
+            ledger,
+            idempotency_key="implementation-only",
+            claims={},
+            **common,
+        )
+    else:
+        record_verification_receipt(
+            ledger,
+            idempotency_key="verification-only",
+            verification={"status": "SUCCESS"},
+            claims={},
+            **common,
+        )
+
+    with pytest.raises(CanonicalReconciliationError, match="KCP_ACCEPTED_WORK_COVERAGE_REQUIRED"):
+        cr._assert_canonical_acceptance_kcp_coverage(
+            {"project_id": "lari"},
+            candidate_sha=candidate_sha,
+            knowledge_ledger=ledger,
+        )
+
+
+@pytest.mark.parametrize("token_env", [None, "GH_TOKEN", "GITHUB_TOKEN"])
+def test_github_actions_request_auth_is_optional_and_secret_safe(
+    monkeypatch,
+    token_env: str | None,
+):
+    from aos import canonical_reconciler as cr
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    secret = "github-secret-value"
+    if token_env:
+        monkeypatch.setenv(token_env, secret)
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"id": 123, "conclusion": "success"}'
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(cr.urllib.request, "urlopen", fake_urlopen)
+    result = cr._read_github_actions_run("MertSGI/AOS", 123)
+
+    authorization = captured["request"].get_header("Authorization")
+    assert authorization == (f"Bearer {secret}" if token_env else None)
+    assert captured["timeout"] == 30
+    assert secret not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("code", "headers", "classification"),
+    [
+        (401, {}, "GITHUB_AUTHENTICATION_FAILED"),
+        (403, {}, "GITHUB_FORBIDDEN"),
+        (403, {"X-RateLimit-Remaining": "0"}, "GITHUB_RATE_LIMITED"),
+        (429, {"Retry-After": "10"}, "GITHUB_RATE_LIMITED"),
+    ],
+)
+def test_github_actions_http_failures_are_bounded_and_sanitized(
+    monkeypatch,
+    code: int,
+    headers: dict,
+    classification: str,
+):
+    from aos import canonical_reconciler as cr
+
+    secret = "must-not-leak"
+    monkeypatch.setenv("GH_TOKEN", secret)
+
+    def fail(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "https://api.github.com/redacted",
+            code,
+            "failure",
+            headers,
+            io.BytesIO(b"ignored"),
+        )
+
+    monkeypatch.setattr(cr.urllib.request, "urlopen", fail)
+    with pytest.raises(CanonicalReconciliationError, match=classification) as exc_info:
+        cr._read_github_actions_run("MertSGI/AOS", 123)
+    assert secret not in str(exc_info.value)
+
+
+def test_registry_reconciliation_failure_blocks_commit_and_all_canonical_writes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from aos import acceptance_receipt, canonical_reconciler as cr
+
+    candidate_sha = "c" * 40
+    control_sha = "d" * 40
+    control = tmp_path / "control"
+    state_path = control / "docs" / "project-control" / "STATE.json"
+    state_path.parent.mkdir(parents=True)
+    state = _partial_r2_state()
+    state["current_status"] = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R2_BOUND_READY"
+    state["current_milestone"] = "Program V2 Phase 7 Node 2 Discovery Marketplace R2"
+    state["next_action"] = f"Implement Phase 7 Node 2 R2 from accepted R1 base {R1_SHA}."
+    state["candidate_release"]["accepted_product_sha"] = R1_SHA
+    state["candidate_release"]["next_action_execution_base_sha"] = R1_SHA
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = state_path.read_bytes()
+    registry_path = state_path.parent / "PROGRAM_V2_CAPABILITY_REGISTRY.json"
+    registry_path.write_text('{"current_live_commercial_registry": []}', encoding="utf-8")
+    descriptor = tmp_path / "lari.json"
+    descriptor.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    committed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal committed
+        args = list(args)
+        if "commit" in args:
+            committed = True
+        stdout = "docs/project-control/STATE.json\n" if args[:2] == ["ls-files", "*STATE*.json"] else ""
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, control_sha))
+    monkeypatch.setattr(cr, "_git", fake_git)
+    receipt = acceptance_receipt.AcceptanceReceipt(
+        receipt_id="registry-failure",
+        project_id="lari",
+        lane="lane-b",
+        slice_id="r2",
+        execution_base_sha=R1_SHA,
+        candidate_sha=candidate_sha,
+        ci_workflow_name="test.yml",
+        ci_run_id=123,
+        ci_conclusion="success",
+        acceptance_result="ACCEPTED",
+        controller_authority="TEST",
+        control_sha_before=control_sha,
+    )
+
+    with pytest.raises(CanonicalReconciliationError, match="registry entry is missing"):
+        record_slice_acceptance(
+            descriptor_path=descriptor,
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=candidate_sha,
+            execution_base_sha=R1_SHA,
+            ci_evidence={"run_id": "123"},
+            slice_id="r2",
+            acceptance_receipt=receipt,
+            knowledge_ledger=_accepted_work_ledger(tmp_path, candidate_sha),
+        )
+
+    assert committed is False
+    assert state_path.read_bytes() == before
+    assert not list(state_path.parent.glob("acceptance-receipt-*.json"))
+
+
+def test_post_commit_downstream_failure_returns_explicit_hold(tmp_path: Path, monkeypatch):
+    from aos import acceptance_receipt, canonical_reconciler as cr, cross_lane_coordinator
+
+    candidate_sha = "c" * 40
+    control_sha = "d" * 40
+    transition_sha = "e" * 40
+    control = tmp_path / "control"
+    state_path = control / "docs" / "project-control" / "STATE.json"
+    state_path.parent.mkdir(parents=True)
+    state = _partial_r2_state()
+    state["current_status"] = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R2_BOUND_READY"
+    state["current_milestone"] = "Program V2 Phase 7 Node 2 Discovery Marketplace R2"
+    state["next_action"] = f"Implement Phase 7 Node 2 R2 from accepted R1 base {R1_SHA}."
+    state["candidate_release"]["accepted_product_sha"] = R1_SHA
+    state["candidate_release"]["next_action_execution_base_sha"] = R1_SHA
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    descriptor = tmp_path / "lari.json"
+    descriptor.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    committed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal committed
+        args = list(args)
+        stdout = ""
+        if args[:2] == ["ls-files", "*STATE*.json"]:
+            stdout = "docs/project-control/STATE.json\n"
+        elif args[:3] == ["diff", "--name-only", "--cached"]:
+            stdout = "docs/project-control/STATE.json\n"
+        elif args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            stdout = (transition_sha if committed else control_sha) + "\n"
+        elif args[:2] == ["rev-parse", "HEAD"]:
+            stdout = (transition_sha if committed else control_sha) + "\n"
+        elif "commit" in args:
+            committed = True
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, control_sha))
+    monkeypatch.setattr(cr, "_git", fake_git)
+    monkeypatch.setattr(acceptance_receipt, "write_acceptance_receipt", lambda *args: state_path)
+    monkeypatch.setattr(
+        cross_lane_coordinator,
+        "evaluate_downstream_gates",
+        lambda *args: (_ for _ in ()).throw(
+            cross_lane_coordinator.DownstreamActivationError(
+                "continue-61be4ab1af53cfa646d773ce",
+                "DOWNSTREAM_ACTIVATION_RUNTIMEERROR",
+            )
+        ),
+    )
+    receipt = acceptance_receipt.AcceptanceReceipt(
+        receipt_id="downstream-hold",
+        project_id="lari",
+        lane="lane-b",
+        slice_id="r2",
+        execution_base_sha=R1_SHA,
+        candidate_sha=candidate_sha,
+        ci_workflow_name="test.yml",
+        ci_run_id=123,
+        ci_conclusion="success",
+        acceptance_result="ACCEPTED",
+        controller_authority="TEST-CONTROLLER",
+        control_sha_before=control_sha,
+    )
+
+    result = record_slice_acceptance(
+        descriptor_path=descriptor,
+        product_workspace=tmp_path / "product",
+        runtime_dir=tmp_path / "runtime",
+        candidate_sha=candidate_sha,
+        execution_base_sha=R1_SHA,
+        ci_evidence={"run_id": "123"},
+        slice_id="r2",
+        acceptance_receipt=receipt,
+        knowledge_ledger=_accepted_work_ledger(tmp_path, candidate_sha),
+    )
+
+    assert committed is True
+    assert result["status"] == "ACCEPTED_WITH_DOWNSTREAM_HOLD"
+    assert result["control_sha_after"] == transition_sha
+    assert result["downstream_activation"] == {
+        "status": "HOLD",
+        "classification": "DOWNSTREAM_ACTIVATION_RUNTIMEERROR",
+        "command_id": "continue-61be4ab1af53cfa646d773ce",
+    }
+    recorded = json.loads((tmp_path / "runtime" / "slice-acceptance-r2.json").read_text())
+    assert recorded == result

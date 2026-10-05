@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime as dt
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import shutil
 import subprocess
 import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
@@ -541,24 +543,86 @@ def validate_canonical_coherence(state: Mapping[str, Any]) -> None:
 
 
 def _read_github_actions_run(repository: str, run_id: int) -> Dict[str, Any]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "aos-canonical-reconciler",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         f"https://api.github.com/repos/{repository}/actions/runs/{run_id}",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "aos-canonical-reconciler",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             value = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        response_headers = exc.headers or {}
+        if exc.code == 401:
+            classification = "GITHUB_AUTHENTICATION_FAILED"
+        elif exc.code == 429 or (
+            exc.code == 403
+            and (
+                str(response_headers.get("X-RateLimit-Remaining") or "") == "0"
+                or bool(response_headers.get("Retry-After"))
+            )
+        ):
+            classification = "GITHUB_RATE_LIMITED"
+        elif exc.code == 403:
+            classification = "GITHUB_FORBIDDEN"
+        else:
+            classification = f"GITHUB_HTTP_{exc.code}"
+        raise CanonicalReconciliationError(
+            f"Could not independently read GitHub Actions run {run_id}: {classification}"
+        ) from exc
     except Exception as exc:
         raise CanonicalReconciliationError(
-            f"Could not independently read GitHub Actions run {run_id}: {exc}"
+            f"Could not independently read GitHub Actions run {run_id}: "
+            f"GITHUB_TRANSPORT_{type(exc).__name__.upper()}"
         ) from exc
     if not isinstance(value, dict):
         raise CanonicalReconciliationError(f"Invalid GitHub Actions run response for {run_id}")
     return value
+
+
+def _assert_canonical_acceptance_kcp_coverage(
+    descriptor: Mapping[str, Any],
+    *,
+    candidate_sha: str,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+) -> Dict[str, Any]:
+    """Fail closed before a canonical control checkout can be mutated."""
+    from aos.knowledge.accepted_work import (
+        AcceptedWorkCoverageError,
+        assert_accepted_work_receipted,
+    )
+    from aos.knowledge.hooks import resolve_knowledge_ledger
+
+    project_id = str(descriptor.get("project_id") or "")
+    if not project_id:
+        raise CanonicalReconciliationError("KCP acceptance project identity is missing")
+    ledger = resolve_knowledge_ledger(
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
+    if ledger is None:
+        raise CanonicalReconciliationError("KCP runtime home not configured")
+    try:
+        return assert_accepted_work_receipted(
+            ledger,
+            project_id=project_id,
+            result_sha=candidate_sha.lower(),
+        )
+    except AcceptedWorkCoverageError as exc:
+        raise CanonicalReconciliationError(str(exc)) from exc
+    except Exception as exc:
+        raise CanonicalReconciliationError(
+            f"KCP_ACCEPTED_WORK_COVERAGE_UNAVAILABLE:{project_id}:{candidate_sha.lower()}:"
+            f"{type(exc).__name__}"
+        ) from exc
 
 
 def _remote_branch_sha(product_workspace: Path, branch: str) -> str:
@@ -757,6 +821,8 @@ def record_phase7_node2_r3_acceptance(
     execution_base_sha: str,
     ci_run_id: int,
     controller_authority: str,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
 ) -> Dict[str, Any]:
     """Apply the one authorized exact-SHA R3 acceptance transition, fail closed."""
     from aos.acceptance_receipt import AcceptanceReceipt, write_acceptance_receipt
@@ -777,6 +843,13 @@ def record_phase7_node2_r3_acceptance(
         raise CanonicalReconciliationError("R3 CI run mismatch")
     if controller_authority != PHASE7_NODE2_R3_CONTROLLER_DECISION:
         raise CanonicalReconciliationError("R3 Controller authority mismatch")
+
+    kcp_coverage = _assert_canonical_acceptance_kcp_coverage(
+        descriptor,
+        candidate_sha=candidate_sha,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
 
     control, remote_before = _ensure_control_clone(repository, control_ref, runtime_dir)
     if remote_before.lower() != PHASE7_NODE2_R3_CONTROL_BASE_SHA:
@@ -805,7 +878,13 @@ def record_phase7_node2_r3_acceptance(
     r2_receipt_path = control / "docs/project-control/acceptance-receipt-discovery_marketplace_r2.json"
     if not registry_path.is_file() or not decisions_path.is_file() or not r2_receipt_path.is_file():
         raise CanonicalReconciliationError("Required canonical R3 acceptance inputs are missing")
-    r2_receipt_before = r2_receipt_path.read_bytes()
+    receipt_dir = control / "docs/project-control"
+    historical_receipts = {
+        path: path.read_bytes() for path in receipt_dir.glob("acceptance-receipt-*.json")
+    }
+    r3_receipt_path = receipt_dir / "acceptance-receipt-discovery_marketplace_r3.json"
+    if r3_receipt_path.exists():
+        raise CanonicalReconciliationError("R3 acceptance receipt already exists and is immutable")
     updated_state = _phase7_node2_r3_accepted_state(
         _read_json(state_path),
         candidate_sha=candidate_sha,
@@ -828,6 +907,7 @@ def record_phase7_node2_r3_acceptance(
         ci_conclusion="success",
         acceptance_result="ACCEPTED",
         controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        control_sha_before=remote_before,
         canonical_control_transition_sha=remote_before,
         production="NO_GO",
     )
@@ -836,8 +916,8 @@ def record_phase7_node2_r3_acceptance(
     _atomic_json(registry_path, updated_registry)
     _atomic_text(decisions_path, updated_decisions)
     receipt_path = write_acceptance_receipt(control, receipt)
-    if r2_receipt_path.read_bytes() != r2_receipt_before:
-        raise CanonicalReconciliationError("R2 acceptance receipt changed during R3 acceptance")
+    if any(path.read_bytes() != before for path, before in historical_receipts.items()):
+        raise CanonicalReconciliationError("Historical acceptance receipt changed during R3 acceptance")
 
     status_lines = [
         line.rstrip().replace("\\", "/")
@@ -889,6 +969,10 @@ def record_phase7_node2_r3_acceptance(
         "control_sha_after": control_after,
         "control_remote_sha_equal": True,
         "candidate_sha": PHASE7_NODE2_R3_ACCEPTED_SHA,
+        "controller_authority": PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        "controller_decision_id": PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        "kcp_implementation_receipt_ids": kcp_coverage["implementation_receipt_ids"],
+        "kcp_verification_receipt_ids": kcp_coverage["verification_receipt_ids"],
         "accepted_gate": PHASE7_NODE2_R3_GATE,
         "acceptance_receipt": receipt_path.relative_to(control).as_posix(),
         "current_status": PHASE7_NODE3_PREBIND_STATUS,
@@ -909,14 +993,23 @@ def record_slice_acceptance(
     ci_evidence: Mapping[str, Any],
     slice_id: str,
     acceptance_receipt: Any,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
 ) -> Dict[str, Any]:
     """Execute atomic forward-only canonical control-plane acceptance transition."""
-    from aos.acceptance_receipt import write_acceptance_receipt
+    from aos.acceptance_receipt import AcceptanceReceipt, write_acceptance_receipt
 
     descriptor = _read_json(descriptor_path)
     project_id = str(descriptor.get("project_id") or "")
     repository = str(descriptor.get("repository") or "")
     control_ref = str(descriptor.get("control_ref") or "")
+
+    kcp_coverage = _assert_canonical_acceptance_kcp_coverage(
+        descriptor,
+        candidate_sha=candidate_sha,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
 
     control, control_sha = _ensure_control_clone(repository, control_ref, runtime_dir)
     state_path = find_state_json(control, project_id)
@@ -944,29 +1037,63 @@ def record_slice_acceptance(
     updated_state["accepted_gates"] = accepted_gates
     updated_state["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
-    # 3. Write structured acceptance receipt
-    write_acceptance_receipt(control, acceptance_receipt)
+    if not isinstance(acceptance_receipt, AcceptanceReceipt):
+        raise CanonicalReconciliationError("Structured acceptance receipt is required")
+    if acceptance_receipt.project_id != project_id:
+        raise CanonicalReconciliationError("Acceptance receipt project identity mismatch")
+    if acceptance_receipt.candidate_sha.lower() != candidate_sha.lower():
+        raise CanonicalReconciliationError("Acceptance receipt candidate SHA mismatch")
+    bound_receipt = dataclasses.replace(
+        acceptance_receipt,
+        control_sha_before=control_sha,
+        canonical_control_transition_sha=control_sha,
+    )
 
-    # 4. Update capability registry if present
+    # 3. Prepare required registry reconciliation before any canonical write.
     registry_path = control / "docs" / "project-control" / "PROGRAM_V2_CAPABILITY_REGISTRY.json"
+    updated_registry = None
     if registry_path.is_file():
-        try:
-            reg = _read_json(registry_path)
-            for item in reg.get("current_live_commercial_registry", []):
-                if item.get("key") == "discovery_marketplace":
-                    item["program_maturity"] = "REAL_CODE_NOT_LIVE_VERIFIED"
-                    item["accepted_r2_sha"] = candidate_sha
-                    item["delivery_slice"] = "R2_ACCEPTED_R3_UI_READY"
-            _atomic_json(registry_path, reg)
-            _git(["add", "--", str(registry_path)], cwd=control)
-        except Exception:
-            pass
+        updated_registry = _read_json(registry_path)
+        registry_items = updated_registry.get("current_live_commercial_registry")
+        if not isinstance(registry_items, list):
+            raise CanonicalReconciliationError("Canonical capability registry is invalid")
+        matches = [
+            item for item in registry_items
+            if isinstance(item, dict) and item.get("key") == "discovery_marketplace"
+        ]
+        if len(matches) != 1:
+            raise CanonicalReconciliationError(
+                "Canonical discovery_marketplace registry entry is missing or duplicated"
+            )
+        matches[0]["program_maturity"] = "REAL_CODE_NOT_LIVE_VERIFIED"
+        matches[0]["accepted_r2_sha"] = candidate_sha
+        matches[0]["delivery_slice"] = "R2_ACCEPTED_R3_UI_READY"
+
+    receipt_dir = control / "docs" / "project-control"
+    historical_receipts = {
+        path: path.read_bytes() for path in receipt_dir.glob("acceptance-receipt-*.json")
+    }
+    receipt_slug = bound_receipt.slice_id.replace("/", "-").replace(" ", "-").lower()
+    receipt_target = receipt_dir / f"acceptance-receipt-{receipt_slug}.json"
+    if receipt_target.exists():
+        raise CanonicalReconciliationError(
+            f"acceptance receipt is immutable: {receipt_target.name}"
+        )
+
+    # 4. Apply the precomputed canonical writes and stage only the new receipt.
+    if updated_registry is not None:
+        _atomic_json(registry_path, updated_registry)
+        _git(["add", "--", str(registry_path)], cwd=control)
 
     _atomic_json(state_path, updated_state)
     _git(["add", "--", str(state_path)], cwd=control)
-    receipt_files = list((control / "docs" / "project-control").glob("acceptance-receipt-*.json"))
-    for rf in receipt_files:
-        _git(["add", "--", str(rf)], cwd=control)
+    try:
+        receipt_path = write_acceptance_receipt(control, bound_receipt)
+    except FileExistsError as exc:
+        raise CanonicalReconciliationError(str(exc)) from exc
+    if any(path.read_bytes() != before for path, before in historical_receipts.items()):
+        raise CanonicalReconciliationError("Historical acceptance receipt changed during acceptance")
+    _git(["add", "--", str(receipt_path)], cwd=control)
 
     # 5. Verify only expected files changed
     diff_names = (_git(["diff", "--name-only", "--cached"], cwd=control).stdout or "").splitlines()
@@ -1001,19 +1128,49 @@ def record_slice_acceptance(
             f"Remote SHA verification failed after push: expected {new_control_sha}, got {remote_after}"
         )
 
-    # 9. Evaluate downstream dependency gates (e.g. UI V2 continue-61be4ab1af53cfa646d773ce)
+    result = {
+        "status": "ACCEPTED",
+        "slice_id": slice_id,
+        "candidate_sha": candidate_sha,
+        "control_sha_before": control_sha,
+        "control_sha_after": new_control_sha,
+        "control_transition_sha": new_control_sha,
+        "controller_authority": bound_receipt.controller_authority,
+        "controller_decision_id": bound_receipt.controller_authority,
+        "kcp_implementation_receipt_ids": kcp_coverage["implementation_receipt_ids"],
+        "kcp_verification_receipt_ids": kcp_coverage["verification_receipt_ids"],
+        "next_status": updated_state["current_status"],
+        "downstream_activation": {"status": "NOT_EVALUATED"},
+    }
+
+    # 9. Evaluate operational downstream gates after canonical acceptance is final.
     try:
         from aos.cross_lane_coordinator import evaluate_downstream_gates
         from aos.runtime_admission import CommandAdmissionStore
         admission_store = CommandAdmissionStore(runtime_dir.parent.parent if runtime_dir.name == "project-runtime" else runtime_dir)
-        evaluate_downstream_gates(control, admission_store)
-    except Exception:
-        pass
+        activated = evaluate_downstream_gates(control, admission_store)
+        result["downstream_activation"] = {
+            "status": "SUCCEEDED" if activated else "NO_TRANSITION_REQUIRED",
+            "activated_command_ids": [record.command_id for record in activated],
+        }
+    except Exception as exc:
+        result["status"] = "ACCEPTED_WITH_DOWNSTREAM_HOLD"
+        result["downstream_activation"] = {
+            "status": "HOLD",
+            "classification": getattr(
+                exc,
+                "classification",
+                f"DOWNSTREAM_ACTIVATION_{type(exc).__name__.upper()}",
+            ),
+            "command_id": getattr(exc, "command_id", None),
+        }
 
-    return {
-        "status": "ACCEPTED",
-        "slice_id": slice_id,
-        "candidate_sha": candidate_sha,
-        "control_transition_sha": new_control_sha,
-        "next_status": updated_state["current_status"],
-    }
+    result["runtime_evidence_write"] = {"status": "RECORDED"}
+    try:
+        _atomic_json(runtime_dir / f"slice-acceptance-{slice_id.lower()}.json", result)
+    except Exception as exc:
+        result["runtime_evidence_write"] = {
+            "status": "FAILED",
+            "classification": f"RUNTIME_EVIDENCE_{type(exc).__name__.upper()}",
+        }
+    return result
