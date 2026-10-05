@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -9,12 +10,39 @@ from aos.autonomous_host import (
     assert_workspace_execution_lineage,
     build_dag,
     load_bound_run_plan,
+    refresh_canonical_binding,
 )
 from aos.planner import PlannerContractError, PlannerTransientError
 from aos.provider_observation import ContractFailureSubtype
 from aos.provider_registry import ProviderRegistry, ProviderRouter
+from aos.source_adapter import ProjectSourceAdapter
 from extensions.autonomy_fabric.execution_backend import ExecutionCapability, ExecutionRequest
 from extensions.autonomy_fabric.run_registry import AgentRunRegistry
+
+
+DESCRIPTOR_PATH = Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"
+CURRENT_LARI_STATE_PATH = Path(__file__).parent / "fixtures" / "current_lari_state.json"
+CURRENT_CONTROL_SHA = "e1dbec33f0b52af5cc53497dd3b44bf36063868a"
+CURRENT_EXECUTION_BASE_SHA = "e6b30e0708aa2eb1597caa3155b3c3b3b3e9f0d6"
+
+
+def _stub_current_canonical_source(monkeypatch, state):
+    resolved_revisions = []
+    monkeypatch.setattr(ProjectSourceAdapter, "resolve_ref_to_sha", lambda _self: CURRENT_CONTROL_SHA)
+    monkeypatch.setattr(
+        ProjectSourceAdapter,
+        "fetch_canonical_context",
+        lambda _self, _sha, paths: (
+            {key: json.dumps(state) if key == "state" else "fixture" for key in paths},
+            {path: "0" * 64 for path in paths.values()},
+        ),
+    )
+    monkeypatch.setattr(
+        ProjectSourceAdapter,
+        "resolve_exact_revision",
+        lambda _self, sha: resolved_revisions.append(sha) or sha,
+    )
+    return resolved_revisions
 
 
 def _policy():
@@ -171,6 +199,36 @@ def test_provider_contract_failure_routes_through_chain_without_claiming_outage(
     assert result.evidence_payload["failure_class"] == "REASONING_BACKEND_LOCAL_FAILURES_EXHAUSTED"
     assert result.availability.state.value == "CONTRACT_FAILURE"
     assert result.evidence_payload["provider_attempts"][0]["status"] == ProviderAttemptStatus.NON_RETRYABLE_FAILED.value
+
+
+def test_current_lari_binding_uses_dynamic_execution_base_without_legacy_next_action_hold(monkeypatch, tmp_path):
+    state = json.loads(CURRENT_LARI_STATE_PATH.read_text(encoding="utf-8"))
+    resolved_revisions = _stub_current_canonical_source(monkeypatch, state)
+
+    binding = refresh_canonical_binding(DESCRIPTOR_PATH, tmp_path / "canonical-binding.json")
+
+    assert binding["source_sha"] == CURRENT_CONTROL_SHA
+    assert binding["current_status"] == "PHASE_7_NODE_3_FAVORITES_REBOOKING_PREBIND_REQUIRED"
+    assert binding["execution_base_sha"] == CURRENT_EXECUTION_BASE_SHA
+    assert "65a53427f52c21e60aa8f92e02a17d693a201601" not in binding["canonical_next_action"]
+    assert resolved_revisions == [CURRENT_EXECUTION_BASE_SHA]
+
+
+@pytest.mark.parametrize("execution_base", [None, "not-a-valid-sha"])
+def test_current_lari_binding_fails_closed_on_missing_or_malformed_execution_base(
+    monkeypatch, tmp_path, execution_base
+):
+    state = json.loads(CURRENT_LARI_STATE_PATH.read_text(encoding="utf-8"))
+    if execution_base is None:
+        state.pop("next_action_execution_base_sha")
+    else:
+        state["next_action_execution_base_sha"] = execution_base
+    resolved_revisions = _stub_current_canonical_source(monkeypatch, state)
+
+    with pytest.raises(RuntimeError, match="Canonical source ambiguity"):
+        refresh_canonical_binding(DESCRIPTOR_PATH, tmp_path / "canonical-binding.json")
+
+    assert resolved_revisions == []
 
 
 def test_contract_subtype_and_safe_detail_survive_attempt_journal(tmp_path):

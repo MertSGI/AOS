@@ -117,6 +117,15 @@ def run_shadow_orchestration(
 
     # 4. Build normalized canonical project snapshot and validate
     projection_cfg = desc.get("projection")
+    if source_mode == "pinned_proof" and expectation_data:
+        # Historical proofs are immutable, non-mutating evidence. They may
+        # predate the current execution-base field, but their declared legacy
+        # target must still be present and explicitly bound in next_action.
+        projection_cfg = dict(projection_cfg or {})
+        projection_cfg["next_action_execution_base_sha_required"] = False
+        if expectation_data.get("expected_target_base_sha"):
+            projection_cfg["target_base_sha_required"] = True
+            projection_cfg["require_target_base_in_next_action"] = True
     try:
         snapshot = adapter.build_normalized_snapshot(project_id, pinned_sha, raw_contents, file_hashes, projection_cfg)
     except Exception as e:

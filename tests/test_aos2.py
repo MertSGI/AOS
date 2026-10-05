@@ -28,6 +28,7 @@ class FakeProjectSourceAdapter(ProjectSourceAdapter):
             "current_status": "CORE_SOFTWARE_RC_CLOSED_PROVEN",
             "current_milestone": "LARİ Clinic",
             "next_action": "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601.",
+            "next_action_execution_base_sha": "65a53427f52c21e60aa8f92e02a17d693a201601",
             "canonical_refs": {
                 "package_customization_baseline": {
                     "sha": "65a53427f52c21e60aa8f92e02a17d693a201601"
@@ -106,6 +107,38 @@ class TestOpenAIPlannerProviderUnit:
             provider.generate_plan("prompt", {})
 
 class TestShadowOrchestrationFullRegressionOffline:
+    def test_historical_pinned_proof_accepts_pre_execution_base_snapshot(self, tmp_path):
+        historical_state = {
+            "schema_version": "1.0.0",
+            "current_status": "CORE_SOFTWARE_RC_CLOSED_PROVEN",
+            "current_milestone": "LARİ Clinic",
+            "next_action": (
+                "Controller-authorized LARİ Clinic foundation materialization and read-only scope/contract "
+                "gap audit from frozen Package baseline 65a53427f52c21e60aa8f92e02a17d693a201601."
+            ),
+            "canonical_refs": {
+                "package_customization_baseline": {
+                    "sha": "65a53427f52c21e60aa8f92e02a17d693a201601"
+                }
+            },
+        }
+        adapter = FakeProjectSourceAdapter(state_data=historical_state)
+        provider = FakePlannerProvider()
+
+        disp, traces, code = run_shadow_orchestration(
+            str(DESCRIPTOR_PATH),
+            expectation_path=str(EXPECTATION_PATH),
+            repeat=1,
+            provider_override=provider,
+            trace_dir_override=tmp_path,
+            adapter_override=adapter,
+            source_mode="pinned_proof",
+        )
+
+        assert code == 0
+        assert disp == "SHADOW_ACCEPT"
+        assert traces[0]["resolved_source_sha"] == "4c55eecdbe064c74b34af31a1daf9851689e4fe8"
+
     def test_valid_shadow_orchestration_passes_offline(self, tmp_path):
         adapter = FakeProjectSourceAdapter()
         provider = FakePlannerProvider()
