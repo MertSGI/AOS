@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
@@ -31,6 +32,21 @@ PHASE7_NODE2_R3_BOUND_STATUS = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_RE
 PHASE7_NODE2_R2_GATE = "P7N2-DISCOVERY_MARKETPLACE_R2"
 PHASE7_NODE2_R2_GATE_ALIASES = frozenset(
     {PHASE7_NODE2_R2_GATE, "P7N2-DISCOVERY-MARKETPLACE_R2"}
+)
+PHASE7_NODE2_R3_ACCEPTED_SHA = "e6b30e0708aa2eb1597caa3155b3c3b3b3e9f0d6"
+PHASE7_NODE2_R3_CONTROL_BASE_SHA = "8cb93243bf4097d4db1c40c532472ea260ad7813"
+PHASE7_NODE2_R3_BRANCH = "feature/phase7-node2-discovery-marketplace-r3-review-20261004"
+PHASE7_NODE2_R3_CI_RUN_ID = 37231913934
+PHASE7_NODE2_R3_CONTROLLER_DECISION = "LARI-P7-N2-R3-ACCEPT-N3-PREBIND-20261005-01"
+PHASE7_NODE2_R3_GATE = "P7N2-DISCOVERY-MARKETPLACE_R3"
+PHASE7_NODE3_PREBIND_STATUS = "PHASE_7_NODE_3_FAVORITES_REBOOKING_PREBIND_REQUIRED"
+PHASE7_NODE2_R3_ALLOWED_CONTROL_FILES = frozenset(
+    {
+        "docs/project-control/STATE.json",
+        "docs/project-control/DECISIONS.md",
+        "docs/project-control/PROGRAM_V2_CAPABILITY_REGISTRY.json",
+        "docs/project-control/acceptance-receipt-discovery_marketplace_r3.json",
+    }
 )
 
 
@@ -69,6 +85,16 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     with tmp.open("w", encoding="utf-8", newline="\n") as handle:
         json.dump(dict(value), handle, ensure_ascii=False, indent=2)
         handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def _atomic_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(value)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
@@ -512,6 +538,365 @@ def validate_canonical_coherence(state: Mapping[str, Any]) -> None:
             raise CanonicalReconciliationError(
                 f"Canonical semantic contradiction: status '{status}' contradicts next_action '{next_action[:60]}...'"
             )
+
+
+def _read_github_actions_run(repository: str, run_id: int) -> Dict[str, Any]:
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repository}/actions/runs/{run_id}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "aos-canonical-reconciler",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise CanonicalReconciliationError(
+            f"Could not independently read GitHub Actions run {run_id}: {exc}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise CanonicalReconciliationError(f"Invalid GitHub Actions run response for {run_id}")
+    return value
+
+
+def _remote_branch_sha(product_workspace: Path, branch: str) -> str:
+    proc = _git(
+        ["ls-remote", "--heads", "origin", f"refs/heads/{branch}"],
+        cwd=product_workspace,
+        timeout=120,
+    )
+    rows = [line.split() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if len(rows) != 1 or len(rows[0]) < 2 or not HEX40.fullmatch(rows[0][0]):
+        raise CanonicalReconciliationError(f"Could not resolve one exact remote head for {branch}")
+    return rows[0][0].lower()
+
+
+def _phase7_node2_r3_accepted_state(
+    state: Mapping[str, Any],
+    *,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_run_id: int,
+    ci_conclusion: str,
+    controller_authority: str,
+) -> Dict[str, Any]:
+    """Build only the authorized Node 2 R3 acceptance -> Node 3 prebind frontier."""
+    failures = []
+    if candidate_sha.lower() != PHASE7_NODE2_R3_ACCEPTED_SHA:
+        failures.append("candidate_sha")
+    if execution_base_sha.lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+        failures.append("execution_base_sha")
+    if int(ci_run_id) != PHASE7_NODE2_R3_CI_RUN_ID:
+        failures.append("ci_run_id")
+    if ci_conclusion.lower() != "success":
+        failures.append("ci_conclusion")
+    if controller_authority != PHASE7_NODE2_R3_CONTROLLER_DECISION:
+        failures.append("controller_authority")
+    if str(state.get("current_status") or "") != PHASE7_NODE2_R3_BOUND_STATUS:
+        failures.append("current_status")
+    if str(state.get("production_status") or "") != "NO_GO":
+        failures.append("production_status")
+    if str(state.get("next_action_execution_base_sha") or "").lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+        failures.append("next_action_execution_base_sha")
+
+    candidate_release = state.get("candidate_release")
+    if not isinstance(candidate_release, Mapping):
+        failures.append("candidate_release")
+    else:
+        if str(candidate_release.get("accepted_product_sha") or "").lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+            failures.append("candidate_release.accepted_product_sha")
+        if str(candidate_release.get("next_action_execution_base_sha") or "").lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+            failures.append("candidate_release.next_action_execution_base_sha")
+
+    chain = state.get("phase7_accepted_execution_chain")
+    if not isinstance(chain, Mapping):
+        failures.append("phase7_accepted_execution_chain")
+    else:
+        if str(chain.get("node2_r1") or "").lower() != PHASE7_NODE2_R1_ACCEPTED_SHA:
+            failures.append("phase7_accepted_execution_chain.node2_r1")
+        if str(chain.get("node2_r2") or "").lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+            failures.append("phase7_accepted_execution_chain.node2_r2")
+        if chain.get("node2_r3"):
+            failures.append("phase7_accepted_execution_chain.node2_r3")
+
+    contract = state.get("phase7_node2_contract")
+    delivery_slices = contract.get("delivery_slices") if isinstance(contract, Mapping) else None
+    if not isinstance(contract, Mapping) or not isinstance(delivery_slices, Mapping):
+        failures.append("phase7_node2_contract")
+    else:
+        if str(contract.get("execution_base_sha") or "").lower() != PHASE7_NODE2_R1_ACCEPTED_SHA:
+            failures.append("phase7_node2_contract.execution_base_sha")
+        r1_authority = contract.get("r1_server_authority")
+        if not isinstance(r1_authority, Mapping) or str(r1_authority.get("product_sha") or "").lower() != PHASE7_NODE2_R1_ACCEPTED_SHA:
+            failures.append("phase7_node2_contract.r1_server_authority.product_sha")
+        if delivery_slices.get("R2") != "ACCEPTED_PROVEN":
+            failures.append("phase7_node2_contract.delivery_slices.R2")
+        if delivery_slices.get("R3") != "BOUND_READY_FOR_IMPLEMENTATION":
+            failures.append("phase7_node2_contract.delivery_slices.R3")
+        if contract.get("ui_v2") != "RELEASED_ACTIVE":
+            failures.append("phase7_node2_contract.ui_v2")
+        if contract.get("node3") != "NOT_IN_SCOPE":
+            failures.append("phase7_node2_contract.node3")
+
+    next_product_action = state.get("next_product_action")
+    if not isinstance(next_product_action, Mapping):
+        failures.append("next_product_action")
+    else:
+        expected = {
+            "phase": "PHASE_7",
+            "node": "NODE_2_DISCOVERY_MARKETPLACE",
+            "slice": "R3_CUSTOMER_FACING_DISCOVERY_PORTFOLIO_UI",
+            "execution_base_sha": PHASE7_NODE2_R2_ACCEPTED_SHA,
+        }
+        for key, expected_value in expected.items():
+            if next_product_action.get(key) != expected_value:
+                failures.append(f"next_product_action.{key}")
+
+    gates = state.get("accepted_gates")
+    if not isinstance(gates, list):
+        failures.append("accepted_gates")
+    elif any(
+        isinstance(gate, Mapping)
+        and str(gate.get("gate") or "").upper() == PHASE7_NODE2_R3_GATE
+        for gate in gates
+    ):
+        failures.append("accepted_gates.R3_duplicate")
+
+    if failures:
+        raise CanonicalReconciliationError(
+            "Phase 7 Node 2 R3 acceptance precondition mismatch: " + ", ".join(failures)
+        )
+
+    value = copy.deepcopy(dict(state))
+    value["current_status"] = PHASE7_NODE3_PREBIND_STATUS
+    value["current_milestone"] = "Program V2 Phase 7 — Node 3 Favorites & Fast Rebooking Prebind"
+    value["next_action"] = (
+        "Research and bind the Phase 7 Node 3 Favorites & Fast Rebooking execution contract "
+        f"from accepted Node 2 R3 base {PHASE7_NODE2_R3_ACCEPTED_SHA} before any implementation. "
+        "Node 3 implementation is NOT authorized. Production remains NO_GO."
+    )
+    value["next_action_execution_base_sha"] = PHASE7_NODE2_R3_ACCEPTED_SHA
+    value["candidate_release"]["accepted_product_sha"] = PHASE7_NODE2_R3_ACCEPTED_SHA
+    value["candidate_release"]["next_action_execution_base_sha"] = PHASE7_NODE2_R3_ACCEPTED_SHA
+    value["phase7_accepted_execution_chain"]["node2_r3"] = PHASE7_NODE2_R3_ACCEPTED_SHA
+    value["phase7_node2_contract"]["delivery_slices"]["R3"] = "ACCEPTED_PROVEN"
+    value["next_product_action"].update(
+        {
+            "phase": "PHASE_7",
+            "node": "NODE_3_FAVORITES_FAST_REBOOKING",
+            "slice": "PREBIND_REQUIRED",
+            "execution_base_sha": PHASE7_NODE2_R3_ACCEPTED_SHA,
+        }
+    )
+    value["accepted_gates"].append(
+        {
+            "gate": PHASE7_NODE2_R3_GATE,
+            "status": "CLOSED_PROVEN",
+            "evidence_level": "E2_EXECUTABLE_EXACT_SHA_CI",
+            "tested_sha": PHASE7_NODE2_R3_ACCEPTED_SHA,
+            "run_ids": [str(PHASE7_NODE2_R3_CI_RUN_ID)],
+            "closed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "reopen_condition": "Failed exact-SHA R3 contract verification or CI regression",
+        }
+    )
+    value["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    return value
+
+
+def _phase7_node2_r3_accepted_registry(registry: Mapping[str, Any]) -> Dict[str, Any]:
+    value = copy.deepcopy(dict(registry))
+    capabilities = value.get("additional_program_capabilities")
+    if not isinstance(capabilities, list):
+        raise CanonicalReconciliationError("additional_program_capabilities is missing or invalid")
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for item in capabilities:
+        if isinstance(item, dict) and item.get("key") in {
+            "verified_reviews", "discovery_marketplace", "favorites_rebooking"
+        }:
+            key = str(item["key"])
+            if key in by_key:
+                raise CanonicalReconciliationError(f"Duplicate capability registry key: {key}")
+            by_key[key] = item
+    required = {"verified_reviews", "discovery_marketplace", "favorites_rebooking"}
+    if set(by_key) != required:
+        raise CanonicalReconciliationError(f"Missing Phase 7 capability registry keys: {sorted(required - set(by_key))}")
+    favorites = by_key["favorites_rebooking"]
+    if favorites.get("source_state") != "PLANNED" or favorites.get("program_maturity") != "PLANNED":
+        raise CanonicalReconciliationError("favorites_rebooking is not still PLANNED")
+
+    for key in ("verified_reviews", "discovery_marketplace"):
+        by_key[key]["source_state"] = "LIVE_ACCEPTANCE_ONLY"
+        by_key[key]["program_maturity"] = "REAL_CODE_NOT_LIVE_VERIFIED"
+    discovery = by_key["discovery_marketplace"]
+    discovery["accepted_r3_sha"] = PHASE7_NODE2_R3_ACCEPTED_SHA
+    discovery["accepted_r3_ci_run_id"] = PHASE7_NODE2_R3_CI_RUN_ID
+    discovery["delivery_slice"] = "R3_ACCEPTED_NODE3_PREBIND"
+    return value
+
+
+def _decision_023_text(existing: str) -> str:
+    if "DECISION-023" in existing:
+        raise CanonicalReconciliationError("DECISION-023 already exists")
+    block = (
+        "## DECISION-023: Phase 7 Node 2 R3 Functional Acceptance and Node 3 Prebind Boundary\n"
+        "- **Status**: ACCEPTED\n"
+        f"- **Authority**: `{PHASE7_NODE2_R3_CONTROLLER_DECISION}`.\n"
+        f"- **Decision**: Phase 7 Node 2 R3 functional Discovery / Portfolio UI is accepted at exact product SHA `{PHASE7_NODE2_R3_ACCEPTED_SHA}` from execution base `{PHASE7_NODE2_R2_ACCEPTED_SHA}`, with exact-SHA GitHub Actions Run `{PHASE7_NODE2_R3_CI_RUN_ID}` completed successfully. DECISION-022 remains the Node 2 server-authoritative architecture authority. This functional acceptance does not close broader UI-V2 visual or productization work; real-browser, visual, and productization evidence remains separate. Node 3 Favorites & Fast Rebooking is downstream, its implementation is not authorized, and Controller PREBIND is required first. Production remains `NO_GO`.\n"
+    )
+    return existing.rstrip() + "\n\n" + block
+
+
+def record_phase7_node2_r3_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_run_id: int,
+    controller_authority: str,
+) -> Dict[str, Any]:
+    """Apply the one authorized exact-SHA R3 acceptance transition, fail closed."""
+    from aos.acceptance_receipt import AcceptanceReceipt, write_acceptance_receipt
+
+    descriptor = _read_json(descriptor_path)
+    project_id = str(descriptor.get("project_id") or "")
+    repository = str(descriptor.get("repository") or "")
+    control_ref = str(descriptor.get("control_ref") or "")
+    if (project_id, repository, control_ref) != (
+        "lari", "MertSGI/Randapp-main", "control/lari-project-control-plane"
+    ):
+        raise CanonicalReconciliationError("R3 acceptance descriptor authority mismatch")
+    if candidate_sha.lower() != PHASE7_NODE2_R3_ACCEPTED_SHA:
+        raise CanonicalReconciliationError("R3 candidate SHA mismatch")
+    if execution_base_sha.lower() != PHASE7_NODE2_R2_ACCEPTED_SHA:
+        raise CanonicalReconciliationError("R3 execution-base SHA mismatch")
+    if int(ci_run_id) != PHASE7_NODE2_R3_CI_RUN_ID:
+        raise CanonicalReconciliationError("R3 CI run mismatch")
+    if controller_authority != PHASE7_NODE2_R3_CONTROLLER_DECISION:
+        raise CanonicalReconciliationError("R3 Controller authority mismatch")
+
+    control, remote_before = _ensure_control_clone(repository, control_ref, runtime_dir)
+    if remote_before.lower() != PHASE7_NODE2_R3_CONTROL_BASE_SHA:
+        raise CanonicalReconciliationError(
+            f"R3 starting control SHA drift: {remote_before} != {PHASE7_NODE2_R3_CONTROL_BASE_SHA}"
+        )
+    remote_candidate = _remote_branch_sha(product_workspace, PHASE7_NODE2_R3_BRANCH)
+    if remote_candidate != PHASE7_NODE2_R3_ACCEPTED_SHA:
+        raise CanonicalReconciliationError(
+            f"R3 remote branch SHA mismatch: {remote_candidate} != {PHASE7_NODE2_R3_ACCEPTED_SHA}"
+        )
+    ci = _read_github_actions_run(repository, PHASE7_NODE2_R3_CI_RUN_ID)
+    ci_matches = (
+        int(ci.get("id") or 0) == PHASE7_NODE2_R3_CI_RUN_ID
+        and str(ci.get("head_sha") or "").lower() == PHASE7_NODE2_R3_ACCEPTED_SHA
+        and str(ci.get("head_branch") or "") == PHASE7_NODE2_R3_BRANCH
+        and str(ci.get("status") or "").lower() == "completed"
+        and str(ci.get("conclusion") or "").lower() == "success"
+    )
+    if not ci_matches:
+        raise CanonicalReconciliationError("R3 hosted CI does not prove exact candidate SHA success")
+
+    state_path = find_state_json(control, project_id)
+    registry_path = control / "docs/project-control/PROGRAM_V2_CAPABILITY_REGISTRY.json"
+    decisions_path = control / "docs/project-control/DECISIONS.md"
+    r2_receipt_path = control / "docs/project-control/acceptance-receipt-discovery_marketplace_r2.json"
+    if not registry_path.is_file() or not decisions_path.is_file() or not r2_receipt_path.is_file():
+        raise CanonicalReconciliationError("Required canonical R3 acceptance inputs are missing")
+    r2_receipt_before = r2_receipt_path.read_bytes()
+    updated_state = _phase7_node2_r3_accepted_state(
+        _read_json(state_path),
+        candidate_sha=candidate_sha,
+        execution_base_sha=execution_base_sha,
+        ci_run_id=ci_run_id,
+        ci_conclusion=str(ci.get("conclusion") or ""),
+        controller_authority=controller_authority,
+    )
+    updated_registry = _phase7_node2_r3_accepted_registry(_read_json(registry_path))
+    updated_decisions = _decision_023_text(decisions_path.read_text(encoding="utf-8"))
+    receipt = AcceptanceReceipt(
+        receipt_id="receipt-lari-p7-n2-discovery-marketplace-r3",
+        project_id="lari",
+        lane="lane-b",
+        slice_id="discovery_marketplace_r3",
+        execution_base_sha=PHASE7_NODE2_R2_ACCEPTED_SHA,
+        candidate_sha=PHASE7_NODE2_R3_ACCEPTED_SHA,
+        ci_workflow_name="lari-phase5-postgres-acceptance.yml",
+        ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+        ci_conclusion="success",
+        acceptance_result="ACCEPTED",
+        controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        canonical_control_transition_sha=remote_before,
+        production="NO_GO",
+    )
+
+    _atomic_json(state_path, updated_state)
+    _atomic_json(registry_path, updated_registry)
+    _atomic_text(decisions_path, updated_decisions)
+    receipt_path = write_acceptance_receipt(control, receipt)
+    if r2_receipt_path.read_bytes() != r2_receipt_before:
+        raise CanonicalReconciliationError("R2 acceptance receipt changed during R3 acceptance")
+
+    status_lines = [
+        line.rstrip().replace("\\", "/")
+        for line in (_git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=control).stdout or "").splitlines()
+        if line.strip()
+    ]
+    changed = {line[3:] if len(line) > 3 else line for line in status_lines}
+    if changed != PHASE7_NODE2_R3_ALLOWED_CONTROL_FILES:
+        raise CanonicalReconciliationError(f"Unexpected R3 acceptance changed files: {sorted(changed)}")
+    _git(["diff", "--check"], cwd=control)
+    for rel in sorted(PHASE7_NODE2_R3_ALLOWED_CONTROL_FILES):
+        _git(["add", "--", rel], cwd=control)
+    staged = {
+        line.strip().replace("\\", "/")
+        for line in (_git(["diff", "--name-only", "--cached"], cwd=control).stdout or "").splitlines()
+        if line.strip()
+    }
+    if staged != PHASE7_NODE2_R3_ALLOWED_CONTROL_FILES:
+        raise CanonicalReconciliationError(f"Unexpected staged R3 acceptance files: {sorted(staged)}")
+
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=120)
+    remote_now = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip().lower()
+    if remote_now != remote_before.lower():
+        raise CanonicalReconciliationError(
+            f"Concurrent control drift detected: {remote_before} -> {remote_now}"
+        )
+    _git(
+        [
+            "-c", "user.name=AOS Canonical Reconciler",
+            "-c", "user.email=aos-reconciler@users.noreply.github.com",
+            "commit", "-m", "control(lari): accept Phase 7 Node 2 R3 and bind Node 3 preflight",
+        ],
+        cwd=control,
+    )
+    control_after = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip().lower()
+    if not HEX40.fullmatch(control_after):
+        raise CanonicalReconciliationError(f"Invalid resulting control SHA: {control_after!r}")
+    _git(["push", "origin", f"HEAD:{control_ref}"], cwd=control, timeout=300)
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=120)
+    remote_after = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip().lower()
+    if remote_after != control_after:
+        raise CanonicalReconciliationError(
+            f"R3 acceptance push verification failed: {control_after} != {remote_after}"
+        )
+
+    result = {
+        "status": "ACCEPTED",
+        "control_sha_before": remote_before.lower(),
+        "control_sha_after": control_after,
+        "control_remote_sha_equal": True,
+        "candidate_sha": PHASE7_NODE2_R3_ACCEPTED_SHA,
+        "accepted_gate": PHASE7_NODE2_R3_GATE,
+        "acceptance_receipt": receipt_path.relative_to(control).as_posix(),
+        "current_status": PHASE7_NODE3_PREBIND_STATUS,
+        "next_action_execution_base_sha": PHASE7_NODE2_R3_ACCEPTED_SHA,
+        "production": "NO_GO",
+    }
+    _atomic_json(runtime_dir / "r3-acceptance.json", result)
+    return result
 
 
 def record_slice_acceptance(

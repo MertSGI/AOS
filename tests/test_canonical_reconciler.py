@@ -9,8 +9,16 @@ from aos.canonical_reconciler import (
     CanonicalReconciliationError,
     PHASE7_NODE2_R2_ACCEPTED_SHA,
     PHASE7_NODE2_R2_GATE,
+    PHASE7_NODE2_R3_ACCEPTED_SHA,
+    PHASE7_NODE2_R3_CI_RUN_ID,
+    PHASE7_NODE2_R3_CONTROLLER_DECISION,
+    PHASE7_NODE2_R3_GATE,
+    PHASE7_NODE3_PREBIND_STATUS,
+    _phase7_node2_r3_accepted_registry,
+    _phase7_node2_r3_accepted_state,
     bind_missing_execution_base,
     derive_latest_accepted_product_sha,
+    record_phase7_node2_r3_acceptance,
     reconcile_phase7_node2_r2_frontier,
     reconcile_missing_execution_base,
     record_slice_acceptance,
@@ -19,6 +27,7 @@ from aos.canonical_reconciler import (
 
 R1_SHA = "814e3ca0c09c3a484e20869f1a47a3545259f6db"
 R2_SHA = PHASE7_NODE2_R2_ACCEPTED_SHA
+R3_SHA = PHASE7_NODE2_R3_ACCEPTED_SHA
 
 
 def _partial_r2_state() -> dict:
@@ -80,6 +89,46 @@ def _partial_r2_state() -> dict:
             "ui_v2": "HOLD_UNTIL_R1_AND_R2_ACCEPTED",
             "node3": "NOT_IN_SCOPE",
         },
+    }
+
+
+def _r3_bound_state() -> dict:
+    _, state = reconcile_phase7_node2_r2_frontier(
+        _partial_r2_state(),
+        project_id="lari",
+        latest_accepted_product_sha=R2_SHA,
+    )
+    state["production_status"] = "NO_GO"
+    return state
+
+
+def _phase7_registry() -> dict:
+    return {
+        "additional_program_capabilities": [
+            {
+                "key": "verified_reviews",
+                "source_state": "PLANNED",
+                "program_maturity": "PLANNED",
+                "preserved": "verified",
+            },
+            {
+                "key": "discovery_marketplace",
+                "source_state": "PLANNED",
+                "program_maturity": "PLANNED",
+                "execution_base_sha": "2b5e08d2b8dc674dd1dd21ea93f1b967ec468201",
+                "execution_authority": "DECISION-022",
+                "delivery_slice": "R1_SERVER_AUTHORITY_FIRST",
+            },
+            {
+                "key": "favorites_rebooking",
+                "source_state": "PLANNED",
+                "program_maturity": "PLANNED",
+                "preserved": "favorites",
+            },
+        ],
+        "current_live_commercial_registry": [
+            {"key": "unrelated_live", "source_state": "LIVE"}
+        ],
     }
 
 
@@ -381,6 +430,240 @@ def test_fresh_no_checkout_clone_is_checked_only_after_exact_checkout(tmp_path: 
     assert not (control / "stale.txt").exists()
     assert _git(control, "status", "--porcelain=v1", "--untracked-files=all") == ""
     assert _git(control, "rev-parse", "HEAD") == expected
+
+
+def test_exact_r3_bound_state_accepts_and_advances_only_to_node3_prebind():
+    state = _r3_bound_state()
+    historical = {
+        "node2_r1": state["phase7_accepted_execution_chain"]["node2_r1"],
+        "node2_r2": state["phase7_accepted_execution_chain"]["node2_r2"],
+        "contract_base": state["phase7_node2_contract"]["execution_base_sha"],
+        "r1_authority": copy.deepcopy(state["phase7_node2_contract"]["r1_server_authority"]),
+        "node3": state["phase7_node2_contract"]["node3"],
+        "ui_v2": state["phase7_node2_contract"]["ui_v2"],
+    }
+
+    accepted = _phase7_node2_r3_accepted_state(
+        state,
+        candidate_sha=R3_SHA,
+        execution_base_sha=R2_SHA,
+        ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+        ci_conclusion="success",
+        controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+    )
+
+    assert state["current_status"] == "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY"
+    assert accepted["current_status"] == PHASE7_NODE3_PREBIND_STATUS
+    assert accepted["current_milestone"] == "Program V2 Phase 7 — Node 3 Favorites & Fast Rebooking Prebind"
+    assert accepted["next_product_action"]["phase"] == "PHASE_7"
+    assert accepted["next_product_action"]["node"] == "NODE_3_FAVORITES_FAST_REBOOKING"
+    assert accepted["next_product_action"]["slice"] == "PREBIND_REQUIRED"
+    assert accepted["next_product_action"]["execution_base_sha"] == R3_SHA
+    assert accepted["next_action_execution_base_sha"] == R3_SHA
+    assert accepted["candidate_release"]["accepted_product_sha"] == R3_SHA
+    assert accepted["candidate_release"]["next_action_execution_base_sha"] == R3_SHA
+    assert accepted["phase7_accepted_execution_chain"]["node2_r3"] == R3_SHA
+    assert accepted["phase7_node2_contract"]["delivery_slices"]["R3"] == "ACCEPTED_PROVEN"
+    assert accepted["phase7_accepted_execution_chain"]["node2_r1"] == historical["node2_r1"]
+    assert accepted["phase7_accepted_execution_chain"]["node2_r2"] == historical["node2_r2"]
+    assert accepted["phase7_node2_contract"]["execution_base_sha"] == historical["contract_base"]
+    assert accepted["phase7_node2_contract"]["r1_server_authority"] == historical["r1_authority"]
+    assert accepted["phase7_node2_contract"]["node3"] == historical["node3"] == "NOT_IN_SCOPE"
+    assert accepted["phase7_node2_contract"]["ui_v2"] == historical["ui_v2"] == "RELEASED_ACTIVE"
+    assert "visual" not in accepted["phase7_node2_contract"]
+    assert "productization" not in accepted["phase7_node2_contract"]
+    assert accepted["production_status"] == "NO_GO"
+    gates = [gate for gate in accepted["accepted_gates"] if gate["gate"] == PHASE7_NODE2_R3_GATE]
+    assert gates == [{
+        "gate": PHASE7_NODE2_R3_GATE,
+        "status": "CLOSED_PROVEN",
+        "evidence_level": "E2_EXECUTABLE_EXACT_SHA_CI",
+        "tested_sha": R3_SHA,
+        "run_ids": [str(PHASE7_NODE2_R3_CI_RUN_ID)],
+        "closed_at": gates[0]["closed_at"],
+        "reopen_condition": "Failed exact-SHA R3 contract verification or CI regression",
+    }]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("candidate_sha", "f" * 40),
+        ("ci_run_id", PHASE7_NODE2_R3_CI_RUN_ID + 1),
+        ("ci_conclusion", "failure"),
+    ],
+)
+def test_r3_acceptance_evidence_mismatch_fails_without_state_mutation(field: str, value):
+    state = _r3_bound_state()
+    original = copy.deepcopy(state)
+    kwargs = {
+        "candidate_sha": R3_SHA,
+        "execution_base_sha": R2_SHA,
+        "ci_run_id": PHASE7_NODE2_R3_CI_RUN_ID,
+        "ci_conclusion": "success",
+        "controller_authority": PHASE7_NODE2_R3_CONTROLLER_DECISION,
+    }
+    kwargs[field] = value
+
+    with pytest.raises(CanonicalReconciliationError):
+        _phase7_node2_r3_accepted_state(state, **kwargs)
+
+    assert state == original
+
+
+def test_r3_gate_cannot_be_accepted_twice():
+    state = _r3_bound_state()
+    state["accepted_gates"].append({"gate": PHASE7_NODE2_R3_GATE})
+    original = copy.deepcopy(state)
+    with pytest.raises(CanonicalReconciliationError, match="R3_duplicate"):
+        _phase7_node2_r3_accepted_state(
+            state,
+            candidate_sha=R3_SHA,
+            execution_base_sha=R2_SHA,
+            ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+            ci_conclusion="success",
+            controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        )
+    assert state == original
+
+
+def test_r3_registry_updates_only_accepted_capabilities_and_preserves_node3_planned():
+    registry = _phase7_registry()
+    original_live = copy.deepcopy(registry["current_live_commercial_registry"])
+
+    accepted = _phase7_node2_r3_accepted_registry(registry)
+    items = {item["key"]: item for item in accepted["additional_program_capabilities"]}
+
+    assert registry["additional_program_capabilities"][0]["source_state"] == "PLANNED"
+    assert accepted["current_live_commercial_registry"] == original_live
+    assert items["verified_reviews"]["source_state"] == "LIVE_ACCEPTANCE_ONLY"
+    assert items["verified_reviews"]["program_maturity"] == "REAL_CODE_NOT_LIVE_VERIFIED"
+    assert items["verified_reviews"]["preserved"] == "verified"
+    assert items["discovery_marketplace"]["source_state"] == "LIVE_ACCEPTANCE_ONLY"
+    assert items["discovery_marketplace"]["program_maturity"] == "REAL_CODE_NOT_LIVE_VERIFIED"
+    assert items["discovery_marketplace"]["accepted_r3_sha"] == R3_SHA
+    assert items["discovery_marketplace"]["accepted_r3_ci_run_id"] == PHASE7_NODE2_R3_CI_RUN_ID
+    assert items["discovery_marketplace"]["delivery_slice"] == "R3_ACCEPTED_NODE3_PREBIND"
+    assert items["discovery_marketplace"]["execution_base_sha"] == "2b5e08d2b8dc674dd1dd21ea93f1b967ec468201"
+    assert items["favorites_rebooking"] == registry["additional_program_capabilities"][2]
+    assert items["favorites_rebooking"]["source_state"] == "PLANNED"
+    assert items["favorites_rebooking"]["program_maturity"] == "PLANNED"
+
+
+def _r3_acceptance_control_repo(control: Path) -> tuple[Path, bytes]:
+    state_path = control / "docs/project-control/STATE.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(_r3_bound_state()), encoding="utf-8")
+    (state_path.parent / "PROGRAM_V2_CAPABILITY_REGISTRY.json").write_text(
+        json.dumps(_phase7_registry()), encoding="utf-8"
+    )
+    (state_path.parent / "DECISIONS.md").write_text(
+        "# Decisions\n\n## DECISION-022: Existing Node 2 Authority\n- **Status**: ACCEPTED\n",
+        encoding="utf-8",
+    )
+    r2_receipt = state_path.parent / "acceptance-receipt-discovery_marketplace_r2.json"
+    r2_receipt.write_text('{"receipt_id":"r2-preserved"}\n', encoding="utf-8")
+    r2_before = r2_receipt.read_bytes()
+    _git(control, "init")
+    _git(control, "add", ".")
+    _git(
+        control, "-c", "user.name=AOS Test", "-c", "user.email=aos@example.invalid",
+        "commit", "-m", "control base"
+    )
+    return state_path, r2_before
+
+
+def test_record_r3_acceptance_writes_exact_four_control_files(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    state_path, r2_before = _r3_acceptance_control_repo(control)
+    descriptor = tmp_path / "lari.json"
+    descriptor.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    real_git = cr._git
+    pushed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal pushed
+        args = list(args)
+        if args[:3] == ["fetch", "origin", "control/lari-project-control-plane"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            stdout = (_git(control, "rev-parse", "HEAD") if pushed else cr.PHASE7_NODE2_R3_CONTROL_BASE_SHA) + "\n"
+            return subprocess.CompletedProcess(args, 0, stdout, "")
+        if args[:2] == ["push", "origin"]:
+            pushed = True
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(args, cwd=cwd, check=check, timeout=timeout)
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, cr.PHASE7_NODE2_R3_CONTROL_BASE_SHA))
+    monkeypatch.setattr(cr, "_remote_branch_sha", lambda *args: R3_SHA)
+    monkeypatch.setattr(cr, "_read_github_actions_run", lambda *args: {
+        "id": PHASE7_NODE2_R3_CI_RUN_ID,
+        "head_sha": R3_SHA,
+        "head_branch": cr.PHASE7_NODE2_R3_BRANCH,
+        "status": "completed",
+        "conclusion": "success",
+    })
+    monkeypatch.setattr(cr, "_git", fake_git)
+
+    result = record_phase7_node2_r3_acceptance(
+        descriptor_path=descriptor,
+        product_workspace=tmp_path / "product",
+        runtime_dir=tmp_path / "runtime",
+        candidate_sha=R3_SHA,
+        execution_base_sha=R2_SHA,
+        ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+        controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+    )
+
+    changed = set(_git(control, "show", "--pretty=format:", "--name-only", "HEAD").splitlines())
+    assert changed == cr.PHASE7_NODE2_R3_ALLOWED_CONTROL_FILES
+    assert result["status"] == "ACCEPTED"
+    assert result["control_remote_sha_equal"] is True
+    assert (state_path.parent / "acceptance-receipt-discovery_marketplace_r2.json").read_bytes() == r2_before
+    receipt = json.loads((state_path.parent / "acceptance-receipt-discovery_marketplace_r3.json").read_text())
+    assert receipt["execution_base_sha"] == R2_SHA
+    assert receipt["candidate_sha"] == R3_SHA
+    assert receipt["ci_run_id"] == PHASE7_NODE2_R3_CI_RUN_ID
+    assert receipt["controller_authority"] == PHASE7_NODE2_R3_CONTROLLER_DECISION
+    assert receipt["canonical_control_transition_sha"] == cr.PHASE7_NODE2_R3_CONTROL_BASE_SHA
+    assert receipt["production"] == "NO_GO"
+    decisions = (state_path.parent / "DECISIONS.md").read_text(encoding="utf-8")
+    assert decisions.count("DECISION-023") == 1
+    assert "does not close broader UI-V2 visual or productization work" in decisions
+
+
+def test_record_r3_acceptance_starting_control_drift_fails_before_mutation(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    state_path, _ = _r3_acceptance_control_repo(control)
+    before = {path: path.read_bytes() for path in state_path.parent.iterdir()}
+    descriptor = tmp_path / "lari.json"
+    descriptor.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, "f" * 40))
+
+    with pytest.raises(CanonicalReconciliationError, match="starting control SHA drift"):
+        record_phase7_node2_r3_acceptance(
+            descriptor_path=descriptor,
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=R3_SHA,
+            execution_base_sha=R2_SHA,
+            ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+            controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+        )
+
+    assert {path: path.read_bytes() for path in state_path.parent.iterdir()} == before
 
 
 def test_record_slice_acceptance_writes_complete_r3_frontier(tmp_path: Path, monkeypatch):
