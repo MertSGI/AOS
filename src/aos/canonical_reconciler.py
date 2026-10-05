@@ -1,6 +1,7 @@
 """Bounded canonical execution-base reconciliation for Runtime V1."""
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import os
@@ -22,6 +23,14 @@ PRODUCT_SHA_LINE = re.compile(
 _ACCEPTED_MARKERS = (
     "=PASS", "=ACCEPTED", "STATUS=ACCEPTED", "CONCLUSION=SUCCESS",
     '"STATUS": "ACCEPTED"', '"CONCLUSION": "SUCCESS"',
+)
+
+PHASE7_NODE2_R2_ACCEPTED_SHA = "1bc7cfddd4c07b448956521acc86a125bcdea80d"
+PHASE7_NODE2_R1_ACCEPTED_SHA = "814e3ca0c09c3a484e20869f1a47a3545259f6db"
+PHASE7_NODE2_R3_BOUND_STATUS = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY"
+PHASE7_NODE2_R2_GATE = "P7N2-DISCOVERY_MARKETPLACE_R2"
+PHASE7_NODE2_R2_GATE_ALIASES = frozenset(
+    {PHASE7_NODE2_R2_GATE, "P7N2-DISCOVERY-MARKETPLACE_R2"}
 )
 
 
@@ -204,6 +213,115 @@ def bind_missing_execution_base(state: Mapping[str, Any], base_sha: str) -> Tupl
     return "BOUND_MISSING_POINTER", value
 
 
+def _phase7_node2_r3_frontier(state: Mapping[str, Any], accepted_r2_sha: str) -> Dict[str, Any]:
+    """Build the complete post-R2 operational frontier without rewriting R1 history."""
+    value = copy.deepcopy(dict(state))
+
+    next_product_action = value.get("next_product_action")
+    accepted_chain = value.get("phase7_accepted_execution_chain")
+    node2_contract = value.get("phase7_node2_contract")
+    if not isinstance(next_product_action, dict):
+        raise CanonicalReconciliationError("next_product_action is missing or invalid")
+    if not isinstance(next_product_action.get("canonical_capability_order"), list):
+        raise CanonicalReconciliationError("canonical_capability_order is missing or invalid")
+    if not isinstance(accepted_chain, dict):
+        raise CanonicalReconciliationError("phase7_accepted_execution_chain is missing or invalid")
+    if not isinstance(node2_contract, dict):
+        raise CanonicalReconciliationError("phase7_node2_contract is missing or invalid")
+    delivery_slices = node2_contract.get("delivery_slices")
+    if not isinstance(delivery_slices, dict):
+        raise CanonicalReconciliationError("phase7_node2_contract.delivery_slices is missing or invalid")
+
+    value["current_status"] = PHASE7_NODE2_R3_BOUND_STATUS
+    value["current_milestone"] = "Program V2 Phase 7 — Node 2 Discovery Marketplace R3"
+    value["next_action"] = (
+        f"Implement Phase 7 Node 2 R3 — Customer-facing Discovery / Portfolio UI "
+        f"from accepted R2 execution base {accepted_r2_sha} under DECISION-022. "
+        "Consume accepted R1 server-authoritative Discovery Marketplace RPCs and R2 application service contracts. "
+        "Production remains NO_GO."
+    )
+    value["next_action_execution_base_sha"] = accepted_r2_sha
+
+    next_product_action["phase"] = "PHASE_7"
+    next_product_action["node"] = "NODE_2_DISCOVERY_MARKETPLACE"
+    next_product_action["slice"] = "R3_CUSTOMER_FACING_DISCOVERY_PORTFOLIO_UI"
+    next_product_action["execution_base_sha"] = accepted_r2_sha
+
+    candidate_release = value.get("candidate_release")
+    if not isinstance(candidate_release, dict):
+        raise CanonicalReconciliationError("candidate_release is missing or invalid")
+    candidate_release["accepted_product_sha"] = accepted_r2_sha
+    candidate_release["next_action_execution_base_sha"] = accepted_r2_sha
+
+    accepted_chain["node2_r2"] = accepted_r2_sha
+    node2_contract["status"] = "ACCEPTED_PROVEN"
+    delivery_slices["R1"] = "ACCEPTED_PROVEN"
+    delivery_slices["R2"] = "ACCEPTED_PROVEN"
+    delivery_slices["R3"] = "BOUND_READY_FOR_IMPLEMENTATION"
+    node2_contract["ui_v2"] = "RELEASED_ACTIVE"
+    return value
+
+
+def reconcile_phase7_node2_r2_frontier(
+    state: Mapping[str, Any],
+    *,
+    project_id: str,
+    latest_accepted_product_sha: str,
+) -> Tuple[str, Dict[str, Any]]:
+    """Repair only the exact, independently corroborated accepted-R2 partial frontier."""
+    accepted_sha = PHASE7_NODE2_R2_ACCEPTED_SHA
+    failures = []
+
+    if project_id.strip().lower() != "lari":
+        failures.append("project_id")
+    if str(state.get("current_status") or "") != PHASE7_NODE2_R3_BOUND_STATUS:
+        failures.append("current_status")
+    if latest_accepted_product_sha.strip().lower() != accepted_sha:
+        failures.append("latest_accepted_product_sha")
+    if str(state.get("next_action_execution_base_sha") or "").strip().lower() != PHASE7_NODE2_R1_ACCEPTED_SHA:
+        failures.append("next_action_execution_base_sha")
+
+    candidate_release = state.get("candidate_release")
+    if not isinstance(candidate_release, Mapping):
+        failures.append("candidate_release")
+    else:
+        if str(candidate_release.get("accepted_product_sha") or "").strip().lower() != accepted_sha:
+            failures.append("candidate_release.accepted_product_sha")
+        if str(candidate_release.get("next_action_execution_base_sha") or "").strip().lower() != accepted_sha:
+            failures.append("candidate_release.next_action_execution_base_sha")
+
+    matching_gates = [
+        gate
+        for gate in (state.get("accepted_gates") or [])
+        if isinstance(gate, Mapping)
+        and str(gate.get("gate") or "").upper() in PHASE7_NODE2_R2_GATE_ALIASES
+    ]
+    if len(matching_gates) != 1:
+        failures.append("accepted_gates.R2")
+    else:
+        gate = matching_gates[0]
+        if str(gate.get("status") or "").upper() != "CLOSED_PROVEN":
+            failures.append("accepted_gates.R2.status")
+        if str(gate.get("tested_sha") or "").strip().lower() != accepted_sha:
+            failures.append("accepted_gates.R2.tested_sha")
+
+    next_action = str(state.get("next_action") or "")
+    next_action_upper = next_action.upper()
+    if "PHASE 7 NODE 2 R3" not in next_action_upper:
+        failures.append("next_action.R3")
+    if "CUSTOMER-FACING DISCOVERY / PORTFOLIO UI" not in next_action_upper:
+        failures.append("next_action.customer_ui")
+    if accepted_sha not in next_action.lower():
+        failures.append("next_action.execution_base_sha")
+
+    if failures:
+        raise CanonicalReconciliationError(
+            "Phase 7 Node 2 R2 frontier evidence mismatch: " + ", ".join(failures)
+        )
+
+    return "RECONCILED_PHASE7_NODE2_R2_FRONTIER", _phase7_node2_r3_frontier(state, accepted_sha)
+
+
 def _ensure_control_clone(repository: str, control_ref: str, runtime_dir: Path) -> Tuple[Path, str]:
     reconciliation_root = (runtime_dir / "canonical-reconciliation").resolve()
     control = (reconciliation_root / "control").resolve()
@@ -266,20 +384,27 @@ def reconcile_missing_execution_base(
 
     try:
         action, updated = bind_missing_execution_base(state, base_sha)
-    except CanonicalReconciliationError as exc:
-        result = {
-            "status": "HUMAN_REQUIRED",
-            "reason": "CANONICAL_EXECUTION_BASE_CONFLICT",
-            "detail": str(exc)[:1500],
-            "control_sha_before": remote_before,
-            "accepted_execution_base_sha": base_sha,
-            "evidence_source": evidence_source,
-            "evidence_number": evidence_number,
-            "state_path": state_path.relative_to(control).as_posix(),
-            "production": "NO_GO",
-        }
-        _atomic_json(runtime_dir / "canonical-repair.json", result)
-        return result
+    except CanonicalReconciliationError as bind_exc:
+        try:
+            action, updated = reconcile_phase7_node2_r2_frontier(
+                state,
+                project_id=project_id,
+                latest_accepted_product_sha=base_sha,
+            )
+        except CanonicalReconciliationError as frontier_exc:
+            result = {
+                "status": "HUMAN_REQUIRED",
+                "reason": "CANONICAL_EXECUTION_BASE_CONFLICT",
+                "detail": f"{bind_exc}; {frontier_exc}"[:1500],
+                "control_sha_before": remote_before,
+                "accepted_execution_base_sha": base_sha,
+                "evidence_source": evidence_source,
+                "evidence_number": evidence_number,
+                "state_path": state_path.relative_to(control).as_posix(),
+                "production": "NO_GO",
+            }
+            _atomic_json(runtime_dir / "canonical-repair.json", result)
+            return result
 
     if action == "ALREADY_CURRENT":
         result = {
@@ -323,9 +448,14 @@ def reconcile_missing_execution_base(
         return result
 
     _git(["add", "--", expected_path], cwd=control)
+    commit_message = (
+        "docs(control-plane): reconcile accepted R2 operational frontier"
+        if action == "RECONCILED_PHASE7_NODE2_R2_FRONTIER"
+        else "docs(control-plane): bind autonomous execution base from accepted evidence"
+    )
     _git(
         ["-c", "user.name=AOS Runtime", "-c", "user.email=aos-runtime@users.noreply.github.com",
-         "commit", "-m", "docs(control-plane): bind autonomous execution base from accepted evidence"],
+         "commit", "-m", commit_message],
         cwd=control,
     )
     new_control_sha = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip()
@@ -340,7 +470,11 @@ def reconcile_missing_execution_base(
 
     result = {
         "status": "APPLIED",
-        "reason": "MISSING_EXECUTION_BASE_BOUND_FROM_ACCEPTED_EVIDENCE",
+        "reason": (
+            "PHASE7_NODE2_R2_FRONTIER_RECONCILED"
+            if action == "RECONCILED_PHASE7_NODE2_R2_FRONTIER"
+            else "MISSING_EXECUTION_BASE_BOUND_FROM_ACCEPTED_EVIDENCE"
+        ),
         "control_sha_before": remote_before,
         "control_sha_after": new_control_sha,
         "accepted_execution_base_sha": base_sha,
@@ -348,7 +482,7 @@ def reconcile_missing_execution_base(
         "evidence_number": evidence_number,
         "state_path": expected_path,
         "push_mode": "FAST_FORWARD_NO_FORCE",
-        "frontier_injected": False,
+        "frontier_injected": action == "RECONCILED_PHASE7_NODE2_R2_FRONTIER",
         "run_plan_injected": False,
         "production": "NO_GO",
     }
@@ -406,23 +540,9 @@ def record_slice_acceptance(
     # 1. Validate semantic coherence before update
     validate_canonical_coherence(current_state)
 
-    # 2. Build updated state atomically
-    updated_state = dict(current_state)
-    updated_state["current_status"] = "PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY"
-    updated_state["current_milestone"] = "Program V2 Phase 7 — Node 2 Discovery Marketplace R3"
-    updated_state["next_action"] = (
-        f"Implement Phase 7 Node 2 R3 — Customer-facing Discovery / Portfolio UI "
-        f"from accepted R2 execution base {candidate_sha} under DECISION-022. "
-        f"Consume accepted R1 server-authoritative Discovery Marketplace RPCs and R2 application service contracts. "
-        f"Production remains NO_GO."
-    )
-
-    # Update candidate release/acceptance evidence
-    candidate_rel = updated_state.get("candidate_release") or {}
-    if isinstance(candidate_rel, dict):
-        candidate_rel["accepted_product_sha"] = candidate_sha
-        candidate_rel["next_action_execution_base_sha"] = candidate_sha
-        updated_state["candidate_release"] = candidate_rel
+    # 2. Build the complete operational frontier atomically. Historical R1
+    # authority fields are retained by the narrowly scoped helper.
+    updated_state = _phase7_node2_r3_frontier(current_state, candidate_sha)
 
     # Add to accepted_gates
     accepted_gates = list(updated_state.get("accepted_gates") or [])
