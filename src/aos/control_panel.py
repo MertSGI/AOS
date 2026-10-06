@@ -56,6 +56,10 @@ from aos.self_repair import (
 from aos.platform_recovery import PlatformRecoveryCoordinator, SourceRepairExecutor
 from aos.knowledge.hooks import ledger_from_runtime_config
 from aos.source_repair_factory import create_source_repair_executor_from_config
+from aos.runtime_admission import AdmissionState, CommandAdmissionStore
+
+PRODUCT_PROJECT_IDS = frozenset({"lari", "lari-ui-v2"})
+TERMINAL_STATES = frozenset({"PROJECT_COMPLETE", "HUMAN_REQUIRED", "FAILED"})
 
 
 def _controller_relay_root(config: Dict[str, Any]) -> Path:
@@ -1079,12 +1083,29 @@ textarea.goal-main {
             <div class="cockpit-view-title">
               <span>Current Autonomous Activity</span>
             </div>
-            <div class="section-subtitle">Real-time multi-lane execution picture · Semantic stage progression</div>
+            <div class="section-subtitle">Real-time multi-lane execution picture · Semantic stage progression (Product Lanes Only)</div>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="switchView('lanes')">Open Full Lanes Cockpit ↗</button>
         </div>
 
         <div id="overview-lanes-summary" style="display:flex; flex-direction:column; gap:12px;">
+          <!-- Populated dynamically by refreshStatus() -->
+        </div>
+      </div>
+
+      <!-- PLATFORM OPERATIONS (AOS MAINTENANCE & PLATFORM TELEMETRY) -->
+      <div class="cockpit-card">
+        <div class="card-header-flex">
+          <div>
+            <div class="cockpit-view-title">
+              <span>Platform Operations</span>
+            </div>
+            <div class="section-subtitle">AOS maintenance state, self-repair, provider health, and platform blockers</div>
+          </div>
+          <span class="status-chip ok" id="plat-ops-status-chip">PLATFORM NOMINAL</span>
+        </div>
+
+        <div id="overview-platform-operations" style="display:flex; flex-direction:column; gap:10px;">
           <!-- Populated dynamically by refreshStatus() -->
         </div>
       </div>
@@ -1356,6 +1377,23 @@ textarea.goal-main {
 
     <!-- VIEW 5: EVIDENCE & PROVENANCE -->
     <section class="view-container" id="view-evidence">
+      <!-- COCKPIT EVIDENCE LADDER (WP1G) -->
+      <div class="cockpit-card">
+        <div class="card-header-flex">
+          <div>
+            <div class="cockpit-view-title">
+              <span>Cockpit Evidence Ladder</span>
+            </div>
+            <div class="section-subtitle">Separate truth dimensions across lifecycle · No single aggregate badge false claims</div>
+          </div>
+          <span class="status-chip neutral" id="ev-ladder-summary">DIMENSIONAL TRUTH</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-top:8px;" id="evidence-ladder-grid">
+          <!-- Populated dynamically by refreshStatus() -->
+        </div>
+      </div>
+
       <!-- RUNTIME IDENTITY & PROVENANCE TABLE -->
       <div class="cockpit-card">
         <div class="card-header-flex">
@@ -2018,7 +2056,7 @@ async function refreshStatus() {
         const safeCmd = escapeHtml(cmdId);
         const safeCi = escapeHtml(item.tests_ci_state ? JSON.stringify(item.tests_ci_state) : '—');
 
-        // Overview Summary Row
+        // Overview Summary Row (Maximum two product cards: LARI and LARI UI-V2)
         overviewSummaryHtml += `
         <div style="background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:8px; padding:14px;">
           <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
@@ -2158,6 +2196,66 @@ async function refreshStatus() {
 
       if (lanesView) lanesView.innerHTML = cockpitHtml;
       if (ovLanesSummary) ovLanesSummary.innerHTML = overviewSummaryHtml;
+    }
+
+    // Render Platform Operations (WP1C)
+    const platOpsContainer = document.getElementById('overview-platform-operations');
+    const platOpsChip = document.getElementById('plat-ops-status-chip');
+    if (platOpsContainer) {
+      const plat = s.platform_operations || {};
+      const maintLane = plat.maintenance_lane;
+      const platStatus = plat.status || 'UNKNOWN';
+      if (platOpsChip) {
+        platOpsChip.textContent = platStatus === 'HEALTHY' ? 'PLATFORM NOMINAL' : 'PLATFORM ATTENTION';
+        platOpsChip.className = 'status-chip ' + (platStatus === 'HEALTHY' ? 'ok' : 'hold');
+      }
+
+      let platHtml = `
+      <div style="background:var(--bg-card-subtle); border:1px solid var(--border-dim); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div>
+            <strong style="color:#fff; font-size:13px;">Host &amp; Platform Subsystems</strong>
+            <div style="color:var(--text-muted); font-size:11.5px; margin-top:2px;">Runtime Health: <code>${escapeHtml(plat.runtime_health || 'UNKNOWN')}</code> · Providers: <code>${escapeHtml(plat.circuit_summary || '0 CLOSED')}</code></div>
+          </div>
+          <span class="status-chip ${platStatus === 'HEALTHY' ? 'ok' : 'neutral'}">${escapeHtml(platStatus)}</span>
+        </div>`;
+
+      if (maintLane) {
+        platHtml += `
+        <div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--border-dim); font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span class="lane-badge-id" style="background:#1e293b; color:#94a3b8; font-size:10px;">AOS-MAINTENANCE</span>
+            <span style="color:var(--text-sub); margin-left:6px;">Cmd: <code>${escapeHtml((maintLane.command_id || '').slice(0, 16))}…</code></span>
+          </div>
+          <span class="status-chip neutral">${escapeHtml(maintLane.state || 'IDLE')}</span>
+        </div>`;
+      } else {
+        platHtml += `
+        <div style="margin-top:4px; font-size:11.5px; color:var(--text-muted);">
+          No active platform maintenance execution. Self-repair and recovery monitoring standby.
+        </div>`;
+      }
+      platHtml += `</div>`;
+      platOpsContainer.innerHTML = platHtml;
+    }
+
+    // Render Evidence Ladder (WP1G)
+    const ladderGrid = document.getElementById('evidence-ladder-grid');
+    if (ladderGrid) {
+      const lad = s.evidence_ladder || {};
+      const keys = ['SOURCE', 'CI', 'KCP', 'CANONICAL', 'PREVIEW', 'STAGING_WEB', 'STAGING_DB', 'PRODUCTION'];
+      ladderGrid.innerHTML = keys.map(k => {
+        const val = lad[k] || 'UNKNOWN';
+        const isOk = ['PROVEN', 'ACCEPTED', 'READY'].includes(val);
+        const isNoGo = ['NO_GO', 'FAIL'].includes(val);
+        const isHold = ['DRIFTED', 'PENDING', 'NOT_CURRENT'].includes(val);
+        const chipClass = isOk ? 'ok' : (isNoGo ? 'danger' : (isHold ? 'hold' : 'neutral'));
+        return `
+        <div class="history-metric-box" style="text-align:center;">
+          <div class="label" style="font-size:10px; font-weight:700;">${escapeHtml(k)}</div>
+          <div class="val" style="margin-top:4px;"><span class="status-chip ${chipClass}" style="font-size:10.5px;">${escapeHtml(val)}</span></div>
+        </div>`;
+      }).join('');
     }
 
     const ovTotalBatches = document.getElementById('ov-total-batches');
@@ -3082,18 +3180,35 @@ def _command_recency_key(
     *,
     active_or_waiting: set[str],
     latest_command_id: Optional[str],
+    admission_state: Optional[str] = None,
 ) -> tuple[int, float, str]:
     """Order command projections by live authority, then durable recency.
 
     Command identifiers are random and must never determine which project
-    lineage the cockpit presents. Runtime-reported active/waiting commands are
-    authoritative, followed by the runtime's latest command, then the newest
-    durable state for projects without a live command.
+    lineage the cockpit presents.
+    Priority:
+    1. Active admitted non-terminal current command (priority 3)
+    2. Waiting/held current non-superseded command (priority 2)
+    3. Latest durable non-superseded command (priority 1)
+    Superceded commands (priority -1) or terminal commands without live priority (priority 0)
+    never beat active or newer non-terminal commands.
     """
+    raw_state = str(state.get("state") or "").strip().upper()
+    is_terminal = raw_state in TERMINAL_STATES
+    adm = str(admission_state or "").strip().upper()
 
-    live_priority = 2 if command_id in active_or_waiting else 0
-    if command_id == latest_command_id:
-        live_priority = max(live_priority, 1)
+    if adm == AdmissionState.SUPERSEDED.value:
+        priority = -1
+    elif adm == AdmissionState.ACTIVE.value and not is_terminal:
+        priority = 3
+    elif adm == AdmissionState.HOLD.value or (command_id in active_or_waiting and not is_terminal):
+        priority = 2
+    elif command_id == latest_command_id and not is_terminal:
+        priority = 2
+    elif not is_terminal:
+        priority = 1
+    else:
+        priority = 0
 
     raw_timestamp = state.get("updated_at") or command.get("created_at") or ""
     try:
@@ -3107,7 +3222,7 @@ def _command_recency_key(
     except (TypeError, ValueError, OverflowError):
         timestamp = float("-inf")
 
-    return live_priority, timestamp, command_id
+    return priority, timestamp, command_id
 
 
 def _provider_presence() -> Dict[str, bool]:
@@ -3478,8 +3593,12 @@ def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, 
 
     recent_window_size = len(checkpoint.get("recent_completed_batches", completed_batches) or [])
 
+    obj_title = objective.get("title") or objective.get("objective_id") or command.get("goal") or "UNKNOWN"
+    current_blocker = checkpoint.get("reason") if str(state.get("state", "")).startswith("WAITING") else state.get("failure_class")
+    last_prog_ts = max(progress_timestamps) if progress_timestamps else (state.get("updated_at") or None)
+
     return {
-        "current_objective": objective.get("title") or objective.get("objective_id") or command.get("goal"),
+        "current_objective": obj_title,
         "current_planning_phase": checkpoint.get("phase") or state.get("state"),
         "current_batch": batch_number,
         "planning_batch_number": batch_number,
@@ -3487,13 +3606,33 @@ def _command_work(command_root: Path, state: Dict[str, Any], command: Dict[str, 
         "successful_batches": successful_batches_int,
         "failed_batches": failed_batches_int,
         "recent_window_size": recent_window_size,
-        "current_task": current_task,
+        "current_task": current_task or "NONE",
         "most_recent_completed_task": completed_ids[-1] if completed_ids else None,
-        "canonical_next_action": situation.get("canonical_next_action"),
-        "last_meaningful_progress_at": max(progress_timestamps) if progress_timestamps else None,
-        "current_blocker": checkpoint.get("reason") if str(state.get("state", "")).startswith("WAITING") else state.get("failure_class"),
+        "canonical_next_action": situation.get("canonical_next_action") or "NOT_YET_AVAILABLE",
+        "last_meaningful_progress_at": last_prog_ts,
+        "current_blocker": current_blocker,
         "last_accepted_milestone": completed_ids[-1] if completed_ids else None,
         "tests_ci_state": situation.get("ci_state"),
+        # Semantic Progress Model (WP1D)
+        "CURRENT_OBJECTIVE": obj_title,
+        "CURRENT_TASK": current_task or "NOT_YET_AVAILABLE",
+        "WORKSPACE_HEAD_SHA": state.get("workspace_head_sha") or "NOT_YET_AVAILABLE",
+        "WORKSPACE_DIRTY": state.get("workspace_dirty") if state.get("workspace_dirty") is not None else "UNKNOWN",
+        "CANDIDATE_SHA": state.get("candidate_sha") or "NOT_YET_AVAILABLE",
+        "REMOTE_BRANCH_SHA": state.get("remote_branch_sha") or "NOT_YET_AVAILABLE",
+        "CI_STATUS": (situation.get("ci_state") or {}).get("status") if isinstance(situation.get("ci_state"), dict) else (state.get("ci_status") or "NOT_YET_AVAILABLE"),
+        "CI_RUN_ID": (situation.get("ci_state") or {}).get("run_id") if isinstance(situation.get("ci_state"), dict) else (state.get("ci_run_id") or "NOT_YET_AVAILABLE"),
+        "KCP_IMPLEMENTATION_STATUS": state.get("kcp_implementation_status") or "NOT_YET_AVAILABLE",
+        "KCP_VERIFICATION_STATUS": state.get("kcp_verification_status") or "NOT_YET_AVAILABLE",
+        "KCP_EXACT_SHA_COVERAGE": state.get("kcp_exact_sha_coverage") or "NOT_YET_AVAILABLE",
+        "BROWSER_EVIDENCE_STATUS": state.get("browser_evidence_status") or "NOT_APPLICABLE",
+        "CANONICAL_ACCEPTANCE_STATUS": state.get("canonical_acceptance_status") or "NOT_YET_AVAILABLE",
+        "STAGING_DEPLOYMENT_STATUS": state.get("staging_deployment_status") or "NOT_APPLICABLE",
+        "STAGING_DEPLOYMENT_SHA": state.get("staging_deployment_sha") or "NOT_APPLICABLE",
+        "LAST_MEANINGFUL_PROGRESS_AT": last_prog_ts or "NOT_YET_AVAILABLE",
+        "CURRENT_BLOCKER": current_blocker or "NONE",
+        "NEXT_ACTION": situation.get("canonical_next_action") or "NOT_YET_AVAILABLE",
+        "NEXT_RETRY_AT": state.get("retry_after_epoch") or "NOT_APPLICABLE",
     }
 
 
@@ -3565,9 +3704,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 store_roots.append(base_p)
             else:
                 store_roots.append(base_p)
-        local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
-        if (local_app_state / "commands").is_dir() and local_app_state not in store_roots:
-            store_roots.append(local_app_state)
+        else:
+            local_app_state = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "runtime-v1" / "state"
+            if (local_app_state / "commands").is_dir() and local_app_state not in store_roots:
+                store_roots.append(local_app_state)
 
         deliberation_metrics = {
             "total_samples": 0,
@@ -3590,6 +3730,20 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             active_or_waiting = set(requested_cids)
             latest_command_id = str(latest_cmd.get("command_id") or "") or None
 
+            # Load admission records if available across store roots
+            admission_records_by_cid = {}
+            for r_root in store_roots:
+                adm_file = r_root / "command-admission.json"
+                if not adm_file.is_file():
+                    adm_file = r_root.parent / "command-admission.json"
+                if adm_file.is_file():
+                    try:
+                        adm_data = json.loads(adm_file.read_text(encoding="utf-8"))
+                        if isinstance(adm_data.get("records"), dict):
+                            admission_records_by_cid.update(adm_data["records"])
+                    except Exception:
+                        pass
+
             for root in store_roots:
                 if not (
                     root
@@ -3602,9 +3756,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 )
 
                 # Runtime detailed status can be DEGRADED while durable command
-                # state is still authoritative. Select one current/latest command
-                # per project directly from durable state so the panel never
-                # fabricates zero lanes merely because enrichment failed.
+                # state is still authoritative. Select exactly ONE current/latest
+                # non-superseded command per project directly from durable state.
                 preferred_by_project = {}
 
                 for cid in store.list_command_ids()[-200:]:
@@ -3635,11 +3788,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                         "unknown"
                     )
 
-                    previous = (
-                        preferred_by_project.get(
-                            project_id
-                        )
-                    )
+                    adm_rec = admission_records_by_cid.get(cid, {})
+                    adm_state = adm_rec.get("state") if isinstance(adm_rec, dict) else None
+                    if adm_state == AdmissionState.SUPERSEDED.value:
+                        continue
 
                     score = _command_recency_key(
                         cid,
@@ -3647,8 +3799,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                         cmd_data,
                         active_or_waiting=active_or_waiting,
                         latest_command_id=latest_command_id,
+                        admission_state=adm_state,
                     )
 
+                    previous = preferred_by_project.get(project_id)
                     if (
                         previous is None
                         or
@@ -3675,6 +3829,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                         proj = (cmd_data.get("project") or {}).get("project_id") or "unknown"
                         lanes_detail[proj] = {
                             "command_id": cid,
+                            "project_id": proj,
                             "state": cmd_state.get("state"),
                             "disposition": cmd_state.get("disposition"),
                             "completed_batches": int(cmd_state.get("completed_batch_count", 0) or 0),
@@ -3862,7 +4017,11 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
         browser_evidence = relay_info.get("browser_evidence_status") or "AWAITING_BROWSER_SUITE_RUN"
         responsive_evidence = relay_info.get("responsive_evidence_status") or "AWAITING_BROWSER_SUITE_RUN"
 
-        # Alerts assessment
+        # Separate product lanes from platform maintenance (WP1C)
+        product_lanes_detail = {k: v for k, v in lanes_detail.items() if k in PRODUCT_PROJECT_IDS}
+        platform_operations_detail = {k: v for k, v in lanes_detail.items() if k not in PRODUCT_PROJECT_IDS}
+
+        # Alerts assessment derived strictly from current product lanes and platform (WP1F)
         alerts = []
 
         if (
@@ -3875,36 +4034,54 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             alerts.append(
                 "DETAILED_TELEMETRY_DEGRADED: last accepted durable telemetry is being preserved"
             )
-        if any(l.get("state") == "HUMAN_REQUIRED" for l in lanes_detail.values()):
+        if any(l.get("state") == "HUMAN_REQUIRED" for l in product_lanes_detail.values()):
             alerts.append("HUMAN_REQUIRED: One or more lanes require intervention")
-        if any(l.get("state") == "FAILED" for l in lanes_detail.values()):
+        if any(l.get("state") == "FAILED" for l in product_lanes_detail.values()):
             alerts.append("LANE_FAILED: An execution lane entered FAILED state")
         if provenance_status == "FAIL":
             alerts.append("PROVENANCE_FAILURE: Exact SHA provenance check failed")
-        if any(l.get("provider_backoff") for l in lanes_detail.values()):
+        if any(l.get("provider_backoff") for l in product_lanes_detail.values()):
             alerts.append("PROVIDER_DEGRADATION: Lane currently in provider backoff")
         if diag_summary.get("blocking_finding_count", 0) > 0:
             alerts.append(f"SELF_DIAGNOSIS_BLOCKING: {diag_summary['blocking_finding_count']} blocking finding(s) detected")
-        baseline_by_command = {
-            "continue-b181ddc574c25c2aa0f2a6b9": 25,
-            "continue-61be4ab1af53cfa646d773ce": 18,
-        }
-        product_delta_by_lane = {
-            lane.get("command_id"): max(
-                0,
-                int(lane.get("completed_batches", 0) or 0) - baseline_by_command.get(lane.get("command_id"), int(lane.get("completed_batches", 0) or 0)),
-            )
-            for lane in lanes_detail.values()
-        }
-        meaningful_batch_delta = sum(product_delta_by_lane.values())
-        if any(command_id in active_cmds + waiting_cmds for command_id in baseline_by_command) and meaningful_batch_delta == 0:
-            alerts.append("NO MEANINGFUL PRODUCT PROGRESS")
+
+        # Check for meaningful semantic progress across current product lanes (WP1D)
+        # Meaningful progress is determined by semantic milestones/source/CI transitions,
+        # NOT by batch counter increments alone.
+        for proj_id, lane_info in product_lanes_detail.items():
+            last_ts = lane_info.get("last_meaningful_progress_at")
+            if lane_info.get("state") in ("RUNNING", "EXECUTING") and not last_ts:
+                alerts.append(f"NO_MEANINGFUL_PROGRESS: Lane {proj_id} executing without recorded semantic progress")
+
         for row in runtime_v1.get("provider_details", []) or []:
             if row.get("circuit_state") != "CLOSED":
                 alerts.append(
                     f"PROVIDER_{str(row.get('provider_id', 'unknown')).upper()}={row.get('circuit_state', 'UNKNOWN')}:"
                     f"{row.get('failure_class') or 'NO_LIVE_SUCCESS'}"
                 )
+
+        # Evidence Ladder (WP1G)
+        evidence_ladder = {
+            "SOURCE": "PROVEN" if (provenance_status == "PROVEN" or source_checkout_relation == "MATCH") else ("DRIFTED" if source_checkout_relation == "DRIFTED" else "UNKNOWN"),
+            "CI": "PROVEN" if (runtime_v1.get("ci_status") == "SUCCESS" or (relay_info.get("ci_status") == "SUCCESS")) else "UNAVAILABLE",
+            "KCP": "PROVEN" if (provenance_status == "PROVEN") else "UNKNOWN",
+            "CANONICAL": "ACCEPTED" if (bridge.get("canonical_accepted") or relay_info.get("canonical_accepted")) else "PENDING",
+            "PREVIEW": "READY" if (first_ui_mutation or browser_evidence == "PROVEN") else "NOT_CURRENT",
+            "STAGING_WEB": "NOT_CURRENT",
+            "STAGING_DB": "UNKNOWN",
+            "PRODUCTION": "NO_GO",
+        }
+
+        # Platform operations aggregation (WP1C)
+        platform_operations_data = {
+            "status": "HEALTHY" if bridge.get("host_state") == "HEALTHY" else bridge.get("host_state", "UNKNOWN"),
+            "maintenance_lane": platform_operations_detail.get("aos-maintenance"),
+            "self_repair": repair_cockpit,
+            "platform_recovery_jobs": platform_recovery_jobs,
+            "runtime_health": runtime_v1.get("runtime_state", "UNKNOWN"),
+            "circuit_summary": f"{len([r for r in runtime_v1.get('provider_details', []) if r.get('circuit_state') == 'CLOSED'])} / {len(runtime_v1.get('provider_details', []))} CLOSED",
+            "blocking_findings": diag_summary.get("blocking_finding_count", 0),
+        }
 
         return {
             "schema_version": "1.0.0",
@@ -3937,7 +4114,10 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
             "active_commands": active_cmds,
             "waiting_commands": waiting_cmds,
             "latest_command": latest_cmd,
-            "lanes": lanes_detail,
+            "lanes": product_lanes_detail,
+            "all_lanes": lanes_detail,
+            "platform_operations": platform_operations_data,
+            "evidence_ladder": evidence_ladder,
             "deliberation": deliberation_metrics,
             "relay": relay_info,
             "agentic_executor_truth": {
@@ -3973,10 +4153,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 "first_user_facing_ui_mutation": first_ui_mutation,
                 "browser_evidence_status": browser_evidence,
                 "responsive_evidence_status": responsive_evidence,
-                "meaningful_batch_delta": meaningful_batch_delta,
-                "meaningful_batch_delta_by_command": product_delta_by_lane,
                 "tests_ci_state": {
-                    key: value.get("tests_ci_state") for key, value in lanes_detail.items()
+                    key: value.get("tests_ci_state") for key, value in product_lanes_detail.items()
                 },
             },
             "alerts": alerts,

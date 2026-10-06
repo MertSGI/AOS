@@ -56,14 +56,53 @@ def _ui_v2_canonical_preconditions(state: Mapping[str, Any]) -> bool:
         for gate in gates
     )
 
-DOWNSTREAM_GATES = {
-    # UI V2 command depends on R1 and R2 canonical acceptance
-    "continue-61be4ab1af53cfa646d773ce": {
+DOWNSTREAM_LANES = {
+    "lari-ui-v2": {
         "label": "lari_ui_v2",
         "predicate": _ui_v2_canonical_preconditions,
-        "description": "UI V2 requires R1 and R2 canonical acceptance",
+        "description": "UI V2 requires R1 and R2 canonical acceptance and structured canonical lane authority",
     }
 }
+
+
+def _resolve_current_project_command(
+    admission_store: CommandAdmissionStore,
+    project_id: str,
+) -> Optional[str]:
+    """Resolve current non-superseded command for project from durable admission and runtime store."""
+    runtime_root = admission_store.runtime_root
+    commands_dir = runtime_root / "commands"
+    if not commands_dir.is_dir():
+        return None
+
+    doc = admission_store._load()
+    records = doc.get("records", {})
+
+    candidates = []
+    for cmd_path in commands_dir.iterdir():
+        if not cmd_path.is_dir():
+            continue
+        cid = cmd_path.name
+        cmd_json = read_json(cmd_path / "command.json", {})
+        proj = (cmd_json.get("project") or {}).get("project_id")
+        if proj != project_id:
+            continue
+
+        rec = records.get(cid, {})
+        state = rec.get("state") if isinstance(rec, dict) else None
+        if state == AdmissionState.SUPERSEDED.value:
+            continue
+
+        state_json = read_json(cmd_path / "state.json", {})
+        updated_at = state_json.get("updated_at") or cmd_json.get("created_at") or ""
+        candidates.append((updated_at, cid, state))
+
+    if not candidates:
+        return None
+
+    # Sort newest first
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
 
 
 def evaluate_downstream_gates(
@@ -72,8 +111,9 @@ def evaluate_downstream_gates(
 ) -> List[AdmissionRecord]:
     """Evaluate downstream dependency gates against canonical state.
     
-    If preconditions are met, transition pre-existing HOLD command lineages
-    to ACTIVE with authority DOWNSTREAM_GATE_SATISFIED.
+    If preconditions and structured canonical lane authority are met, transition
+    pre-existing HOLD command lineages to ACTIVE with authority DOWNSTREAM_GATE_SATISFIED.
+    Missing lane authority => HOLD (does not activate).
     """
     state_path = control_dir / "docs" / "project-control" / "STATE.json"
     if not state_path.is_file():
@@ -88,9 +128,21 @@ def evaluate_downstream_gates(
         return []
 
     activated: List[AdmissionRecord] = []
-    for command_id, gate in DOWNSTREAM_GATES.items():
+    for project_id, gate in DOWNSTREAM_LANES.items():
         predicate = gate["predicate"]
         if not predicate(canonical_state):
+            continue
+
+        # Activation must require explicit structured canonical lane authority
+        if project_id == "lari-ui-v2":
+            lanes = canonical_state.get("parallel_execution_lanes")
+            ui_lane = lanes.get("ui_v2") if isinstance(lanes, Mapping) else None
+            if not isinstance(ui_lane, Mapping) or not ui_lane.get("objective"):
+                logger.info("Structured canonical lane authority missing for %s; remaining in HOLD", project_id)
+                continue
+
+        command_id = _resolve_current_project_command(admission_store, project_id)
+        if not command_id:
             continue
 
         try:

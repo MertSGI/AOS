@@ -201,7 +201,7 @@ def test_ui_v2_downstream_gate(tmp_path: Path):
     ui_cmd_id = 'continue-61be4ab1af53cfa646d773ce'
     cmd_dir = tmp_path / 'commands' / ui_cmd_id
     cmd_dir.mkdir(parents=True)
-    (cmd_dir / 'command.json').write_text(json.dumps({'project': {'project_id': 'lari'}}), encoding='utf-8')
+    (cmd_dir / 'command.json').write_text(json.dumps({'project': {'project_id': 'lari-ui-v2'}}), encoding='utf-8')
 
     control_dir = tmp_path / 'control'
     control_pc = control_dir / 'docs' / 'project-control'
@@ -212,6 +212,7 @@ def test_ui_v2_downstream_gate(tmp_path: Path):
     assert len(res) == 0
     assert store.get(ui_cmd_id).state == AdmissionState.HOLD.value
 
+    # Without parallel_execution_lanes.ui_v2, remains HOLD
     (control_pc / 'STATE.json').write_text(json.dumps({
         'current_status': 'PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY',
         'current_milestone': 'Program V2 Phase 7 — Node 2 Discovery Marketplace R3',
@@ -225,6 +226,31 @@ def test_ui_v2_downstream_gate(tmp_path: Path):
             'status': 'CLOSED_PROVEN',
             'tested_sha': 'b' * 40,
         }],
+    }), encoding='utf-8')
+    res_no_lane = evaluate_downstream_gates(control_dir, store)
+    assert len(res_no_lane) == 0
+    assert store.get(ui_cmd_id).state == AdmissionState.HOLD.value
+
+    # With structured parallel_execution_lanes.ui_v2, activates
+    (control_pc / 'STATE.json').write_text(json.dumps({
+        'current_status': 'PHASE_7_NODE_2_DISCOVERY_MARKETPLACE_R3_BOUND_READY',
+        'current_milestone': 'Program V2 Phase 7 — Node 2 Discovery Marketplace R3',
+        'next_action': 'Implement Phase 7 Node 2 R3',
+        'phase7_node2_contract': {
+            'delivery_slices': {'R1': 'ACCEPTED_PROVEN', 'R2': 'ACCEPTED_PROVEN'},
+        },
+        'phase7_accepted_execution_chain': {'node2_r2': 'b' * 40},
+        'accepted_gates': [{
+            'gate': 'P7N2-DISCOVERY-MARKETPLACE_R2',
+            'status': 'CLOSED_PROVEN',
+            'tested_sha': 'b' * 40,
+        }],
+        'parallel_execution_lanes': {
+            'ui_v2': {
+                'objective': 'Discovery Marketplace UI Productization',
+                'status': 'READY',
+            }
+        },
     }), encoding='utf-8')
     res2 = evaluate_downstream_gates(control_dir, store)
     assert len(res2) == 1
