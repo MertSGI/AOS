@@ -16,11 +16,21 @@ from aos.canonical_reconciler import (
     PHASE7_NODE2_R3_CONTROLLER_DECISION,
     PHASE7_NODE2_R3_GATE,
     PHASE7_NODE3_PREBIND_STATUS,
+    PHASE7_NODE3_R1_ACCEPTED_SHA,
+    PHASE7_NODE3_R1_BRANCH,
+    PHASE7_NODE3_R1_CI_RUN_ID,
+    PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+    PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+    PHASE7_NODE3_R1_GATE,
+    PHASE7_NODE3_R2_AUTHORIZED_STATUS,
+    _phase7_node3_r1_accepted_registry,
+    _phase7_node3_r1_accepted_state,
     _phase7_node2_r3_accepted_registry,
     _phase7_node2_r3_accepted_state,
     bind_missing_execution_base,
     derive_latest_accepted_product_sha,
     record_phase7_node2_r3_acceptance,
+    record_phase7_node3_r1_acceptance,
     reconcile_phase7_node2_r2_frontier,
     reconcile_missing_execution_base,
     record_slice_acceptance,
@@ -164,6 +174,40 @@ def _phase7_registry() -> dict:
             {"key": "unrelated_live", "source_state": "LIVE"}
         ],
     }
+
+
+def _node3_prebind_state() -> dict:
+    return _phase7_node2_r3_accepted_state(
+        _r3_bound_state(),
+        candidate_sha=PHASE7_NODE2_R3_ACCEPTED_SHA,
+        execution_base_sha=PHASE7_NODE2_R2_ACCEPTED_SHA,
+        ci_run_id=PHASE7_NODE2_R3_CI_RUN_ID,
+        ci_conclusion="success",
+        controller_authority=PHASE7_NODE2_R3_CONTROLLER_DECISION,
+    )
+
+
+def _node3_accepted_work_ledger(tmp_path: Path) -> KnowledgeLedger:
+    ledger = KnowledgeLedger(tmp_path / "node3-knowledge")
+    ingest_accepted_work(
+        ledger,
+        project_id="lari",
+        agent_class="CODEX",
+        tool_name="codex.controller-authorized-implementation",
+        base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+        result_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+        repository="MertSGI/Randapp-main",
+        branch=PHASE7_NODE3_R1_BRANCH,
+        module_ids=["phase7-node3-favorites", "phase7-node3-fast-rebooking"],
+        changed_paths=["supabase/migrations/node3.sql"],
+        evidence_refs=[f"github-actions-run:{PHASE7_NODE3_R1_CI_RUN_ID}"],
+        verification_status="SUCCESS",
+        canonical_next_action="Controller review before canonical acceptance",
+        idempotency_key=(
+            f"lari:p7n3-r1:{PHASE7_NODE3_R1_ACCEPTED_SHA}:accepted-work"
+        ),
+    )
+    return ledger
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -701,6 +745,400 @@ def test_record_r3_acceptance_starting_control_drift_fails_before_mutation(tmp_p
         )
 
     assert {path: path.read_bytes() for path in state_path.parent.iterdir()} == before
+
+
+def _node3_acceptance_control_repo(control: Path) -> tuple[Path, dict[Path, bytes]]:
+    control_dir = control / "docs/project-control"
+    control_dir.mkdir(parents=True)
+    state = _node3_prebind_state()
+    state["parallel_lanes"] = {"ui_v2": {"status": "ACTIVE", "branch": "ui-v2-independent"}}
+    state_path = control_dir / "STATE.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    registry = _phase7_node2_r3_accepted_registry(_phase7_registry())
+    (control_dir / "PROGRAM_V2_CAPABILITY_REGISTRY.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+    (control_dir / "DECISIONS.md").write_text(
+        "# Decisions\n\n## DECISION-023: Existing Node 2 R3 Acceptance\n- **Status**: ACCEPTED\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "acceptance-receipt-discovery_marketplace_r2.json",
+        "acceptance-receipt-discovery_marketplace_r3.json",
+    ):
+        (control_dir / name).write_text(
+            json.dumps({"receipt_id": f"preserved-{name}"}) + "\n", encoding="utf-8"
+        )
+    historical = {
+        path: path.read_bytes() for path in control_dir.glob("acceptance-receipt-*.json")
+    }
+    _git(control, "init")
+    _git(control, "add", ".")
+    _git(
+        control, "-c", "user.name=AOS Test", "-c", "user.email=aos@example.invalid",
+        "commit", "-m", "node3 control base"
+    )
+    return state_path, historical
+
+
+def _node3_descriptor(path: Path) -> Path:
+    path.write_text(json.dumps({
+        "project_id": "lari",
+        "repository": "MertSGI/Randapp-main",
+        "control_ref": "control/lari-project-control-plane",
+    }), encoding="utf-8")
+    return path
+
+
+def _node3_ci(**overrides) -> dict:
+    value = {
+        "id": PHASE7_NODE3_R1_CI_RUN_ID,
+        "head_sha": PHASE7_NODE3_R1_ACCEPTED_SHA,
+        "head_branch": PHASE7_NODE3_R1_BRANCH,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    value.update(overrides)
+    return value
+
+
+def test_record_node3_r1_acceptance_is_exact_and_authorizes_r2(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr, cross_lane_coordinator
+
+    control = tmp_path / "control"
+    state_path, historical = _node3_acceptance_control_repo(control)
+    descriptor = _node3_descriptor(tmp_path / "lari.json")
+    state_before = json.loads(state_path.read_text(encoding="utf-8"))
+    registry_path = state_path.parent / "PROGRAM_V2_CAPABILITY_REGISTRY.json"
+    registry_before = json.loads(registry_path.read_text(encoding="utf-8"))
+    real_git = cr._git
+    pushed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal pushed
+        args = list(args)
+        if args[:3] == ["fetch", "origin", "control/lari-project-control-plane"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            observed = _git(control, "rev-parse", "HEAD") if pushed else cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+            return subprocess.CompletedProcess(args, 0, observed + "\n", "")
+        if args[:2] == ["push", "origin"]:
+            pushed = True
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(args, cwd=cwd, check=check, timeout=timeout)
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (
+        control, cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+    ))
+    monkeypatch.setattr(cr, "_remote_branch_sha", lambda *args: PHASE7_NODE3_R1_ACCEPTED_SHA)
+    monkeypatch.setattr(cr, "_assert_exact_single_commit_lineage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cr, "_read_github_actions_run", lambda *args: _node3_ci())
+    monkeypatch.setattr(cr, "_git", fake_git)
+    monkeypatch.setattr(cross_lane_coordinator, "evaluate_downstream_gates", lambda *args: [])
+
+    result = record_phase7_node3_r1_acceptance(
+        descriptor_path=descriptor,
+        product_workspace=tmp_path / "product",
+        runtime_dir=tmp_path / "runtime",
+        candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+        execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+        ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+        controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+        knowledge_ledger=_node3_accepted_work_ledger(tmp_path),
+    )
+
+    changed = set(_git(control, "show", "--pretty=format:", "--name-only", "HEAD").splitlines())
+    assert changed == cr.PHASE7_NODE3_R1_ALLOWED_CONTROL_FILES
+    assert result["status"] == "ACCEPTED"
+    assert result["control_remote_sha_equal"] is True
+    assert result["accepted_gate"] == PHASE7_NODE3_R1_GATE
+    assert result["next_action_execution_base_sha"] == PHASE7_NODE3_R1_ACCEPTED_SHA
+    assert result["downstream_activation"]["status"] == "NO_TRANSITION_REQUIRED"
+    assert result["kcp_implementation_receipt_ids"] == [
+        cr.PHASE7_NODE3_R1_IMPLEMENTATION_RECEIPT_ID
+    ]
+    assert result["kcp_verification_receipt_ids"] == [
+        cr.PHASE7_NODE3_R1_VERIFICATION_RECEIPT_ID
+    ]
+
+    written = json.loads(state_path.read_text(encoding="utf-8"))
+    assert written["current_status"] == PHASE7_NODE3_R2_AUTHORIZED_STATUS
+    assert written["next_action_execution_base_sha"] == PHASE7_NODE3_R1_ACCEPTED_SHA
+    assert written["next_product_action"] == {
+        **state_before["next_product_action"],
+        "phase": "PHASE_7",
+        "node": "NODE_3_FAVORITES_FAST_REBOOKING",
+        "slice": "R2_PRODUCT_INTEGRATION_AUTHORIZED",
+        "execution_base_sha": PHASE7_NODE3_R1_ACCEPTED_SHA,
+    }
+    assert written["phase7_accepted_execution_chain"] == {
+        **state_before["phase7_accepted_execution_chain"],
+        "node3_r1": PHASE7_NODE3_R1_ACCEPTED_SHA,
+    }
+    assert written["phase7_node2_contract"] == state_before["phase7_node2_contract"]
+    assert written["parallel_lanes"] == state_before["parallel_lanes"]
+    contract = written["phase7_node3_contract"]
+    assert contract["authority"] == "DECISION-024"
+    assert contract["r1_server_foundation"] == {
+        "status": "ACCEPTED_PROVEN",
+        "product_sha": PHASE7_NODE3_R1_ACCEPTED_SHA,
+        "ci_run_id": PHASE7_NODE3_R1_CI_RUN_ID,
+    }
+    assert contract["delivery_slices"] == {"R1": "ACCEPTED_PROVEN", "R2": "AUTHORIZED"}
+    assert contract["production"] == "NO_GO"
+    node3_gates = [gate for gate in written["accepted_gates"] if gate["gate"] == PHASE7_NODE3_R1_GATE]
+    assert len(node3_gates) == 1
+    assert node3_gates[0]["gate"].startswith("P7N3-")
+    assert not node3_gates[0]["gate"].startswith("P7N2-")
+    assert node3_gates[0]["tested_sha"] == PHASE7_NODE3_R1_ACCEPTED_SHA
+    assert node3_gates[0]["run_ids"] == [str(PHASE7_NODE3_R1_CI_RUN_ID)]
+    assert written["production_status"] == "NO_GO"
+
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    before_items = {item["key"]: item for item in registry_before["additional_program_capabilities"]}
+    items = {item["key"]: item for item in registry["additional_program_capabilities"]}
+    assert items["verified_reviews"] == before_items["verified_reviews"]
+    assert items["discovery_marketplace"] == before_items["discovery_marketplace"]
+    assert items["favorites_rebooking"]["source_state"] == "LIVE_ACCEPTANCE_ONLY"
+    assert items["favorites_rebooking"]["program_maturity"] == "REAL_CODE_NOT_LIVE_VERIFIED"
+    assert items["favorites_rebooking"]["delivery_slice"] == "R1_ACCEPTED_R2_AUTHORIZED"
+    assert items["favorites_rebooking"]["accepted_r1_sha"] == PHASE7_NODE3_R1_ACCEPTED_SHA
+
+    for path, before in historical.items():
+        assert path.read_bytes() == before
+    receipt = json.loads(
+        (state_path.parent / "acceptance-receipt-favorites_rebooking_r1.json").read_text()
+    )
+    assert receipt["project_id"] == "lari"
+    assert receipt["lane"] == "lane-b"
+    assert receipt["slice_id"] == "favorites_rebooking_r1"
+    assert receipt["execution_base_sha"] == PHASE7_NODE3_R1_EXECUTION_BASE_SHA
+    assert receipt["candidate_sha"] == PHASE7_NODE3_R1_ACCEPTED_SHA
+    assert receipt["ci_run_id"] == PHASE7_NODE3_R1_CI_RUN_ID
+    assert receipt["control_sha_before"] == cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+    assert receipt["production"] == "NO_GO"
+    decisions = (state_path.parent / "DECISIONS.md").read_text(encoding="utf-8")
+    assert decisions.count("DECISION-024") == 1
+    assert "current-truth seed only" in decisions
+    assert "R2 Product Integration is authorized" in decisions
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"candidate_sha": "c" * 40}, "candidate SHA mismatch"),
+        ({"execution_base_sha": "b" * 40}, "execution-base SHA mismatch"),
+        ({"ci_run_id": 1}, "CI run mismatch"),
+        ({"controller_authority": "WRONG"}, "Controller authority mismatch"),
+    ],
+)
+def test_record_node3_r1_acceptance_rejects_wrong_exact_authority(
+    tmp_path: Path, monkeypatch, override: dict, message: str
+):
+    from aos import canonical_reconciler as cr
+
+    clone_called = False
+
+    def forbidden_clone(*args, **kwargs):
+        nonlocal clone_called
+        clone_called = True
+        raise AssertionError("control checkout must not be created")
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", forbidden_clone)
+    arguments = {
+        "descriptor_path": _node3_descriptor(tmp_path / "lari.json"),
+        "product_workspace": tmp_path / "product",
+        "runtime_dir": tmp_path / "runtime",
+        "candidate_sha": PHASE7_NODE3_R1_ACCEPTED_SHA,
+        "execution_base_sha": PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+        "ci_run_id": PHASE7_NODE3_R1_CI_RUN_ID,
+        "controller_authority": PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+        "knowledge_ledger": _node3_accepted_work_ledger(tmp_path),
+    }
+    arguments.update(override)
+    with pytest.raises(CanonicalReconciliationError, match=message):
+        record_phase7_node3_r1_acceptance(**arguments)
+    assert clone_called is False
+
+
+@pytest.mark.parametrize("ledger_kind", ["missing", "wrong_sha"])
+def test_record_node3_r1_acceptance_kcp_failure_has_zero_control_writes(
+    tmp_path: Path, monkeypatch, ledger_kind: str
+):
+    from aos import canonical_reconciler as cr
+
+    clone_called = False
+
+    def forbidden_clone(*args, **kwargs):
+        nonlocal clone_called
+        clone_called = True
+        raise AssertionError("control checkout must not be created")
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", forbidden_clone)
+    ledger = (
+        KnowledgeLedger(tmp_path / "empty")
+        if ledger_kind == "missing"
+        else _accepted_work_ledger(tmp_path, "a" * 40)
+    )
+    with pytest.raises(CanonicalReconciliationError, match="KCP_ACCEPTED_WORK_COVERAGE_REQUIRED"):
+        record_phase7_node3_r1_acceptance(
+            descriptor_path=_node3_descriptor(tmp_path / "lari.json"),
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+            execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+            ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+            controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+            knowledge_ledger=ledger,
+        )
+    assert clone_called is False
+
+
+def test_record_node3_r1_acceptance_rejects_control_base_drift_before_mutation(
+    tmp_path: Path, monkeypatch
+):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    state_path, _ = _node3_acceptance_control_repo(control)
+    before = {path: path.read_bytes() for path in state_path.parent.iterdir()}
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (control, "f" * 40))
+    with pytest.raises(CanonicalReconciliationError, match="starting control SHA drift"):
+        record_phase7_node3_r1_acceptance(
+            descriptor_path=_node3_descriptor(tmp_path / "lari.json"),
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+            execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+            ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+            controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+            knowledge_ledger=_node3_accepted_work_ledger(tmp_path),
+        )
+    assert {path: path.read_bytes() for path in state_path.parent.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    "ci_override",
+    [
+        {"id": 1},
+        {"head_sha": "c" * 40},
+        {"head_branch": "wrong-branch"},
+        {"status": "in_progress"},
+        {"conclusion": "failure"},
+    ],
+)
+def test_record_node3_r1_acceptance_requires_exact_hosted_ci(
+    tmp_path: Path, monkeypatch, ci_override: dict
+):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    state_path, _ = _node3_acceptance_control_repo(control)
+    before = {path: path.read_bytes() for path in state_path.parent.iterdir()}
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (
+        control, cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+    ))
+    monkeypatch.setattr(cr, "_remote_branch_sha", lambda *args: PHASE7_NODE3_R1_ACCEPTED_SHA)
+    monkeypatch.setattr(cr, "_assert_exact_single_commit_lineage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cr, "_read_github_actions_run", lambda *args: _node3_ci(**ci_override))
+    with pytest.raises(CanonicalReconciliationError, match="hosted CI"):
+        record_phase7_node3_r1_acceptance(
+            descriptor_path=_node3_descriptor(tmp_path / "lari.json"),
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+            execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+            ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+            controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+            knowledge_ledger=_node3_accepted_work_ledger(tmp_path),
+        )
+    assert {path: path.read_bytes() for path in state_path.parent.iterdir()} == before
+
+
+def test_record_node3_r1_acceptance_rejects_concurrent_remote_drift(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    _node3_acceptance_control_repo(control)
+    real_git = cr._git
+    committed = False
+    pushed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal committed, pushed
+        args = list(args)
+        if args[:3] == ["fetch", "origin", "control/lari-project-control-plane"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            return subprocess.CompletedProcess(args, 0, "f" * 40 + "\n", "")
+        if "commit" in args:
+            committed = True
+        if args[:2] == ["push", "origin"]:
+            pushed = True
+        return real_git(args, cwd=cwd, check=check, timeout=timeout)
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (
+        control, cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+    ))
+    monkeypatch.setattr(cr, "_remote_branch_sha", lambda *args: PHASE7_NODE3_R1_ACCEPTED_SHA)
+    monkeypatch.setattr(cr, "_assert_exact_single_commit_lineage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cr, "_read_github_actions_run", lambda *args: _node3_ci())
+    monkeypatch.setattr(cr, "_git", fake_git)
+    with pytest.raises(CanonicalReconciliationError, match="Concurrent control drift"):
+        record_phase7_node3_r1_acceptance(
+            descriptor_path=_node3_descriptor(tmp_path / "lari.json"),
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+            execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+            ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+            controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+            knowledge_ledger=_node3_accepted_work_ledger(tmp_path),
+        )
+    assert committed is False
+    assert pushed is False
+
+
+def test_record_node3_r1_acceptance_verifies_remote_after_push(tmp_path: Path, monkeypatch):
+    from aos import canonical_reconciler as cr
+
+    control = tmp_path / "control"
+    _node3_acceptance_control_repo(control)
+    real_git = cr._git
+    pushed = False
+
+    def fake_git(args, *, cwd, check=True, timeout=300):
+        nonlocal pushed
+        args = list(args)
+        if args[:3] == ["fetch", "origin", "control/lari-project-control-plane"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["rev-parse", "FETCH_HEAD"]:
+            observed = "f" * 40 if pushed else cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+            return subprocess.CompletedProcess(args, 0, observed + "\n", "")
+        if args[:2] == ["push", "origin"]:
+            pushed = True
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_git(args, cwd=cwd, check=check, timeout=timeout)
+
+    monkeypatch.setattr(cr, "_ensure_control_clone", lambda *args: (
+        control, cr.PHASE7_NODE3_R1_CONTROL_BASE_SHA
+    ))
+    monkeypatch.setattr(cr, "_remote_branch_sha", lambda *args: PHASE7_NODE3_R1_ACCEPTED_SHA)
+    monkeypatch.setattr(cr, "_assert_exact_single_commit_lineage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cr, "_read_github_actions_run", lambda *args: _node3_ci())
+    monkeypatch.setattr(cr, "_git", fake_git)
+    with pytest.raises(CanonicalReconciliationError, match="push verification failed"):
+        record_phase7_node3_r1_acceptance(
+            descriptor_path=_node3_descriptor(tmp_path / "lari.json"),
+            product_workspace=tmp_path / "product",
+            runtime_dir=tmp_path / "runtime",
+            candidate_sha=PHASE7_NODE3_R1_ACCEPTED_SHA,
+            execution_base_sha=PHASE7_NODE3_R1_EXECUTION_BASE_SHA,
+            ci_run_id=PHASE7_NODE3_R1_CI_RUN_ID,
+            controller_authority=PHASE7_NODE3_R1_CONTROLLER_AUTHORITY,
+            knowledge_ledger=_node3_accepted_work_ledger(tmp_path),
+        )
+    assert pushed is True
 
 
 def test_record_slice_acceptance_writes_complete_r3_frontier(tmp_path: Path, monkeypatch):
