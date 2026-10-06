@@ -7,7 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 _RECEIPT_RE = re.compile(r"^acceptance-receipt-.*\.json$")
 
@@ -84,28 +84,53 @@ def write_acceptance_receipt(control_dir: Path, receipt: AcceptanceReceipt) -> P
     return target_path
 
 
-def read_latest_acceptance_receipt(control_dir: Path, project_id: Optional[str] = None) -> Optional[AcceptanceReceipt]:
+def read_all_acceptance_receipts(
+    control_dir: Path,
+    project_id: Optional[str] = None,
+    lane: Optional[str] = None,
+    require_accepted: bool = True,
+) -> List[AcceptanceReceipt]:
     receipts_dir = control_dir / "docs" / "project-control"
     if not receipts_dir.is_dir():
-        return None
+        return []
 
     receipt_files = [p for p in receipts_dir.glob("acceptance-receipt-*.json") if _RECEIPT_RE.match(p.name)]
     if not receipt_files:
-        return None
+        return []
 
-    parsed_receipts = []
+    parsed: List[AcceptanceReceipt] = []
     for p in receipt_files:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "receipt_id" in data and "candidate_sha" in data:
                 r = AcceptanceReceipt.from_dict(data)
-                if project_id is None or r.project_id == project_id:
-                    parsed_receipts.append((r.created_at, r))
+                if project_id is not None and r.project_id != project_id:
+                    continue
+                if lane is not None and r.lane != lane:
+                    continue
+                if require_accepted and r.acceptance_result != "ACCEPTED":
+                    continue
+                parsed.append(r)
         except Exception:
             continue
 
-    if not parsed_receipts:
+    return parsed
+
+
+def read_latest_acceptance_receipt(
+    control_dir: Path,
+    project_id: Optional[str] = None,
+    lane: Optional[str] = None,
+    require_accepted: bool = True,
+) -> Optional[AcceptanceReceipt]:
+    receipts = read_all_acceptance_receipts(
+        control_dir,
+        project_id=project_id,
+        lane=lane,
+        require_accepted=require_accepted,
+    )
+    if not receipts:
         return None
 
-    parsed_receipts.sort(key=lambda t: t[0], reverse=True)
-    return parsed_receipts[0][1]
+    receipts.sort(key=lambda r: r.created_at, reverse=True)
+    return receipts[0]

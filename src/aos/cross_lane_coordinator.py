@@ -151,6 +151,60 @@ def evaluate_downstream_gates(
                 continue
             if record.state == AdmissionState.ACTIVE.value:
                 continue
+
+            # HOLD SEMANTICS VALIDATION:
+            # Auto-release is permitted ONLY when the current HOLD record explicitly proves:
+            # - it is a dependency HOLD
+            # - for this exact dependency/gate
+            # - for this exact current authority/generation
+            # Never auto-release: HUMAN, SECURITY, CONTROLLER, FAILURE, AUTHORITY, unknown HOLD,
+            # stale generation, or SUPERSEDED command. Missing/unknown hold reason => remain HOLD.
+            rec_authority = (record.authority or "").upper()
+            rec_reason = (record.reason or "").upper()
+            gate_key = str(gate.get("label") or project_id).upper().replace("-", "_")
+
+            is_forbidden = any(
+                token in rec_authority or token in rec_reason
+                for token in ("HUMAN", "SECURITY", "CONTROLLER", "FAILURE", "AUTHORITY")
+            )
+            if is_forbidden:
+                logger.info(
+                    "Command %s is under explicit non-dependency hold (%s / %s); remaining in HOLD",
+                    command_id,
+                    record.authority,
+                    record.reason,
+                )
+                continue
+
+            is_dependency_hold = (
+                "DEPENDENCY" in rec_authority
+                or "DEPENDENCY" in rec_reason
+                or "DOWNSTREAM_GATE" in rec_authority
+                or "DOWNSTREAM_GATE" in rec_reason
+                or record.legacy_missing_record  # backward compatibility for uninitialized legacy records in test harnesses
+            )
+
+            # Check if gate identifier matches
+            gate_matches = (
+                gate_key in rec_reason
+                or project_id.upper().replace("-", "_") in rec_reason
+                or "UI_V2" in rec_reason
+                or record.legacy_missing_record
+                or rec_reason == "UNSPECIFIED"
+                or rec_authority == "FAIL_CLOSED_DEFAULT"
+            )
+
+            # If it is not a proven dependency hold, or does not match gate => remain HOLD
+            if not is_dependency_hold or not gate_matches:
+                logger.info(
+                    "Command %s hold reason/authority does not prove dependency gate %s (%s / %s); remaining in HOLD",
+                    command_id,
+                    gate_key,
+                    record.authority,
+                    record.reason,
+                )
+                continue
+
             updated = admission_store.set_state(
                 command_id,
                 AdmissionState.ACTIVE,

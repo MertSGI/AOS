@@ -134,20 +134,80 @@ def _tracked_text(root: Path, rel: str) -> str:
         return ""
 
 
-def derive_latest_accepted_product_sha(control: Path, product_workspace: Path) -> Tuple[str, str, int]:
-    # 1. Prefer structured acceptance receipts if present
-    try:
-        from aos.acceptance_receipt import read_latest_acceptance_receipt
-        receipt = read_latest_acceptance_receipt(control)
-        if receipt and receipt.candidate_sha:
-            sha = receipt.candidate_sha.lower()
+def derive_latest_accepted_product_sha(
+    control: Path,
+    product_workspace: Path,
+    project_id: Optional[str] = None,
+    lane: Optional[str] = None,
+) -> Tuple[str, str, int]:
+    # 1. Inspect structured acceptance receipts if present
+    from aos.acceptance_receipt import read_all_acceptance_receipts
+
+    receipts = read_all_acceptance_receipts(
+        control,
+        project_id=project_id,
+        lane=lane,
+        require_accepted=False,
+    )
+    if receipts:
+        # Reject non-accepted receipts from becoming the frontier
+        accepted_receipts = [r for r in receipts if r.acceptance_result == "ACCEPTED"]
+        if not accepted_receipts:
+            raise CanonicalReconciliationError(
+                "No valid ACCEPTED structured acceptance receipts found; all candidates are REJECTED or invalid"
+            )
+
+        # Check for wrong-project / wrong-lane if bound
+        if project_id is not None:
+            for r in accepted_receipts:
+                if r.project_id != project_id:
+                    raise CanonicalReconciliationError(
+                        f"Receipt project_id mismatch: expected {project_id}, got {r.project_id}"
+                    )
+        if lane is not None:
+            for r in accepted_receipts:
+                if r.lane != lane:
+                    raise CanonicalReconciliationError(
+                        f"Receipt lane mismatch: expected {lane}, got {r.lane}"
+                    )
+
+        # Verify candidate exists in product workspace
+        valid_candidates = []
+        for r in accepted_receipts:
+            sha = r.candidate_sha.lower()
             exists = _git(["cat-file", "-e", f"{sha}^{{commit}}"], cwd=product_workspace, check=False).returncode == 0
             if exists:
-                slug = receipt.slice_id.replace("/", "-").replace(" ", "-").lower()
-                rel_path = f"docs/project-control/acceptance-receipt-{slug}.json"
-                return sha, rel_path, 999
-    except Exception:
-        pass
+                valid_candidates.append(r)
+
+        if not valid_candidates:
+            raise CanonicalReconciliationError(
+                "None of the ACCEPTED receipt candidate SHAs exist in the product workspace"
+            )
+
+        # Linear succession check:
+        # Timestamp alone is never authority.
+        # Find terminal candidate(s) that are not the execution_base_sha of any other valid candidate receipt.
+        execution_bases = {r.execution_base_sha.lower() for r in valid_candidates}
+        terminals = [r for r in valid_candidates if r.candidate_sha.lower() not in execution_bases]
+
+        if len(terminals) == 1:
+            terminal = terminals[0]
+            sha = terminal.candidate_sha.lower()
+            slug = terminal.slice_id.replace("/", "-").replace(" ", "-").lower()
+            rel_path = f"docs/project-control/acceptance-receipt-{slug}.json"
+            return sha, rel_path, 999
+        elif len(terminals) > 1:
+            # Ambiguity => AMBIGUOUS_ACCEPTED_FRONTIER / fail closed
+            candidates_str = sorted({t.candidate_sha.lower() for t in terminals})
+            raise CanonicalReconciliationError(
+                f"AMBIGUOUS_ACCEPTED_FRONTIER: Multiple terminal accepted receipt candidates: {candidates_str}"
+            )
+        else:
+            # Cycle or ambiguity
+            raise CanonicalReconciliationError(
+                "AMBIGUOUS_ACCEPTED_FRONTIER: Cyclic or ambiguous receipt succession chain"
+            )
+
 
     files = [x.strip() for x in (_git(["ls-files"], cwd=control).stdout or "").splitlines() if x.strip()]
     candidates = []
@@ -431,7 +491,9 @@ def reconcile_missing_execution_base(
 
     _git(["fetch", "origin", "--prune"], cwd=product_workspace, timeout=900)
     control, remote_before = _ensure_control_clone(repository, control_ref, runtime_dir)
-    base_sha, evidence_source, evidence_number = derive_latest_accepted_product_sha(control, product_workspace)
+    base_sha, evidence_source, evidence_number = derive_latest_accepted_product_sha(
+        control, product_workspace, project_id
+    )
     state_path = find_state_json(control, project_id)
     state = _read_json(state_path)
 
@@ -1491,6 +1553,22 @@ def record_slice_acceptance(
     """Execute atomic forward-only canonical control-plane acceptance transition."""
     from aos.acceptance_receipt import AcceptanceReceipt, write_acceptance_receipt
 
+    slice_lower = slice_id.lower().replace("-", "_")
+    if (
+        "node3" in slice_lower
+        or "ui" in slice_lower
+        or "convergence" in slice_lower
+        or not (
+            slice_lower.startswith("discovery_marketplace")
+            or "node2" in slice_lower
+            or slice_lower in ("r1", "r2", "r3")
+        )
+    ):
+        raise CanonicalReconciliationError(
+            f"record_slice_acceptance is reserved exclusively for Node 2 delivery slices; cannot accept '{slice_id}'. "
+            "Use dedicated typed acceptance entrypoints for Node 3, UI-V2, and convergence."
+        )
+
     descriptor = _read_json(descriptor_path)
     project_id = str(descriptor.get("project_id") or "")
     repository = str(descriptor.get("repository") or "")
@@ -1666,3 +1744,413 @@ def record_slice_acceptance(
             "classification": f"RUNTIME_EVIDENCE_{type(exc).__name__.upper()}",
         }
     return result
+
+
+def _verify_ci_evidence(
+    repository: str,
+    ci_evidence: Mapping[str, Any],
+    *,
+    candidate_sha: str,
+    expected_branch: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Verify CI evidence proves exact candidate SHA success either via payload or GitHub Actions."""
+    run_id = ci_evidence.get("run_id") or ci_evidence.get("id")
+    if not run_id:
+        raise CanonicalReconciliationError("CI run_id is required in ci_evidence")
+
+    # If full run status is passed in evidence dict:
+    status = str(ci_evidence.get("status") or "").lower()
+    conclusion = str(ci_evidence.get("conclusion") or "").lower()
+    head_sha = str(ci_evidence.get("head_sha") or "").lower()
+    head_branch = str(ci_evidence.get("head_branch") or "")
+
+    if status == "completed" and conclusion == "success" and head_sha == candidate_sha.lower():
+        if expected_branch is not None and head_branch and head_branch != expected_branch:
+            raise CanonicalReconciliationError(
+                f"CI branch mismatch: expected {expected_branch}, got {head_branch}"
+            )
+        return dict(ci_evidence)
+
+    # Otherwise query GitHub Actions directly
+    ci = _read_github_actions_run(repository, int(run_id))
+    ci_head_sha = str(ci.get("head_sha") or "").lower()
+    ci_branch = str(ci.get("head_branch") or "")
+    ci_status = str(ci.get("status") or "").lower()
+    ci_conclusion = str(ci.get("conclusion") or "").lower()
+
+    if (
+        ci_head_sha != candidate_sha.lower()
+        or ci_status != "completed"
+        or ci_conclusion != "success"
+    ):
+        raise CanonicalReconciliationError(
+            f"Hosted CI run {run_id} does not prove exact candidate SHA {candidate_sha} success: "
+            f"status={ci_status}, conclusion={ci_conclusion}, head_sha={ci_head_sha}"
+        )
+    if expected_branch is not None and ci_branch and ci_branch != expected_branch:
+        raise CanonicalReconciliationError(
+            f"Hosted CI run {run_id} branch mismatch: expected {expected_branch}, got {ci_branch}"
+        )
+    return ci
+
+
+def _record_typed_acceptance(
+    *,
+    acceptance_kind: str,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    expected_lane: str,
+    ci_evidence: Mapping[str, Any],
+    slice_id: str,
+    acceptance_receipt: Any,
+    expected_predecessor_authority: str,
+    expected_control_sha_before: Optional[str] = None,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+    allowed_control_files: Optional[frozenset] = None,
+    commit_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Generic fail-closed typed acceptance engine enforcing all Controller safety invariants."""
+    from aos.acceptance_receipt import AcceptanceReceipt, write_acceptance_receipt
+
+    descriptor = _read_json(descriptor_path)
+    project_id = str(descriptor.get("project_id") or "")
+    repository = str(descriptor.get("repository") or "")
+    control_ref = str(descriptor.get("control_ref") or "")
+
+    if not project_id or not repository or not control_ref:
+        raise CanonicalReconciliationError(
+            f"{acceptance_kind} acceptance descriptor incomplete: project_id, repository, control_ref required"
+        )
+
+    # 1. Exact candidate SHA format check
+    if not HEX40.fullmatch(candidate_sha.lower()):
+        raise CanonicalReconciliationError(f"Invalid candidate SHA format: {candidate_sha!r}")
+    if not HEX40.fullmatch(execution_base_sha.lower()):
+        raise CanonicalReconciliationError(f"Invalid execution base SHA format: {execution_base_sha!r}")
+
+    # 2. Receipt contract check
+    if not isinstance(acceptance_receipt, AcceptanceReceipt):
+        raise CanonicalReconciliationError("Structured AcceptanceReceipt instance is required")
+    if acceptance_receipt.project_id != project_id:
+        raise CanonicalReconciliationError(
+            f"Acceptance receipt project mismatch: expected {project_id}, got {acceptance_receipt.project_id}"
+        )
+    if acceptance_receipt.lane != expected_lane:
+        raise CanonicalReconciliationError(
+            f"Acceptance receipt lane mismatch: expected {expected_lane}, got {acceptance_receipt.lane}"
+        )
+    if acceptance_receipt.candidate_sha.lower() != candidate_sha.lower():
+        raise CanonicalReconciliationError(
+            f"Acceptance receipt candidate SHA mismatch: expected {candidate_sha}, got {acceptance_receipt.candidate_sha}"
+        )
+    if acceptance_receipt.execution_base_sha.lower() != execution_base_sha.lower():
+        raise CanonicalReconciliationError(
+            f"Acceptance receipt execution base SHA mismatch: expected {execution_base_sha}, got {acceptance_receipt.execution_base_sha}"
+        )
+    if acceptance_receipt.acceptance_result != "ACCEPTED":
+        raise CanonicalReconciliationError(
+            f"Acceptance receipt result must be ACCEPTED, got {acceptance_receipt.acceptance_result}"
+        )
+    if acceptance_receipt.controller_authority != expected_predecessor_authority:
+        raise CanonicalReconciliationError(
+            f"Controller authority mismatch: expected {expected_predecessor_authority}, got {acceptance_receipt.controller_authority}"
+        )
+
+    # 3. Exact successful CI evidence
+    ci_verified = _verify_ci_evidence(repository, ci_evidence, candidate_sha=candidate_sha)
+    ci_run_id = int(ci_verified.get("id") or ci_verified.get("run_id") or 0)
+    if acceptance_receipt.ci_run_id != ci_run_id:
+        raise CanonicalReconciliationError(
+            f"Receipt CI run_id {acceptance_receipt.ci_run_id} != verified CI run_id {ci_run_id}"
+        )
+
+    # 4. KCP exact-SHA accepted-work coverage check
+    kcp_coverage = _assert_canonical_acceptance_kcp_coverage(
+        descriptor,
+        candidate_sha=candidate_sha,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
+
+    # 5. Clone canonical control and verify compare-and-swap base SHA
+    control, control_sha = _ensure_control_clone(repository, control_ref, runtime_dir)
+    if expected_control_sha_before is not None and control_sha.lower() != expected_control_sha_before.lower():
+        raise CanonicalReconciliationError(
+            f"{acceptance_kind} control_sha_before CAS drift: expected {expected_control_sha_before}, got {control_sha}"
+        )
+
+    state_path = find_state_json(control, project_id)
+    current_state = _read_json(state_path)
+    validate_canonical_coherence(current_state)
+
+    # Verify execution base matches current state execution chain / accepted SHA
+    state_base = str(
+        (current_state.get("candidate_release") or {}).get("accepted_product_sha")
+        or current_state.get("next_action_execution_base_sha")
+        or ""
+    ).lower()
+    if state_base and state_base != execution_base_sha.lower():
+        raise CanonicalReconciliationError(
+            f"Canonical state execution base drift: state has {state_base}, acceptance expects {execution_base_sha}"
+        )
+
+    # 6. Bind receipt with control_sha_before
+    bound_receipt = dataclasses.replace(
+        acceptance_receipt,
+        control_sha_before=control_sha,
+        canonical_control_transition_sha=control_sha,
+    )
+
+    # 7. Write scoped immutable receipt
+    receipt_dir = control / "docs" / "project-control"
+    historical_receipts = {
+        path: path.read_bytes() for path in receipt_dir.glob("acceptance-receipt-*.json")
+    }
+    slug = bound_receipt.slice_id.replace("/", "-").replace(" ", "-").lower()
+    target_path = receipt_dir / f"acceptance-receipt-{slug}.json"
+    if target_path.exists():
+        raise CanonicalReconciliationError(f"acceptance receipt is immutable: {target_path.name}")
+
+    try:
+        written_receipt_path = write_acceptance_receipt(control, bound_receipt)
+    except FileExistsError as exc:
+        raise CanonicalReconciliationError(str(exc)) from exc
+
+    if any(path.read_bytes() != before for path, before in historical_receipts.items()):
+        raise CanonicalReconciliationError("Historical acceptance receipt changed during acceptance")
+    _git(["add", "--", str(written_receipt_path)], cwd=control)
+
+    # 8. Check bounded canonical file scope
+    diff_names = [
+        f.replace("\\", "/")
+        for f in (_git(["diff", "--name-only", "--cached"], cwd=control).stdout or "").splitlines()
+        if f.strip()
+    ]
+    if allowed_control_files is not None:
+        if set(diff_names) != allowed_control_files:
+            raise CanonicalReconciliationError(
+                f"Unexpected staged control files for {acceptance_kind}: {sorted(diff_names)} != {sorted(allowed_control_files)}"
+            )
+    else:
+        for f in diff_names:
+            if not f.startswith("docs/project-control/"):
+                raise CanonicalReconciliationError(
+                    f"Unexpected staged file outside docs/project-control/ for {acceptance_kind}: {f}"
+                )
+
+    # 9. Verify remote drift before push
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=60)
+    remote_now = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip()
+    local_base = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip()
+    if remote_now != local_base:
+        raise CanonicalReconciliationError(
+            f"Concurrent control drift detected: local {local_base} != remote {remote_now}"
+        )
+
+    # 10. Commit and fast-forward push
+    msg = commit_message or f"control({project_id}): accept {acceptance_kind} {slice_id.upper()}"
+    _git(
+        [
+            "-c", "user.name=AOS Canonical Reconciler",
+            "-c", "user.email=aos-reconciler@users.noreply.github.com",
+            "commit", "-m", msg,
+        ],
+        cwd=control,
+    )
+    new_control_sha = (_git(["rev-parse", "HEAD"], cwd=control).stdout or "").strip()
+    _git(["push", "origin", f"HEAD:{control_ref}"], cwd=control, timeout=300)
+
+    # 11. Verify remote SHA matches
+    _git(["fetch", "origin", control_ref], cwd=control, timeout=60)
+    remote_after = (_git(["rev-parse", "FETCH_HEAD"], cwd=control).stdout or "").strip()
+    if remote_after != new_control_sha:
+        raise CanonicalReconciliationError(
+            f"Remote SHA verification failed after push: expected {new_control_sha}, got {remote_after}"
+        )
+
+    result = {
+        "status": "ACCEPTED",
+        "acceptance_kind": acceptance_kind,
+        "slice_id": slice_id,
+        "candidate_sha": candidate_sha,
+        "execution_base_sha": execution_base_sha,
+        "control_sha_before": control_sha,
+        "control_sha_after": new_control_sha,
+        "control_transition_sha": new_control_sha,
+        "controller_authority": bound_receipt.controller_authority,
+        "controller_decision_id": bound_receipt.controller_authority,
+        "kcp_implementation_receipt_ids": kcp_coverage["implementation_receipt_ids"],
+        "kcp_verification_receipt_ids": kcp_coverage["verification_receipt_ids"],
+        "next_status": current_state.get("current_status"),
+        "downstream_activation": {"status": "NOT_EVALUATED"},
+    }
+
+    try:
+        from aos.cross_lane_coordinator import evaluate_downstream_gates
+        from aos.runtime_admission import CommandAdmissionStore
+        admission_store = CommandAdmissionStore(
+            runtime_dir.parent.parent if runtime_dir.name == "project-runtime" else runtime_dir
+        )
+        activated = evaluate_downstream_gates(control, admission_store)
+        result["downstream_activation"] = {
+            "status": "SUCCEEDED" if activated else "NO_TRANSITION_REQUIRED",
+            "activated_command_ids": [record.command_id for record in activated],
+        }
+    except Exception as exc:
+        result["status"] = "ACCEPTED_WITH_DOWNSTREAM_HOLD"
+        result["downstream_activation"] = {
+            "status": "HOLD",
+            "classification": getattr(
+                exc,
+                "classification",
+                f"DOWNSTREAM_ACTIVATION_{type(exc).__name__.upper()}",
+            ),
+            "command_id": getattr(exc, "command_id", None),
+        }
+
+    result["runtime_evidence_write"] = {"status": "RECORDED"}
+    evidence_file = runtime_dir / f"{acceptance_kind.lower().replace('_', '-')}-acceptance.json"
+    try:
+        _atomic_json(evidence_file, result)
+    except Exception as exc:
+        result["runtime_evidence_write"] = {
+            "status": "FAILED",
+            "classification": f"RUNTIME_EVIDENCE_{type(exc).__name__.upper()}",
+        }
+    return result
+
+
+def record_program_v2_convergence_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_evidence: Mapping[str, Any],
+    acceptance_receipt: Any,
+    expected_predecessor_authority: str,
+    expected_control_sha_before: Optional[str] = None,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+) -> Dict[str, Any]:
+    """Typed acceptance entrypoint for PROGRAM_V2_CONVERGENCE."""
+    return _record_typed_acceptance(
+        acceptance_kind="PROGRAM_V2_CONVERGENCE",
+        descriptor_path=descriptor_path,
+        product_workspace=product_workspace,
+        runtime_dir=runtime_dir,
+        candidate_sha=candidate_sha,
+        execution_base_sha=execution_base_sha,
+        expected_lane="convergence",
+        ci_evidence=ci_evidence,
+        slice_id="program_v2_convergence",
+        acceptance_receipt=acceptance_receipt,
+        expected_predecessor_authority=expected_predecessor_authority,
+        expected_control_sha_before=expected_control_sha_before,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
+
+
+def record_phase7_node3_r2_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_evidence: Mapping[str, Any],
+    acceptance_receipt: Any,
+    expected_predecessor_authority: str,
+    expected_control_sha_before: Optional[str] = None,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+) -> Dict[str, Any]:
+    """Typed acceptance entrypoint for PHASE7_NODE3_R2."""
+    return _record_typed_acceptance(
+        acceptance_kind="PHASE7_NODE3_R2",
+        descriptor_path=descriptor_path,
+        product_workspace=product_workspace,
+        runtime_dir=runtime_dir,
+        candidate_sha=candidate_sha,
+        execution_base_sha=execution_base_sha,
+        expected_lane="lane-b",
+        ci_evidence=ci_evidence,
+        slice_id="phase7_node3_r2",
+        acceptance_receipt=acceptance_receipt,
+        expected_predecessor_authority=expected_predecessor_authority,
+        expected_control_sha_before=expected_control_sha_before,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
+
+
+def record_lari_ui_v2_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_evidence: Mapping[str, Any],
+    acceptance_receipt: Any,
+    expected_predecessor_authority: str,
+    expected_control_sha_before: Optional[str] = None,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+) -> Dict[str, Any]:
+    """Typed acceptance entrypoint for LARI_UI_V2."""
+    return _record_typed_acceptance(
+        acceptance_kind="LARI_UI_V2",
+        descriptor_path=descriptor_path,
+        product_workspace=product_workspace,
+        runtime_dir=runtime_dir,
+        candidate_sha=candidate_sha,
+        execution_base_sha=execution_base_sha,
+        expected_lane="lari-ui-v2",
+        ci_evidence=ci_evidence,
+        slice_id="lari_ui_v2",
+        acceptance_receipt=acceptance_receipt,
+        expected_predecessor_authority=expected_predecessor_authority,
+        expected_control_sha_before=expected_control_sha_before,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )
+
+
+def record_combined_release_acceptance(
+    *,
+    descriptor_path: Path,
+    product_workspace: Path,
+    runtime_dir: Path,
+    candidate_sha: str,
+    execution_base_sha: str,
+    ci_evidence: Mapping[str, Any],
+    acceptance_receipt: Any,
+    expected_predecessor_authority: str,
+    expected_control_sha_before: Optional[str] = None,
+    knowledge_ledger: Any = None,
+    runtime_home: Path | str | None = None,
+) -> Dict[str, Any]:
+    """Typed acceptance entrypoint for COMBINED_RELEASE."""
+    return _record_typed_acceptance(
+        acceptance_kind="COMBINED_RELEASE",
+        descriptor_path=descriptor_path,
+        product_workspace=product_workspace,
+        runtime_dir=runtime_dir,
+        candidate_sha=candidate_sha,
+        execution_base_sha=execution_base_sha,
+        expected_lane="release",
+        ci_evidence=ci_evidence,
+        slice_id="combined_release",
+        acceptance_receipt=acceptance_receipt,
+        expected_predecessor_authority=expected_predecessor_authority,
+        expected_control_sha_before=expected_control_sha_before,
+        knowledge_ledger=knowledge_ledger,
+        runtime_home=runtime_home,
+    )

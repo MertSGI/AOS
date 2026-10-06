@@ -22,6 +22,20 @@ class AdmissionState(str, Enum):
     SUPERSEDED = "SUPERSEDED"
 
 
+# Hold types and prefixes for strict auto-release semantics
+DEPENDENCY_HOLD_PREFIX = "DEPENDENCY_HOLD:"
+DEPENDENCY_HOLD_AUTHORITY = "DEPENDENCY_GATE"
+
+FORBIDDEN_AUTORELEASE_HOLD_SUBSTRINGS = frozenset({
+    "HUMAN",
+    "SECURITY",
+    "CONTROLLER",
+    "FAILURE",
+    "AUTHORITY",
+})
+
+
+
 @dataclass(frozen=True)
 class AdmissionRecord:
     command_id: str
