@@ -111,6 +111,101 @@ def validate_execution_authority(
     if exec_base_sha and task_base_sha != exec_base_sha:
         errors.append(f"Task base_sha '{task_base_sha}' != canonical execution base SHA '{exec_base_sha}'")
 
+    # 9. Authority revision check
+    snap_auth_rev = snapshot.get("authority_revision")
+    task_auth_rev = task.get("authority_revision") or (task.get("extensions") or {}).get("authority_revision")
+    if snap_auth_rev:
+        if task_auth_rev and str(task_auth_rev) != str(snap_auth_rev):
+            errors.append(
+                f"STALE_AUTHORITY_REVISION: task authority revision '{task_auth_rev}' != snapshot revision '{snap_auth_rev}'"
+            )
+
+    # 10. Canonical lane scope & shared-path ownership enforcement
+    # Determine if task is mutating
+    task_is_mutating = True
+    if "mutating" in task:
+        task_is_mutating = bool(task["mutating"])
+    elif (task.get("extensions") or {}).get("mutating") is False:
+        task_is_mutating = False
+
+    is_product_lane = task_project_id in ("lari", "lari-ui-v2") or snapshot_project_id in ("lari", "lari-ui-v2")
+    lane_allowed = snapshot.get("lane_allowed_scope")
+    if lane_allowed is not None:
+        lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in lane_allowed]
+        lane_allowed_exact = [p.replace("\\", "/") for p in lane_allowed]
+
+        # Gather paths targeted by task
+        candidate_paths: List[str] = []
+        if isinstance(task.get("allowed_scope"), dict):
+            candidate_paths.extend(task["allowed_scope"].get("paths", []))
+        if isinstance(task.get("write_scope"), list):
+            candidate_paths.extend(task["write_scope"])
+
+        for cp in candidate_paths:
+            clean_cp = cp.replace("\\", "/")
+            is_covered = False
+            for a_pref in lane_allowed_prefixes:
+                if clean_cp.startswith(a_pref):
+                    is_covered = True
+                    break
+            if not is_covered and clean_cp in lane_allowed_exact:
+                is_covered = True
+            # Also if lane_allowed contains a prefix that covers clean_cp
+            if not is_covered:
+                for a_pref in lane_allowed_prefixes:
+                    if a_pref.rstrip("/") == clean_cp:
+                        is_covered = True
+                        break
+
+            if not is_covered:
+                errors.append(
+                    f"CANONICAL_LANE_SCOPE_VIOLATION: path '{clean_cp}' is outside canonical lane allowed scope"
+                )
+    elif task_is_mutating and is_product_lane:
+        # Mutating product work fails closed if canonical lane scope is missing
+        errors.append("CANONICAL_LANE_SCOPE_MISSING: mutating product task requires defined canonical lane allowed scope")
+
+    # Shared path governance
+    shared_gov = snapshot.get("shared_path_governance")
+    if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED":
+        gov_paths = shared_gov.get("paths", {})
+        if isinstance(gov_paths, dict):
+            # Gather task paths again
+            candidate_paths = []
+            if isinstance(task.get("allowed_scope"), dict):
+                candidate_paths.extend(task["allowed_scope"].get("paths", []))
+            if isinstance(task.get("write_scope"), list):
+                candidate_paths.extend(task["write_scope"])
+
+            task_extensions = task.get("extensions") or {}
+            explicit_handoff = (
+                task_extensions.get("shared_path_handoff")
+                or task_extensions.get("ownership_handoff")
+                or task.get("shared_path_handoff")
+            )
+
+            current_lane = task_project_id
+            if current_lane == "lari-ui-v2":
+                lane_key = "ui_v2"
+            elif current_lane == "lari":
+                lane_key = "lari"
+            else:
+                lane_key = str(current_lane)
+
+            for cp in candidate_paths:
+                clean_cp = cp.replace("\\", "/")
+                # Check match against governed paths
+                for g_path, g_rule in gov_paths.items():
+                    clean_gp = g_path.replace("\\", "/")
+                    if clean_cp == clean_gp or clean_cp.startswith(clean_gp.rstrip("/") + "/"):
+                        owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                        if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                            # Requires explicit valid ownership handoff
+                            if not explicit_handoff or not explicit_handoff.get("valid"):
+                                errors.append(
+                                    f"SHARED_PATH_OWNERSHIP_REQUIRED: path '{clean_cp}' is owned by lane '{owner_lane}', not '{current_lane}'"
+                                )
+
     if errors:
         valid_exec_sha = exec_base_sha if isinstance(exec_base_sha, str) and re.match(r"^[0-9a-f]{40}$", exec_base_sha) else None
         return ExecutionAuthorityResult(

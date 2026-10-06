@@ -71,6 +71,19 @@
         "pattern": "^[0-9a-f]{64}$"
       }
     },
+    "authority_revision": {
+      "type": ["string", "null"]
+    },
+    "lane_allowed_scope": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "shared_path_governance": {
+      "type": ["object", "null"]
+    },
     "extensions": {
       "type": "object",
       "additionalProperties": true

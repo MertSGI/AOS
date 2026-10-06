@@ -279,6 +279,29 @@ class ProjectSourceAdapter:
                 next_action_execution_base_sha = None
                 ambiguity_reasons.append("CANONICAL_LANE_AUTHORITY_MISSING: explicit structured UI-V2 lane authority is absent")
 
+        # Resolve structured lane object for current project if present
+        resolved_lane_obj = None
+        lanes_dict = state_data.get("parallel_execution_lanes")
+        if isinstance(lanes_dict, dict):
+            if project_id in ("lari-ui-v2", "ui_v2"):
+                resolved_lane_obj = lanes_dict.get("ui_v2") or lanes_dict.get("lari_ui_v2")
+            elif project_id in ("lari", "product"):
+                resolved_lane_obj = lanes_dict.get("lari") or lanes_dict.get("product")
+            else:
+                resolved_lane_obj = lanes_dict.get(project_id)
+
+        authority_revision = None
+        lane_allowed_scope = None
+        if isinstance(resolved_lane_obj, dict):
+            authority_revision = resolved_lane_obj.get("authority_revision")
+            raw_scope = resolved_lane_obj.get("allowed_scope")
+            if isinstance(raw_scope, list):
+                lane_allowed_scope = [str(p) for p in raw_scope]
+
+        shared_path_governance = state_data.get("shared_path_governance")
+        if not isinstance(shared_path_governance, dict):
+            shared_path_governance = None
+
         if not current_milestone:
             ambiguity_reasons.append(f"Missing required milestone at pointer '{milestone_ptr}'")
         if not canonical_next_action:
@@ -302,6 +325,9 @@ class ProjectSourceAdapter:
             "canonical_next_action": str(canonical_next_action) if canonical_next_action else "UNKNOWN_NEXT_ACTION",
             "target_base_sha": str(target_base_sha) if target_base_sha else None,
             "next_action_execution_base_sha": str(next_action_execution_base_sha) if next_action_execution_base_sha else None,
+            "authority_revision": str(authority_revision) if authority_revision else None,
+            "lane_allowed_scope": lane_allowed_scope,
+            "shared_path_governance": shared_path_governance,
             "has_ambiguity": len(ambiguity_reasons) > 0,
             "ambiguity_reasons": ambiguity_reasons,
             "input_file_hashes": file_hashes

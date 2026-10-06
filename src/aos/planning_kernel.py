@@ -259,6 +259,9 @@ class ProjectSituation:
     completion_criteria: Tuple[str, ...]
     ambiguity_reasons: Tuple[str, ...]
     captured_at: str
+    authority_revision: Optional[str] = None
+    lane_allowed_scope: Optional[Tuple[str, ...]] = None
+    shared_path_governance: Optional[Dict[str, Any]] = None
 
     def identity(self) -> str:
         payload = {
@@ -746,6 +749,9 @@ def synthesize_project_situation(
         completion_criteria=_completion_criteria_from_descriptor(descriptor, goal),
         ambiguity_reasons=ambiguity,
         captured_at=_utc_now(),
+        authority_revision=snapshot.get("authority_revision"),
+        lane_allowed_scope=tuple(snapshot.get("lane_allowed_scope")) if snapshot.get("lane_allowed_scope") is not None else None,
+        shared_path_governance=snapshot.get("shared_path_governance"),
     )
 
 
@@ -1999,12 +2005,56 @@ class CanonicalAuthorityResolver:
             if token in ("LARI", "AOS", "NON PRODUCTION", "PROGRAM V2"):
                 continue
             # Scope tags are advisory unless the authority explicitly contradicts them.
+        is_product_lane = self.situation.project_id in ("lari", "lari-ui-v2")
+        mutating_task = bool(task.get("mutating", True))
+
+        # Check mutating tasks have write_scope
+        if mutating_task and is_product_lane and self.situation.lane_allowed_scope is None:
+            raise AuthorityDenied("CANONICAL_LANE_SCOPE_MISSING")
+
+        lane_allowed = self.situation.lane_allowed_scope
+        lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in lane_allowed] if lane_allowed else []
+        lane_allowed_exact = [p.replace("\\", "/") for p in lane_allowed] if lane_allowed else []
+
+        shared_gov = self.situation.shared_path_governance or {}
+        gov_paths = shared_gov.get("paths", {}) if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED" else {}
+        explicit_handoff = task.get("shared_path_handoff") or (task.get("extensions") or {}).get("shared_path_handoff")
+
         for path in task.get("write_scope", []) or []:
             if not isinstance(path, str) or not path.strip():
                 raise AuthorityDenied("Invalid write_scope path")
             candidate = (Path(self.situation.repository_head) if False else path)  # type guard placeholder
             if ".." in Path(path).parts:
                 raise AuthorityDenied("write_scope escapes workspace")
+
+            clean_path = path.replace("\\", "/")
+
+            # If lane_allowed_scope is active, every write_scope entry MUST be a subset
+            if lane_allowed is not None and mutating_task:
+                is_covered = False
+                for a_pref in lane_allowed_prefixes:
+                    if clean_path.startswith(a_pref) or clean_path + "/" == a_pref:
+                        is_covered = True
+                        break
+                if not is_covered and clean_path in lane_allowed_exact:
+                    is_covered = True
+
+                if not is_covered:
+                    raise AuthorityDenied(f"CANONICAL_LANE_SCOPE_VIOLATION: path '{clean_path}' outside canonical lane allowed scope")
+
+            # Shared path ownership check
+            if gov_paths and mutating_task:
+                for g_path, g_rule in gov_paths.items():
+                    clean_gp = g_path.replace("\\", "/")
+                    if clean_path == clean_gp or clean_path.startswith(clean_gp.rstrip("/") + "/"):
+                        owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                        current_lane = self.situation.project_id
+                        lane_key = "ui_v2" if current_lane == "lari-ui-v2" else ("lari" if current_lane == "lari" else current_lane)
+                        if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                            if not explicit_handoff or not explicit_handoff.get("valid"):
+                                raise AuthorityDenied(
+                                    f"SHARED_PATH_OWNERSHIP_REQUIRED: path '{clean_path}' is owned by lane '{owner_lane}', not '{current_lane}'"
+                                )
 
 
 def _walk_keys(value: Any) -> Iterable[str]:
@@ -2174,6 +2224,7 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
             raise PlanningKernelError(
                 f"Task {node_id} mutating {run_type} task requires non-empty write_scope"
             )
+
         if not isinstance(task.get("payload"), dict):
             raise PlanningKernelError(f"Task {node_id} payload must be object")
         _validate_worker_payload(node_id, run_type, task["payload"])
@@ -2211,6 +2262,49 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
                     raise PlanningKernelError(
                         f"Task {node_id} AGENTIC expected artifact is outside declared write_scope: {artifact}"
                     )
+
+        # Enforce canonical lane allowed scope ceiling on mutating task write_scope
+        if run_type in {"FILE", "AGENTIC"} and task["mutating"]:
+            if situation.project_id in ("lari", "lari-ui-v2") and situation.lane_allowed_scope is None:
+                raise PlanningKernelError(
+                    f"Task {node_id} mutating {run_type} task rejected: CANONICAL_LANE_SCOPE_MISSING"
+                )
+            if situation.lane_allowed_scope is not None:
+                lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in situation.lane_allowed_scope]
+                lane_allowed_exact = [p.replace("\\", "/") for p in situation.lane_allowed_scope]
+                for ws in task["write_scope"]:
+                    clean_ws = ws.replace("\\", "/")
+                    is_covered = False
+                    for a_pref in lane_allowed_prefixes:
+                        if clean_ws.startswith(a_pref) or clean_ws + "/" == a_pref:
+                            is_covered = True
+                            break
+                    if not is_covered and clean_ws in lane_allowed_exact:
+                        is_covered = True
+                    if not is_covered:
+                        raise PlanningKernelError(
+                            f"Task {node_id} write_scope '{clean_ws}' outside canonical lane allowed scope: CANONICAL_LANE_SCOPE_VIOLATION"
+                        )
+
+            # Enforce shared path governance
+            shared_gov = situation.shared_path_governance or {}
+            gov_paths = shared_gov.get("paths", {}) if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED" else {}
+            explicit_handoff = task.get("shared_path_handoff") or (task.get("extensions") or {}).get("shared_path_handoff")
+            if gov_paths:
+                for ws in task["write_scope"]:
+                    clean_ws = ws.replace("\\", "/")
+                    for g_path, g_rule in gov_paths.items():
+                        clean_gp = g_path.replace("\\", "/")
+                        if clean_ws == clean_gp or clean_ws.startswith(clean_gp.rstrip("/") + "/"):
+                            owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                            current_lane = situation.project_id
+                            lane_key = "ui_v2" if current_lane == "lari-ui-v2" else ("lari" if current_lane == "lari" else current_lane)
+                            if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                                if not explicit_handoff or not explicit_handoff.get("valid"):
+                                    raise PlanningKernelError(
+                                        f"Task {node_id} write_scope '{clean_ws}' owned by lane '{owner_lane}', not '{current_lane}': SHARED_PATH_OWNERSHIP_REQUIRED"
+                                    )
+
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
             # Git read operations exist, but planner must explicitly mark mutation truthfully.
             payload_text = json.dumps(task["payload"], sort_keys=True).lower()
