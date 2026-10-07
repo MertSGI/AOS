@@ -3320,17 +3320,29 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
     # 3. Cline CLI
     cline_attestation_file = Path(os.environ.get("LOCALAPPDATA", "")) / "AOS" / "capabilities" / "cline-cli.json"
     cline_attested = False
+    cline_start_eligible = False
     cline_ver = "unknown"
     cline_exe = "cline.cmd"
     cline_status = "NOT_OPERATIONALLY_PROVEN"
+    cline_provider = None
+    cline_model = None
+    cline_cost_class = "UNKNOWN"
+    cline_resume_proven = False
+    cline_auth_proven = False
     if cline_attestation_file.is_file():
         try:
             cln_data = json.loads(cline_attestation_file.read_text("utf-8"))
             cline_status = cln_data.get("capability_status", "NOT_OPERATIONALLY_PROVEN")
-            cline_attested = cline_status in {"OPERATIONAL", "OPERATIONAL_BOUNDED"}
+            cline_attested = cline_status == "OPERATIONAL"
+            cline_start_eligible = cline_status in {"OPERATIONAL", "OPERATIONAL_START_ONLY"}
             exec_id = cln_data.get("executable_identity") or {}
-            cline_ver = exec_id.get("version", "3.0.65")
+            cline_ver = exec_id.get("version", "unknown")
             cline_exe = exec_id.get("filename", "cline.cmd")
+            cline_provider = cln_data.get("provider")
+            cline_model = cln_data.get("model")
+            cline_cost_class = cln_data.get("cost_class", "UNKNOWN")
+            cline_resume_proven = cln_data.get("session_resume_proven") is True
+            cline_auth_proven = cln_data.get("auth_smoke_proven") is True
         except Exception:
             pass
 
@@ -3338,21 +3350,30 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
         "name": "Cline",
         "resource_type": "AGENTIC_CLI_HARNESS",
         "operational_tier": "CORE",
-        "usefulness_classification": "ACTIVE_VISIBLE" if cline_attested else "STANDBY_VISIBLE",
+        "usefulness_classification": "ACTIVE_VISIBLE" if cline_start_eligible else "STANDBY_VISIBLE",
         "executable": cline_exe,
         "version": cline_ver,
-        "auth_status": "PROVIDER_BOUNDED",
-        "cost_class": "SUBSCRIPTION_INCLUDED",
-        "general_health": "HEALTHY" if cline_attested else cline_status,
+        "auth_status": "PROVEN" if cline_auth_proven else "UNPROVEN",
+        "cost_class": cline_cost_class,
+        "provider": cline_provider,
+        "model": cline_model,
+        "session_resume_proven": cline_resume_proven,
+        "general_health": cline_status,
         "task_classes": ["agentic_coding", "file_edit", "bounded_execution"],
         "lifecycle_state": cline_status,
         "quota_status": "PROVIDER_DEPENDENT",
         "retry_deadline": None,
-        "current_blocker": "NONE" if cline_attested else "OFFICIAL_CLINE_CLI_NOT_INSTALLED",
+        "current_blocker": (
+            "NONE"
+            if cline_attested
+            else "SESSION_RESUME_UNPROVEN"
+            if cline_start_eligible
+            else "CAPABILITY_ATTESTATION_REQUIRED"
+        ),
         "eligibility_by_task_class": {
             "structured_planning": False,
             "repo_ui_planning": False,
-            "agentic_coding": cline_attested,
+            "agentic_coding": cline_start_eligible,
             "verification": False,
         },
     })

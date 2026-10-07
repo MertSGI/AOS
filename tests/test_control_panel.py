@@ -523,14 +523,49 @@ def test_resource_operations_matrix_and_lane_hold_review_controls(tmp_path, monk
 
     # Check Cline prerequisite / live attested capability
     cline = by_name["Cline"]
-    assert cline["current_blocker"] in {"OFFICIAL_CLINE_CLI_NOT_INSTALLED", "NONE"}
-    assert cline["general_health"] in {"NOT_OPERATIONALLY_PROVEN", "HEALTHY", "OPERATIONAL_BOUNDED"}
+    assert cline["current_blocker"] in {
+        "CAPABILITY_ATTESTATION_REQUIRED",
+        "SESSION_RESUME_UNPROVEN",
+        "NONE",
+    }
+    assert cline["general_health"] in {
+        "NOT_OPERATIONALLY_PROVEN",
+        "OPERATIONAL_START_ONLY",
+        "OPERATIONAL",
+    }
 
     # HTML contains Resource Operations Matrix and Lane Hold/Resume controls
     assert 'id="resource-operations-container"' in _HTML
     assert "Review " in _HTML
     assert "Resume " in _HTML
     assert "Running / " in _HTML
+
+
+def test_resource_operations_matrix_projects_start_only_cline_truth(tmp_path, monkeypatch):
+    from aos.control_panel import get_resource_operations_matrix
+
+    capability_dir = tmp_path / "AOS" / "capabilities"
+    capability_dir.mkdir(parents=True)
+    (capability_dir / "cline-cli.json").write_text(json.dumps({
+        "capability_status": "OPERATIONAL_START_ONLY",
+        "executable_identity": {"version": "3.0.68", "filename": "cline.exe"},
+        "provider": "openai-compatible",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "cost_class": "FREE_TIER_CLOUD",
+        "auth_smoke_proven": True,
+        "session_resume_proven": False,
+    }), encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    cline = next(row for row in get_resource_operations_matrix() if row["name"] == "Cline")
+
+    assert cline["general_health"] == "OPERATIONAL_START_ONLY"
+    assert cline["current_blocker"] == "SESSION_RESUME_UNPROVEN"
+    assert cline["eligibility_by_task_class"]["agentic_coding"] is True
+    assert cline["provider"] == "openai-compatible"
+    assert cline["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+    assert cline["cost_class"] == "FREE_TIER_CLOUD"
+    assert cline["session_resume_proven"] is False
 
 
 def test_resource_operations_matrix_requires_antigravity_attestation(tmp_path, monkeypatch):
