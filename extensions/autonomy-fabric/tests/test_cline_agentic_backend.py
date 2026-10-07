@@ -16,6 +16,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionCapability,
     ExecutionHealth,
     ExecutionRequest,
+    ExecutionAvailabilityState,
 )
 from aos.workers.cline_cli_probe import (
     build_cline_child_environment,
@@ -119,6 +120,22 @@ def test_proof_c_structured_ndjson_parsing():
         returncode=1,
     )
     assert overloaded.failure_class == "PROVIDER_CAPACITY"
+
+
+def test_bounded_execution_timeout_is_resource_unavailable_not_contract_failure(tmp_path):
+    source_sha = _repo(tmp_path)
+
+    def runner(argv, cwd, prompt, timeout, env):
+        return subprocess.CompletedProcess(argv, 124, "", "")
+
+    backend = _backend(
+        runner, data_dir=str(tmp_path / "data"), config_dir=str(tmp_path / "config")
+    )
+    result = backend.execute(_request(tmp_path, source_sha))
+
+    assert result.status == "DEGRADED"
+    assert result.sanitized_errors == ["CLINE_EXECUTION_TIMEOUT"]
+    assert result.availability.state == ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE
 
 
 # Proof D, E, F, G, H, I: execution, containment, safe write, process exec, terminal classification, session identity

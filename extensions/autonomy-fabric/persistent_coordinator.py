@@ -51,6 +51,9 @@ from aos.workspace_fingerprint import compute_workspace_fingerprint
 from aos.integrity_reconciler import IntegrityReconciler
 
 
+AGENTIC_EXECUTION_TIMEOUT_SECONDS = 600
+
+
 class CheckpointCorruptionError(ValueError):
     """Raised when checkpoint is corrupt, truncated, or incompatible."""
     pass
@@ -440,6 +443,11 @@ class PersistentCoordinator:
                 },
                 agentic_identity=prior_identity,
                 context_pack=context_pack,
+                timeout_seconds=(
+                    AGENTIC_EXECUTION_TIMEOUT_SECONDS
+                    if caps == [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK]
+                    else 180
+                ),
             )
 
             integrity_claim = None

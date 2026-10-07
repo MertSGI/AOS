@@ -562,6 +562,44 @@ def test_plan_compiler_rejects_renamed_repeat_of_completed_action(tmp_path):
     assert backend.calls == 2
 
 
+def test_plan_compiler_allows_repeated_verification_after_novel_mutation(tmp_path):
+    plan = _plan()
+    mutation = {
+        "node_id": "write-forward-artifact",
+        "run_type": "FILE",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": True,
+        "dependencies": [],
+        "scope_tags": ["docs"],
+        "write_scope": ["docs/forward.md"],
+        "payload": {"action": "write_file", "path": "docs/forward.md", "content": "forward\n"},
+        "expected_artifacts": ["docs/forward.md"],
+        "tests": [],
+        "evidence_requirements": ["artifact written"],
+        "completion_criteria": ["artifact exists"],
+    }
+    plan["tasks"].insert(0, mutation)
+    plan["tasks"][1]["dependencies"] = ["write-forward-artifact"]
+    plan["parallel_safe_groups"] = [["write-forward-artifact"], ["bounded-test"]]
+    backend = QueueBackend([plan])
+
+    result = compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        forbidden_task_signatures=['TEST:{"cmd":["git","diff","--check"]}'],
+        workspace=tmp_path,
+    )
+
+    assert [task["node_id"] for task in result["tasks"]] == [
+        "write-forward-artifact", "bounded-test",
+    ]
+    assert backend.calls == 1
+
+
 def test_completed_action_signatures_are_bounded_for_provider_prompt():
     signatures = [f"FILE:{{\"patch\":\"{index}-{'x' * 1000}\"}}" for index in range(100)]
 
@@ -1758,6 +1796,38 @@ def test_exact_retry_boundary_reuses_last_accepted_objective(tmp_path, phase, re
 
     changed = dataclasses.replace(situation, repository_head="f" * 40)
     assert _recover_waiting_objective(runtime, 1, checkpoint, {}, changed) is None
+
+
+def test_backend_local_technical_hold_reuses_current_accepted_objective(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    prior_situation = situation.to_dict()
+    (runtime / "objective-0005.json").write_text(
+        json.dumps(_objective()), encoding="utf-8",
+    )
+    checkpoint = {
+        "phase": "TECHNICAL_HOLD",
+        "failure_class": "BACKEND_LOCAL_REASONING_FAILURE",
+        "batch_number": 5,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+
+    recovered = _recover_waiting_objective(
+        runtime, 5, checkpoint, prior_situation, situation,
+    )
+
+    assert recovered is not None
+    assert recovered.objective_id == "obj-1"
+    assert _recover_waiting_objective(
+        runtime,
+        5,
+        {**checkpoint, "failure_class": "RUNTIME_EXECUTION_FAILURE"},
+        prior_situation,
+        situation,
+    ) is None
 
 
 def test_provider_wait_retry_skips_duplicate_objective_reasoning(tmp_path):

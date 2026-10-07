@@ -566,6 +566,17 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             outcome = parse_cline_stream_output(
                 str(completed.stdout or ""), str(completed.stderr or ""), returncode=completed.returncode
             )
+            if completed.returncode == 124:
+                outcome = ClineJsonOutcome(
+                    valid=False,
+                    session_id=outcome.session_id,
+                    finish_reason=outcome.finish_reason,
+                    usage=outcome.usage,
+                    failure_class="EXECUTION_TIMEOUT",
+                    event_count=outcome.event_count,
+                    raw_error="BOUNDED_EXECUTION_TIMEOUT",
+                    result_text=outcome.result_text,
+                )
         except Exception:
             failed = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
@@ -580,6 +591,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "AUTH_UNAVAILABLE": ExecutionAvailabilityState.AUTH_UNAVAILABLE,
                 "PROVIDER_UNREACHABLE": ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
                 "PROVIDER_CAPACITY": ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+                "EXECUTION_TIMEOUT": ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
             }.get(outcome.failure_class, ExecutionAvailabilityState.CONTRACT_FAILURE)
             failed = ExecutionAvailabilitySnapshot(
                 state, self._now_iso(),

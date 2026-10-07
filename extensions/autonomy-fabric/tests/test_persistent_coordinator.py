@@ -9,6 +9,7 @@ from extensions.autonomy_fabric.task_dag import TaskDAG
 from extensions.autonomy_fabric.execution_router import ExecutionRouter
 from extensions.autonomy_fabric.native_workers import NativeFileWorker, NativeGitWorker, NativeProcessWorker
 from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator
+from extensions.autonomy_fabric.persistent_coordinator import AGENTIC_EXECUTION_TIMEOUT_SECONDS
 
 
 def test_persistent_coordinator_batch_execution_and_checkpoint():
@@ -189,3 +190,51 @@ def test_waiting_for_reasoning_provider_is_non_terminal_and_does_not_fail_task(t
     assert len(runs) == 1
     assert runs[0].status == RunStatus.WAITING_AGENT
 
+
+def test_agentic_tasks_receive_bounded_long_horizon_timeout(tmp_path):
+    from extensions.autonomy_fabric.execution_backend import (
+        ExecutionBackend, ExecutionCapability, ExecutionCost, ExecutionHealth,
+        ExecutionResult, ExecutionTrustZone,
+    )
+
+    class CapturingAgenticBackend(ExecutionBackend):
+        backend_id = "capturing_agentic"
+        trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
+        cost = ExecutionCost.FREE_LOCAL
+        supported_capabilities = {ExecutionCapability.LONG_HORIZON_AGENTIC_WORK}
+
+        def __init__(self):
+            self.requests = []
+
+        def get_health(self):
+            return ExecutionHealth.HEALTHY
+
+        def execute(self, request):
+            self.requests.append(request)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="capture",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="SUCCESS",
+                exit_code=0,
+                workspace=request.workspace,
+            )
+
+    registry = AgentRunRegistry()
+    dag = TaskDAG("proj-agentic-timeout", registry)
+    node = dag.add_node("agentic-work", "AGENTIC", "auth-1")
+    node.payload = {"prompt": "Perform bounded agentic work"}
+    backend = CapturingAgenticBackend()
+    coordinator = PersistentCoordinator(
+        project_id="proj-agentic-timeout",
+        workspace_path=str(tmp_path),
+        dag=dag,
+        router=ExecutionRouter(backends=[backend]),
+        registry=registry,
+    )
+
+    result = coordinator.execute_next_batch(max_tasks=1)[0]
+
+    assert result.status == "SUCCESS"
+    assert backend.requests[0].timeout_seconds == AGENTIC_EXECUTION_TIMEOUT_SECONDS

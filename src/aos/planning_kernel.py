@@ -1127,6 +1127,42 @@ def _task_signature(task: Mapping[str, Any]) -> str:
     )
 
 
+def _repeatable_verification_after_novel_mutation(
+    task: Mapping[str, Any],
+    tasks_by_id: Mapping[str, Mapping[str, Any]],
+    forbidden_task_ids: set[str],
+    forbidden_signatures: set[str],
+) -> bool:
+    """Allow a repeated check only when this DAG first performs novel mutation.
+
+    Verification commands are intentionally stable across batches.  Their
+    payload signature therefore cannot by itself distinguish pointless replay
+    from a necessary post-mutation check.  Keep standalone replay forbidden,
+    but permit a PROCESS/TEST/BUILD task whose dependency graph contains a
+    mutating task that has not already completed under either durable identity.
+    """
+    if str(task.get("run_type", "")).upper() not in ("PROCESS", "TEST", "BUILD"):
+        return False
+    pending = [str(item) for item in task.get("dependencies", [])]
+    visited: set[str] = set()
+    while pending:
+        node_id = pending.pop()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        dependency = tasks_by_id.get(node_id)
+        if dependency is None:
+            continue
+        if (
+            bool(dependency.get("mutating"))
+            and node_id not in forbidden_task_ids
+            and _task_signature(dependency) not in forbidden_signatures
+        ):
+            return True
+        pending.extend(str(item) for item in dependency.get("dependencies", []))
+    return False
+
+
 def _completed_task_signatures(
     runtime_dir: Path,
     completed_batches: Sequence[Mapping[str, Any]],
@@ -2983,7 +3019,13 @@ def compile_execution_plan(
                         task["run_type"] == "FILE"
                         and task["payload"].get("action") == "read_file"
                     )
-                    if signature in forbidden_signatures and not is_read_task:
+                    if (
+                        signature in forbidden_signatures
+                        and not is_read_task
+                        and not _repeatable_verification_after_novel_mutation(
+                            task, tasks_by_id, forbidden_ids, forbidden_signatures,
+                        )
+                    ):
                         rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
                         continue
                     if task["run_type"] in ("PROCESS", "TEST", "BUILD"):
@@ -3135,6 +3177,9 @@ def compile_execution_plan(
                 raise PlanningKernelError(
                     f"Execution plan repeats completed task identities: {duplicates}"
                 )
+            current_tasks_by_id = {
+                task["node_id"]: task for task in normalized["tasks"]
+            }
             repeated_actions = sorted({
                 _task_signature(task)
                 for task in normalized["tasks"]
@@ -3142,6 +3187,9 @@ def compile_execution_plan(
                 and not (
                     task["run_type"] == "FILE"
                     and task["payload"].get("action") == "read_file"
+                )
+                and not _repeatable_verification_after_novel_mutation(
+                    task, current_tasks_by_id, forbidden_ids, forbidden_signatures,
                 )
             })
             if repeated_actions:
@@ -3474,6 +3522,14 @@ def _recover_waiting_objective(
     """Reuse an accepted objective across an exact, non-authority retry boundary."""
     phase = str(checkpoint.get("phase") or "")
     if phase == "WAITING_FOR_REASONING_PROVIDER":
+        artifact_batch = batch_number
+        persisted_situation = prior_situation
+    elif (
+        phase == "TECHNICAL_HOLD"
+        and checkpoint.get("failure_class") == "BACKEND_LOCAL_REASONING_FAILURE"
+    ):
+        # The objective was already accepted before the planning backend failed.
+        # A backend-local retry must not resample its risk classification.
         artifact_batch = batch_number
         persisted_situation = prior_situation
     elif phase == "BOUNDED_RUN_EXHAUSTED" and batch_number > 0:
