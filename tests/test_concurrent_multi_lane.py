@@ -221,8 +221,15 @@ def test_concurrent_same_workspace_worker_lock_conflict(tmp_path, monkeypatch):
         )
         monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda **kwargs: None)
 
-        # Manually acquire the workspace lock representing an active worker on command 1
-        ws_lock_file = Path(p_lari["workspace"]) / ".aos_workspace_active.lock"
+        # Manually acquire the machine-local workspace lock representing an
+        # active worker on command 1. Runtime coordination must not open or
+        # mutate a path inside the product workspace.
+        workspace = Path(p_lari["workspace"])
+        ws_lock_file = runtime_worker._workspace_lock_path(
+            Path(cfg["runtime_root"]), workspace
+        )
+        assert workspace not in ws_lock_file.parents
+        assert ws_lock_file.parent == Path(cfg["runtime_root"]).resolve() / "workspace-locks"
         with runtime_worker.exclusive_file_lock(ws_lock_file):
             # Attempting to execute command 2 while command 1 holds the workspace lock must raise RuntimeError with conflict
             with pytest.raises(RuntimeError, match="Workspace conflict"):

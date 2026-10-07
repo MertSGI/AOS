@@ -453,6 +453,20 @@ def _terminal_state(disposition: str) -> str:
     return "FAILED"
 
 
+def _workspace_lock_path(runtime_root: Path, workspace_dir: Path) -> Path:
+    """Return a machine-local lock path without mutating product workspaces.
+
+    Some accepted product lineages track the historical root lock filename.
+    Holding that tracked file open on Windows makes its content unreadable to
+    the content-sensitive workspace fingerprint.  Key the coordination lock by
+    the canonical workspace path under Runtime V1 state instead, preserving
+    cross-command mutual exclusion without hiding or changing tracked source.
+    """
+    normalized = os.path.normcase(str(workspace_dir.expanduser().resolve()))
+    identity = hashlib.sha256(os.fsencode(normalized)).hexdigest()
+    return runtime_root.expanduser().resolve() / "workspace-locks" / f"{identity}.lock"
+
+
 def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
     store = RuntimeStore(runtime_root)
     raw = store.read_command(command_id)
@@ -467,7 +481,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
 
     worker_lock = command_root / "worker.lock"
     workspace_dir = Path(command.project.workspace).expanduser().resolve()
-    workspace_lock = workspace_dir / ".aos_workspace_active.lock"
+    workspace_lock = _workspace_lock_path(runtime_root, workspace_dir)
+    workspace_lock.parent.mkdir(parents=True, exist_ok=True)
     ws_lock_ctx = None
     with exclusive_file_lock(worker_lock):
         try:

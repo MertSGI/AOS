@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from aos import runtime_worker
 import aos.workspace_fingerprint as workspace_fingerprint
 from aos.runtime_store import exclusive_file_lock
 from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
@@ -191,6 +192,24 @@ def test_tracked_root_runtime_lock_name_remains_fingerprinted(tmp_path):
     lock_path.write_text("tracked changed\n", encoding="utf-8")
 
     assert _fingerprint(root) != baseline
+
+
+def test_machine_local_worker_lock_keeps_tracked_lock_shaped_source_readable(tmp_path):
+    root = _repo(tmp_path)
+    tracked_lock = root / ".aos_workspace_active.lock"
+    tracked_lock.write_text("tracked product content\n", encoding="utf-8")
+    _git(root, "add", ".aos_workspace_active.lock")
+    _git(root, "commit", "-m", "track lock-shaped product file")
+    baseline = _fingerprint(root)
+
+    runtime_root = tmp_path / "runtime-state"
+    machine_lock = runtime_worker._workspace_lock_path(runtime_root, root)
+    machine_lock.parent.mkdir(parents=True)
+
+    assert root not in machine_lock.parents
+    with exclusive_file_lock(machine_lock):
+        assert tracked_lock.read_text(encoding="utf-8") == "tracked product content\n"
+        assert _fingerprint(root) == baseline
 
 
 def test_other_unreadable_file_errors_are_not_ignored(tmp_path, monkeypatch):
