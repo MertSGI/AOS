@@ -29,6 +29,7 @@ from aos.workers.cline_cli_probe import (
     CLINE_ADAPTER_CONTRACT_VERSION,
     build_cline_child_environment,
     get_cline_capability_store_path,
+    load_cline_runtime_config,
     resolve_cline_capability_status,
     resolve_cline_executable_identity,
 )
@@ -108,6 +109,8 @@ def parse_cline_stream_output(stdout: str, stderr: str, *, returncode: int) -> C
             err_str = (raw_error or "").lower()
             if any(t in err_str for t in ("unauthorized", "re-authenticate", "auth", "login")):
                 failure_class = "AUTH_UNAVAILABLE"
+            elif any(t in err_str for t in ("service temporarily overloaded", "temporarily overloaded", "overloaded", "capacity", "503")):
+                failure_class = "PROVIDER_CAPACITY"
             elif any(t in err_str for t in ("cannot connect", "connectionrefused", "econnrefused", "timeout")):
                 failure_class = "PROVIDER_UNREACHABLE"
             elif any(t in err_str for t in ("rate limit", "quota", "429")):
@@ -168,9 +171,7 @@ def build_cline_argv(
     if session_id:
         argv.extend(["--id", session_id])
     if prompt:
-        # Prompt must be passed as quoted argument
-        quoted_prompt = f'"{prompt.strip()}"' if not (prompt.startswith('"') and prompt.endswith('"')) else prompt
-        argv.append(quoted_prompt)
+        argv.append(prompt.strip())
     return argv
 
 
@@ -212,9 +213,9 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         capability_store_path: Optional[Path] = None,
         data_dir: Optional[str] = None,
         config_dir: Optional[str] = None,
-        underlying_provider: str = "openai-compatible",
-        underlying_model: str = "qwen-local",
-        underlying_cost_class: str = "FREE_LOCAL",
+        underlying_provider: Optional[str] = None,
+        underlying_model: Optional[str] = None,
+        underlying_cost_class: Optional[str] = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._runner = runner
@@ -226,11 +227,12 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         self._active_processes: Dict[str, Any] = {}
 
         local_app_data = os.environ.get("LOCALAPPDATA", "")
-        self._data_dir = data_dir or str(Path(local_app_data) / "AOS" / "sandbox" / "cline" / "data")
-        self._config_dir = config_dir or str(Path(local_app_data) / "AOS" / "sandbox" / "cline" / "config")
-        self.underlying_provider = underlying_provider
-        self.underlying_model = underlying_model
-        self.underlying_cost_class = underlying_cost_class
+        machine_config = load_cline_runtime_config()
+        self._data_dir = data_dir or (machine_config.data_dir if machine_config else str(Path(local_app_data) / "AOS" / "sandbox" / "cline" / "data"))
+        self._config_dir = config_dir or (machine_config.config_dir if machine_config else str(Path(local_app_data) / "AOS" / "sandbox" / "cline" / "config"))
+        self.underlying_provider = underlying_provider or (machine_config.provider if machine_config else "")
+        self.underlying_model = underlying_model or (machine_config.model if machine_config else "")
+        self.underlying_cost_class = underlying_cost_class or (machine_config.cost_class if machine_config else "FREE_LOCAL")
 
         os.makedirs(self._data_dir, exist_ok=True)
         os.makedirs(self._config_dir, exist_ok=True)
@@ -251,7 +253,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
 
     def get_availability(self) -> ExecutionAvailabilitySnapshot:
         status = self._capability_status()
-        if status not in {"OPERATIONAL", "OPERATIONAL_BOUNDED", "TEST_DOUBLE"}:
+        if status not in {"OPERATIONAL", "OPERATIONAL_START_ONLY", "TEST_DOUBLE"}:
             return ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.AUTH_UNAVAILABLE,
                 self._now_iso(),
@@ -268,6 +270,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "model": self.underlying_model,
                 "cost_class": self.underlying_cost_class,
                 "paid_fallback": "DISABLED",
+                "session_resume": "PROVEN" if status in {"OPERATIONAL", "TEST_DOUBLE"} else "UNPROVEN",
             },
         )
 
@@ -417,7 +420,61 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
     def resume(
         self, request: ExecutionRequest, identity: AgenticSessionIdentity, context_pack: Dict[str, Any]
     ) -> ExecutionResult:
+        availability = self.get_availability()
+        if self._capability_status() not in {"OPERATIONAL", "TEST_DOUBLE"}:
+            return self._failure(
+                request,
+                "CLINE_SESSION_RESUME_UNPROVEN",
+                availability,
+                evidence={"resume_mode": "FAIL_CLOSED"},
+            )
         return self._run(request, context_pack, identity)
+
+    @staticmethod
+    def _sanitized_fingerprint_evidence(exc: BaseException) -> Dict[str, str]:
+        if isinstance(exc, WorkspaceFingerprintError):
+            return {
+                "fingerprint_operation": exc.operation,
+                "safe_cause": exc.safe_cause,
+            }
+        if isinstance(exc, PermissionError):
+            return {"fingerprint_operation": "PATH_ACCESS", "safe_cause": "PERMISSION_DENIED"}
+        if isinstance(exc, OSError):
+            return {"fingerprint_operation": "PATH_ACCESS", "safe_cause": "OS_ERROR"}
+        return {}
+
+    def _durable_session_id(
+        self,
+        request: ExecutionRequest,
+        *,
+        started_at: float,
+        stream_task_id: Optional[str],
+    ) -> Optional[str]:
+        """Resolve Cline's durable history ID; stream taskId is not a resume ID."""
+        sessions_root = Path(self._data_dir) / "sessions"
+        candidates: List[tuple[float, str]] = []
+        try:
+            metadata_files = sessions_root.glob("*/*.json")
+            for path in metadata_files:
+                if path.name.endswith(".messages.json") or path.stat().st_mtime < started_at - 5:
+                    continue
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(value, dict):
+                    continue
+                if os.path.normcase(str(value.get("cwd") or "")) != os.path.normcase(str(Path(request.workspace).resolve())):
+                    continue
+                if value.get("provider") != self.underlying_provider or value.get("model") != self.underlying_model:
+                    continue
+                session_id = str(value.get("session_id") or "").strip()
+                if session_id:
+                    candidates.append((path.stat().st_mtime, session_id))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        if candidates:
+            return max(candidates)[1]
+        if self._capability_status() == "TEST_DOUBLE":
+            return stream_task_id
+        return None
 
     def _run(
         self,
@@ -445,6 +502,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             safe_evidence = {
                 "prelaunch_operation": prelaunch_operation,
                 "exception_class": exc.__class__.__name__,
+                **self._sanitized_fingerprint_evidence(exc),
             }
             failed = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.CONTRACT_FAILURE,
@@ -482,6 +540,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 )
 
         try:
+            execution_started_at = self._clock()
             argv = build_cline_argv(
                 executable["path"],
                 request.workspace,
@@ -517,6 +576,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "QUOTA_EXHAUSTED": ExecutionAvailabilityState.QUOTA_EXHAUSTED,
                 "AUTH_UNAVAILABLE": ExecutionAvailabilityState.AUTH_UNAVAILABLE,
                 "PROVIDER_UNREACHABLE": ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+                "PROVIDER_CAPACITY": ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
             }.get(outcome.failure_class, ExecutionAvailabilityState.CONTRACT_FAILURE)
             failed = ExecutionAvailabilitySnapshot(
                 state, self._now_iso(),
@@ -524,6 +584,19 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 evidence={"finish_reason": outcome.finish_reason or "MISSING", "error": outcome.raw_error},
             )
             return self._failure(request, f"CLINE_{outcome.failure_class}", failed)
+
+        durable_session_id = self._durable_session_id(
+            request,
+            started_at=execution_started_at,
+            stream_task_id=outcome.session_id,
+        )
+        if not durable_session_id:
+            return self._failure(
+                request,
+                "CLINE_DURABLE_SESSION_ID_UNAVAILABLE",
+                availability,
+                evidence={"stream_task_id_is_resume_id": False},
+            )
 
         try:
             changed = self._changed_paths(request.workspace)
@@ -536,9 +609,13 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 request.workspace, sorted(set(changed) | set(request.expected_artifacts))
             )
             after = compute_workspace_fingerprint(request.workspace, source_sha=source_sha)
-        except (OSError, WorkspaceFingerprintError):
+        except (OSError, WorkspaceFingerprintError) as exc:
             return self._failure(
-                request, "CLINE_POST_EXECUTION_VERIFICATION_FAILED", availability, status="FAILED"
+                request,
+                "CLINE_POST_EXECUTION_VERIFICATION_FAILED",
+                availability,
+                status="FAILED",
+                evidence=self._sanitized_fingerprint_evidence(exc),
             )
 
         seed = handoff_seed(context_pack) if prior is None else {}
@@ -555,7 +632,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         identity = AgenticSessionIdentity(
             resource_id=self.resource_id,
             backend_id=self.backend_id,
-            session_or_thread_id=outcome.session_id or f"cline-{request.task_id}",
+            session_or_thread_id=durable_session_id,
             workspace_fingerprint=after.sha256,
             source_sha=source_sha,
             checkpoint_id=str(request.payload.get("checkpoint_id") or request.request_id),
@@ -590,6 +667,8 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "finish_reason": outcome.finish_reason,
                 "event_count": outcome.event_count,
                 "resume_mode": "SESSION_ID" if prior else "NEW_SESSION",
+                "stream_task_id": outcome.session_id,
+                "durable_session_id": durable_session_id,
                 "underlying_provider": self.underlying_provider,
                 "underlying_model": self.underlying_model,
                 "cost_class": self.underlying_cost_class,

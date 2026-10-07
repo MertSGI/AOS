@@ -3199,7 +3199,9 @@ def _command_recency_key(
 
     if adm == AdmissionState.SUPERSEDED.value:
         priority = -1
-    elif adm == AdmissionState.ACTIVE.value and not is_terminal:
+    elif adm == AdmissionState.ACTIVE.value:
+        # Admission is the current-command authority. HUMAN_REQUIRED and
+        # TECHNICAL_HOLD are execution dispositions of that admitted command.
         priority = 3
     elif adm == AdmissionState.HOLD.value or (command_id in active_or_waiting and not is_terminal):
         priority = 2
@@ -3759,6 +3761,7 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                 # state is still authoritative. Select exactly ONE current/latest
                 # non-superseded command per project directly from durable state.
                 preferred_by_project = {}
+                active_admitted_by_project: Dict[str, list[str]] = {}
 
                 for cid in store.list_command_ids()[-200:]:
                     cmd_data = (
@@ -3792,6 +3795,8 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                     adm_state = adm_rec.get("state") if isinstance(adm_rec, dict) else None
                     if adm_state == AdmissionState.SUPERSEDED.value:
                         continue
+                    if adm_state == AdmissionState.ACTIVE.value:
+                        active_admitted_by_project.setdefault(project_id, []).append(cid)
 
                     score = _command_recency_key(
                         cid,
@@ -3817,6 +3822,14 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                             cid,
                         )
 
+                ambiguous_active_projects = {
+                    project_id: sorted(command_ids)
+                    for project_id, command_ids in active_admitted_by_project.items()
+                    if len(command_ids) > 1
+                }
+                for project_id in ambiguous_active_projects:
+                    preferred_by_project.pop(project_id, None)
+
                 cids_to_scan = [
                     cid
                     for _score, cid in preferred_by_project.values()
@@ -3840,6 +3853,19 @@ def build_status(config: Dict[str, Any]) -> Dict[str, Any]:
                             "canonical_source_sha": cmd_state.get("canonical_source_sha"),
                             **_command_work(store.command_dir(cid), cmd_state, cmd_data),
                         }
+                for project_id, command_ids in ambiguous_active_projects.items():
+                    lanes_detail[project_id] = {
+                        "command_id": None,
+                        "project_id": project_id,
+                        "state": "HUMAN_REQUIRED",
+                        "disposition": "AMBIGUOUS_ACTIVE_COMMANDS",
+                        "failure_class": "AMBIGUOUS_ACTIVE_COMMANDS",
+                        "error": "Multiple ACTIVE admitted commands fail closed",
+                        "ambiguous_command_ids": command_ids,
+                        "completed_batches": 0,
+                        "attempts": 0,
+                        "worker_execution_attempt_count": 0,
+                    }
                 # Aggregate deliberation shadow metrics from store commands
                 for ledger in (root / "commands").glob("*/project-runtime/deliberation/deliberation-shadow-ledger.jsonl"):
                     try:

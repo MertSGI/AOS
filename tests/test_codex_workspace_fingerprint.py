@@ -6,7 +6,7 @@ import pytest
 
 import aos.workspace_fingerprint as workspace_fingerprint
 from aos.runtime_store import exclusive_file_lock
-from aos.workspace_fingerprint import compute_workspace_fingerprint
+from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
 
 
 def _git(root: Path, *args: str) -> str:
@@ -206,5 +206,27 @@ def test_other_unreadable_file_errors_are_not_ignored(tmp_path, monkeypatch):
 
     monkeypatch.setattr(workspace_fingerprint, "_stream_sha256", fail_only_for_blocked)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(WorkspaceFingerprintError) as captured:
         _fingerprint(root)
+
+    assert captured.value.operation == "PATH_READ"
+    assert captured.value.safe_cause == "PERMISSION_DENIED"
+    assert "blocked-product.bin" not in str(captured.value)
+
+
+def test_git_failure_reports_exact_sanitized_fingerprint_operation(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    original = workspace_fingerprint.run_headless
+
+    def fail_status(command, **kwargs):
+        if "status" in command:
+            raise subprocess.TimeoutExpired(command, 30)
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(workspace_fingerprint, "run_headless", fail_status)
+
+    with pytest.raises(WorkspaceFingerprintError) as captured:
+        _fingerprint(root)
+
+    assert captured.value.operation == "GIT_READ_STATUS"
+    assert captured.value.safe_cause == "TIMEOUT"

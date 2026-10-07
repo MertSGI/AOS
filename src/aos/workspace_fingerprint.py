@@ -12,7 +12,12 @@ from aos.process_utils import run_headless
 
 
 class WorkspaceFingerprintError(RuntimeError):
-    pass
+    """Sanitized workspace inspection failure with a bounded operation cause."""
+
+    def __init__(self, message: str, *, operation: str = "UNKNOWN", safe_cause: str = "UNKNOWN") -> None:
+        super().__init__(message)
+        self.operation = operation
+        self.safe_cause = safe_cause
 
 
 RUNTIME_OWNED_ROOT_LOCK_PATH = ".aos_workspace_active.lock"
@@ -35,6 +40,7 @@ class WorkspaceFingerprint:
 
 
 def _git(root: Path, *args: str) -> bytes:
+    operation = _git_operation(args)
     try:
         completed = run_headless(
             ["git", "-C", str(root), *args],
@@ -42,13 +48,45 @@ def _git(root: Path, *args: str) -> bytes:
             text=False,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise WorkspaceFingerprintError("git workspace inspection failed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise WorkspaceFingerprintError(
+            "git workspace inspection timed out",
+            operation=operation,
+            safe_cause="TIMEOUT",
+        ) from exc
+    except OSError as exc:
+        raise WorkspaceFingerprintError(
+            "git workspace inspection failed",
+            operation=operation,
+            safe_cause="OS_ERROR",
+        ) from exc
     if completed.returncode != 0:
         raise WorkspaceFingerprintError(
-            f"git {' '.join(args[:2])} failed with exit {completed.returncode}"
+            f"git workspace inspection failed with exit {completed.returncode}",
+            operation=operation,
+            safe_cause=f"GIT_EXIT_{completed.returncode}",
         )
     return completed.stdout
+
+
+def _git_operation(args: Tuple[str, ...]) -> str:
+    if args[:2] == ("rev-parse", "--show-toplevel"):
+        return "GIT_RESOLVE_TOPLEVEL"
+    if args[:2] == ("rev-parse", "HEAD"):
+        return "GIT_READ_HEAD"
+    if args[:2] == ("rev-parse", "--show-object-format"):
+        return "GIT_READ_OBJECT_FORMAT"
+    if args[:3] == ("config", "--get", "core.repositoryformatversion"):
+        return "GIT_READ_REPOSITORY_FORMAT"
+    if args[:2] == ("ls-files", "--stage"):
+        return "GIT_READ_INDEX"
+    if args and args[0] == "status":
+        return "GIT_READ_STATUS"
+    if args[:2] == ("ls-files", "--others"):
+        return "GIT_LIST_UNTRACKED"
+    if args and args[0] == "ls-files":
+        return "GIT_LIST_TRACKED"
+    return "GIT_WORKSPACE_INSPECTION"
 
 
 def _record(digest: "hashlib._Hash", tag: bytes, *values: bytes) -> None:
@@ -116,12 +154,40 @@ def _path_record(root: Path, path_bytes: bytes) -> Tuple[bytes, ...]:
         info = path.lstat()
     except FileNotFoundError:
         return path_bytes, b"MISSING", b"0", b"0", hashlib.sha256(b"").hexdigest().encode("ascii")
+    except PermissionError as exc:
+        raise WorkspaceFingerprintError(
+            "workspace path metadata is not readable",
+            operation="PATH_LSTAT",
+            safe_cause="PERMISSION_DENIED",
+        ) from exc
+    except OSError as exc:
+        raise WorkspaceFingerprintError(
+            "workspace path metadata inspection failed",
+            operation="PATH_LSTAT",
+            safe_cause="OS_ERROR",
+        ) from exc
     mode = oct(stat.S_IMODE(info.st_mode)).encode("ascii")
     if stat.S_ISLNK(info.st_mode):
         target = os.fsencode(os.readlink(path))
         return path_bytes, b"SYMLINK", mode, str(len(target)).encode("ascii"), hashlib.sha256(target).hexdigest().encode("ascii")
     if stat.S_ISREG(info.st_mode):
-        return path_bytes, b"FILE", mode, str(info.st_size).encode("ascii"), _stream_sha256(path)
+        try:
+            content_sha = _stream_sha256(path)
+        except FileNotFoundError:
+            return path_bytes, b"MISSING", b"0", b"0", hashlib.sha256(b"").hexdigest().encode("ascii")
+        except PermissionError as exc:
+            raise WorkspaceFingerprintError(
+                "workspace file content is not readable",
+                operation="PATH_READ",
+                safe_cause="PERMISSION_DENIED",
+            ) from exc
+        except OSError as exc:
+            raise WorkspaceFingerprintError(
+                "workspace file content inspection failed",
+                operation="PATH_READ",
+                safe_cause="OS_ERROR",
+            ) from exc
+        return path_bytes, b"FILE", mode, str(info.st_size).encode("ascii"), content_sha
     if stat.S_ISDIR(info.st_mode):
         return path_bytes, b"DIRECTORY", mode, b"0", hashlib.sha256(b"").hexdigest().encode("ascii")
     return path_bytes, b"OTHER", mode, str(info.st_size).encode("ascii"), hashlib.sha256(b"").hexdigest().encode("ascii")

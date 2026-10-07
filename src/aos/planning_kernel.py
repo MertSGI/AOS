@@ -271,6 +271,9 @@ class ProjectSituation:
             "repository_head": self.repository_head,
             "execution_base_sha": self.execution_base_sha,
             "goal": self.goal,
+            "authority_revision": self.authority_revision,
+            "lane_allowed_scope": list(self.lane_allowed_scope) if self.lane_allowed_scope is not None else None,
+            "shared_path_governance": self.shared_path_governance,
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -1857,6 +1860,9 @@ def _situation_prompt_payload(
         "ci_state": situation.ci_state,
         "accepted_gates": situation.accepted_gates,
         "blocked_gates": situation.blocked_gates,
+        "authority_revision": situation.authority_revision,
+        "lane_allowed_scope": list(situation.lane_allowed_scope) if situation.lane_allowed_scope is not None else None,
+        "shared_path_governance": situation.shared_path_governance,
         "authority_ids": sorted(record.authority_id for record in situation.authority_records.values()),
         "goal": situation.goal,
         "constraints": list(situation.constraints),
@@ -2420,6 +2426,48 @@ def _package_has_playwright_test_runner(workspace: Path) -> bool:
     )
 
 
+def _bounded_verification_capabilities(workspace: Optional[Path]) -> Dict[str, Any]:
+    """Project only package-declared verification truth into planner context."""
+    result: Dict[str, Any] = {
+        "package_json_present": False,
+        "playwright_library_declared": False,
+        "playwright_test_runner_declared": False,
+        "verification_scripts": {},
+    }
+    if workspace is None:
+        return result
+    package_path = workspace.resolve() / "package.json"
+    if not package_path.is_file():
+        return result
+    result["package_json_present"] = True
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        result["package_json_readable"] = False
+        return result
+    if not isinstance(package, Mapping):
+        result["package_json_readable"] = False
+        return result
+    result["package_json_readable"] = True
+    dependencies: set[str] = set()
+    for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        values = package.get(section)
+        if isinstance(values, Mapping):
+            dependencies.update(str(name) for name in values)
+    result["playwright_library_declared"] = "playwright" in dependencies
+    result["playwright_test_runner_declared"] = "@playwright/test" in dependencies
+    scripts = package.get("scripts")
+    if isinstance(scripts, Mapping):
+        selected = {
+            str(name): str(command)
+            for name, command in scripts.items()
+            if isinstance(command, str)
+            and any(token in str(name).lower() for token in ("test", "lint", "check", "type", "build", "verify"))
+        }
+        result["verification_scripts"] = dict(sorted(selected.items())[:16])
+    return result
+
+
 def _playwright_test_spec_args(cmd: Sequence[str]) -> Optional[List[str]]:
     """Return explicit spec arguments for recognized Playwright test commands."""
     args = [str(value) for value in cmd]
@@ -2565,6 +2613,7 @@ def compile_execution_plan(
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     workspace_declared_symbols = _bounded_workspace_declared_symbols(workspace, workspace_manifest)
     available_process_binaries = _available_process_binaries()
+    verification_capabilities = _bounded_verification_capabilities(workspace)
 
     # If the workspace contains no Python scripts, remove python/py from available binaries and inject rule
     has_python_scripts = False
@@ -2756,6 +2805,9 @@ def compile_execution_plan(
         "python -m; Python may only receive an existing workspace-relative script path.\n"
         f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
+        "VERIFICATION_CAPABILITY_RULE=Use only package-declared verification scripts and capabilities below. "
+        "The playwright library does not imply the @playwright/test runner; never invent unsupported test commands.\n"
+        f"VERIFICATION_CAPABILITIES={json.dumps(verification_capabilities, ensure_ascii=False, sort_keys=True)}\n"
         f"{design_intelligence_guidance}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
@@ -2773,7 +2825,25 @@ def compile_execution_plan(
         attempt_prompt = prompt
         if attempt:
             python_guidance = ""
-            if "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
+            if "CANONICAL_LANE_SCOPE_VIOLATION" in validation_error:
+                python_guidance = (
+                    "\nCANONICAL_SCOPE_REPAIR_RULE: Regenerate the full plan with every mutating write_scope strictly inside "
+                    f"the canonical lane_allowed_scope from SITUATION: {json.dumps(list(situation.lane_allowed_scope or ()), ensure_ascii=False)}. "
+                    "Remove every out-of-lane path; do not weaken or duplicate the authority source."
+                )
+            elif "SHARED_PATH_OWNERSHIP_REQUIRED" in validation_error:
+                python_guidance = (
+                    "\nSHARED_PATH_REPAIR_RULE: Remove every mutation of a shared path owned by another lane. "
+                    "Do not invent an ownership handoff. Regenerate only with paths currently owned by this project in "
+                    "SITUATION.shared_path_governance."
+                )
+            elif "Playwright test runner capability is unavailable" in validation_error or "does not declare @playwright/test" in validation_error:
+                python_guidance = (
+                    "\nVERIFICATION_CAPABILITY_REPAIR_RULE: @playwright/test is not declared and MUST NOT be proposed or installed. "
+                    "Choose only an exact existing package verification script from VERIFICATION_CAPABILITIES, or a proven available "
+                    "non-Playwright check. Never repeat the unsupported Playwright Test Runner command."
+                )
+            elif "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
                 python_guidance = (
                     "\nPYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
                     "Python commands may ONLY invoke an existing workspace-relative script path (e.g. `python path/to/script.py`). "

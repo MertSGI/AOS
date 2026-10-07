@@ -1233,6 +1233,108 @@ def test_playwright_binary_on_path_does_not_prove_test_runner_capability(tmp_pat
     assert result["tasks"][0]["payload"]["cmd"][0] == "git"
     assert backend.calls == 2
     assert "does not declare @playwright/test" in backend.requests[1].payload["prompt"]
+    assert "VERIFICATION_CAPABILITY_REPAIR_RULE" in backend.requests[1].payload["prompt"]
+    assert '"playwright_library_declared": true' in backend.requests[0].payload["prompt"]
+    assert '"playwright_test_runner_declared": false' in backend.requests[0].payload["prompt"]
+
+
+def test_situation_prompt_projects_canonical_scope_from_same_situation():
+    situation = dataclasses.replace(
+        _situation(),
+        authority_revision="20261007-02",
+        lane_allowed_scope=("pages/BookingPage.tsx", "services/"),
+        shared_path_governance={
+            "status": "ENFORCED",
+            "paths": {"pages/BookingPage.tsx": {"owner_lane": "lari"}},
+        },
+    )
+
+    payload = _situation_prompt_payload(situation)
+
+    assert payload["authority_revision"] == "20261007-02"
+    assert payload["lane_allowed_scope"] == ["pages/BookingPage.tsx", "services/"]
+    assert payload["shared_path_governance"]["paths"]["pages/BookingPage.tsx"]["owner_lane"] == "lari"
+
+
+def test_plan_compiler_gives_deterministic_canonical_scope_repair(tmp_path):
+    situation = dataclasses.replace(_situation(), lane_allowed_scope=("services/",))
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "FILE",
+        "mutating": True,
+        "write_scope": ["pages/BookingPage.tsx"],
+        "expected_artifacts": ["pages/BookingPage.tsx"],
+        "payload": {"action": "write_file", "path": "pages/BookingPage.tsx", "content": "x"},
+    })
+    backend = QueueBackend([invalid, _plan()])
+
+    compile_execution_plan(
+        situation,
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    repair_prompt = backend.requests[1].payload["prompt"]
+    assert "CANONICAL_SCOPE_REPAIR_RULE" in repair_prompt
+    assert '"services/"' in repair_prompt
+
+
+def test_plan_compiler_gives_deterministic_shared_owner_repair(tmp_path):
+    situation = dataclasses.replace(
+        _situation(),
+        project_id="lari-ui-v2",
+        lane_allowed_scope=("pages/BookingPage.tsx", "components/"),
+        shared_path_governance={
+            "status": "ENFORCED",
+            "paths": {"pages/BookingPage.tsx": {"owner_lane": "lari"}},
+        },
+    )
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "FILE",
+        "mutating": True,
+        "write_scope": ["pages/BookingPage.tsx"],
+        "expected_artifacts": ["pages/BookingPage.tsx"],
+        "payload": {"action": "write_file", "path": "pages/BookingPage.tsx", "content": "x"},
+    })
+    corrected = _plan()
+    backend = QueueBackend([invalid, corrected])
+
+    compile_execution_plan(
+        situation,
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    assert "SHARED_PATH_REPAIR_RULE" in backend.requests[1].payload["prompt"]
+
+
+def test_repeated_identical_scope_invalid_plan_exhausts_fail_closed(tmp_path):
+    situation = dataclasses.replace(_situation(), lane_allowed_scope=("services/",))
+    invalid = _plan()
+    invalid["tasks"][0].update({
+        "run_type": "FILE",
+        "mutating": True,
+        "write_scope": ["pages/BookingPage.tsx"],
+        "expected_artifacts": ["pages/BookingPage.tsx"],
+        "payload": {"action": "write_file", "path": "pages/BookingPage.tsx", "content": "x"},
+    })
+
+    with pytest.raises(planning_kernel.PlannerValidationExhausted, match="PLANNER_VALIDATION_REPAIR_EXHAUSTED"):
+        compile_execution_plan(
+            situation,
+            Objective.from_dict(_objective()),
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            backend_override=QueueBackend([invalid, invalid]),
+            workspace=tmp_path,
+        )
 
 
 def test_design_remediation_rejects_verification_only_process_plan(tmp_path):

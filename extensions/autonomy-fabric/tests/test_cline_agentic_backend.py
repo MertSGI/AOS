@@ -1,5 +1,4 @@
 """Comprehensive Proofs A-O for Cline Agentic Execution Backend."""
-import importlib
 import json
 import os
 import subprocess
@@ -9,17 +8,19 @@ import pytest
 
 from extensions.autonomy_fabric.cline_agentic_backend import (
     ClineAgenticExecutionBackend,
-    WorkspaceFingerprintError,
     build_cline_argv,
     parse_cline_stream_output,
 )
 from extensions.autonomy_fabric.execution_backend import (
+    AgenticSessionIdentity,
     ExecutionCapability,
     ExecutionHealth,
     ExecutionRequest,
 )
 from aos.workers.cline_cli_probe import (
     build_cline_child_environment,
+    get_cline_runtime_config_path,
+    load_cline_runtime_config,
     resolve_cline_capability_status,
     resolve_cline_executable_identity,
 )
@@ -86,11 +87,11 @@ def _backend(runner, *, capability="TEST_DOUBLE", data_dir=None, config_dir=None
     )
 
 
-# Proof A: executable launches & Proof B: version is stable 3.0.65
+# Proof A: executable launches & Proof B: accepted machine version is stable.
 def test_proof_a_b_executable_identity_and_version():
     identity = resolve_cline_executable_identity()
     assert identity is not None
-    assert identity["version"] == "3.0.65"
+    assert identity["version"] == "3.0.68"
     assert identity["filename"] in {"cline.cmd", "cline.exe"}
     assert len(identity["sha256"]) == 64
 
@@ -111,6 +112,13 @@ def test_proof_c_structured_ndjson_parsing():
     err_outcome = parse_cline_stream_output("", err_json, returncode=1)
     assert err_outcome.valid is False
     assert err_outcome.failure_class == "AUTH_UNAVAILABLE"
+
+    overloaded = parse_cline_stream_output(
+        "",
+        json.dumps({"type": "error", "message": "Service temporarily overloaded"}),
+        returncode=1,
+    )
+    assert overloaded.failure_class == "PROVIDER_CAPACITY"
 
 
 # Proof D, E, F, G, H, I: execution, containment, safe write, process exec, terminal classification, session identity
@@ -263,21 +271,16 @@ def test_prelaunch_failure_identifies_workspace_fingerprint_without_raw_error(tm
         config_dir=str(tmp_path / "config"),
     )
 
-    def fail_fingerprint(*_args, **_kwargs):
-        raise WorkspaceFingerprintError("sensitive path must not be persisted")
-
-    backend_module = importlib.import_module(
-        "extensions.autonomy-fabric.cline_agentic_backend"
-    )
-    monkeypatch.setattr(backend_module, "compute_workspace_fingerprint", fail_fingerprint)
     result = backend.execute(_request(tmp_path, "a" * 40))
 
     assert result.evidence_payload == {
         "failure_class": "CLINE_PRELAUNCH_CONTRACT_FAILURE",
         "prelaunch_operation": "WORKSPACE_FINGERPRINT",
         "exception_class": "WorkspaceFingerprintError",
+        "fingerprint_operation": "GIT_RESOLVE_TOPLEVEL",
+        "safe_cause": "GIT_EXIT_128",
     }
-    assert "sensitive" not in json.dumps(result.to_dict())
+    assert str(tmp_path) not in json.dumps(result.to_dict())
 
 
 def test_prelaunch_failure_identifies_prompt_construction_without_raw_error(tmp_path):
@@ -297,3 +300,82 @@ def test_prelaunch_failure_identifies_prompt_construction_without_raw_error(tmp_
         "prelaunch_operation": "PROMPT_CONSTRUCTION",
         "exception_class": "ValueError",
     }
+
+
+def test_machine_local_runtime_config_rejects_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    path = get_cline_runtime_config_path()
+    path.parent.mkdir(parents=True)
+    base = {
+        "provider": "openai-compatible",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "config_dir": str((tmp_path / "cline-config").resolve()),
+        "data_dir": str((tmp_path / "cline-data").resolve()),
+        "cost_class": "FREE_TIER_CLOUD",
+        "paid_fallback": "DISABLED",
+    }
+    path.write_text(json.dumps(base), encoding="utf-8")
+    loaded = load_cline_runtime_config()
+    assert loaded is not None
+    assert loaded.provider == "openai-compatible"
+    assert loaded.model == "nvidia/nemotron-3-ultra-550b-a55b"
+
+    path.write_text(json.dumps({**base, "api_key": "must-not-be-here"}), encoding="utf-8")
+    assert load_cline_runtime_config() is None
+
+
+def test_real_mode_uses_durable_history_session_id_not_stream_task_id(tmp_path):
+    source_sha = _repo(tmp_path)
+    data_dir = tmp_path.parent / f"{tmp_path.name}-cline-data"
+    durable_id = "1791344906919_y44r4"
+
+    def runner(argv, cwd, prompt, timeout, env):
+        session_dir = data_dir / "sessions" / durable_id
+        session_dir.mkdir(parents=True)
+        (session_dir / f"{durable_id}.json").write_text(json.dumps({
+            "session_id": durable_id,
+            "cwd": str(tmp_path.resolve()),
+            "provider": "openai-compatible",
+            "model": "qwen-local",
+            "status": "completed",
+        }), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, _success_output("conv_stream_task"), "")
+
+    backend = _backend(
+        runner,
+        capability="OPERATIONAL",
+        data_dir=str(data_dir),
+        config_dir=str(tmp_path / "cline-config"),
+    )
+    result = backend.execute(_request(tmp_path, source_sha))
+
+    assert result.status == "SUCCESS"
+    assert result.agentic_identity.session_or_thread_id == durable_id
+    assert result.evidence_payload["stream_task_id"] == "conv_stream_task"
+    assert result.evidence_payload["durable_session_id"] == durable_id
+
+
+def test_start_only_attestation_fails_closed_for_resume(tmp_path):
+    source_sha = _repo(tmp_path)
+    backend = _backend(
+        lambda *_args: pytest.fail("runner must not launch"),
+        capability="OPERATIONAL_START_ONLY",
+        data_dir=str(tmp_path / "cline-data"),
+        config_dir=str(tmp_path / "cline-config"),
+    )
+    request = _request(tmp_path, source_sha, task_id="resume-work")
+    identity = AgenticSessionIdentity(
+        resource_id="cline_harness",
+        backend_id="cline",
+        session_or_thread_id="durable-session",
+        workspace_fingerprint="a" * 64,
+        source_sha=source_sha,
+        checkpoint_id="checkpoint",
+        last_successful_turn=1,
+    )
+
+    result = backend.resume(request, identity, {})
+
+    assert result.status == "DEGRADED"
+    assert result.sanitized_errors == ["CLINE_SESSION_RESUME_UNPROVEN"]
+    assert result.evidence_payload["resume_mode"] == "FAIL_CLOSED"

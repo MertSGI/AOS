@@ -1048,7 +1048,9 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
     # cannot be selected without a matching task capability and local proof.
     ag_backend = AntigravityAgenticExecutionBackend()
     codex_backend = CodexCliExecutionBackend()
-    cline_backend = ClineAgenticExecutionBackend(underlying_cost_class="SUBSCRIPTION_INCLUDED")
+    # Provider, model, local state paths, and non-paid cost class come only
+    # from the validated machine-local Cline backend profile.
+    cline_backend = ClineAgenticExecutionBackend()
 
     return ExecutionRouter(
         backends=[

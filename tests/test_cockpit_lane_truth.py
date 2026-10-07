@@ -260,6 +260,89 @@ def test_9_current_command_beats_older_failed_or_completed_command(tmp_path: Pat
     assert status["lanes"]["lari"]["state"] == "HOLD"
 
 
+@pytest.mark.parametrize("execution_state", ["HUMAN_REQUIRED", "TECHNICAL_HOLD"])
+def test_active_admission_remains_current_for_held_execution_disposition(
+    tmp_path: Path, monkeypatch, execution_state: str,
+):
+    state_root = tmp_path / "runtime" / "state"
+    commands = state_root / "commands"
+    commands.mkdir(parents=True)
+    active_id = "continue-actual-active"
+    historical_id = "continue-historical-hold"
+    for command_id, state, updated_at in (
+        (active_id, execution_state, "2026-10-06T10:00:00Z"),
+        (historical_id, "HOLD", "2026-10-06T12:00:00Z"),
+    ):
+        cdir = commands / command_id
+        cdir.mkdir()
+        (cdir / "command.json").write_text(
+            json.dumps({"project": {"project_id": "lari"}, "created_at": updated_at}), encoding="utf-8"
+        )
+        (cdir / "state.json").write_text(
+            json.dumps({"state": state, "updated_at": updated_at}), encoding="utf-8"
+        )
+    (state_root / "command-admission.json").write_text(json.dumps({
+        "contract_version": "1.0.0",
+        "records": {
+            active_id: {"command_id": active_id, "project_id": "lari", "state": "ACTIVE"},
+            historical_id: {"command_id": historical_id, "project_id": "lari", "state": "HOLD"},
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(control_panel, "runtime_configured", lambda _cfg: True)
+    monkeypatch.setattr(control_panel, "runtime_status", lambda _cfg: {
+        "host_state": "HEALTHY",
+        "runtime_v1": {
+            "runtime_state": "HEALTHY",
+            "active_commands": [active_id],
+            "waiting_commands": [historical_id],
+            "latest_command": {"command_id": historical_id},
+        },
+    })
+
+    status = control_panel.build_status({"runtime_root": str(state_root)})
+
+    assert status["lanes"]["lari"]["command_id"] == active_id
+    assert status["lanes"]["lari"]["state"] == execution_state
+
+
+def test_multiple_active_admissions_fail_closed_without_selecting_history(tmp_path: Path, monkeypatch):
+    state_root = tmp_path / "runtime" / "state"
+    commands = state_root / "commands"
+    commands.mkdir(parents=True)
+    records = {}
+    for index in (1, 2):
+        command_id = f"continue-active-{index}"
+        cdir = commands / command_id
+        cdir.mkdir()
+        (cdir / "command.json").write_text(
+            json.dumps({"project": {"project_id": "lari"}}), encoding="utf-8"
+        )
+        (cdir / "state.json").write_text(
+            json.dumps({"state": "RUNNING", "updated_at": f"2026-10-06T1{index}:00:00Z"}), encoding="utf-8"
+        )
+        records[command_id] = {"command_id": command_id, "project_id": "lari", "state": "ACTIVE"}
+    (state_root / "command-admission.json").write_text(
+        json.dumps({"contract_version": "1.0.0", "records": records}), encoding="utf-8"
+    )
+    monkeypatch.setattr(control_panel, "runtime_configured", lambda _cfg: True)
+    monkeypatch.setattr(control_panel, "runtime_status", lambda _cfg: {
+        "host_state": "HEALTHY",
+        "runtime_v1": {
+            "runtime_state": "HEALTHY",
+            "active_commands": sorted(records),
+            "waiting_commands": [],
+            "latest_command": {"command_id": "continue-active-2"},
+        },
+    })
+
+    lane = control_panel.build_status({"runtime_root": str(state_root)})["lanes"]["lari"]
+
+    assert lane["command_id"] is None
+    assert lane["state"] == "HUMAN_REQUIRED"
+    assert lane["failure_class"] == "AMBIGUOUS_ACTIVE_COMMANDS"
+    assert lane["ambiguous_command_ids"] == ["continue-active-1", "continue-active-2"]
+
+
 def test_10_old_failed_command_does_not_create_system_attention_when_newer_exists(tmp_path: Path, monkeypatch):
     """10. Old failed UI command does not create current System Attention if a newer current command exists."""
     state_root = tmp_path / "runtime" / "state"
