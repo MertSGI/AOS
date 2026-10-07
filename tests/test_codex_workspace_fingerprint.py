@@ -7,7 +7,12 @@ import pytest
 from aos import runtime_worker
 import aos.workspace_fingerprint as workspace_fingerprint
 from aos.runtime_store import exclusive_file_lock
-from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
+from aos.workspace_fingerprint import (
+    WorkspaceFingerprintError,
+    capture_workspace_mutation_state,
+    compute_workspace_fingerprint,
+    workspace_mutation_delta,
+)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -210,6 +215,23 @@ def test_machine_local_worker_lock_keeps_tracked_lock_shaped_source_readable(tmp
     with exclusive_file_lock(machine_lock):
         assert tracked_lock.read_text(encoding="utf-8") == "tracked product content\n"
         assert _fingerprint(root) == baseline
+
+
+def test_mutation_delta_ignores_preexisting_dirty_paths_but_detects_new_changes(tmp_path):
+    root = _repo(tmp_path)
+    (root / "tracked.txt").write_text("accepted prior change\n", encoding="utf-8")
+    before = capture_workspace_mutation_state(root)
+
+    unchanged = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(before, unchanged) == []
+
+    (root / "new.txt").write_text("new invocation change\n", encoding="utf-8")
+    after_new = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(before, after_new) == ["new.txt"]
+
+    (root / "tracked.txt").write_text("changed again\n", encoding="utf-8")
+    after_existing = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(after_new, after_existing) == ["tracked.txt"]
 
 
 def test_other_unreadable_file_errors_are_not_ignored(tmp_path, monkeypatch):

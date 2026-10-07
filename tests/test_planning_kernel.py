@@ -1725,6 +1725,41 @@ def test_provider_wait_retry_reuses_only_exactly_bound_durable_objective(tmp_pat
     assert _recover_waiting_objective(runtime, 0, checkpoint, prior_situation, situation) is None
 
 
+@pytest.mark.parametrize(
+    ("phase", "reason"),
+    [
+        ("BOUNDED_RUN_EXHAUSTED", "Batch bound reached"),
+        ("HUMAN_REQUIRED", "OBJECTIVE_RISK_OUTSIDE_ROUTINE_STANDING_AUTHORITY"),
+    ],
+)
+def test_exact_retry_boundary_reuses_last_accepted_objective(tmp_path, phase, reason):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    situation = _situation()
+    (runtime / "situation-0000.json").write_text(
+        json.dumps(situation.to_dict()), encoding="utf-8",
+    )
+    (runtime / "objective-0000.json").write_text(
+        json.dumps(_objective()), encoding="utf-8",
+    )
+    checkpoint = {
+        "phase": phase,
+        "reason": reason,
+        "batch_number": 1,
+        "situation_id": situation.identity(),
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+
+    recovered = _recover_waiting_objective(runtime, 1, checkpoint, {}, situation)
+
+    assert recovered is not None
+    assert recovered.objective_id == "obj-1"
+
+    changed = dataclasses.replace(situation, repository_head="f" * 40)
+    assert _recover_waiting_objective(runtime, 1, checkpoint, {}, changed) is None
+
+
 def test_provider_wait_retry_skips_duplicate_objective_reasoning(tmp_path):
     runtime = tmp_path / "runtime"
     runtime.mkdir()

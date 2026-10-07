@@ -23,7 +23,9 @@ from aos.process_utils import popen_headless, run_headless
 from aos.workspace_fingerprint import (
     RUNTIME_OWNED_ROOT_LOCK_PATH,
     WorkspaceFingerprintError,
+    capture_workspace_mutation_state,
     compute_workspace_fingerprint,
+    workspace_mutation_delta,
 )
 from aos.workers.cline_cli_probe import (
     CLINE_ADAPTER_CONTRACT_VERSION,
@@ -496,6 +498,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             source_sha = self._source_sha(request, prior)
             prelaunch_operation = "WORKSPACE_FINGERPRINT"
             before = compute_workspace_fingerprint(request.workspace, source_sha=source_sha)
+            before_mutations = capture_workspace_mutation_state(request.workspace)
             prelaunch_operation = "PROMPT_CONSTRUCTION"
             prompt = self._prompt(request, context_pack)
         except (ValueError, OSError, WorkspaceFingerprintError) as exc:
@@ -599,7 +602,8 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             )
 
         try:
-            changed = self._changed_paths(request.workspace)
+            after_mutations = capture_workspace_mutation_state(request.workspace)
+            changed = workspace_mutation_delta(before_mutations, after_mutations)
             scopes = list(request.write_scope or request.expected_changed_paths)
             if any(not self._in_scope(path, scopes) for path in changed):
                 return self._failure(
@@ -616,6 +620,10 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 availability,
                 status="FAILED",
                 evidence=self._sanitized_fingerprint_evidence(exc),
+            )
+        if after.head_sha != before.head_sha:
+            return self._failure(
+                request, "CLINE_HEAD_MUTATION", availability, status="FAILED"
             )
 
         seed = handoff_seed(context_pack) if prior is None else {}

@@ -267,6 +267,37 @@ def test_write_scope_escape_fails_closed(tmp_path):
     assert result.sanitized_errors == ["CODEX_WRITE_SCOPE_VIOLATION"]
 
 
+def test_preexisting_dirty_path_is_not_attributed_to_current_invocation(tmp_path):
+    source_sha = _repo(tmp_path)
+    (tmp_path / "prior-dirty.txt").write_text("accepted prior task\n", encoding="utf-8")
+
+    def runner(argv, cwd, prompt, timeout, env):
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        (allowed / "current.txt").write_text("current task\n", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0, _success_output(), "")
+
+    result = _backend(runner).execute(_request(tmp_path, source_sha))
+
+    assert result.status == "SUCCESS"
+    assert result.changed_paths == ["allowed/current.txt"]
+
+
+def test_read_only_invocation_on_dirty_workspace_reports_no_new_mutation(tmp_path):
+    source_sha = _repo(tmp_path)
+    (tmp_path / "prior-dirty.txt").write_text("accepted prior task\n", encoding="utf-8")
+
+    def runner(argv, cwd, prompt, timeout, env):
+        return subprocess.CompletedProcess(argv, 0, _success_output(), "")
+
+    request = _request(tmp_path, source_sha)
+    request.write_scope = []
+    result = _backend(runner).execute(request)
+
+    assert result.status == "SUCCESS"
+    assert result.changed_paths == []
+
+
 def test_host_registers_codex_outside_provider_factories(tmp_path):
     from aos.autonomous_host import _PROVIDER_FACTORIES, build_execution_router
 
@@ -383,4 +414,3 @@ def test_existing_behavior_unchanged_when_valid_codex_executable_identity_exists
     assert avail.source == "TEST"
     assert avail.evidence.get("auth_mode") == "chatgpt"
     assert avail.evidence.get("api_key_fallback") == "DISABLED"
-

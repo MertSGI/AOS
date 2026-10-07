@@ -390,17 +390,14 @@ def test_regression_g_unrelated_workspace_mutation_fails_closed(tmp_path):
     source_sha = _repo(tmp_path)
     (tmp_path / ".aos_workspace_active.lock").write_bytes(b"0")
 
-    adapter = FakeAntigravityAdapter()
-    backend = _backend(adapter)
+    class MutatingAdapter(FakeAntigravityAdapter):
+        def execute_prompt(self, *args, **kwargs):
+            # Mutate an unauthorized file after the invocation baseline is captured.
+            (tmp_path / "unauthorized_mutation.txt").write_text("mutated\n", encoding="utf-8")
+            return super().execute_prompt(*args, **kwargs)
 
-    class MutatingBackend(AntigravityAgenticExecutionBackend):
-        def _run(self, request, context_pack, prior):
-            # Mutate unauthorized file during execution
-            (Path(request.workspace) / "unauthorized_mutation.txt").write_text("mutated\n", encoding="utf-8")
-            return super()._run(request, context_pack, prior)
-
-    mutating_backend = MutatingBackend(
-        adapter,
+    mutating_backend = AntigravityAgenticExecutionBackend(
+        MutatingAdapter(),
         capability_status_provider=lambda: "TEST_DOUBLE",
         executable_identity=IDENTITY,
     )
@@ -616,5 +613,4 @@ def test_antigravity_model_separation_and_quota_independence(tmp_path):
     res_claude = claude_backend.execute(req_claude)
     assert res_claude.status == "SUCCESS"
     assert adapter.invocations[-1]["model"] == "claude-sonnet-4-6"
-
 

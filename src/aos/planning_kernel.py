@@ -3471,8 +3471,24 @@ def _recover_waiting_objective(
     prior_situation: Mapping[str, Any],
     fresh_situation: ProjectSituation,
 ) -> Optional[Objective]:
-    """Reuse a durable objective only across an identical provider-wait retry."""
-    if checkpoint.get("phase") != "WAITING_FOR_REASONING_PROVIDER":
+    """Reuse an accepted objective across an exact, non-authority retry boundary."""
+    phase = str(checkpoint.get("phase") or "")
+    if phase == "WAITING_FOR_REASONING_PROVIDER":
+        artifact_batch = batch_number
+        persisted_situation = prior_situation
+    elif phase == "BOUNDED_RUN_EXHAUSTED" and batch_number > 0:
+        artifact_batch = batch_number - 1
+        persisted_situation = _read_json(runtime_dir / f"situation-{artifact_batch:04d}.json")
+    elif (
+        phase == "HUMAN_REQUIRED"
+        and checkpoint.get("reason") == "OBJECTIVE_RISK_OUTSIDE_ROUTINE_STANDING_AUTHORITY"
+        and batch_number > 0
+    ):
+        # A newly sampled risk label must not override the last accepted R0/R1
+        # objective when canonical authority and workspace identity are exact.
+        artifact_batch = batch_number - 1
+        persisted_situation = _read_json(runtime_dir / f"situation-{artifact_batch:04d}.json")
+    else:
         return None
     situation_id = fresh_situation.identity()
     if (
@@ -3480,12 +3496,12 @@ def _recover_waiting_objective(
         or checkpoint.get("situation_id") != situation_id
         or checkpoint.get("canonical_source_sha") != fresh_situation.control_sha
         or checkpoint.get("canonical_execution_base_sha") != fresh_situation.execution_base_sha
-        or prior_situation.get("situation_id") != situation_id
-        or prior_situation.get("control_sha") != fresh_situation.control_sha
-        or prior_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
+        or persisted_situation.get("situation_id") != situation_id
+        or persisted_situation.get("control_sha") != fresh_situation.control_sha
+        or persisted_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
     ):
         return None
-    raw_objective = _read_json(runtime_dir / f"objective-{batch_number:04d}.json")
+    raw_objective = _read_json(runtime_dir / f"objective-{artifact_batch:04d}.json")
     if not raw_objective or not Draft202012Validator(OBJECTIVE_SCHEMA).is_valid(raw_objective):
         return None
     try:

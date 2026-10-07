@@ -16,7 +16,9 @@ from aos.process_utils import run_headless
 from aos.workspace_fingerprint import (
     RUNTIME_OWNED_ROOT_LOCK_PATH,
     WorkspaceFingerprintError,
+    capture_workspace_mutation_state,
     compute_workspace_fingerprint,
+    workspace_mutation_delta,
 )
 from aos.workers.antigravity import (
     ADAPTER_CONTRACT_VERSION,
@@ -298,6 +300,7 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             before = compute_workspace_fingerprint(
                 request.workspace, source_sha=source_sha
             )
+            before_mutations = capture_workspace_mutation_state(request.workspace)
         except (ValueError, WorkspaceFingerprintError, OSError):
             failed = ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.CONTRACT_FAILURE,
@@ -403,7 +406,8 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             transient_structured_output = parsed_dict
 
         try:
-            changed_paths = self._changed_paths(request.workspace)
+            after_mutations = capture_workspace_mutation_state(request.workspace)
+            changed_paths = workspace_mutation_delta(before_mutations, after_mutations)
             allowed = list(request.write_scope or request.expected_changed_paths)
             unexpected = [path for path in changed_paths if not self._in_scope(path, allowed)]
             if unexpected:
@@ -424,6 +428,10 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             return self._failure(
                 request, "ANTIGRAVITY_POST_EXECUTION_VERIFICATION_FAILED", availability,
                 status="FAILED",
+            )
+        if after.head_sha != before.head_sha:
+            return self._failure(
+                request, "ANTIGRAVITY_HEAD_MUTATION", availability, status="FAILED"
             )
         if (
             request.write_scope
