@@ -2824,10 +2824,12 @@ def compile_execution_plan(
         "IMPLEMENTATION_PLAN_RULE=When the selected objective is implementation, preparatory GIT actions such as "
         "fetch/checkout/switch/worktree/status do not satisfy it. Include real bounded product mutation plus concrete "
         "expected_artifacts, completion criteria, tests/verification, and evidence requirements.\n"
-        "AGENTIC_EXECUTION_RULE=For high-value multi-file repository implementation or architecture-sensitive work, "
-        "prefer provider-neutral AGENTIC rather than inventing isolated files. AGENTIC requires a non-empty bounded "
-        "write_scope, concrete expected_artifacts, a self-contained prompt, verification/evidence, and completion criteria. "
-        "Never name or force a specific agentic backend; Resource Orchestrator selects the eligible resource.\n"
+        "NATIVE_FIRST_EXECUTION_RULE=Use native FILE/GIT/PROCESS/TEST/BUILD tasks whenever the operation is expressible "
+        "by their declared deterministic worker contracts. Ordinary repository mutation and verification must not require "
+        "an external agentic executor. Reserve provider-neutral AGENTIC for high-value, architecture-sensitive work that "
+        "cannot be safely decomposed into bounded native tasks. AGENTIC requires a non-empty bounded write_scope, concrete "
+        "expected_artifacts, a self-contained prompt, verification/evidence, and completion criteria. Never name or force "
+        "a specific agentic backend; Resource Orchestrator selects the eligible resource.\n"
         f"{_run_type_payload_contract_guidance()}\n"
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
@@ -4092,49 +4094,6 @@ def run_autonomous_project(
             consecutive_failures = 0
             replan_reason = "MEANINGFUL_BATCH_COMPLETE_FRESH_READ_REQUIRED"
 
-            # Deterministic Delivery Closure (Phase 1A):
-            # If the batch made changes or workspace is dirty and remote delivery is required,
-            # enter delivery closure instead of blind replan.
-            if workspace is not None:
-                has_mutation = any(
-                    bool(t.get("mutating"))
-                    for t in plan.get("tasks", [])
-                    if isinstance(t, Mapping) and str(t.get("node_id")) in completed_now
-                )
-                status_check = run_headless(["git", "status", "--porcelain=v1"], cwd=str(workspace), timeout=30)
-                is_dirty = bool([l for l in (status_check.stdout or "").splitlines() if l.strip() and not l.strip().endswith(".lock")])
-
-                if has_mutation or is_dirty:
-                    closure_result = delivery_closure(
-                        workspace=workspace,
-                        runtime_dir=runtime_dir,
-                        situation=situation,
-                        objective=objective,
-                        batch_number=batch_number,
-                    )
-                    if closure_result.get("disposition") == "WAITING_FOR_CI":
-                        candidate_sha = closure_result.get("candidate_sha")
-                        result = _final_result(
-                            situation,
-                            batch_number,
-                            completed_batches,
-                            "WAITING_FOR_CI",
-                            "Delivery closure committed and pushed candidate SHA. Waiting for exact-SHA CI observation.",
-                            recent_receipt,
-                            runtime_dir,
-                            total_completed_batch_count=total_completed_batch_count,
-                            successful_batch_count=successful_batch_count,
-                            failed_batch_count=failed_batch_count,
-                        )
-                        result["candidate_sha"] = candidate_sha
-                        result["ci_workflow_identity"] = closure_result.get("ci_workflow_identity")
-                        _write_kernel_checkpoint(runtime_dir, {
-                            **result,
-                            "phase": "WAITING_FOR_CI",
-                            "candidate_sha": candidate_sha,
-                        })
-                        return result
-
         progress_fingerprint = _progress_fingerprint(
             situation,
             workspace,
@@ -4258,115 +4217,6 @@ def run_autonomous_project(
     )
     _write_kernel_checkpoint(runtime_dir, {**result, "phase": "BOUNDED_RUN_EXHAUSTED"})
     return result
-
-
-def delivery_closure(
-    *,
-    workspace: Path,
-    runtime_dir: Path,
-    situation: ProjectSituation,
-    objective: Objective,
-    batch_number: int,
-) -> Dict[str, Any]:
-    """Execute deterministic post-implementation delivery closure.
-
-    Invariants:
-    - Pure deterministic orchestration: git status -> add -> commit -> resolve exact SHA -> push -> WAITING_FOR_CI
-    - Never uses HEAD as accepted evidence
-    - Forward-only fast-forward git push; no force push
-    - Durable restart safety through delivery-state.json
-    """
-    from aos.delivery_state import (
-        DeliveryState,
-        read_delivery_state,
-        write_delivery_state,
-        advance_delivery_stage,
-    )
-
-    ws = workspace.resolve()
-    # 1. Check existing delivery state if resumed
-    state = read_delivery_state(runtime_dir)
-    if state is None:
-        # Check git status for uncommitted changes
-        status_proc = run_headless(["git", "status", "--porcelain=v1"], cwd=str(ws), timeout=30)
-        status_lines = [
-            l for l in (status_proc.stdout or "").splitlines()
-            if l.strip() and not l.strip().endswith(".lock")
-        ]
-        if not status_lines:
-            return {"disposition": "NO_MUTATION", "reason": "workspace_clean"}
-
-        delivery_id = f"delivery-{hashlib.sha256(f'{situation.project_id}:{objective.objective_id}:{batch_number}'.encode('utf-8')).hexdigest()[:12]}"
-
-        # Determine push target branch from git or situation
-        branch_proc = run_headless(["git", "branch", "--show-current"], cwd=str(ws), timeout=30)
-        push_branch = (branch_proc.stdout or "").strip()
-        if not push_branch:
-            push_branch = "feature/phase7-node2-discovery-marketplace-r1-20261003"
-
-        state = DeliveryState(
-            delivery_id=delivery_id,
-            objective_id=objective.objective_id,
-            execution_base_sha=situation.execution_base_sha or "",
-            stage="PREPARING",
-            ci_workflow_identity="lari-phase5-postgres-acceptance.yml",
-            push_target_branch=push_branch,
-            production="NO_GO",
-        )
-        write_delivery_state(runtime_dir, state)
-
-    # 2. Stage changes if in PREPARING
-    if state.stage == "PREPARING":
-        run_headless(["git", "add", "-A"], cwd=str(ws), timeout=60)
-        state = advance_delivery_stage(runtime_dir, "STAGED")
-
-    # 3. Commit changes if in STAGED
-    if state.stage == "STAGED":
-        msg = f"feat({situation.project_id}): {objective.title} [AOS-AUTO]"
-        commit_proc = run_headless(
-            [
-                "git",
-                "-c", "user.name=AOS Delivery Worker",
-                "-c", "user.email=aos-delivery@users.noreply.github.com",
-                "commit", "-m", msg,
-            ],
-            cwd=str(ws),
-            timeout=60,
-        )
-        state = advance_delivery_stage(runtime_dir, "COMMITTED")
-
-    # 4. Resolve exact SHA
-    head_proc = run_headless(["git", "rev-parse", "HEAD"], cwd=str(ws), timeout=30)
-    candidate_sha = (head_proc.stdout or "").strip().lower()
-    if not candidate_sha or len(candidate_sha) != 40:
-        raise ValueError(f"Failed to resolve candidate SHA after commit: {candidate_sha!r}")
-
-    state.candidate_sha = candidate_sha
-    write_delivery_state(runtime_dir, state)
-
-    # 5. Push changes if in COMMITTED
-    if state.stage == "COMMITTED":
-        push_proc = run_headless(
-            ["git", "push", "origin", f"HEAD:{state.push_target_branch}"],
-            cwd=str(ws),
-            timeout=300,
-        )
-        if push_proc.returncode != 0:
-            err = (push_proc.stderr or push_proc.stdout or "").strip()
-            raise RuntimeError(f"Deterministic delivery push failed: {err[:500]}")
-        state = advance_delivery_stage(runtime_dir, "PUSHED")
-
-    # 6. Advance to WAITING_FOR_CI
-    if state.stage in ("PUSHED", "WAITING_FOR_CI"):
-        state = advance_delivery_stage(runtime_dir, "WAITING_FOR_CI")
-        return {
-            "disposition": "WAITING_FOR_CI",
-            "candidate_sha": state.candidate_sha,
-            "ci_workflow_identity": state.ci_workflow_identity,
-            "delivery_state_path": str(runtime_dir / "delivery-state.json"),
-        }
-
-    return {"disposition": "WAITING_FOR_CI", "candidate_sha": state.candidate_sha}
 
 
 def _final_result(

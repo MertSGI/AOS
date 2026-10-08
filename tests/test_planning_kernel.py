@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -598,6 +599,100 @@ def test_plan_compiler_allows_repeated_verification_after_novel_mutation(tmp_pat
         "write-forward-artifact", "bounded-test",
     ]
     assert backend.calls == 1
+
+
+def test_plan_compiler_directs_ordinary_work_to_native_workers_first(tmp_path):
+    backend = QueueBackend([_plan()])
+
+    compile_execution_plan(
+        _situation(),
+        Objective.from_dict(_objective()),
+        tmp_path / "policy.json",
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    prompt = backend.requests[0].payload["prompt"]
+    assert "NATIVE_FIRST_EXECUTION_RULE=" in prompt
+    assert "Ordinary repository mutation and verification must not require an external agentic executor" in prompt
+    assert "prefer provider-neutral AGENTIC" not in prompt
+
+
+def test_successful_dirty_batch_does_not_stage_commit_or_push_automatically(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "native-canary@example.invalid"],
+        cwd=workspace,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Native Canary"],
+        cwd=workspace,
+        check=True,
+    )
+    (workspace / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=workspace, check=True, capture_output=True)
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=workspace, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    plan = _plan()
+    mutation = {
+        "node_id": "native-write",
+        "run_type": "FILE",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": True,
+        "dependencies": [],
+        "scope_tags": ["docs"],
+        "write_scope": ["docs/native.txt"],
+        "payload": {"action": "write_file", "path": "docs/native.txt", "content": "native\n"},
+        "expected_artifacts": ["docs/native.txt"],
+        "tests": [],
+        "evidence_requirements": ["artifact written"],
+        "completion_criteria": ["artifact exists"],
+    }
+    plan["tasks"].insert(0, mutation)
+    plan["tasks"][1]["dependencies"] = ["native-write"]
+    plan["parallel_safe_groups"] = [["native-write"], ["bounded-test"]]
+    runtime = tmp_path / "runtime"
+
+    def execute_batch(**_kwargs):
+        target = workspace / "docs" / "native.txt"
+        target.parent.mkdir()
+        target.write_text("native\n", encoding="utf-8")
+        return {
+            "progress": 100.0,
+            "completed_task_ids": ["native-write", "bounded-test"],
+            "failed_task_ids": [],
+            "production": "NO_GO",
+        }
+
+    result = run_autonomous_project(
+        descriptor_path=tmp_path / "descriptor.json",
+        workspace=workspace,
+        runtime_dir=runtime,
+        routing_policy_path=tmp_path / "policy.json",
+        backend_override=QueueBackend([_objective(), plan]),
+        situation_factory=lambda **_kwargs: _situation(),
+        batch_executor=execute_batch,
+        max_batches=1,
+    )
+
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=workspace, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--short"], cwd=workspace, check=True, capture_output=True, text=True,
+    ).stdout
+    assert result["disposition"] == "BOUNDED_RUN_EXHAUSTED"
+    assert head_sha == base_sha
+    assert "?? docs/" in status
+    assert not (runtime / "delivery-state.json").exists()
 
 
 def test_completed_action_signatures_are_bounded_for_provider_prompt():
