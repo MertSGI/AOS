@@ -1,0 +1,80 @@
+{
+  "authority_id": "AOS-ASTRA-RESUME-GATE-THROUGHPUT-RECOVERY-20261008-01",
+  "status": "PASS",
+  "base_sha": "27e67c9db359df8ea3e512beac15db25974d7ec8",
+  "result_sha": "e991720920b45fc1532fd12562f15e834b167f2d",
+  "branch": "recovery/aos-throughput-kernel-20261008-01",
+  "remote_branch_sha": "e991720920b45fc1532fd12562f15e834b167f2d",
+  "working_tree_clean": true,
+  "production": "NO_GO",
+  "paid_fallback": "DISABLED",
+  "files_changed": [
+    "descriptors/lari-ui-v2.autonomous-host.descriptor.json",
+    "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "extensions/autonomy-fabric/codex_cli_backend.py",
+    "schemas/v0.1/canonical_project_snapshot.schema.json",
+    "src/aos/execution_authority.py",
+    "src/aos/planning_kernel.py",
+    "src/aos/runtime_worker.py",
+    "src/aos/source_adapter.py",
+    "src/aos/workspace_fingerprint.py",
+    "tests/test_codex_workspace_fingerprint.py",
+    "tests/test_concurrent_multi_lane.py",
+    "tests/test_execution_authority.py",
+    "tests/test_planning_kernel.py"
+  ],
+  "implemented_invariants": {
+    "machine_local_workspace_lock": "PASS",
+    "invocation_local_mutation_delta": "PASS",
+    "native_first_planner": "PASS",
+    "bounded_objective_continuity": "PASS",
+    "c4_lane_scope_projection": "PASS",
+    "planner_validator_authority_symmetry": "PASS",
+    "shared_path_ownership": "PASS",
+    "verification_capability_truth": "PASS",
+    "repeat_verification_after_novel_mutation": "PASS",
+    "automatic_delivery_closure_absent": "PASS",
+    "cline_dependency_absent": "PASS"
+  },
+  "tests": {
+    "focused": [
+      "tests/test_codex_workspace_fingerprint.py (7 passed)",
+      "tests/test_concurrent_multi_lane.py (4 passed)",
+      "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py (13 passed)",
+      "extensions/autonomy-fabric/tests/test_codex_cli_backend.py (7 passed)",
+      "tests/test_execution_authority.py (24 passed)",
+      "tests/test_planning_kernel.py (53 passed)",
+      "focused total: 108 passed"
+    ],
+    "full": "1058 passed, 8 skipped, 26 deselected in 889.95s",
+    "git_diff_check": "PASS (clean, no whitespace/syntax errors)"
+  },
+  "real_canary": {
+    "status": "BLOCKED_PROVIDER_ONLY",
+    "provider": "nemotron",
+    "lineage_id": "",
+    "batch_1_mutation": "",
+    "batch_2_mutation": "",
+    "same_verification_ran_twice": false,
+    "runtime_restart_continuity": "NOT_RUN",
+    "agentic_executor_required": false,
+    "workspace_fingerprint_failure": false,
+    "false_scope_violation": false,
+    "duplicate_accepted_work": false
+  },
+  "forbidden_surface_audit": {
+    "agentic_planner_run_type_present": false,
+    "prefer_agentic_rule_present": false,
+    "automatic_delivery_closure_present": false,
+    "git_add_all_hot_path_present": false,
+    "cline_added": false,
+    "paid_execution_used": false,
+    "product_repo_mutated": false,
+    "canonical_control_mutated": false
+  },
+  "known_limitations": [
+    "Nemotron hosted provider API key (NVIDIA_API_KEY) not configured in local environment; canary marked BLOCKED_PROVIDER_ONLY per contract instructions without fallback to paid providers."
+  ],
+  "blockers": [],
+  "next_controller_action": "Evaluate recovery branch e991720920b45fc1532fd12562f15e834b167f2d for Astra resume gate progression."
+}
