@@ -214,6 +214,9 @@ class ProjectSituation:
     completion_criteria: Tuple[str, ...]
     ambiguity_reasons: Tuple[str, ...]
     captured_at: str
+    authority_revision: Optional[str] = None
+    lane_allowed_scope: Optional[Tuple[str, ...]] = None
+    shared_path_governance: Optional[Dict[str, Any]] = None
 
     def identity(self) -> str:
         payload = {
@@ -223,6 +226,9 @@ class ProjectSituation:
             "repository_head": self.repository_head,
             "execution_base_sha": self.execution_base_sha,
             "goal": self.goal,
+            "authority_revision": self.authority_revision,
+            "lane_allowed_scope": list(self.lane_allowed_scope) if self.lane_allowed_scope is not None else None,
+            "shared_path_governance": self.shared_path_governance,
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -689,6 +695,9 @@ def synthesize_project_situation(
         completion_criteria=_completion_criteria_from_descriptor(descriptor, goal),
         ambiguity_reasons=ambiguity,
         captured_at=_utc_now(),
+        authority_revision=snapshot.get("authority_revision"),
+        lane_allowed_scope=tuple(snapshot.get("lane_allowed_scope")) if snapshot.get("lane_allowed_scope") is not None else None,
+        shared_path_governance=snapshot.get("shared_path_governance"),
     )
 
 
@@ -942,6 +951,42 @@ def _task_signature(task: Mapping[str, Any]) -> str:
     return f"{str(task.get('run_type', '')).upper()}:" + json.dumps(
         dict(normalized_payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )
+
+
+def _repeatable_verification_after_novel_mutation(
+    task: Mapping[str, Any],
+    tasks_by_id: Mapping[str, Mapping[str, Any]],
+    forbidden_task_ids: set[str],
+    forbidden_signatures: set[str],
+) -> bool:
+    """Allow a repeated check only when this DAG first performs novel mutation.
+
+    Verification commands are intentionally stable across batches.  Their
+    payload signature therefore cannot by itself distinguish pointless replay
+    from a necessary post-mutation check.  Keep standalone replay forbidden,
+    but permit a PROCESS/TEST/BUILD task whose dependency graph contains a
+    mutating task that has not already completed under either durable identity.
+    """
+    if str(task.get("run_type", "")).upper() not in ("PROCESS", "TEST", "BUILD"):
+        return False
+    pending = [str(item) for item in task.get("dependencies", [])]
+    visited: set[str] = set()
+    while pending:
+        node_id = pending.pop()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        dependency = tasks_by_id.get(node_id)
+        if dependency is None:
+            continue
+        if (
+            bool(dependency.get("mutating"))
+            and node_id not in forbidden_task_ids
+            and _task_signature(dependency) not in forbidden_signatures
+        ):
+            return True
+        pending.extend(str(item) for item in dependency.get("dependencies", []))
+    return False
 
 
 def _completed_task_signatures(
@@ -1497,6 +1542,9 @@ def _situation_prompt_payload(
         "ci_state": situation.ci_state,
         "accepted_gates": situation.accepted_gates,
         "blocked_gates": situation.blocked_gates,
+        "authority_revision": situation.authority_revision,
+        "lane_allowed_scope": list(situation.lane_allowed_scope) if situation.lane_allowed_scope is not None else None,
+        "shared_path_governance": situation.shared_path_governance,
         "authority_ids": sorted(record.authority_id for record in situation.authority_records.values()),
         "goal": situation.goal,
         "constraints": list(situation.constraints),
@@ -1639,12 +1687,56 @@ class CanonicalAuthorityResolver:
             if token in ("LARI", "AOS", "NON PRODUCTION", "PROGRAM V2"):
                 continue
             # Scope tags are advisory unless the authority explicitly contradicts them.
+        is_product_lane = self.situation.project_id in ("lari", "lari-ui-v2")
+        mutating_task = bool(task.get("mutating", True))
+
+        # Check mutating tasks have write_scope
+        if mutating_task and is_product_lane and self.situation.lane_allowed_scope is None:
+            raise AuthorityDenied("CANONICAL_LANE_SCOPE_MISSING")
+
+        lane_allowed = self.situation.lane_allowed_scope
+        lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in lane_allowed] if lane_allowed else []
+        lane_allowed_exact = [p.replace("\\", "/") for p in lane_allowed] if lane_allowed else []
+
+        shared_gov = self.situation.shared_path_governance or {}
+        gov_paths = shared_gov.get("paths", {}) if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED" else {}
+        explicit_handoff = task.get("shared_path_handoff") or (task.get("extensions") or {}).get("shared_path_handoff")
+
         for path in task.get("write_scope", []) or []:
             if not isinstance(path, str) or not path.strip():
                 raise AuthorityDenied("Invalid write_scope path")
             candidate = (Path(self.situation.repository_head) if False else path)  # type guard placeholder
             if ".." in Path(path).parts:
                 raise AuthorityDenied("write_scope escapes workspace")
+
+            clean_path = path.replace("\\", "/")
+
+            # If lane_allowed_scope is active, every write_scope entry MUST be a subset
+            if lane_allowed is not None and mutating_task:
+                is_covered = False
+                for a_pref in lane_allowed_prefixes:
+                    if clean_path.startswith(a_pref) or clean_path + "/" == a_pref:
+                        is_covered = True
+                        break
+                if not is_covered and clean_path in lane_allowed_exact:
+                    is_covered = True
+
+                if not is_covered:
+                    raise AuthorityDenied(f"CANONICAL_LANE_SCOPE_VIOLATION: path '{clean_path}' outside canonical lane allowed scope")
+
+            # Shared path ownership check
+            if gov_paths and mutating_task:
+                for g_path, g_rule in gov_paths.items():
+                    clean_gp = g_path.replace("\\", "/")
+                    if clean_path == clean_gp or clean_path.startswith(clean_gp.rstrip("/") + "/"):
+                        owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                        current_lane = self.situation.project_id
+                        lane_key = "ui_v2" if current_lane == "lari-ui-v2" else ("lari" if current_lane == "lari" else current_lane)
+                        if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                            if not explicit_handoff or not explicit_handoff.get("valid"):
+                                raise AuthorityDenied(
+                                    f"SHARED_PATH_OWNERSHIP_REQUIRED: path '{clean_path}' is owned by lane '{owner_lane}', not '{current_lane}'"
+                                )
 
 
 def _walk_keys(value: Any) -> Iterable[str]:
@@ -1824,6 +1916,49 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
                 for scope in task["write_scope"]
             ):
                 raise PlanningKernelError(f"Task {node_id} FILE target is outside declared write_scope")
+
+        # Enforce canonical lane allowed scope ceiling on mutating task write_scope
+        if run_type == "FILE" and task["mutating"]:
+            if situation.project_id in ("lari", "lari-ui-v2") and situation.lane_allowed_scope is None:
+                raise PlanningKernelError(
+                    f"Task {node_id} mutating {run_type} task rejected: CANONICAL_LANE_SCOPE_MISSING"
+                )
+            if situation.lane_allowed_scope is not None:
+                lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in situation.lane_allowed_scope]
+                lane_allowed_exact = [p.replace("\\", "/") for p in situation.lane_allowed_scope]
+                for ws in task["write_scope"]:
+                    clean_ws = ws.replace("\\", "/")
+                    is_covered = False
+                    for a_pref in lane_allowed_prefixes:
+                        if clean_ws.startswith(a_pref) or clean_ws + "/" == a_pref:
+                            is_covered = True
+                            break
+                    if not is_covered and clean_ws in lane_allowed_exact:
+                        is_covered = True
+                    if not is_covered:
+                        raise PlanningKernelError(
+                            f"Task {node_id} write_scope '{clean_ws}' outside canonical lane allowed scope: CANONICAL_LANE_SCOPE_VIOLATION"
+                        )
+
+            # Enforce shared path governance
+            shared_gov = situation.shared_path_governance or {}
+            gov_paths = shared_gov.get("paths", {}) if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED" else {}
+            explicit_handoff = task.get("shared_path_handoff") or (task.get("extensions") or {}).get("shared_path_handoff")
+            if gov_paths:
+                for ws in task["write_scope"]:
+                    clean_ws = ws.replace("\\", "/")
+                    for g_path, g_rule in gov_paths.items():
+                        clean_gp = g_path.replace("\\", "/")
+                        if clean_ws == clean_gp or clean_ws.startswith(clean_gp.rstrip("/") + "/"):
+                            owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                            current_lane = situation.project_id
+                            lane_key = "ui_v2" if current_lane == "lari-ui-v2" else ("lari" if current_lane == "lari" else current_lane)
+                            if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                                if not explicit_handoff or not explicit_handoff.get("valid"):
+                                    raise PlanningKernelError(
+                                        f"Task {node_id} write_scope '{clean_ws}' owned by lane '{owner_lane}', not '{current_lane}': SHARED_PATH_OWNERSHIP_REQUIRED"
+                                    )
+
         for key in ("expected_artifacts", "tests", "evidence_requirements", "completion_criteria"):
             task[key] = _string_list(task.get(key, []), key, 64, 500)
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
@@ -1918,6 +2053,118 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
             raise PlanningKernelError(f"Task {node_id} MODEL_REASONING payload requires prompt and schema")
 
 
+def _package_has_playwright_test_runner(workspace: Path) -> bool:
+    package_path = workspace / "package.json"
+    if not package_path.is_file():
+        return False
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(package, Mapping):
+        return False
+    return any(
+        isinstance(package.get(section), Mapping)
+        and "@playwright/test" in package[section]
+        for section in ("dependencies", "devDependencies", "optionalDependencies")
+    )
+
+
+def _bounded_verification_capabilities(workspace: Optional[Path]) -> Dict[str, Any]:
+    """Project only package-declared verification truth into planner context."""
+    result: Dict[str, Any] = {
+        "package_json_present": False,
+        "playwright_library_declared": False,
+        "playwright_test_runner_declared": False,
+        "verification_scripts": {},
+    }
+    if workspace is None:
+        return result
+    package_path = workspace.resolve() / "package.json"
+    if not package_path.is_file():
+        return result
+    result["package_json_present"] = True
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        result["package_json_readable"] = False
+        return result
+    if not isinstance(package, Mapping):
+        result["package_json_readable"] = False
+        return result
+    result["package_json_readable"] = True
+    dependencies: set[str] = set()
+    for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        values = package.get(section)
+        if isinstance(values, Mapping):
+            dependencies.update(str(name) for name in values)
+    result["playwright_library_declared"] = "playwright" in dependencies
+    result["playwright_test_runner_declared"] = "@playwright/test" in dependencies
+    scripts = package.get("scripts")
+    if isinstance(scripts, Mapping):
+        selected = {
+            str(name): str(command)
+            for name, command in scripts.items()
+            if isinstance(command, str)
+            and any(token in str(name).lower() for token in ("test", "lint", "check", "type", "build", "verify"))
+        }
+        result["verification_scripts"] = dict(sorted(selected.items())[:16])
+    return result
+
+
+def _playwright_test_spec_args(cmd: Sequence[str]) -> Optional[List[str]]:
+    """Return explicit spec arguments for recognized Playwright test commands."""
+    args = [str(value) for value in cmd]
+    if not args:
+        return None
+    binary = Path(args[0]).name.lower().removesuffix(".exe")
+    tail = args[1:]
+    if binary in {"npm", "npx"}:
+        while tail and tail[0] in {"exec", "--yes", "-y"}:
+            tail = tail[1:]
+        if tail and tail[0] == "--":
+            tail = tail[1:]
+        if not tail or tail[0].lower() not in {"playwright", "@playwright/test"}:
+            return None
+        tail = tail[1:]
+    elif binary != "playwright":
+        return None
+    if tail and tail[0] == "--":
+        tail = tail[1:]
+    if not tail or tail[0].lower() != "test":
+        return None
+    return [
+        value for value in tail[1:]
+        if not value.startswith("-")
+        and Path(re.sub(r":\d+(?::\d+)?$", "", value)).suffix.lower()
+        in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+    ]
+
+
+def _validate_process_workspace_inputs(task: Mapping[str, Any], workspace: Path) -> None:
+    if task.get("run_type") not in {"PROCESS", "TEST", "BUILD"}:
+        return
+    cmd = task["payload"]["cmd"]
+    spec_args = _playwright_test_spec_args(cmd)
+    if spec_args is None:
+        return
+    node_id = str(task["node_id"])
+    if not _package_has_playwright_test_runner(workspace):
+        raise PlanningKernelError(
+            f"Task {node_id} Playwright test runner capability is unavailable: "
+            "package.json does not declare @playwright/test"
+        )
+    for spec_arg in spec_args:
+        relative = re.sub(r":\d+(?::\d+)?$", "", spec_arg)
+        spec_path = (workspace / relative).resolve()
+        if spec_path != workspace and workspace not in spec_path.parents:
+            raise PlanningKernelError(f"Task {node_id} Playwright spec escapes managed workspace")
+        if not spec_path.is_file():
+            raise PlanningKernelError(
+                f"Task {node_id} Playwright spec does not exist: {relative}"
+            )
+
+
 def _assert_acyclic(tasks: Sequence[Mapping[str, Any]]) -> None:
     graph = {str(t["node_id"]): list(t.get("dependencies", [])) for t in tasks}
     visiting: set[str] = set()
@@ -1964,6 +2211,7 @@ def compile_execution_plan(
     }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     available_process_binaries = _available_process_binaries()
+    verification_capabilities = _bounded_verification_capabilities(workspace)
 
     # If the workspace contains no Python scripts, remove python/py from available binaries and inject rule
     has_python_scripts = False
@@ -1991,6 +2239,8 @@ def compile_execution_plan(
         "Every task requires a canonical authority_id. Never emit production, force-push, history rewrite, destructive, secret, payment, "
         "legal/compliance, or material trust/security changes. Do not invent evidence. "
         "The top-level schema_version MUST be the exact string \"1.0.0\". Return exactly the requested JSON.\n\n"
+        "NATIVE_FIRST_EXECUTION_RULE=Use native FILE/GIT/PROCESS/TEST/BUILD tasks whenever operation is expressible by declared native worker contracts. "
+        "Do not require an external agentic executor for ordinary repository mutation or verification.\n"
         f"OBJECTIVE={json.dumps(dataclasses.asdict(objective), ensure_ascii=False, sort_keys=True)}\n"
         f"SITUATION={json.dumps(_situation_prompt_payload(situation), ensure_ascii=False, sort_keys=True)}\n"
         f"REPAIR_CONTEXT={json.dumps(dict(repair_context or {}), ensure_ascii=False, sort_keys=True)}\n"
@@ -2012,6 +2262,9 @@ def compile_execution_plan(
         "python -m; Python may only receive an existing workspace-relative script path.\n"
         f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
+        "VERIFICATION_CAPABILITY_RULE=Use only package-declared verification scripts and capabilities below. "
+        "The playwright library does not imply the @playwright/test runner; never invent unsupported test commands.\n"
+        f"VERIFICATION_CAPABILITIES={json.dumps(verification_capabilities, ensure_ascii=False, sort_keys=True)}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -2028,7 +2281,25 @@ def compile_execution_plan(
         attempt_prompt = prompt
         if attempt:
             python_guidance = ""
-            if "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
+            if "CANONICAL_LANE_SCOPE_VIOLATION" in validation_error:
+                python_guidance = (
+                    "\nCANONICAL_SCOPE_REPAIR_RULE: Regenerate the full plan with every mutating write_scope strictly inside "
+                    f"the canonical lane_allowed_scope from SITUATION: {json.dumps(list(situation.lane_allowed_scope or ()), ensure_ascii=False)}. "
+                    "Remove every out-of-lane path; do not weaken or duplicate the authority source."
+                )
+            elif "SHARED_PATH_OWNERSHIP_REQUIRED" in validation_error:
+                python_guidance = (
+                    "\nSHARED_PATH_REPAIR_RULE: Remove every mutation of a shared path owned by another lane. "
+                    "Do not invent an ownership handoff. Regenerate only with paths currently owned by this project in "
+                    "SITUATION.shared_path_governance."
+                )
+            elif "Playwright test runner capability is unavailable" in validation_error or "does not declare @playwright/test" in validation_error:
+                python_guidance = (
+                    "\nVERIFICATION_CAPABILITY_REPAIR_RULE: @playwright/test is not declared and MUST NOT be proposed or installed. "
+                    "Choose only an exact existing package verification script from VERIFICATION_CAPABILITIES, or a proven available "
+                    "non-Playwright check. Never repeat the unsupported Playwright Test Runner command."
+                )
+            elif "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
                 python_guidance = (
                     "\nPYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
                     "Python commands may ONLY invoke an existing workspace-relative script path (e.g. `python path/to/script.py`). "
@@ -2131,7 +2402,13 @@ def compile_execution_plan(
                         task["run_type"] == "FILE"
                         and task["payload"].get("action") == "read_file"
                     )
-                    if signature in forbidden_signatures and not is_read_task:
+                    if (
+                        signature in forbidden_signatures
+                        and not is_read_task
+                        and not _repeatable_verification_after_novel_mutation(
+                            task, tasks_by_id, forbidden_ids, forbidden_signatures,
+                        )
+                    ):
                         rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
                         continue
                     if task["run_type"] in ("PROCESS", "TEST", "BUILD"):
@@ -2273,6 +2550,8 @@ def compile_execution_plan(
                             f"Task {task['node_id']} FILE read target does not exist: "
                             f"{task['payload'].get('path')}"
                         )
+                for task in normalized["tasks"]:
+                    _validate_process_workspace_inputs(task, workspace_root)
             duplicates = sorted(
                 task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
             )
@@ -2280,6 +2559,9 @@ def compile_execution_plan(
                 raise PlanningKernelError(
                     f"Execution plan repeats completed task identities: {duplicates}"
                 )
+            current_tasks_by_id = {
+                task["node_id"]: task for task in normalized["tasks"]
+            }
             repeated_actions = sorted({
                 _task_signature(task)
                 for task in normalized["tasks"]
@@ -2287,6 +2569,9 @@ def compile_execution_plan(
                 and not (
                     task["run_type"] == "FILE"
                     and task["payload"].get("action") == "read_file"
+                )
+                and not _repeatable_verification_after_novel_mutation(
+                    task, current_tasks_by_id, forbidden_ids, forbidden_signatures,
                 )
             })
             if repeated_actions:
@@ -2549,21 +2834,27 @@ def _recover_waiting_objective(
     prior_situation: Mapping[str, Any],
     fresh_situation: ProjectSituation,
 ) -> Optional[Objective]:
-    """Reuse a durable objective only across an identical provider-wait retry."""
-    if checkpoint.get("phase") != "WAITING_FOR_REASONING_PROVIDER":
+    """Reuse an accepted objective across an exact, non-authority retry boundary."""
+    phase = str(checkpoint.get("phase") or "")
+    if phase == "WAITING_FOR_REASONING_PROVIDER":
+        artifact_batch = batch_number
+        persisted_situation = prior_situation
+    elif phase == "BOUNDED_RUN_EXHAUSTED" and batch_number > 0:
+        artifact_batch = batch_number - 1
+        persisted_situation = _read_json(runtime_dir / f"situation-{artifact_batch:04d}.json")
+    else:
         return None
     situation_id = fresh_situation.identity()
     if (
-        checkpoint.get("batch_number") != batch_number
-        or checkpoint.get("situation_id") != situation_id
+        checkpoint.get("situation_id") != situation_id
         or checkpoint.get("canonical_source_sha") != fresh_situation.control_sha
         or checkpoint.get("canonical_execution_base_sha") != fresh_situation.execution_base_sha
-        or prior_situation.get("situation_id") != situation_id
-        or prior_situation.get("control_sha") != fresh_situation.control_sha
-        or prior_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
+        or persisted_situation.get("situation_id") != situation_id
+        or persisted_situation.get("control_sha") != fresh_situation.control_sha
+        or persisted_situation.get("execution_base_sha") != fresh_situation.execution_base_sha
     ):
         return None
-    raw_objective = _read_json(runtime_dir / f"objective-{batch_number:04d}.json")
+    raw_objective = _read_json(runtime_dir / f"objective-{artifact_batch:04d}.json")
     if not raw_objective or not Draft202012Validator(OBJECTIVE_SCHEMA).is_valid(raw_objective):
         return None
     try:

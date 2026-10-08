@@ -68,6 +68,7 @@ def _situation(*, status="ACTIVE", next_action="Continue authorized work", ambig
         completion_criteria=("All roadmap work complete",),
         ambiguity_reasons=tuple(ambiguity),
         captured_at="2026-09-15T00:00:00+00:00",
+        lane_allowed_scope=("src/", "supabase/", "tests/", "scripts/", "pages/", "services/", "components/", "SAFETY.md", "RUNBOOK.md", "SECURITY_TODO.md", "docs/"),
     )
 
 

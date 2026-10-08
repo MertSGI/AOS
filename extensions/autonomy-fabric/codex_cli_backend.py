@@ -16,7 +16,12 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from aos.agentic_resume import evaluate_agentic_resume
 from aos.context_pack import handoff_seed
 from aos.process_utils import popen_headless, run_headless
-from aos.workspace_fingerprint import WorkspaceFingerprintError, compute_workspace_fingerprint
+from aos.workspace_fingerprint import (
+    WorkspaceFingerprintError,
+    capture_workspace_mutation_state,
+    compute_workspace_fingerprint,
+    workspace_mutation_delta,
+)
 from aos.workers.codex_cli_probe import (
     CODEX_ADAPTER_CONTRACT_VERSION,
     build_codex_child_environment,
@@ -411,6 +416,7 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
         try:
             source_sha = self._source_sha(request, prior)
             before = compute_workspace_fingerprint(request.workspace, source_sha=source_sha)
+            before_mutations = capture_workspace_mutation_state(request.workspace)
             prompt = self._prompt(request, context_pack)
         except (ValueError, OSError, WorkspaceFingerprintError):
             failed = ExecutionAvailabilitySnapshot(
@@ -491,7 +497,8 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
             return self._failure(request, f"CODEX_{outcome.failure_class}", failed)
 
         try:
-            changed = self._changed_paths(request.workspace)
+            after_mutations = capture_workspace_mutation_state(request.workspace)
+            changed = workspace_mutation_delta(before_mutations, after_mutations)
             scopes = list(request.write_scope or request.expected_changed_paths)
             if any(not self._in_scope(path, scopes) for path in changed):
                 return self._failure(
@@ -504,6 +511,10 @@ class CodexCliExecutionBackend(AgenticExecutionBackend):
         except (OSError, WorkspaceFingerprintError):
             return self._failure(
                 request, "CODEX_POST_EXECUTION_VERIFICATION_FAILED", availability, status="FAILED"
+            )
+        if after.head_sha != before.head_sha:
+            return self._failure(
+                request, "CODEX_HEAD_MUTATION", availability, status="FAILED"
             )
 
         seed = handoff_seed(context_pack) if prior is None else {}

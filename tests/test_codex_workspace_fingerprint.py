@@ -2,7 +2,13 @@ import os
 import subprocess
 from pathlib import Path
 
-from aos.workspace_fingerprint import compute_workspace_fingerprint
+from aos import runtime_worker
+from aos.runtime_store import exclusive_file_lock
+from aos.workspace_fingerprint import (
+    capture_workspace_mutation_state,
+    compute_workspace_fingerprint,
+    workspace_mutation_delta,
+)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -138,3 +144,38 @@ def test_initialized_submodule_content_changes_parent_identity(tmp_path):
 
     assert baseline.initialized_submodule_count == 1
     assert changed.sha256 != baseline.sha256
+
+
+def test_machine_local_worker_lock_keeps_tracked_lock_shaped_source_readable(tmp_path):
+    root = _repo(tmp_path)
+    tracked_lock = root / ".aos_workspace_active.lock"
+    tracked_lock.write_text("tracked product content\n", encoding="utf-8")
+    _git(root, "add", ".aos_workspace_active.lock")
+    _git(root, "commit", "-m", "track lock-shaped product file")
+    baseline = _fingerprint(root)
+
+    runtime_root = tmp_path / "runtime-state"
+    machine_lock = runtime_worker._workspace_lock_path(runtime_root, root)
+    machine_lock.parent.mkdir(parents=True)
+
+    assert root not in machine_lock.parents
+    with exclusive_file_lock(machine_lock):
+        assert tracked_lock.read_text(encoding="utf-8") == "tracked product content\n"
+        assert _fingerprint(root) == baseline
+
+
+def test_mutation_delta_ignores_preexisting_dirty_paths_but_detects_new_changes(tmp_path):
+    root = _repo(tmp_path)
+    (root / "tracked.txt").write_text("accepted prior change\n", encoding="utf-8")
+    before = capture_workspace_mutation_state(root)
+
+    unchanged = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(before, unchanged) == []
+
+    (root / "new.txt").write_text("new invocation change\n", encoding="utf-8")
+    after_new = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(before, after_new) == ["new.txt"]
+
+    (root / "tracked.txt").write_text("changed again\n", encoding="utf-8")
+    after_existing = capture_workspace_mutation_state(root)
+    assert workspace_mutation_delta(after_new, after_existing) == ["tracked.txt"]

@@ -176,3 +176,37 @@ def compute_workspace_fingerprint(
         entry_count=len(all_paths),
         initialized_submodule_count=initialized_submodules,
     )
+
+
+def capture_workspace_mutation_state(workspace: str | Path) -> Dict[str, str]:
+    """Hash the current dirty state per path without retaining file content."""
+    requested = Path(workspace).expanduser().resolve()
+    root_raw = _git(requested, "rev-parse", "--show-toplevel").strip()
+    if not root_raw:
+        raise WorkspaceFingerprintError("workspace is not a Git repository")
+    root = Path(os.fsdecode(root_raw)).resolve()
+    tracked_dirty = _nul_paths(_git(root, "diff", "--name-only", "-z", "HEAD"))
+    untracked = _nul_paths(_git(root, "ls-files", "--others", "--exclude-standard", "-z"))
+    index_entries = _stage_entries(_git(root, "ls-files", "--stage", "-z"))
+
+    states: Dict[str, str] = {}
+    for path_bytes in sorted(set(tracked_dirty) | set(untracked)):
+        digest = hashlib.sha256()
+        index_entry = index_entries.get(path_bytes)
+        if index_entry is None:
+            _record(digest, b"INDEX_ENTRY", b"MISSING")
+        else:
+            _record(digest, b"INDEX_ENTRY", index_entry[0], index_entry[1])
+        _record(digest, b"WORKTREE_ENTRY", *_path_record(root, path_bytes))
+        patch = _git(root, "diff", "--binary", "HEAD", "--", os.fsdecode(path_bytes))
+        _record(digest, b"PATCH", hashlib.sha256(patch).hexdigest().encode("ascii"))
+        states[os.fsdecode(path_bytes).replace("\\", "/")] = digest.hexdigest()
+    return states
+
+
+def workspace_mutation_delta(before: Dict[str, str], after: Dict[str, str]) -> List[str]:
+    """Return only paths whose dirty state changed during an invocation."""
+    return sorted(
+        path for path in set(before) | set(after)
+        if before.get(path) != after.get(path)
+    )

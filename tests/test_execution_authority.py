@@ -27,7 +27,8 @@ def make_valid_snapshot(
         "next_action_execution_base_sha": exec_base_sha,
         "has_ambiguity": False,
         "ambiguity_reasons": [],
-        "input_file_hashes": {"state": "0000000000000000000000000000000000000000000000000000000000000000"}
+        "input_file_hashes": {"state": "0000000000000000000000000000000000000000000000000000000000000000"},
+        "lane_allowed_scope": ["src/"]
     }
 
 
