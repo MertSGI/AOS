@@ -600,12 +600,24 @@ def _extract_completed_batch_receipts(
                 has_verification_proof = True
             if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in nested_receipt.get("verified_run_types", [])):
                 has_verification_proof = True
+            for vt in nested_receipt.get("verified_tasks", []):
+                if isinstance(vt, Mapping):
+                    vt_run_type = str(vt.get("run_type", "")).upper()
+                    vt_status = str(vt.get("status", "")).upper()
+                    if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                        has_verification_proof = True
 
     # Top-level verification proof in receipt
     if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence"):
         has_verification_proof = True
     if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in receipt.get("verified_run_types", [])):
         has_verification_proof = True
+    for vt in receipt.get("verified_tasks", []):
+        if isinstance(vt, Mapping):
+            vt_run_type = str(vt.get("run_type", "")).upper()
+            vt_status = str(vt.get("status", "")).upper()
+            if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                has_verification_proof = True
 
     return valid_batches, all_completed_tasks, all_failed_tasks, has_failed, has_verification_proof
 
@@ -629,8 +641,7 @@ def _record_kcp_verification_receipt(
         return None
 
     disposition = str(receipt.get("disposition") or "").upper()
-    # BOUNDED_RUN_EXHAUSTED with completed tasks is not an automatic PASS
-    if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD", "BOUNDED_RUN_EXHAUSTED"):
+    if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD"):
         return None
 
     # Never treat a generated DAG alone as execution evidence
@@ -643,6 +654,23 @@ def _record_kcp_verification_receipt(
 
     if any_batch_failed or failed_task_ids:
         return None
+
+    # BOUNDED_RUN_EXHAUSTED with completed tasks is not an automatic PASS.
+    # It requires real verified test/build tasks from a completed batch.
+    if disposition == "BOUNDED_RUN_EXHAUSTED":
+        has_real_verified_task = False
+        for vb in valid_batches:
+            for vt in vb.get("verified_tasks", []):
+                if isinstance(vt, Mapping):
+                    vt_run_type = str(vt.get("run_type", "")).upper()
+                    vt_status = str(vt.get("status", "")).upper()
+                    if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                        has_real_verified_task = True
+                        break
+            if has_real_verified_task:
+                break
+        if not has_real_verified_task:
+            return None
 
     if not completed_task_ids or not valid_batches:
         return None
@@ -723,7 +751,7 @@ def _record_kcp_verification_receipt(
     verification_payload = {
         "status": "PASS",
         "completed_task_count": len(completed_task_ids),
-        "disposition": disposition or "VERIFIED",
+        "disposition": "VERIFIED_BATCH" if disposition == "BOUNDED_RUN_EXHAUSTED" else (disposition or "VERIFIED"),
     }
     if receipt.get("ci_workflow_identity"):
         verification_payload["ci_workflow"] = receipt["ci_workflow_identity"]
@@ -733,6 +761,8 @@ def _record_kcp_verification_receipt(
         "batch_number": int(batch_number or 0),
         "verified_worker_execution": True,
     }
+    if disposition == "BOUNDED_RUN_EXHAUSTED":
+        claims_payload["project_complete"] = False
     if control_sha and _is_sha40(control_sha):
         claims_payload["canonical_control_sha"] = control_sha
     if is_read_only:

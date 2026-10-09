@@ -1137,6 +1137,43 @@ def run_host(
         for backend_id, metrics in state.backend_attempt_metrics.items()
     }
     ag_metrics = backend_attempt_metrics.get("antigravity", {})
+
+    actual_workspace_head = None
+    try:
+        head_proc = run_headless(["git", "-C", str(workspace), "rev-parse", "HEAD"], timeout=10, check=False)
+        if head_proc.returncode == 0 and head_proc.stdout:
+            raw_sha = head_proc.stdout.strip().lower()
+            if len(raw_sha) == 40:
+                actual_workspace_head = raw_sha
+    except Exception:
+        pass
+
+    verified_tasks = []
+    for tid in state.completed_task_ids:
+        node = dag.nodes.get(tid)
+        if not node:
+            continue
+        run_type = str(getattr(node, "run_type", "")).upper()
+        if run_type not in ("TEST", "BUILD", "CI"):
+            continue
+        run_id = getattr(node, "associated_run_id", None)
+        run_obj = registry.get_run(run_id) if run_id else None
+        run_status = getattr(run_obj, "status", None) if run_obj else None
+        is_completed = (
+            run_status == RunStatus.COMPLETED
+            or str(getattr(run_status, "value", run_status)).upper() == "COMPLETED"
+        )
+        if is_completed:
+            verified_tasks.append({
+                "task_id": tid,
+                "run_id": run_id,
+                "run_type": run_type,
+                "status": "PASS",
+                "workspace_head_sha": actual_workspace_head,
+                "canonical_source_sha": canonical_binding.get("source_sha"),
+                "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
+            })
+
     receipt = {
         "schema_version": "1.0.0",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -1145,6 +1182,7 @@ def run_host(
         "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
         "completed_task_ids": state.completed_task_ids,
         "failed_task_ids": state.failed_task_ids,
+        "verified_tasks": verified_tasks,
         "completed_read_observations": state.completed_read_observations,
         "iteration_count": state.iteration_count,
         "progress": dag.compute_progress(),
