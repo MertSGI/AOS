@@ -675,14 +675,83 @@ def _record_kcp_verification_receipt(
     if not completed_task_ids or not valid_batches:
         return None
 
-    # EXACT SHA IDENTITY:
-    # 1. Control SHA represents canonical control revision, NOT verified product code.
-    #    Preserve it separately as lineage information.
-    # 2. For read-only baseline verification, bind result_sha to verified canonical_execution_base_sha.
-    # 3. For actual candidate verification, use candidate_sha only if that exact candidate is supported by genuine verification evidence.
-    # 4. Never substitute control SHA for product SHA.
-    # 5. Validate exact 40-character lowercase hexadecimal SHAs.
-    # 6. If code identity or verification target is ambiguous, do not emit a successful KCP verification receipt.
+    # Match verified tasks from valid native batch evidence
+    # A genuine verified task must match:
+    # 1. Project ID (if present in task or receipt)
+    # 2. Completed task IDs
+    # 3. Verification task type (TEST, BUILD, CI)
+    # 4. Successful outcome (PASS)
+    # 5. Clean, valid 40-hex workspace_head_sha
+    verified_task_shas: set[str] = set()
+    has_matching_verified_task = False
+
+    for vb in valid_batches:
+        # Check project ID match if batch specifies it
+        vb_project = str(vb.get("project_id") or "").strip()
+        if vb_project and vb_project != project_id:
+            return None
+
+        for vt in vb.get("verified_tasks", []):
+            if not isinstance(vt, Mapping):
+                continue
+            vt_task_id = str(vt.get("task_id") or "").strip()
+            vt_run_type = str(vt.get("run_type") or "").upper()
+            vt_status = str(vt.get("status") or "").upper()
+
+            # Must match completed task ID and verification task type and PASS status
+            if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                # Check task-level project ID if present
+                vt_proj = str(vt.get("project_id") or "").strip()
+                if vt_proj and vt_proj != project_id:
+                    return None
+
+                has_matching_verified_task = True
+                sha = str(vt.get("workspace_head_sha") or "").strip().lower()
+                if sha:
+                    if not _is_sha40(sha):
+                        # Malformed SHA
+                        return None
+                    verified_task_shas.add(sha)
+                else:
+                    # Missing SHA on verified task evidence is rejected
+                    return None
+
+    # Check top-level receipt verified_tasks as well
+    rcpt_project = str(receipt.get("project_id") or "").strip()
+    if rcpt_project and rcpt_project != project_id:
+        return None
+
+    for vt in receipt.get("verified_tasks", []):
+        if not isinstance(vt, Mapping):
+            continue
+        vt_task_id = str(vt.get("task_id") or "").strip()
+        vt_run_type = str(vt.get("run_type") or "").upper()
+        vt_status = str(vt.get("status") or "").upper()
+        if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+            vt_proj = str(vt.get("project_id") or "").strip()
+            if vt_proj and vt_proj != project_id:
+                return None
+            has_matching_verified_task = True
+            sha = str(vt.get("workspace_head_sha") or "").strip().lower()
+            if sha:
+                if not _is_sha40(sha):
+                    return None
+                verified_task_shas.add(sha)
+            else:
+                return None
+
+    # Reject conflicting verified-task SHAs
+    if len(verified_task_shas) > 1:
+        return None
+
+    native_verified_sha = list(verified_task_shas)[0] if len(verified_task_shas) == 1 else None
+
+    # EXACT SHA IDENTITY & BINDING:
+    # 1. Derive verified product SHA from real native verified-task evidence when candidate SHA is absent.
+    # 2. If candidate_sha is present, require exact equality with the verified product SHA.
+    # 3. Reject missing, conflicting, malformed or ambiguous SHAs.
+    # 4. Require a clean, correctly bound source snapshot; never treat code changed after verification as verified.
+    # 5. For read-only baseline verification without new candidate code, allow execution base SHA if verified.
 
     candidate_sha_raw = receipt.get("candidate_sha")
     candidate_sha = str(candidate_sha_raw).strip().lower() if candidate_sha_raw else ""
@@ -711,7 +780,13 @@ def _record_kcp_verification_receipt(
         # Candidate SHA must be supported by genuine verification evidence (TEST/BUILD proof)
         if not has_verification_proof:
             return None
+        # If native verified task SHA exists, candidate_sha must equal it exactly
+        if native_verified_sha is not None and candidate_sha != native_verified_sha:
+            return None
         result_sha = candidate_sha
+    elif native_verified_sha is not None:
+        # Derive verified product SHA directly from real native verified-task evidence
+        result_sha = native_verified_sha
     elif is_read_only and _is_sha40(exec_base_sha):
         # For read-only baseline verification, bind result_sha to verified canonical_execution_base_sha
         if not has_verification_proof:

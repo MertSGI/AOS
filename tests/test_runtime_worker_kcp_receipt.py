@@ -844,14 +844,14 @@ def test_16_native_tasks_complete_without_test_build_negative(tmp_path: Path, mo
 
 
 def test_17_dual_lane_project_identity_preservation(tmp_path: Path, monkeypatch):
-    """Dual-lane test: lane identities (lari and candidate lane) are preserved on KCP receipts."""
+    """Dual-lane test: lane identities (lari and lari-ui-v2) are preserved on KCP receipts."""
     root = tmp_path / "runtime"
     runtime_home = root.parent
     store = RuntimeStore(root)
 
     monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
 
-    for pid in ("lari", "aos-candidate"):
+    for pid in ("lari", "lari-ui-v2"):
         cmd = _command(tmp_path, pid)
         store.create_command(cmd.to_dict())
 
@@ -899,7 +899,232 @@ def test_17_dual_lane_project_identity_preservation(tmp_path: Path, monkeypatch)
     ]
     pids = {r["project_id"] for r in receipts}
     assert "lari" in pids
-    assert "aos-candidate" in pids
+    assert "lari-ui-v2" in pids
+    assert "aos-candidate" not in pids
+
+
+def test_19_candidate_sha_differs_from_verified_sha_not_verified(tmp_path: Path, monkeypatch):
+    """Candidate SHA differs from verified SHA -> NOT_VERIFIED."""
+    root = tmp_path / "runtime"
+    runtime_home = root.parent
+    store = RuntimeStore(root)
+    command = _command(tmp_path, "lari")
+    store.create_command(command.to_dict())
+
+    verified_sha = "1" * 40
+    different_candidate_sha = "2" * 40
+
+    host_rcpt = {
+        "schema_version": "1.0.0",
+        "timestamp": "2026-10-09T10:00:00Z",
+        "project_id": "lari",
+        "completed_task_ids": ["task-1"],
+        "failed_task_ids": [],
+        "verified_tasks": [
+            {
+                "task_id": "task-1",
+                "run_id": "run-01",
+                "run_type": "TEST",
+                "status": "PASS",
+                "workspace_head_sha": verified_sha,
+            }
+        ],
+        "progress": 100.0,
+        "production": "NO_GO",
+    }
+
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: {
+            "disposition": "PROJECT_COMPLETE",
+            "completed_batch_count": 1,
+            "completed_batches": [{"batch_number": 1, "receipt": host_rcpt}],
+            "candidate_sha": different_candidate_sha,
+        },
+    )
+
+    result = runtime_worker.execute_command(root, command.command_id)
+    assert result["state"] == "PROJECT_COMPLETE"
+    assert "kcp_verification_receipt" not in result["receipt"]
+
+    saved_state = store.read_state(command.command_id)
+    assert saved_state["kcp_verification_status"] == "NOT_VERIFIED"
+
+    ledger = ledger_for_runtime(runtime_home)
+    receipts = [
+        e for e in ledger.read_events()
+        if e["event_type"] == KnowledgeEventType.VERIFICATION_RECEIPT.value
+    ]
+    assert len(receipts) == 0
+
+
+def test_20_no_candidate_sha_with_genuine_native_evidence_pass(tmp_path: Path, monkeypatch):
+    """No candidate SHA provided but genuine exact-SHA native evidence -> PASS with verified SHA."""
+    root = tmp_path / "runtime"
+    runtime_home = root.parent
+    store = RuntimeStore(root)
+    command = _command(tmp_path, "lari")
+    store.create_command(command.to_dict())
+
+    verified_sha = "3" * 40
+
+    host_rcpt = {
+        "schema_version": "1.0.0",
+        "timestamp": "2026-10-09T10:00:00Z",
+        "project_id": "lari",
+        "completed_task_ids": ["task-t1"],
+        "failed_task_ids": [],
+        "verified_tasks": [
+            {
+                "task_id": "task-t1",
+                "run_id": "run-01",
+                "run_type": "TEST",
+                "status": "PASS",
+                "workspace_head_sha": verified_sha,
+            }
+        ],
+        "progress": 100.0,
+        "production": "NO_GO",
+    }
+
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: {
+            "disposition": "PROJECT_COMPLETE",
+            "completed_batch_count": 1,
+            "completed_batches": [{"batch_number": 1, "receipt": host_rcpt}],
+            # No candidate_sha present in Planning Kernel / worker result
+        },
+    )
+
+    result = runtime_worker.execute_command(root, command.command_id)
+    assert result["state"] == "PROJECT_COMPLETE"
+    assert "kcp_verification_receipt" in result["receipt"]
+
+    saved_state = store.read_state(command.command_id)
+    assert saved_state["kcp_verification_status"] == "PASS"
+
+    ledger = ledger_for_runtime(runtime_home)
+    receipts = [
+        e for e in ledger.read_events()
+        if e["event_type"] == KnowledgeEventType.VERIFICATION_RECEIPT.value
+    ]
+    assert len(receipts) == 1
+    assert receipts[0]["result_sha"] == verified_sha
+    assert receipts[0]["project_id"] == "lari"
+
+
+def test_21_conflicting_verified_task_shas_not_verified(tmp_path: Path, monkeypatch):
+    """Conflicting verified-task SHAs -> NOT_VERIFIED."""
+    root = tmp_path / "runtime"
+    runtime_home = root.parent
+    store = RuntimeStore(root)
+    command = _command(tmp_path, "lari")
+    store.create_command(command.to_dict())
+
+    sha_a = "4" * 40
+    sha_b = "5" * 40
+
+    host_rcpt = {
+        "schema_version": "1.0.0",
+        "timestamp": "2026-10-09T10:00:00Z",
+        "project_id": "lari",
+        "completed_task_ids": ["task-1", "task-2"],
+        "failed_task_ids": [],
+        "verified_tasks": [
+            {
+                "task_id": "task-1",
+                "run_id": "run-01",
+                "run_type": "TEST",
+                "status": "PASS",
+                "workspace_head_sha": sha_a,
+            },
+            {
+                "task_id": "task-2",
+                "run_id": "run-02",
+                "run_type": "TEST",
+                "status": "PASS",
+                "workspace_head_sha": sha_b,
+            },
+        ],
+        "progress": 100.0,
+        "production": "NO_GO",
+    }
+
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: {
+            "disposition": "PROJECT_COMPLETE",
+            "completed_batch_count": 1,
+            "completed_batches": [{"batch_number": 1, "receipt": host_rcpt}],
+        },
+    )
+
+    result = runtime_worker.execute_command(root, command.command_id)
+    assert result["state"] == "PROJECT_COMPLETE"
+    assert "kcp_verification_receipt" not in result["receipt"]
+
+    saved_state = store.read_state(command.command_id)
+    assert saved_state["kcp_verification_status"] == "NOT_VERIFIED"
+
+    ledger = ledger_for_runtime(runtime_home)
+    receipts = [
+        e for e in ledger.read_events()
+        if e["event_type"] == KnowledgeEventType.VERIFICATION_RECEIPT.value
+    ]
+    assert len(receipts) == 0
+
+
+def test_22_completed_task_missing_valid_verification_evidence_not_verified(tmp_path: Path, monkeypatch):
+    """Completed task missing valid verification evidence (e.g. malformed or missing SHA) -> NOT_VERIFIED."""
+    root = tmp_path / "runtime"
+    runtime_home = root.parent
+    store = RuntimeStore(root)
+    command = _command(tmp_path, "lari")
+    store.create_command(command.to_dict())
+
+    host_rcpt = {
+        "schema_version": "1.0.0",
+        "timestamp": "2026-10-09T10:00:00Z",
+        "project_id": "lari",
+        "completed_task_ids": ["task-1"],
+        "failed_task_ids": [],
+        "verified_tasks": [
+            {
+                "task_id": "task-1",
+                "run_id": "run-01",
+                "run_type": "TEST",
+                "status": "PASS",
+                "workspace_head_sha": "not-a-valid-40-hex-sha",
+            }
+        ],
+        "progress": 100.0,
+        "production": "NO_GO",
+    }
+
+    monkeypatch.setattr(runtime_worker, "hydrate_environment", lambda overwrite=True: {})
+    monkeypatch.setattr(
+        runtime_worker,
+        "run_autonomous_project",
+        lambda **kwargs: {
+            "disposition": "PROJECT_COMPLETE",
+            "completed_batch_count": 1,
+            "completed_batches": [{"batch_number": 1, "receipt": host_rcpt}],
+        },
+    )
+
+    result = runtime_worker.execute_command(root, command.command_id)
+    assert result["state"] == "PROJECT_COMPLETE"
+    assert "kcp_verification_receipt" not in result["receipt"]
+
+    saved_state = store.read_state(command.command_id)
+    assert saved_state["kcp_verification_status"] == "NOT_VERIFIED"
 
 
 def test_18_bounded_run_exhausted_with_real_verified_task_records_verified_batch(tmp_path: Path, monkeypatch):
