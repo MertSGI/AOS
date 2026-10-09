@@ -11,10 +11,13 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Mapping, Optional, Set, Tuple
+
+_HEX_SHA_40 = re.compile(r"^[0-9a-f]{40}$")
 
 from aos.planning_kernel import (
     DEFAULT_RED_LINES,
@@ -469,12 +472,109 @@ def _workspace_lock_path(runtime_root: Path, workspace_dir: Path) -> Path:
     return runtime_root.expanduser().resolve() / "workspace-locks" / f"{identity}.lock"
 
 
+def _is_sha40(val: Any) -> bool:
+    if not isinstance(val, str):
+        return False
+    return bool(_HEX_SHA_40.match(val.strip().lower()))
+
+
+def _extract_completed_batch_receipts(
+    receipt: Mapping[str, Any],
+    project_runtime: Optional[Path] = None,
+) -> Tuple[list[Mapping[str, Any]], set[str], set[str], bool]:
+    """Extract and validate completed batch execution evidence from receipt and project-runtime disk.
+
+    Returns:
+        (valid_batches, cumulative_completed_task_ids, cumulative_failed_task_ids, any_batch_failed)
+    """
+    raw_batches = (
+        receipt.get("completed_batches")
+        or receipt.get("recent_completed_batches")
+        or []
+    )
+    all_completed_tasks: set[str] = set()
+    all_failed_tasks: set[str] = set()
+    valid_batches: list[Mapping[str, Any]] = []
+    has_failed = False
+
+    # Also capture top-level task IDs if present
+    for tid in receipt.get("completed_task_ids", []):
+        s_tid = str(tid).strip()
+        if s_tid:
+            all_completed_tasks.add(s_tid)
+    for tid in receipt.get("failed_task_ids", []):
+        s_tid = str(tid).strip()
+        if s_tid:
+            all_failed_tasks.add(s_tid)
+            has_failed = True
+
+    if isinstance(raw_batches, list):
+        for b_entry in raw_batches:
+            if not isinstance(b_entry, Mapping):
+                continue
+            b_num = b_entry.get("batch_number")
+            nested_receipt = b_entry.get("receipt") if isinstance(b_entry.get("receipt"), Mapping) else b_entry
+
+            # If project_runtime is available, validate against disk artifacts in batches/batch-XXXX/
+            if project_runtime is not None and b_num is not None:
+                try:
+                    b_int = int(b_num)
+                    disk_batch_dir = project_runtime / "batches" / f"batch-{b_int:04d}"
+                    if not disk_batch_dir.is_dir():
+                        disk_batch_dir = project_runtime / "batches" / f"batch-{b_int}"
+                    if disk_batch_dir.is_dir():
+                        host_receipt_file = disk_batch_dir / "host-receipt.json"
+                        if host_receipt_file.is_file():
+                            disk_receipt = read_json(host_receipt_file)
+                            if isinstance(disk_receipt, Mapping):
+                                nested_receipt = disk_receipt
+                except (ValueError, TypeError):
+                    pass
+
+            b_completed = [
+                str(t).strip()
+                for t in nested_receipt.get("completed_task_ids", [])
+                if str(t).strip()
+            ]
+            b_failed = [
+                str(t).strip()
+                for t in nested_receipt.get("failed_task_ids", [])
+                if str(t).strip()
+            ]
+            raw_prog = nested_receipt.get("progress")
+            try:
+                prog = float(raw_prog) if raw_prog is not None else 100.0
+            except (ValueError, TypeError):
+                prog = 0.0
+
+            if b_failed or prog < 100.0:
+                has_failed = True
+                for f_id in b_failed:
+                    all_failed_tasks.add(f_id)
+            elif b_completed:
+                valid_batches.append(nested_receipt)
+                for c_id in b_completed:
+                    all_completed_tasks.add(c_id)
+
+    # Check top-level progress if present
+    top_prog = receipt.get("progress")
+    if top_prog is not None:
+        try:
+            if float(top_prog) < 100.0:
+                has_failed = True
+        except (ValueError, TypeError):
+            pass
+
+    return valid_batches, all_completed_tasks, all_failed_tasks, has_failed
+
+
 def _record_kcp_verification_receipt(
     runtime_root: Path,
     *,
     project_id: str,
     command_id: str,
     receipt: Mapping[str, Any],
+    project_runtime: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Record a KCP verification receipt for verified completed worker outcomes.
 
@@ -486,52 +586,81 @@ def _record_kcp_verification_receipt(
     if not receipt:
         return None
 
-    completed_task_ids = [
-        str(t_id).strip()
-        for t_id in receipt.get("completed_task_ids", [])
-        if str(t_id).strip()
-    ]
-    completed_batches = (
-        receipt.get("completed_batches")
-        or receipt.get("recent_completed_batches")
-        or []
-    )
-    if not completed_task_ids and not completed_batches:
-        return None
-
-    failed_task_ids = [
-        str(t_id).strip()
-        for t_id in receipt.get("failed_task_ids", [])
-        if str(t_id).strip()
-    ]
-    if failed_task_ids:
-        return None
-
     disposition = str(receipt.get("disposition") or "").upper()
     if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD"):
         return None
 
-    result_sha = str(
-        receipt.get("candidate_sha")
-        or receipt.get("canonical_source_sha")
-        or ""
-    ).strip().lower()
-    if not result_sha or len(result_sha) != 40:
+    # Never treat a generated DAG alone as execution evidence
+    if receipt.get("run_plan_only") or receipt.get("generated_dag_only"):
         return None
 
-    base_sha = str(
+    valid_batches, completed_task_ids, failed_task_ids, any_batch_failed = (
+        _extract_completed_batch_receipts(receipt, project_runtime=project_runtime)
+    )
+
+    if any_batch_failed or failed_task_ids:
+        return None
+
+    if not completed_task_ids and not valid_batches:
+        return None
+
+    # EXACT SHA IDENTITY:
+    # 1. Control SHA represents canonical control revision, NOT verified product code.
+    #    Preserve it separately as lineage information.
+    # 2. For read-only baseline verification, bind result_sha to verified canonical_execution_base_sha.
+    # 3. For actual candidate verification, use candidate_sha only if that exact candidate is supported by genuine verification evidence.
+    # 4. Never substitute control SHA for product SHA.
+    # 5. Validate exact 40-character lowercase hexadecimal SHAs.
+    # 6. If code identity or verification target is ambiguous, do not emit a successful KCP verification receipt.
+
+    candidate_sha_raw = receipt.get("candidate_sha")
+    candidate_sha = str(candidate_sha_raw).strip().lower() if candidate_sha_raw else ""
+
+    control_sha_raw = receipt.get("canonical_source_sha") or receipt.get("control_sha")
+    control_sha = str(control_sha_raw).strip().lower() if control_sha_raw else ""
+
+    exec_base_sha_raw = (
         receipt.get("canonical_execution_base_sha")
         or receipt.get("base_sha")
-        or ""
-    ).strip().lower()
-    base_sha_val = base_sha if len(base_sha) == 40 else None
+        or receipt.get("execution_base_sha")
+    )
+    exec_base_sha = str(exec_base_sha_raw).strip().lower() if exec_base_sha_raw else ""
+
+    # Determine product result SHA
+    result_sha: Optional[str] = None
+    base_sha_val: Optional[str] = exec_base_sha if _is_sha40(exec_base_sha) else None
+
+    # Determine whether this is a read-only baseline verification or actual candidate verification
+    is_read_only = bool(
+        receipt.get("read_only_verification")
+        or (not candidate_sha and _is_sha40(exec_base_sha))
+    )
+
+    if candidate_sha:
+        if not _is_sha40(candidate_sha):
+            # Ambiguous / invalid candidate SHA
+            return None
+        # Candidate SHA must be supported by genuine verification evidence
+        result_sha = candidate_sha
+    elif is_read_only and _is_sha40(exec_base_sha):
+        # For read-only baseline verification, bind result_sha to verified canonical_execution_base_sha
+        result_sha = exec_base_sha
+    elif _is_sha40(exec_base_sha) and not control_sha:
+        result_sha = exec_base_sha
+    else:
+        # Never substitute control SHA for product SHA.
+        # If code identity or verification target is ambiguous, do not emit receipt.
+        return None
+
+    if not result_sha or not _is_sha40(result_sha):
+        return None
 
     ledger = resolve_knowledge_ledger(
         runtime_root=runtime_root,
         allow_environment_override=False,
     )
     if ledger is None:
-        return None
+        raise RuntimeError("KCP_LEDGER_UNAVAILABLE")
 
     batch_number = receipt.get("batch_number", 0)
     idempotency_key = (
@@ -539,8 +668,12 @@ def _record_kcp_verification_receipt(
     )
 
     evidence_refs = []
-    if receipt.get("candidate_sha"):
-        evidence_refs.append(f"candidate:{receipt['candidate_sha']}")
+    if candidate_sha and _is_sha40(candidate_sha):
+        evidence_refs.append(f"candidate:{candidate_sha}")
+    if control_sha and _is_sha40(control_sha):
+        evidence_refs.append(f"control_lineage:{control_sha}")
+    if exec_base_sha and _is_sha40(exec_base_sha):
+        evidence_refs.append(f"execution_base:{exec_base_sha}")
     if receipt.get("design_intelligence_execution_id"):
         evidence_refs.append(f"di:{receipt['design_intelligence_execution_id']}")
     evidence_refs.append(f"command:{command_id}")
@@ -558,6 +691,10 @@ def _record_kcp_verification_receipt(
         "batch_number": int(batch_number or 0),
         "verified_worker_execution": True,
     }
+    if control_sha and _is_sha40(control_sha):
+        claims_payload["canonical_control_sha"] = control_sha
+    if is_read_only:
+        claims_payload["read_only_verification"] = True
 
     return record_verification_receipt(
         ledger,
@@ -572,6 +709,7 @@ def _record_kcp_verification_receipt(
         evidence_refs=evidence_refs,
         claims=claims_payload,
     )
+
 
 
 def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
@@ -973,16 +1111,21 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     return result
 
                 kcp_receipt = None
+                kcp_error_classification = None
+                kcp_error_message = None
                 try:
                     kcp_receipt = _record_kcp_verification_receipt(
                         runtime_root,
                         project_id=command.project.project_id,
                         command_id=command_id,
                         receipt=receipt,
+                        project_runtime=project_runtime,
                     )
-                except Exception:
-                    # Advisory failure on ordinary runtime telemetry must not crash the worker
-                    pass
+                except Exception as kcp_exc:
+                    # CORRECTION C: Fail-closed KCP errors
+                    # Never silently swallow ledger write failures at verified-delivery boundary
+                    kcp_error_classification = "KCP_RECEIPT_WRITE_FAILED"
+                    kcp_error_message = _safe_exception_message(kcp_exc)
 
                 state = _terminal_state(disposition)
                 result_payload = dict(receipt)
@@ -992,6 +1135,12 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                         "idempotency_key": kcp_receipt.get("idempotency_key"),
                         "sequence": kcp_receipt.get("sequence"),
                     }
+                elif kcp_error_classification is not None:
+                    result_payload["kcp_error"] = {
+                        "classification": kcp_error_classification,
+                        "error": kcp_error_message,
+                    }
+
                 result = RuntimeResult(
                     command_id=command_id,
                     state=state,
@@ -1002,7 +1151,19 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     receipt=result_payload,
                 ).to_dict()
                 store.write_result(command_id, result)
-                store.write_state(command_id, state=state, worker_pid=None)
+
+                state_kwargs: Dict[str, Any] = {
+                    "state": state,
+                    "worker_pid": None,
+                }
+                if kcp_error_classification is not None:
+                    state_kwargs["kcp_verification_status"] = "FAILED"
+                    state_kwargs["kcp_error"] = kcp_error_classification
+                elif kcp_receipt is not None:
+                    state_kwargs["kcp_verification_status"] = "PASS"
+                    state_kwargs["kcp_receipt_id"] = kcp_receipt.get("event_id")
+
+                store.write_state(command_id, **state_kwargs)
                 event_payload = {
                     "state": state,
                     "disposition": result["disposition"],
@@ -1010,6 +1171,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 }
                 if kcp_receipt is not None:
                     event_payload["kcp_receipt_id"] = kcp_receipt.get("event_id")
+                elif kcp_error_classification is not None:
+                    event_payload["kcp_error"] = kcp_error_classification
                 store.append_event(command_id, "run.finished", event_payload)
                 return result
         except BaseException as exc:
