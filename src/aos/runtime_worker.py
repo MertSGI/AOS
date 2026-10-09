@@ -40,6 +40,8 @@ from aos.runtime_admission import CommandAdmissionStore
 from aos.provider_observation import canonical_failure_family
 from aos.read_identity import build_workspace_source_generation
 from aos.runtime_assets import resolve_active_runtime_artifact
+from aos.knowledge.hooks import resolve_knowledge_ledger
+from aos.knowledge.receipts import record_verification_receipt
 
 
 def recovery_failure_family(
@@ -467,6 +469,111 @@ def _workspace_lock_path(runtime_root: Path, workspace_dir: Path) -> Path:
     return runtime_root.expanduser().resolve() / "workspace-locks" / f"{identity}.lock"
 
 
+def _record_kcp_verification_receipt(
+    runtime_root: Path,
+    *,
+    project_id: str,
+    command_id: str,
+    receipt: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Record a KCP verification receipt for verified completed worker outcomes.
+
+    The authoritative KnowledgeLedger is resolved exclusively from the
+    Runtime V1 root without depending on cwd or ambient environment overrides.
+    A valid verification receipt requires real execution evidence: completed
+    tasks and a confirmed execution SHA.
+    """
+    if not receipt:
+        return None
+
+    completed_task_ids = [
+        str(t_id).strip()
+        for t_id in receipt.get("completed_task_ids", [])
+        if str(t_id).strip()
+    ]
+    completed_batches = (
+        receipt.get("completed_batches")
+        or receipt.get("recent_completed_batches")
+        or []
+    )
+    if not completed_task_ids and not completed_batches:
+        return None
+
+    failed_task_ids = [
+        str(t_id).strip()
+        for t_id in receipt.get("failed_task_ids", [])
+        if str(t_id).strip()
+    ]
+    if failed_task_ids:
+        return None
+
+    disposition = str(receipt.get("disposition") or "").upper()
+    if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD"):
+        return None
+
+    result_sha = str(
+        receipt.get("candidate_sha")
+        or receipt.get("canonical_source_sha")
+        or ""
+    ).strip().lower()
+    if not result_sha or len(result_sha) != 40:
+        return None
+
+    base_sha = str(
+        receipt.get("canonical_execution_base_sha")
+        or receipt.get("base_sha")
+        or ""
+    ).strip().lower()
+    base_sha_val = base_sha if len(base_sha) == 40 else None
+
+    ledger = resolve_knowledge_ledger(
+        runtime_root=runtime_root,
+        allow_environment_override=False,
+    )
+    if ledger is None:
+        return None
+
+    batch_number = receipt.get("batch_number", 0)
+    idempotency_key = (
+        f"runtime-worker-verification:{project_id}:{command_id}:batch-{batch_number}:{result_sha}"
+    )
+
+    evidence_refs = []
+    if receipt.get("candidate_sha"):
+        evidence_refs.append(f"candidate:{receipt['candidate_sha']}")
+    if receipt.get("design_intelligence_execution_id"):
+        evidence_refs.append(f"di:{receipt['design_intelligence_execution_id']}")
+    evidence_refs.append(f"command:{command_id}")
+
+    verification_payload = {
+        "status": "PASS",
+        "completed_task_count": len(completed_task_ids),
+        "disposition": disposition or "VERIFIED",
+    }
+    if receipt.get("ci_workflow_identity"):
+        verification_payload["ci_workflow"] = receipt["ci_workflow_identity"]
+
+    claims_payload = {
+        "command_id": command_id,
+        "batch_number": int(batch_number or 0),
+        "verified_worker_execution": True,
+    }
+
+    return record_verification_receipt(
+        ledger,
+        project_id=project_id,
+        idempotency_key=idempotency_key,
+        agent_class="AOS_NATIVE",
+        tool_name="aos.runtime_worker",
+        result_sha=result_sha,
+        base_sha=base_sha_val,
+        module_ids=[project_id],
+        verification=verification_payload,
+        evidence_refs=evidence_refs,
+        claims=claims_payload,
+    )
+
+
 def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
     store = RuntimeStore(runtime_root)
     raw = store.read_command(command_id)
@@ -865,7 +972,26 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     store.write_result(command_id, result)
                     return result
 
+                kcp_receipt = None
+                try:
+                    kcp_receipt = _record_kcp_verification_receipt(
+                        runtime_root,
+                        project_id=command.project.project_id,
+                        command_id=command_id,
+                        receipt=receipt,
+                    )
+                except Exception:
+                    # Advisory failure on ordinary runtime telemetry must not crash the worker
+                    pass
+
                 state = _terminal_state(disposition)
+                result_payload = dict(receipt)
+                if kcp_receipt is not None:
+                    result_payload["kcp_verification_receipt"] = {
+                        "event_id": kcp_receipt.get("event_id"),
+                        "idempotency_key": kcp_receipt.get("idempotency_key"),
+                        "sequence": kcp_receipt.get("sequence"),
+                    }
                 result = RuntimeResult(
                     command_id=command_id,
                     state=state,
@@ -873,15 +999,18 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     completed_batch_count=completed,
                     canonical_source_sha=receipt.get("canonical_source_sha"),
                     canonical_execution_base_sha=receipt.get("canonical_execution_base_sha"),
-                    receipt=receipt,
+                    receipt=result_payload,
                 ).to_dict()
                 store.write_result(command_id, result)
                 store.write_state(command_id, state=state, worker_pid=None)
-                store.append_event(command_id, "run.finished", {
+                event_payload = {
                     "state": state,
                     "disposition": result["disposition"],
                     "completed_batch_count": completed,
-                })
+                }
+                if kcp_receipt is not None:
+                    event_payload["kcp_receipt_id"] = kcp_receipt.get("event_id")
+                store.append_event(command_id, "run.finished", event_payload)
                 return result
         except BaseException as exc:
             # Hard termination bypasses this block and is recovered from the durable
