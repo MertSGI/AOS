@@ -481,11 +481,11 @@ def _is_sha40(val: Any) -> bool:
 def _extract_completed_batch_receipts(
     receipt: Mapping[str, Any],
     project_runtime: Optional[Path] = None,
-) -> Tuple[list[Mapping[str, Any]], set[str], set[str], bool]:
-    """Extract and validate completed batch execution evidence from receipt and project-runtime disk.
+) -> Tuple[list[Mapping[str, Any]], set[str], set[str], bool, bool]:
+    """Extract and validate completed batch execution and verification evidence.
 
     Returns:
-        (valid_batches, cumulative_completed_task_ids, cumulative_failed_task_ids, any_batch_failed)
+        (valid_batches, cumulative_completed_task_ids, cumulative_failed_task_ids, any_batch_failed, has_verification_proof)
     """
     raw_batches = (
         receipt.get("completed_batches")
@@ -496,65 +496,22 @@ def _extract_completed_batch_receipts(
     all_failed_tasks: set[str] = set()
     valid_batches: list[Mapping[str, Any]] = []
     has_failed = False
+    has_verification_proof = False
 
-    # Also capture top-level task IDs if present
-    for tid in receipt.get("completed_task_ids", []):
-        s_tid = str(tid).strip()
-        if s_tid:
-            all_completed_tasks.add(s_tid)
+    # Explicit failed_batch_count > 0 prevents aggregate PASS
+    try:
+        failed_batch_count = int(receipt.get("failed_batch_count") or 0)
+        if failed_batch_count > 0:
+            has_failed = True
+    except (ValueError, TypeError):
+        pass
+
+    # Top-level failed task IDs fail aggregate verification
     for tid in receipt.get("failed_task_ids", []):
         s_tid = str(tid).strip()
         if s_tid:
             all_failed_tasks.add(s_tid)
             has_failed = True
-
-    if isinstance(raw_batches, list):
-        for b_entry in raw_batches:
-            if not isinstance(b_entry, Mapping):
-                continue
-            b_num = b_entry.get("batch_number")
-            nested_receipt = b_entry.get("receipt") if isinstance(b_entry.get("receipt"), Mapping) else b_entry
-
-            # If project_runtime is available, validate against disk artifacts in batches/batch-XXXX/
-            if project_runtime is not None and b_num is not None:
-                try:
-                    b_int = int(b_num)
-                    disk_batch_dir = project_runtime / "batches" / f"batch-{b_int:04d}"
-                    if not disk_batch_dir.is_dir():
-                        disk_batch_dir = project_runtime / "batches" / f"batch-{b_int}"
-                    if disk_batch_dir.is_dir():
-                        host_receipt_file = disk_batch_dir / "host-receipt.json"
-                        if host_receipt_file.is_file():
-                            disk_receipt = read_json(host_receipt_file)
-                            if isinstance(disk_receipt, Mapping):
-                                nested_receipt = disk_receipt
-                except (ValueError, TypeError):
-                    pass
-
-            b_completed = [
-                str(t).strip()
-                for t in nested_receipt.get("completed_task_ids", [])
-                if str(t).strip()
-            ]
-            b_failed = [
-                str(t).strip()
-                for t in nested_receipt.get("failed_task_ids", [])
-                if str(t).strip()
-            ]
-            raw_prog = nested_receipt.get("progress")
-            try:
-                prog = float(raw_prog) if raw_prog is not None else 100.0
-            except (ValueError, TypeError):
-                prog = 0.0
-
-            if b_failed or prog < 100.0:
-                has_failed = True
-                for f_id in b_failed:
-                    all_failed_tasks.add(f_id)
-            elif b_completed:
-                valid_batches.append(nested_receipt)
-                for c_id in b_completed:
-                    all_completed_tasks.add(c_id)
 
     # Check top-level progress if present
     top_prog = receipt.get("progress")
@@ -563,9 +520,94 @@ def _extract_completed_batch_receipts(
             if float(top_prog) < 100.0:
                 has_failed = True
         except (ValueError, TypeError):
-            pass
+            has_failed = True
 
-    return valid_batches, all_completed_tasks, all_failed_tasks, has_failed
+    if not isinstance(raw_batches, list) or not raw_batches:
+        # Top-level completed task IDs alone cannot authorize PASS without completed batch evidence
+        return valid_batches, all_completed_tasks, all_failed_tasks, has_failed, False
+
+    for b_entry in raw_batches:
+        if not isinstance(b_entry, Mapping):
+            continue
+        b_num = b_entry.get("batch_number")
+        nested_receipt: Optional[Mapping[str, Any]] = None
+        has_disk_receipt = False
+
+        # If project_runtime has a batches directory, validate against disk artifacts in batches/batch-XXXX/
+        batches_dir = project_runtime / "batches" if project_runtime is not None else None
+        if batches_dir is not None and batches_dir.is_dir():
+            if b_num is not None:
+                try:
+                    b_int = int(b_num)
+                    disk_batch_dir = batches_dir / f"batch-{b_int:04d}"
+                    if not disk_batch_dir.is_dir():
+                        disk_batch_dir = batches_dir / f"batch-{b_int}"
+                    if disk_batch_dir.is_dir():
+                        host_receipt_file = disk_batch_dir / "host-receipt.json"
+                        if host_receipt_file.is_file():
+                            disk_receipt = read_json(host_receipt_file)
+                            if isinstance(disk_receipt, Mapping):
+                                nested_receipt = disk_receipt
+                                has_disk_receipt = True
+                except (ValueError, TypeError):
+                    pass
+            # Missing disk execution evidence is NOT acceptable proof when batches directory exists
+            if not has_disk_receipt:
+                has_failed = True
+                continue
+        else:
+            if isinstance(b_entry.get("receipt"), Mapping):
+                nested_receipt = b_entry.get("receipt")
+            else:
+                nested_receipt = b_entry
+
+        if not nested_receipt:
+            has_failed = True
+            continue
+
+        b_completed = [
+            str(t).strip()
+            for t in nested_receipt.get("completed_task_ids", [])
+            if str(t).strip()
+        ]
+        b_failed = [
+            str(t).strip()
+            for t in nested_receipt.get("failed_task_ids", [])
+            if str(t).strip()
+        ]
+
+        # Missing progress is NOT 100%
+        raw_prog = nested_receipt.get("progress")
+        if raw_prog is None:
+            has_failed = True
+            continue
+        try:
+            prog = float(raw_prog)
+        except (ValueError, TypeError):
+            prog = 0.0
+
+        if b_failed or prog < 100.0:
+            has_failed = True
+            for f_id in b_failed:
+                all_failed_tasks.add(f_id)
+        elif b_completed:
+            valid_batches.append(nested_receipt)
+            for c_id in b_completed:
+                all_completed_tasks.add(c_id)
+
+            # Check for verification proof in batch
+            if nested_receipt.get("verification_evidence") or nested_receipt.get("test_evidence") or nested_receipt.get("build_evidence"):
+                has_verification_proof = True
+            if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in nested_receipt.get("verified_run_types", [])):
+                has_verification_proof = True
+
+    # Top-level verification proof in receipt
+    if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence"):
+        has_verification_proof = True
+    if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in receipt.get("verified_run_types", [])):
+        has_verification_proof = True
+
+    return valid_batches, all_completed_tasks, all_failed_tasks, has_failed, has_verification_proof
 
 
 def _record_kcp_verification_receipt(
@@ -581,27 +623,28 @@ def _record_kcp_verification_receipt(
     The authoritative KnowledgeLedger is resolved exclusively from the
     Runtime V1 root without depending on cwd or ambient environment overrides.
     A valid verification receipt requires real execution evidence: completed
-    tasks and a confirmed execution SHA.
+    tasks and a confirmed execution SHA supported by verification evidence.
     """
     if not receipt:
         return None
 
     disposition = str(receipt.get("disposition") or "").upper()
-    if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD"):
+    # BOUNDED_RUN_EXHAUSTED with completed tasks is not an automatic PASS
+    if disposition in ("FAILED", "HUMAN_REQUIRED", "TECHNICAL_HOLD", "BOUNDED_RUN_EXHAUSTED"):
         return None
 
     # Never treat a generated DAG alone as execution evidence
     if receipt.get("run_plan_only") or receipt.get("generated_dag_only"):
         return None
 
-    valid_batches, completed_task_ids, failed_task_ids, any_batch_failed = (
+    valid_batches, completed_task_ids, failed_task_ids, any_batch_failed, has_verification_proof = (
         _extract_completed_batch_receipts(receipt, project_runtime=project_runtime)
     )
 
     if any_batch_failed or failed_task_ids:
         return None
 
-    if not completed_task_ids and not valid_batches:
+    if not completed_task_ids or not valid_batches:
         return None
 
     # EXACT SHA IDENTITY:
@@ -631,21 +674,20 @@ def _record_kcp_verification_receipt(
     base_sha_val: Optional[str] = exec_base_sha if _is_sha40(exec_base_sha) else None
 
     # Determine whether this is a read-only baseline verification or actual candidate verification
-    is_read_only = bool(
-        receipt.get("read_only_verification")
-        or (not candidate_sha and _is_sha40(exec_base_sha))
-    )
+    is_read_only = bool(receipt.get("read_only_verification"))
 
     if candidate_sha:
         if not _is_sha40(candidate_sha):
             # Ambiguous / invalid candidate SHA
             return None
-        # Candidate SHA must be supported by genuine verification evidence
+        # Candidate SHA must be supported by genuine verification evidence (TEST/BUILD proof)
+        if not has_verification_proof:
+            return None
         result_sha = candidate_sha
     elif is_read_only and _is_sha40(exec_base_sha):
         # For read-only baseline verification, bind result_sha to verified canonical_execution_base_sha
-        result_sha = exec_base_sha
-    elif _is_sha40(exec_base_sha) and not control_sha:
+        if not has_verification_proof:
+            return None
         result_sha = exec_base_sha
     else:
         # Never substitute control SHA for product SHA.
@@ -911,6 +953,7 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     failure_class=None,
                     error_class=None,
                     error=None,
+                    kcp_verification_status="NOT_VERIFIED",
                 )
                 store.append_event(command_id, "continuation.cycle_result", {
                     "cycle": cycle,
@@ -1162,6 +1205,8 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 elif kcp_receipt is not None:
                     state_kwargs["kcp_verification_status"] = "PASS"
                     state_kwargs["kcp_receipt_id"] = kcp_receipt.get("event_id")
+                else:
+                    state_kwargs["kcp_verification_status"] = "NOT_VERIFIED"
 
                 store.write_state(command_id, **state_kwargs)
                 event_payload = {
