@@ -1089,7 +1089,7 @@ def _validate_file_patch_tasks(
     tasks: Sequence[Mapping[str, Any]],
     workspace_root: Path,
 ) -> None:
-    """Pre-dispatch validation of native FILE apply_patch tasks against working tree."""
+    """Pre-dispatch validation of native FILE mutating tasks against working tree."""
     from extensions.autonomy_fabric.patch_engine import (
         parse_unified_diff,
         apply_patch_to_lines,
@@ -1097,91 +1097,175 @@ def _validate_file_patch_tasks(
     )
 
     resolved_workspace = workspace_root.resolve()
+    mutated_files_in_dag: Dict[str, str] = {}
 
     for task in tasks:
         if task.get("run_type") != "FILE":
             continue
-        payload = task.get("payload", {})
-        if not isinstance(payload, Mapping) or payload.get("action") != "apply_patch":
+        payload = task.get("payload")
+        if not isinstance(payload, dict):
             continue
-
+        action = payload.get("action")
         node_id = str(task.get("node_id", ""))
-        patch_text = str(payload.get("patch", ""))
-        if not patch_text.strip():
-            raise PlanningKernelError(f"Task {node_id} FILE apply_patch requires non-empty patch")
-        if not patch_text.endswith("\n"):
-            patch_text += "\n"
-
-        try:
-            file_patches = parse_unified_diff(patch_text)
-        except Exception as exc:
-            raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains malformed diff: {exc}") from exc
-
-        if not file_patches:
-            raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains no valid file patches")
-
         write_scope = task.get("write_scope", [])
 
-        for fp in file_patches:
-            target_rel = fp.new_path or fp.orig_path
-            if not target_rel:
-                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target path cannot be determined")
+        if action == "write_file":
+            rel_path = payload.get("path")
+            if not rel_path:
+                continue
+            clean_rel = str(rel_path).replace("\\", "/").lstrip("/")
+
+            # Single mutation per file policy in a bounded batch
+            if clean_rel in mutated_files_in_dag:
+                raise PlanningKernelError(
+                    f"Task {node_id} targets '{clean_rel}' which is already mutated in this plan by "
+                    f"task {mutated_files_in_dag[clean_rel]}: MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED"
+                )
+            mutated_files_in_dag[clean_rel] = node_id
 
             # Validate target is within declared write_scope
-            clean_rel = target_rel.replace("\\", "/").lstrip("/")
             if not any(
                 clean_rel == scope.rstrip("/") or clean_rel.startswith(scope.rstrip("/") + "/")
                 for scope in write_scope
             ):
                 raise PlanningKernelError(
-                    f"Task {node_id} FILE apply_patch target '{clean_rel}' outside declared write_scope: {write_scope}"
+                    f"Task {node_id} FILE write_file target '{clean_rel}' outside declared write_scope: {write_scope}"
                 )
 
             full_path = (resolved_workspace / clean_rel).resolve()
             if full_path != resolved_workspace and resolved_workspace not in full_path.parents:
-                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target escapes managed workspace")
+                raise PlanningKernelError(f"Task {node_id} FILE write_file target escapes managed workspace")
 
-            if fp.is_new_file:
-                continue
+            if full_path.is_file():
+                try:
+                    raw_bytes = full_path.read_bytes()
+                    actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                except OSError as exc:
+                    raise PlanningKernelError(f"Task {node_id} unable to read current target {clean_rel}: {exc}") from exc
 
-            if not full_path.is_file():
-                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target does not exist: {clean_rel}")
+                content = payload.get("content", "")
+                if not isinstance(content, str):
+                    raise PlanningKernelError(f"Task {node_id} FILE write_file payload requires string content")
 
-            try:
-                raw_bytes = full_path.read_bytes()
-                actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
-                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                    current_lines = f.read().splitlines(keepends=True)
-            except OSError as exc:
-                raise PlanningKernelError(f"Task {node_id} unable to read current target {clean_rel}: {exc}") from exc
-
-            # Verify precondition SHA if declared
-            precondition_shas = payload.get("precondition_shas", {})
-            expected_sha = fp.precondition_sha or precondition_shas.get(clean_rel)
-            if expected_sha:
-                if not actual_sha256.startswith(expected_sha) and not expected_sha.startswith(actual_sha256):
+                # Match bytes produced by text-mode write (translating \n to os.linesep)
+                encoded_content = content.replace("\n", os.linesep).encode("utf-8")
+                if raw_bytes == encoded_content:
                     raise PlanningKernelError(
-                        f"Task {node_id} FILE apply_patch precondition SHA mismatch for {clean_rel}: "
-                        f"expected {expected_sha}, actual {actual_sha256}"
+                        f"Task {node_id} FILE write_file produced no content change for {clean_rel}: NO_OP_WRITE"
                     )
 
-            # Test-apply in memory against working-tree lines
-            try:
-                new_lines = apply_patch_to_lines(current_lines, fp)
-            except PatchApplicationError as exc:
-                raise PlanningKernelError(
-                    f"Task {node_id} FILE apply_patch context mismatch against current working-tree content for {clean_rel}: {exc}"
-                ) from exc
-            except Exception as exc:
-                raise PlanningKernelError(
-                    f"Task {node_id} FILE apply_patch failed in-memory validation for {clean_rel}: {exc}"
-                ) from exc
+                precondition_sha = payload.get("precondition_sha")
+                if precondition_sha:
+                    # Guard: A Git blob SHA or short hash must not be mistaken for raw-file SHA256
+                    if len(str(precondition_sha)) != 64 or not re.fullmatch(r"[0-9a-fA-F]{64}", str(precondition_sha)):
+                        raise PlanningKernelError(
+                            f"Task {node_id} FILE write_file precondition SHA '{precondition_sha}' is not a valid 64-char raw-file SHA256"
+                        )
+                    if str(precondition_sha).lower() != actual_sha256.lower():
+                        raise PlanningKernelError(
+                            f"Task {node_id} FILE write_file precondition SHA mismatch for {clean_rel}: "
+                            f"expected {precondition_sha}, actual {actual_sha256}"
+                        )
+                # Propagate verified raw SHA256 precondition to payload
+                payload["precondition_sha"] = actual_sha256
 
-            # Verify no-op
-            if "".join(new_lines) == "".join(current_lines):
-                raise PlanningKernelError(
-                    f"Task {node_id} FILE apply_patch produced no content change for {clean_rel}: NO_OP_PATCH"
-                )
+        elif action == "apply_patch":
+            patch_text = str(payload.get("patch", ""))
+            if not patch_text.strip():
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch requires non-empty patch")
+            if not patch_text.endswith("\n"):
+                patch_text += "\n"
+
+            try:
+                file_patches = parse_unified_diff(patch_text)
+            except Exception as exc:
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains malformed diff: {exc}") from exc
+
+            if not file_patches:
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains no valid file patches")
+
+            for fp in file_patches:
+                target_rel = fp.new_path or fp.orig_path
+                if not target_rel:
+                    raise PlanningKernelError(f"Task {node_id} FILE apply_patch target path cannot be determined")
+
+                clean_rel = target_rel.replace("\\", "/").lstrip("/")
+
+                # Single mutation per file policy in a bounded batch
+                if clean_rel in mutated_files_in_dag:
+                    raise PlanningKernelError(
+                        f"Task {node_id} targets '{clean_rel}' which is already mutated in this plan by "
+                        f"task {mutated_files_in_dag[clean_rel]}: MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED"
+                    )
+                mutated_files_in_dag[clean_rel] = node_id
+
+                # Validate target is within declared write_scope
+                if not any(
+                    clean_rel == scope.rstrip("/") or clean_rel.startswith(scope.rstrip("/") + "/")
+                    for scope in write_scope
+                ):
+                    raise PlanningKernelError(
+                        f"Task {node_id} FILE apply_patch target '{clean_rel}' outside declared write_scope: {write_scope}"
+                    )
+
+                full_path = (resolved_workspace / clean_rel).resolve()
+                if full_path != resolved_workspace and resolved_workspace not in full_path.parents:
+                    raise PlanningKernelError(f"Task {node_id} FILE apply_patch target escapes managed workspace")
+
+                if fp.is_new_file:
+                    continue
+
+                if not full_path.is_file():
+                    raise PlanningKernelError(f"Task {node_id} FILE apply_patch target does not exist: {clean_rel}")
+
+                try:
+                    raw_bytes = full_path.read_bytes()
+                    actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                    with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                        current_lines = f.read().splitlines(keepends=True)
+                except OSError as exc:
+                    raise PlanningKernelError(f"Task {node_id} unable to read current target {clean_rel}: {exc}") from exc
+
+                # Check git blob header vs raw-file SHA256
+                # If the diff contained an "index <blob1>..<blob2>" header, fp.precondition_sha is a git blob SHA (usually 7-40 hex chars).
+                # A Git blob SHA is NEVER a raw-file SHA256. If present, it must match raw SHA256 (64 hex) or be rejected as incompatible.
+                if fp.precondition_sha:
+                    if len(fp.precondition_sha) != 64 or not re.fullmatch(r"[0-9a-fA-F]{64}", fp.precondition_sha):
+                        raise PlanningKernelError(
+                            f"Task {node_id} FILE apply_patch contains incompatible git blob index header '{fp.precondition_sha}' "
+                            f"which cannot be verified as raw-file SHA256 for {clean_rel}: GIT_INDEX_HEADER_INCOMPATIBLE"
+                        )
+
+                # Verify precondition SHA if declared in payload
+                precondition_shas = payload.setdefault("precondition_shas", {})
+                expected_sha = fp.precondition_sha or precondition_shas.get(clean_rel)
+                if expected_sha:
+                    if not actual_sha256.startswith(expected_sha) and not expected_sha.startswith(actual_sha256):
+                        raise PlanningKernelError(
+                            f"Task {node_id} FILE apply_patch precondition SHA mismatch for {clean_rel}: "
+                            f"expected {expected_sha}, actual {actual_sha256}"
+                        )
+
+                # Propagate verified raw SHA256 precondition to payload so NativeFileWorker enforces it
+                precondition_shas[clean_rel] = actual_sha256
+
+                # Test-apply in memory against working-tree lines
+                try:
+                    new_lines = apply_patch_to_lines(current_lines, fp)
+                except PatchApplicationError as exc:
+                    raise PlanningKernelError(
+                        f"Task {node_id} FILE apply_patch context mismatch against current working-tree content for {clean_rel}: {exc}"
+                    ) from exc
+                except Exception as exc:
+                    raise PlanningKernelError(
+                        f"Task {node_id} FILE apply_patch failed in-memory validation for {clean_rel}: {exc}"
+                    ) from exc
+
+                # Verify no-op
+                if "".join(new_lines) == "".join(current_lines):
+                    raise PlanningKernelError(
+                        f"Task {node_id} FILE apply_patch produced no content change for {clean_rel}: NO_OP_PATCH"
+                    )
 
 
 def _bounded_completed_read_context(
@@ -3107,12 +3191,24 @@ def compile_execution_plan(
                     f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
                     "Do not plan tasks for npm, npx, node, or any binary not in that list."
                 )
-            elif "context mismatch against current working-tree content" in validation_error or "precondition SHA mismatch" in validation_error or "NO_OP_PATCH" in validation_error:
+            elif any(
+                marker in validation_error
+                for marker in (
+                    "context mismatch against current working-tree content",
+                    "precondition SHA mismatch",
+                    "NO_OP_PATCH",
+                    "NO_OP_WRITE",
+                    "MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED",
+                    "GIT_INDEX_HEADER_INCOMPATIBLE",
+                    "not a valid 64-char raw-file SHA256",
+                )
+            ):
                 python_guidance = (
-                    "\nSOURCE_PATCH_REPAIR_RULE: The rejected patch had invalid context lines, a precondition SHA mismatch, "
-                    "or was a no-op against the real working tree. Regenerate the apply_patch payload using EXACT current lines "
-                    "from WORKSPACE_SOURCE_CONTEXT, without hallucinated imports or stale context from Git HEAD. "
-                    "If the change has already been made or cannot be applied cleanly, do not force an invalid patch."
+                    "\nSOURCE_PATCH_REPAIR_RULE: The rejected mutation had invalid context lines, a precondition SHA mismatch, "
+                    "a duplicate mutation to the same file, an incompatible Git blob index header, or was a no-op against the real working tree. "
+                    "Regenerate the FILE payload using EXACT current lines and raw SHA-256 preconditions from WORKSPACE_SOURCE_CONTEXT, "
+                    "without hallucinated imports, git blob hashes, or stale context from Git HEAD. Mutate each file at most once per plan. "
+                    "If the change has already been made or cannot be applied cleanly, do not force an invalid mutation."
                 )
             elif "FILE read target does not exist" in validation_error:
                 python_guidance = (
@@ -3392,6 +3488,7 @@ def compile_execution_plan(
                 for task in normalized["tasks"]:
                     _validate_process_workspace_inputs(task, workspace_root)
                 _validate_existing_rpc_references(normalized["tasks"], workspace_declared_symbols)
+                _validate_file_patch_tasks(normalized["tasks"], workspace_root)
             duplicates = sorted(
                 task["node_id"] for task in normalized["tasks"] if task["node_id"] in forbidden_ids
             )
