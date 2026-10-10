@@ -161,6 +161,7 @@ _SYNTHETIC_BOOKKEEPING_STEMS = (
 )
 _PLANNER_READ_CONTEXT_SUFFIXES = {
     ".md", ".markdown", ".txt", ".rst", ".json", ".jsonl", ".yaml", ".yml", ".toml",
+    ".tsx", ".ts", ".jsx", ".js", ".mjs", ".py",
 }
 _SENSITIVE_READ_CONTEXT_PARTS = {
     ".env", ".npmrc", ".pypirc", "credentials", "credential", "private-key", "private_key",
@@ -974,6 +975,213 @@ def _validate_existing_rpc_references(
                 f"Task {task.get('node_id')} references existing RPC symbols absent from the bound workspace: "
                 f"{missing}; declared SQL functions include {sorted(known)[:32]}"
             )
+
+
+def _bounded_workspace_source_context(
+    workspace: Optional[Path],
+    objective: Objective,
+    situation: ProjectSituation,
+    *,
+    max_files: int = 4,
+    max_chars_per_file: int = 4000,
+    max_total_chars: int = 12000,
+) -> Dict[str, Any]:
+    """Capture bounded actual working-tree source text and raw SHA256 before planning."""
+    if workspace is None:
+        return {"status": "UNAVAILABLE", "reason": "workspace_not_bound"}
+    workspace_root = workspace.resolve()
+    if not workspace_root.is_dir():
+        return {"status": "UNAVAILABLE", "reason": "workspace_not_found"}
+
+    candidate_paths: List[str] = []
+
+    # 1. Scope tags matching workspace paths
+    for tag in objective.scope_tags:
+        cleaned = tag.strip().replace("\\", "/").lstrip("/")
+        if cleaned and not any(part in _SENSITIVE_READ_CONTEXT_PARTS for part in cleaned.lower().split("/")):
+            candidate_paths.append(cleaned)
+
+    # 2. Extract potential file path patterns from objective title, description, and criteria
+    corpus = " ".join([
+        objective.title,
+        objective.description,
+        *objective.completion_criteria,
+    ])
+    for match in re.finditer(r"[\w.-]+(?:/[\w.-]+)+\.[a-zA-Z0-9]+", corpus):
+        matched_path = match.group(0).strip().replace("\\", "/").lstrip("/")
+        if matched_path and not any(part in _SENSITIVE_READ_CONTEXT_PARTS for part in matched_path.lower().split("/")):
+            candidate_paths.append(matched_path)
+
+    # 3. Canonical lane allowed scope if single file or specific file paths
+    if situation.lane_allowed_scope:
+        for scope_entry in situation.lane_allowed_scope:
+            clean_scope = scope_entry.strip().replace("\\", "/").lstrip("/")
+            if clean_scope and "." in Path(clean_scope).name:
+                candidate_paths.append(clean_scope)
+
+    # De-duplicate while preserving order
+    seen: set[str] = set()
+    unique_candidates: List[str] = []
+    for p_cand in candidate_paths:
+        lowered = p_cand.lower()
+        if lowered not in seen:
+            seen.add(lowered)
+            unique_candidates.append(p_cand)
+
+    files: List[Dict[str, Any]] = []
+    total_chars = 0
+
+    for rel_path in unique_candidates:
+        if len(files) >= max_files:
+            break
+        # Reject sensitive path components
+        parts = {part.casefold() for part in Path(rel_path).parts}
+        if parts & _SENSITIVE_READ_CONTEXT_PARTS:
+            continue
+        try:
+            target = (workspace_root / rel_path).resolve()
+        except Exception:
+            continue
+        # Strict confinement check
+        if target != workspace_root and workspace_root not in target.parents:
+            continue
+        # Reject symlink escapes
+        try:
+            if target.is_symlink():
+                continue
+        except OSError:
+            continue
+        if not target.is_file():
+            continue
+        if target.suffix.casefold() not in _PLANNER_READ_CONTEXT_SUFFIXES:
+            continue
+        try:
+            raw_bytes = target.read_bytes()
+            if len(raw_bytes) > 256 * 1024:
+                continue
+            sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
+            text_content = raw_bytes.decode("utf-8", errors="replace")
+        except OSError:
+            continue
+
+        bounded_text = _bounded_prompt_excerpt(redact_secrets(text_content), max_chars=max_chars_per_file)
+        if total_chars + len(bounded_text) > max_total_chars:
+            bounded_text = bounded_text[: max(0, max_total_chars - total_chars)]
+
+        files.append({
+            "path": rel_path,
+            "raw_sha256": sha256_hash,
+            "character_count": len(text_content),
+            "content": bounded_text,
+        })
+        total_chars += len(bounded_text)
+        if total_chars >= max_total_chars:
+            break
+
+    return {
+        "status": "AVAILABLE" if files else "NONE",
+        "captured_count": len(files),
+        "files": files,
+    }
+
+
+def _validate_file_patch_tasks(
+    tasks: Sequence[Mapping[str, Any]],
+    workspace_root: Path,
+) -> None:
+    """Pre-dispatch validation of native FILE apply_patch tasks against working tree."""
+    from extensions.autonomy_fabric.patch_engine import (
+        parse_unified_diff,
+        apply_patch_to_lines,
+        PatchApplicationError,
+    )
+
+    resolved_workspace = workspace_root.resolve()
+
+    for task in tasks:
+        if task.get("run_type") != "FILE":
+            continue
+        payload = task.get("payload", {})
+        if not isinstance(payload, Mapping) or payload.get("action") != "apply_patch":
+            continue
+
+        node_id = str(task.get("node_id", ""))
+        patch_text = str(payload.get("patch", ""))
+        if not patch_text.strip():
+            raise PlanningKernelError(f"Task {node_id} FILE apply_patch requires non-empty patch")
+        if not patch_text.endswith("\n"):
+            patch_text += "\n"
+
+        try:
+            file_patches = parse_unified_diff(patch_text)
+        except Exception as exc:
+            raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains malformed diff: {exc}") from exc
+
+        if not file_patches:
+            raise PlanningKernelError(f"Task {node_id} FILE apply_patch contains no valid file patches")
+
+        write_scope = task.get("write_scope", [])
+
+        for fp in file_patches:
+            target_rel = fp.new_path or fp.orig_path
+            if not target_rel:
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target path cannot be determined")
+
+            # Validate target is within declared write_scope
+            clean_rel = target_rel.replace("\\", "/").lstrip("/")
+            if not any(
+                clean_rel == scope.rstrip("/") or clean_rel.startswith(scope.rstrip("/") + "/")
+                for scope in write_scope
+            ):
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE apply_patch target '{clean_rel}' outside declared write_scope: {write_scope}"
+                )
+
+            full_path = (resolved_workspace / clean_rel).resolve()
+            if full_path != resolved_workspace and resolved_workspace not in full_path.parents:
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target escapes managed workspace")
+
+            if fp.is_new_file:
+                continue
+
+            if not full_path.is_file():
+                raise PlanningKernelError(f"Task {node_id} FILE apply_patch target does not exist: {clean_rel}")
+
+            try:
+                raw_bytes = full_path.read_bytes()
+                actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    current_lines = f.read().splitlines(keepends=True)
+            except OSError as exc:
+                raise PlanningKernelError(f"Task {node_id} unable to read current target {clean_rel}: {exc}") from exc
+
+            # Verify precondition SHA if declared
+            precondition_shas = payload.get("precondition_shas", {})
+            expected_sha = fp.precondition_sha or precondition_shas.get(clean_rel)
+            if expected_sha:
+                if not actual_sha256.startswith(expected_sha) and not expected_sha.startswith(actual_sha256):
+                    raise PlanningKernelError(
+                        f"Task {node_id} FILE apply_patch precondition SHA mismatch for {clean_rel}: "
+                        f"expected {expected_sha}, actual {actual_sha256}"
+                    )
+
+            # Test-apply in memory against working-tree lines
+            try:
+                new_lines = apply_patch_to_lines(current_lines, fp)
+            except PatchApplicationError as exc:
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE apply_patch context mismatch against current working-tree content for {clean_rel}: {exc}"
+                ) from exc
+            except Exception as exc:
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE apply_patch failed in-memory validation for {clean_rel}: {exc}"
+                ) from exc
+
+            # Verify no-op
+            if "".join(new_lines) == "".join(current_lines):
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE apply_patch produced no content change for {clean_rel}: NO_OP_PATCH"
+                )
 
 
 def _bounded_completed_read_context(
@@ -2648,6 +2856,7 @@ def compile_execution_plan(
     }
     workspace_manifest = _bounded_workspace_file_manifest(workspace, objective)
     workspace_declared_symbols = _bounded_workspace_declared_symbols(workspace, workspace_manifest)
+    workspace_source_context = _bounded_workspace_source_context(workspace, objective, situation)
     available_process_binaries = _available_process_binaries()
     verification_capabilities = _bounded_verification_capabilities(workspace)
 
@@ -2834,6 +3043,10 @@ def compile_execution_plan(
         "FILE_READ_RULE=Use read_file only for an exact representative_existing_path below or for an exact "
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
+        "SOURCE_GROUNDING_RULE=A read_file task scheduled within the same DAG is NOT evidence that its content was available "
+        "during planning. For mutating native FILE apply_patch tasks, hunks MUST match exact current source context and "
+        "precondition raw_sha256 from WORKSPACE_SOURCE_CONTEXT below. Never hallucinate imports or lines not present in the captured source.\n"
+        f"WORKSPACE_SOURCE_CONTEXT={json.dumps(workspace_source_context, ensure_ascii=False, sort_keys=True)}\n"
         f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
         "EXISTING_RPC_RULE=When consuming accepted or existing SQL RPCs, use only exact declarations in "
         "WORKSPACE_DECLARED_SYMBOLS; never invent a similar RPC name.\n"
@@ -2893,6 +3106,13 @@ def compile_execution_plan(
                     f"\nPROCESS_BINARY_RULE: The requested binary is unavailable on this host. "
                     f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
                     "Do not plan tasks for npm, npx, node, or any binary not in that list."
+                )
+            elif "context mismatch against current working-tree content" in validation_error or "precondition SHA mismatch" in validation_error or "NO_OP_PATCH" in validation_error:
+                python_guidance = (
+                    "\nSOURCE_PATCH_REPAIR_RULE: The rejected patch had invalid context lines, a precondition SHA mismatch, "
+                    "or was a no-op against the real working tree. Regenerate the apply_patch payload using EXACT current lines "
+                    "from WORKSPACE_SOURCE_CONTEXT, without hallucinated imports or stale context from Git HEAD. "
+                    "If the change has already been made or cannot be applied cleanly, do not force an invalid patch."
                 )
             elif "FILE read target does not exist" in validation_error:
                 python_guidance = (
