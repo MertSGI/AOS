@@ -1,6 +1,7 @@
 """Unit tests for Native Workers (NativeFileWorker, NativeProcessWorker, NativeGitWorker, etc.)."""
 
 import pytest
+import hashlib
 import os
 import tempfile
 import shutil
@@ -24,6 +25,7 @@ from extensions.autonomy_fabric.native_workers import (
     compute_file_sha256,
     _resolve_process_argv,
 )
+from extensions.autonomy_fabric.exact_edit_engine import ExactEditError, apply_exact_edits
 
 
 def test_secret_redaction():
@@ -118,6 +120,143 @@ def test_native_file_worker_path_confinement():
         res = worker.execute(req_escape)
         assert res.status == "FAILED"
         assert any("escapes workspace boundary" in err for err in res.sanitized_errors)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_native_file_worker_replace_exact_is_atomic_and_preserves_unrelated_bytes(
+    tmp_path: Path, monkeypatch, newline: str
+):
+    target = tmp_path / "components" / "MarketingLayout.tsx"
+    target.parent.mkdir(parents=True)
+    lines = [
+        "// mobile menu",
+        "React.useEffect(() => {",
+        "  document.body.dataset.menu = mobileMenuOpen ? 'open' : 'closed';",
+        "}, [mobileMenuOpen]);",
+        "const closeMobileMenu = () => setMobileMenuOpen(false);",
+        '<nav aria-label="Main navigation">',
+        "  <a className=\"focus-visible:ring-2 focus-visible:ring-brand\">Home</a>",
+        "</nav>",
+        "",
+    ]
+    original = newline.join(lines).encode("utf-8")
+    target.write_bytes(original)
+    original_sha = hashlib.sha256(original).hexdigest()
+    edits = [
+        {"old": "const closeMobileMenu = () => setMobileMenuOpen(false);\n", "new": ""},
+        {
+            "old": 'aria-label="Main navigation"',
+            "new": "aria-label={language === 'tr' ? 'Ana navigasyon' : 'Main navigation'}",
+        },
+    ]
+    expected = apply_exact_edits(original, edits, original_sha)
+
+    replace_calls = []
+    real_replace = os.replace
+
+    def recording_replace(source, destination):
+        replace_calls.append((Path(source), Path(destination)))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+    result = NativeFileWorker().execute(ExecutionRequest(
+        task_id="replace-exact",
+        project_id="p-test",
+        workspace=str(tmp_path),
+        operation_class="FILE_WRITE",
+        required_capabilities=[ExecutionCapability.FILE_WRITE],
+        authority_id="auth-1",
+        write_scope=["components/MarketingLayout.tsx"],
+        payload={
+            "action": "replace_exact",
+            "path": "components/MarketingLayout.tsx",
+            "edits": edits,
+            "precondition_sha": original_sha,
+            "result_sha256": expected.result_sha256,
+        },
+    ))
+
+    assert result.status == "SUCCESS"
+    assert target.read_bytes() == expected.result_bytes
+    assert len(replace_calls) == 1
+    assert replace_calls[0][0].parent == target.parent
+    assert replace_calls[0][1] == target
+    assert result.evidence_payload["original_sha256"] == original_sha
+    assert result.evidence_payload["result_sha256"] == expected.result_sha256
+    assert result.evidence_payload["newline"] == ("CRLF" if newline == "\r\n" else "LF")
+    assert b"React.useEffect" in target.read_bytes()
+    assert b"focus-visible:ring-2 focus-visible:ring-brand" in target.read_bytes()
+    if newline == "\r\n":
+        assert b"\n" not in target.read_bytes().replace(b"\r\n", b"")
+    else:
+        assert b"\r\n" not in target.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("source", "edits", "sha_override", "error_text"),
+    [
+        (b"alpha beta\n", [{"old": "alpha", "new": "omega"}], "0" * 64, "source SHA mismatch"),
+        (b"alpha beta\n", [{"old": "missing", "new": "omega"}], None, "missing from source"),
+        (b"alpha alpha\n", [{"old": "alpha", "new": "omega"}], None, "ambiguous"),
+        (
+            b"abcdef\n",
+            [{"old": "abcd", "new": "one"}, {"old": "cdef", "new": "two"}],
+            None,
+            "overlapping",
+        ),
+        (
+            b"alpha beta\n",
+            [{"old": "alpha", "new": "omega"}, {"old": "missing", "new": "value"}],
+            None,
+            "missing from source",
+        ),
+        (b"alpha beta\n", [{"old": "alpha", "new": "alpha"}], None, "no-op"),
+    ],
+    ids=["wrong-sha", "missing", "ambiguous", "overlap", "atomic-multi-edit", "no-op"],
+)
+def test_native_file_worker_replace_exact_validation_failure_has_zero_mutation(
+    tmp_path: Path, source: bytes, edits, sha_override, error_text: str
+):
+    target = tmp_path / "source.txt"
+    target.write_bytes(source)
+    result = NativeFileWorker().execute(ExecutionRequest(
+        task_id="replace-exact-invalid",
+        project_id="p-test",
+        workspace=str(tmp_path),
+        operation_class="FILE_WRITE",
+        required_capabilities=[ExecutionCapability.FILE_WRITE],
+        authority_id="auth-1",
+        write_scope=["source.txt"],
+        payload={
+            "action": "replace_exact",
+            "path": "source.txt",
+            "edits": edits,
+            "precondition_sha": sha_override or hashlib.sha256(source).hexdigest(),
+            "result_sha256": "f" * 64,
+        },
+    ))
+
+    assert result.status == "FAILED"
+    assert any(error_text in error for error in result.sanitized_errors)
+    assert target.read_bytes() == source
+
+
+def test_exact_edit_engine_rejects_mixed_newlines_and_unbounded_edits():
+    mixed = b"one\r\ntwo\n"
+    with pytest.raises(ExactEditError, match="mixed LF and CRLF"):
+        apply_exact_edits(
+            mixed,
+            [{"old": "one", "new": "three"}],
+            hashlib.sha256(mixed).hexdigest(),
+        )
+
+    source = b"anchor\n"
+    with pytest.raises(ExactEditError, match="edit count exceeds"):
+        apply_exact_edits(
+            source,
+            [{"old": f"missing-{index}", "new": "value"} for index in range(33)],
+            hashlib.sha256(source).hexdigest(),
+        )
 
 
 def test_native_file_worker_unified_patch():

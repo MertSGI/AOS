@@ -22,6 +22,7 @@ import hashlib
 import tempfile
 import difflib
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -37,6 +38,7 @@ from extensions.autonomy_fabric.execution_backend import (
     ExecutionCost,
     EvidenceClass,
 )
+from extensions.autonomy_fabric.exact_edit_engine import apply_exact_edits
 
 
 SECRET_PATTERNS = [
@@ -98,6 +100,7 @@ class NativeFileWorker(ExecutionBackend):
         errors: List[str] = []
         changed_paths: List[str] = []
         artifact_hashes: Dict[str, str] = {}
+        evidence_payload: Dict[str, Any] = {}
         backups: Dict[str, Optional[bytes]] = {}
 
         action = request.payload.get("action", "apply_patch")
@@ -158,6 +161,84 @@ class NativeFileWorker(ExecutionBackend):
 
                 changed_paths.append(rel_path)
                 artifact_hashes[rel_path] = compute_file_sha256(full_path)
+
+            elif action == "replace_exact":
+                rel_path = request.payload.get("path")
+                edits = request.payload.get("edits")
+                precondition_sha = request.payload.get("precondition_sha")
+                expected_result_sha = request.payload.get("result_sha256")
+
+                if not isinstance(rel_path, str) or not rel_path:
+                    raise ValueError("Missing 'path' in replace_exact payload")
+                full_path = os.path.normpath(os.path.join(workspace, rel_path))
+                if not is_path_confined(full_path, workspace):
+                    raise PermissionError(f"Path {rel_path} escapes workspace boundary")
+                clean_rel = rel_path.replace("\\", "/").lstrip("/")
+                if request.write_scope and not any(
+                    clean_rel == str(prefix).replace("\\", "/").rstrip("/")
+                    or clean_rel.startswith(str(prefix).replace("\\", "/").rstrip("/") + "/")
+                    for prefix in request.write_scope
+                ):
+                    raise PermissionError(f"Path {rel_path} not in authorized write_scope: {request.write_scope}")
+                if not os.path.isfile(full_path) or os.path.islink(full_path):
+                    raise FileNotFoundError(
+                        f"replace_exact target {rel_path} must be an existing regular file"
+                    )
+                if not expected_result_sha or not re.fullmatch(
+                    r"[0-9a-fA-F]{64}", str(expected_result_sha)
+                ):
+                    raise ValueError("replace_exact requires a full 64-character result_sha256")
+
+                with open(full_path, "rb") as f:
+                    original_bytes = f.read()
+                exact_result = apply_exact_edits(original_bytes, edits, precondition_sha)
+                if exact_result.result_sha256 != str(expected_result_sha).lower():
+                    raise ValueError(
+                        f"replace_exact result SHA mismatch for {rel_path}: "
+                        f"expected {str(expected_result_sha).lower()}, computed {exact_result.result_sha256}"
+                    )
+
+                # Re-read and re-run the pure validator immediately before writing.
+                # A source change after planning or during worker validation fails closed.
+                with open(full_path, "rb") as f:
+                    write_snapshot = f.read()
+                exact_result = apply_exact_edits(write_snapshot, edits, precondition_sha)
+                if exact_result.result_sha256 != str(expected_result_sha).lower():
+                    raise ValueError(
+                        f"replace_exact result SHA mismatch for {rel_path}: "
+                        f"expected {str(expected_result_sha).lower()}, computed {exact_result.result_sha256}"
+                    )
+                backups[full_path] = write_snapshot
+
+                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(full_path))
+                try:
+                    with os.fdopen(temp_fd, "wb") as f:
+                        f.write(exact_result.result_bytes)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    shutil.copymode(full_path, temp_path)
+                    os.replace(temp_path, full_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+
+                actual_bytes = Path(full_path).read_bytes()
+                actual_result_sha = hashlib.sha256(actual_bytes).hexdigest()
+                if actual_bytes != exact_result.result_bytes or actual_result_sha != exact_result.result_sha256:
+                    raise ValueError(
+                        f"replace_exact output verification failed for {rel_path}: "
+                        f"expected {exact_result.result_sha256}, actual {actual_result_sha}"
+                    )
+
+                changed_paths.append(rel_path)
+                artifact_hashes[rel_path] = actual_result_sha
+                evidence_payload = {
+                    "path": rel_path,
+                    "original_sha256": exact_result.original_sha256,
+                    "result_sha256": actual_result_sha,
+                    "newline": exact_result.newline,
+                    "edits": [asdict(item) for item in exact_result.evidence],
+                }
 
             elif action == "read_file":
                 rel_path = request.payload.get("path")
@@ -262,6 +343,7 @@ class NativeFileWorker(ExecutionBackend):
                 changed_paths=changed_paths,
                 artifact_hashes=artifact_hashes,
                 stdout_digest=f"Modified {len(changed_paths)} file(s)",
+                evidence_payload=evidence_payload,
                 evidence_class=EvidenceClass.SOURCE_PROOF,
             )
 

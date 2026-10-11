@@ -350,9 +350,11 @@ class _FakeQueueBackend:
     def __init__(self, proposals):
         self.proposals = list(proposals)
         self.calls = 0
+        self.requests = []
 
     def execute(self, request):
         self.calls += 1
+        self.requests.append(request)
         if not self.proposals:
             raise AssertionError("Unexpected additional reasoning call")
         proposal = self.proposals.pop(0)
@@ -949,3 +951,202 @@ def test_e2e_git_index_header_and_multiple_mutations_fail_safely(tmp_path: Path)
             workspace=tmp_path,
         )
     assert "MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED" in str(exc_info.value)
+
+
+def _historical_exact_edit_fixture(newline: str = "\r\n") -> bytes:
+    return newline.join([
+        "import React from 'react';",
+        "",
+        "export const MarketingLayout: React.FC = () => {",
+        "  // Mobile menu behavior",
+        "  React.useEffect(() => {",
+        "    document.body.style.overflow = mobileMenuOpen ? 'hidden' : '';",
+        "    return () => { document.body.style.overflow = ''; };",
+        "  }, [mobileMenuOpen]);",
+        "  const closeMobileMenu = () => setMobileMenuOpen(false);",
+        "",
+        "  return (",
+        '    <nav aria-label="Main navigation">',
+        '      <a className="focus-visible:ring-2 focus-visible:ring-brand">Home</a>',
+        "    </nav>",
+        "  );",
+        "};",
+        "",
+    ]).encode("utf-8")
+
+
+def _replace_exact_plan(source_sha: str) -> dict:
+    return _base_plan_template({
+        "node_id": "source-grounded-exact-edit",
+        "run_type": "FILE",
+        "authority_id": "DECISION-024",
+        "risk_class": "R0",
+        "mutating": True,
+        "dependencies": [],
+        "scope_tags": ["components/layouts/MarketingLayout.tsx"],
+        "write_scope": ["components/layouts/MarketingLayout.tsx"],
+        "payload": {
+            "action": "replace_exact",
+            "path": "components/layouts/MarketingLayout.tsx",
+            "precondition_sha": source_sha,
+            "edits": [
+                {
+                    "old": "  const closeMobileMenu = () => setMobileMenuOpen(false);\n",
+                    "new": "",
+                },
+                {
+                    "old": 'aria-label="Main navigation"',
+                    "new": "aria-label={language === 'tr' ? 'Ana navigasyon' : 'Main navigation'}",
+                },
+            ],
+        },
+        "expected_artifacts": ["components/layouts/MarketingLayout.tsx"],
+        "tests": ["synthetic TSX exact-edit regression"],
+        "evidence_requirements": ["source and result raw SHA256"],
+        "completion_criteria": ["helper removed and navigation label localized"],
+    })
+
+
+def test_historical_menu_context_hallucination_is_rejected_before_execution(tmp_path: Path):
+    target = tmp_path / "components" / "layouts" / "MarketingLayout.tsx"
+    target.parent.mkdir(parents=True)
+    original = _historical_exact_edit_fixture()
+    target.write_bytes(original)
+    hallucinated_patch = (
+        "--- a/components/layouts/MarketingLayout.tsx\n"
+        "+++ b/components/layouts/MarketingLayout.tsx\n"
+        "@@ -3,8 +3,7 @@\n"
+        " export const MarketingLayout: React.FC = () => {\n"
+        "   // Mobile menu behavior\n"
+        "-  const closeMobileMenu = () => setMobileMenuOpen(false);\n"
+        "+  const menuLabel = 'menu';\n"
+        " \n"
+        "   return (\n"
+        "-    <nav aria-label={\"Main navigation\"}>\n"
+        "+    <nav aria-label={\"Main navigation\"}>\n"
+    )
+    task = _replace_exact_plan(hashlib.sha256(original).hexdigest())["tasks"][0]
+    task["node_id"] = "historical-hallucinated-diff"
+    task["payload"] = {"action": "apply_patch", "patch": hallucinated_patch}
+    bad_plan = _base_plan_template(task)
+    backend = _FakeQueueBackend([bad_plan, bad_plan])
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(PlannerValidationExhausted, match="context mismatch"):
+        compile_execution_plan(
+            _make_situation(tmp_path),
+            _make_objective(),
+            policy_path,
+            tmp_path,
+            backend_override=backend,
+            workspace=tmp_path,
+        )
+
+    assert backend.calls == 2
+    assert target.read_bytes() == original
+
+
+def test_replace_exact_plan_is_sha_bound_guided_and_executes_two_edits_atomically(tmp_path: Path):
+    target = tmp_path / "components" / "layouts" / "MarketingLayout.tsx"
+    target.parent.mkdir(parents=True)
+    original = _historical_exact_edit_fixture()
+    target.write_bytes(original)
+    original_sha = hashlib.sha256(original).hexdigest()
+    backend = _FakeQueueBackend([_replace_exact_plan(original_sha)])
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    plan = compile_execution_plan(
+        _make_situation(tmp_path),
+        _make_objective(),
+        policy_path,
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+    payload = plan["tasks"][0]["payload"]
+    assert payload["precondition_sha"] == original_sha
+    assert len(payload["result_sha256"]) == 64
+    prompt = backend.requests[0].payload["prompt"]
+    assert "prefer replace_exact" in prompt
+    assert "actual uniquely observed old/new strings from WORKSPACE_SOURCE_CONTEXT" in prompt
+    assert '"replace_exact"' in prompt
+
+    result = NativeFileWorker().execute(ExecutionRequest(
+        task_id="source-grounded-exact-edit",
+        project_id="lari-ui-v2",
+        workspace=str(tmp_path),
+        operation_class="FILE_WRITE",
+        required_capabilities=[ExecutionCapability.FILE_WRITE],
+        authority_id="DECISION-024",
+        write_scope=["components/layouts/MarketingLayout.tsx"],
+        payload=payload,
+    ))
+
+    assert result.status == "SUCCESS"
+    output = target.read_bytes()
+    assert b"closeMobileMenu" not in output
+    assert b"Ana navigasyon" in output
+    assert b"React.useEffect" in output
+    assert b"focus-visible:ring-2 focus-visible:ring-brand" in output
+    assert b"\n" not in output.replace(b"\r\n", b"")
+    assert hashlib.sha256(output).hexdigest() == payload["result_sha256"]
+
+
+def test_replace_exact_source_drift_after_planning_fails_closed(tmp_path: Path):
+    target = tmp_path / "components" / "layouts" / "MarketingLayout.tsx"
+    target.parent.mkdir(parents=True)
+    original = _historical_exact_edit_fixture()
+    target.write_bytes(original)
+    backend = _FakeQueueBackend([
+        _replace_exact_plan(hashlib.sha256(original).hexdigest()),
+    ])
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+    plan = compile_execution_plan(
+        _make_situation(tmp_path),
+        _make_objective(),
+        policy_path,
+        tmp_path,
+        backend_override=backend,
+        workspace=tmp_path,
+    )
+
+    drifted = original + b"// external drift\r\n"
+    target.write_bytes(drifted)
+    result = NativeFileWorker().execute(ExecutionRequest(
+        task_id="source-grounded-exact-edit",
+        project_id="lari-ui-v2",
+        workspace=str(tmp_path),
+        operation_class="FILE_WRITE",
+        required_capabilities=[ExecutionCapability.FILE_WRITE],
+        authority_id="DECISION-024",
+        write_scope=["components/layouts/MarketingLayout.tsx"],
+        payload=plan["tasks"][0]["payload"],
+    ))
+
+    assert result.status == "FAILED"
+    assert any("source SHA mismatch" in error for error in result.sanitized_errors)
+    assert target.read_bytes() == drifted
+
+
+def test_replace_exact_and_other_file_mutations_share_duplicate_target_guard(tmp_path: Path):
+    target = tmp_path / "components" / "layouts" / "MarketingLayout.tsx"
+    target.parent.mkdir(parents=True)
+    original = _historical_exact_edit_fixture("\n")
+    target.write_bytes(original)
+    exact_task = _replace_exact_plan(hashlib.sha256(original).hexdigest())["tasks"][0]
+    write_task = {
+        **exact_task,
+        "node_id": "second-file-mutation",
+        "payload": {
+            "action": "write_file",
+            "path": "components/layouts/MarketingLayout.tsx",
+            "content": "replacement\n",
+        },
+    }
+
+    with pytest.raises(PlanningKernelError, match="MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED"):
+        _validate_file_patch_tasks([exact_task, write_task], tmp_path)
+    assert target.read_bytes() == original

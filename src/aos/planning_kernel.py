@@ -75,6 +75,10 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     NativeProcessWorker,
     redact_secrets,
 )
+from extensions.autonomy_fabric.exact_edit_engine import (  # noqa: E402
+    ExactEditError,
+    apply_exact_edits,
+)
 
 
 SCHEMA_VERSION = "1.0.0"
@@ -425,7 +429,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
                                 "type": "string",
                                 "enum": sorted(
                                     _ALLOWED_GIT_ACTIONS
-                                    | {"read_file", "write_file", "apply_patch", "observe_run"}
+                                    | {"read_file", "write_file", "replace_exact", "apply_patch", "observe_run"}
                                 ),
                             },
                             "args": {"type": "array", "items": {"type": "string"}},
@@ -438,6 +442,21 @@ PLAN_SCHEMA: Dict[str, Any] = {
                             "path": {"type": "string"},
                             "content": {"type": "string"},
                             "precondition_sha": {"type": "string"},
+                            "edits": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 32,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["old", "new"],
+                                    "properties": {
+                                        "old": {"type": "string", "minLength": 1, "maxLength": 131072},
+                                        "new": {"type": "string", "maxLength": 131072},
+                                    },
+                                },
+                            },
+                            "result_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
                             "patch": {"type": "string"},
                             "precondition_shas": {
                                 "type": "object",
@@ -769,7 +788,7 @@ def _run_type_payload_contract_guidance() -> str:
     """
     return (
         "RUN_TYPE_PAYLOAD_CONTRACT="
-        "FILE -> payload.action is required and must be read_file/write_file/apply_patch; "
+        "FILE -> payload.action is required and must be read_file/write_file/replace_exact/apply_patch; "
         "GIT -> payload.action is required and must be one NativeGitWorker action, with payload.args as an argv array; "
         "PROCESS/TEST/BUILD -> payload.cmd is required and must be a non-empty argv array; "
         "CI -> payload.sha is required; "
@@ -794,13 +813,19 @@ def _worker_contract_summary() -> str:
                         "content": "string",
                         "precondition_sha": "optional sha256",
                     },
+                    "replace_exact": {
+                        "path": "existing workspace-relative string",
+                        "edits": [{"old": "unique observed source string", "new": "replacement string"}],
+                        "precondition_sha": "required full raw-file sha256",
+                        "result_sha256": "planner-bound full raw-file sha256",
+                    },
                     "apply_patch": {
                         "patch": "unified diff string",
                         "precondition_shas": "optional path-to-sha object",
                         "allow_deletion": False,
                     },
                 },
-                "safety": "workspace confinement and declared write_scope are enforced",
+                "safety": "workspace confinement and declared write_scope are enforced; prefer replace_exact for small localized edits to uniquely observed existing source",
             },
             "NativeProcessWorker": {
                 "run_type": "PROCESS",
@@ -1168,6 +1193,53 @@ def _validate_file_patch_tasks(
                         )
                 # Propagate verified raw SHA256 precondition to payload
                 payload["precondition_sha"] = actual_sha256
+
+        elif action == "replace_exact":
+            rel_path = payload.get("path")
+            if not rel_path:
+                raise PlanningKernelError(f"Task {node_id} FILE replace_exact requires path")
+            clean_rel = str(rel_path).replace("\\", "/").lstrip("/")
+
+            if clean_rel in mutated_files_in_dag:
+                raise PlanningKernelError(
+                    f"Task {node_id} targets '{clean_rel}' which is already mutated in this plan by "
+                    f"task {mutated_files_in_dag[clean_rel]}: MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED"
+                )
+            mutated_files_in_dag[clean_rel] = node_id
+
+            if not any(
+                clean_rel == scope.rstrip("/") or clean_rel.startswith(scope.rstrip("/") + "/")
+                for scope in write_scope
+            ):
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE replace_exact target '{clean_rel}' outside declared write_scope: {write_scope}"
+                )
+
+            full_path = (resolved_workspace / clean_rel).resolve()
+            if full_path != resolved_workspace and resolved_workspace not in full_path.parents:
+                raise PlanningKernelError(f"Task {node_id} FILE replace_exact target escapes managed workspace")
+            if not full_path.is_file() or full_path.is_symlink():
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE replace_exact target must be an existing regular file: {clean_rel}"
+                )
+
+            try:
+                raw_bytes = full_path.read_bytes()
+            except OSError as exc:
+                raise PlanningKernelError(f"Task {node_id} unable to read current target {clean_rel}: {exc}") from exc
+            try:
+                exact_result = apply_exact_edits(
+                    raw_bytes,
+                    payload.get("edits"),
+                    payload.get("precondition_sha"),
+                )
+            except ExactEditError as exc:
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE replace_exact validation failed for {clean_rel}: {exc}"
+                ) from exc
+
+            payload["precondition_sha"] = exact_result.original_sha256
+            payload["result_sha256"] = exact_result.result_sha256
 
         elif action == "apply_patch":
             patch_text = str(payload.get("patch", ""))
@@ -1737,7 +1809,7 @@ def _is_product_mutation_task(task: Mapping[str, Any]) -> bool:
     if run_type == "AGENTIC":
         return True
     if run_type == "FILE":
-        return str(payload.get("action", "")).lower() in {"write_file", "apply_patch"}
+        return str(payload.get("action", "")).lower() in {"write_file", "replace_exact", "apply_patch"}
     if run_type == "GIT":
         return str(payload.get("action", "")).lower() in {"merge", "cherry-pick"}
     return False
@@ -2642,7 +2714,10 @@ def _validate_plan_shape(plan: Mapping[str, Any], objective: Objective, situatio
         if run_type in _MUTATING_RUN_TYPES and task["mutating"] is False and run_type in ("FILE", "GIT"):
             # Git read operations exist, but planner must explicitly mark mutation truthfully.
             payload_text = json.dumps(task["payload"], sort_keys=True).lower()
-            if any(x in payload_text for x in ("write", "patch", "commit", "push", "branch", "checkout")):
+            if (
+                run_type == "FILE"
+                and task["payload"].get("action") == "replace_exact"
+            ) or any(x in payload_text for x in ("write", "patch", "commit", "push", "branch", "checkout")):
                 raise PlanningKernelError(f"Task {node_id} understates mutation intent")
         tasks.append(task)
     for task in tasks:
@@ -2669,12 +2744,34 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
 
     if run_type == "FILE":
         action = payload.get("action")
-        if action not in ("read_file", "write_file", "apply_patch"):
+        if action not in ("read_file", "write_file", "replace_exact", "apply_patch"):
             raise PlanningKernelError(f"Task {node_id} FILE payload has unsupported action")
-        if action in ("read_file", "write_file") and not str(payload.get("path", "")).strip():
+        if action in ("read_file", "write_file", "replace_exact") and not str(payload.get("path", "")).strip():
             raise PlanningKernelError(f"Task {node_id} FILE {action} payload requires path")
         if action == "write_file" and not isinstance(payload.get("content"), str):
             raise PlanningKernelError(f"Task {node_id} FILE write_file payload requires content")
+        if action == "replace_exact":
+            precondition_sha = payload.get("precondition_sha")
+            if not isinstance(precondition_sha, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{64}", precondition_sha
+            ):
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE replace_exact requires a full 64-character raw-file SHA256"
+                )
+            edits = payload.get("edits")
+            if not isinstance(edits, list) or not edits:
+                raise PlanningKernelError(f"Task {node_id} FILE replace_exact requires non-empty edits")
+            if any(
+                not isinstance(edit, dict)
+                or set(edit) != {"old", "new"}
+                or not isinstance(edit.get("old"), str)
+                or not edit.get("old")
+                or not isinstance(edit.get("new"), str)
+                for edit in edits
+            ):
+                raise PlanningKernelError(
+                    f"Task {node_id} FILE replace_exact edits require only non-empty string old and string new"
+                )
         if action == "apply_patch" and not str(payload.get("patch", "")).strip():
             raise PlanningKernelError(f"Task {node_id} FILE apply_patch payload requires patch")
         return
@@ -2881,7 +2978,7 @@ def _validate_design_remediation_plan(
         if run_type != "FILE":
             continue
         action = payload.get("action")
-        if bool(task.get("mutating")) and action in {"write_file", "apply_patch"}:
+        if bool(task.get("mutating")) and action in {"write_file", "replace_exact", "apply_patch"}:
             return
         if action == "read_file":
             target = (root / str(payload.get("path", ""))).resolve()
@@ -3128,8 +3225,10 @@ def compile_execution_plan(
         "expected_artifact declared by a transitive dependency. Never invent next_action, status, report, or marker files; "
         "when no relevant path is known, prefer bounded GIT status/diff/log/ls-files or PROCESS/TEST verification.\n"
         "SOURCE_GROUNDING_RULE=A read_file task scheduled within the same DAG is NOT evidence that its content was available "
-        "during planning. For mutating native FILE apply_patch tasks, hunks MUST match exact current source context and "
-        "precondition raw_sha256 from WORKSPACE_SOURCE_CONTEXT below. Never hallucinate imports or lines not present in the captured source.\n"
+        "during planning. For a simple localized edit to EXISTING source text, prefer replace_exact with the full raw_sha256 "
+        "precondition and actual uniquely observed old/new strings from WORKSPACE_SOURCE_CONTEXT. Use apply_patch when the change "
+        "requires a structural unified diff. Never emit invented surrounding JSX merely to edit a uniquely identifiable string. "
+        "For apply_patch, hunks MUST match exact current source context. Never hallucinate imports or lines not present in the captured source.\n"
         f"WORKSPACE_SOURCE_CONTEXT={json.dumps(workspace_source_context, ensure_ascii=False, sort_keys=True)}\n"
         f"WORKSPACE_FILE_MANIFEST={json.dumps(workspace_manifest, ensure_ascii=False, sort_keys=True)}\n"
         "EXISTING_RPC_RULE=When consuming accepted or existing SQL RPCs, use only exact declarations in "
@@ -3201,6 +3300,7 @@ def compile_execution_plan(
                     "MULTIPLE_FILE_MUTATIONS_NOT_PERMITTED",
                     "GIT_INDEX_HEADER_INCOMPATIBLE",
                     "not a valid 64-char raw-file SHA256",
+                    "replace_exact validation failed",
                 )
             ):
                 python_guidance = (
@@ -3208,7 +3308,9 @@ def compile_execution_plan(
                     "a duplicate mutation to the same file, an incompatible Git blob index header, or was a no-op against the real working tree. "
                     "Regenerate the FILE payload using EXACT current lines and raw SHA-256 preconditions from WORKSPACE_SOURCE_CONTEXT, "
                     "without hallucinated imports, git blob hashes, or stale context from Git HEAD. Mutate each file at most once per plan. "
-                    "If the change has already been made or cannot be applied cleanly, do not force an invalid mutation."
+                    "Prefer replace_exact for small localized changes when each observed old anchor is unique; use apply_patch only for "
+                    "structural unified diffs. If an exact anchor is missing or ambiguous, do not force an edit. If the change has "
+                    "already been made or cannot be applied cleanly, do not force an invalid mutation."
                 )
             elif "FILE read target does not exist" in validation_error:
                 python_guidance = (
