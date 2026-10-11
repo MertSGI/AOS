@@ -64,6 +64,21 @@ def _normalize_newlines(value: str, source_newline: str | None, *, label: str) -
     return value.replace(requested_newline, source_newline)
 
 
+def _count_overlapping_occurrences(source: str, anchor: str) -> tuple[int, int | None]:
+    """Return every match count and the first match start, including overlaps."""
+    count = 0
+    first_start: int | None = None
+    search_start = 0
+    while True:
+        match_start = source.find(anchor, search_start)
+        if match_start < 0:
+            return count, first_start
+        if first_start is None:
+            first_start = match_start
+        count += 1
+        search_start = match_start + 1
+
+
 def apply_exact_edits(
     original_bytes: bytes,
     edits: Sequence[Mapping[str, str]],
@@ -127,14 +142,14 @@ def apply_exact_edits(
         if normalized_old == normalized_new:
             raise ExactEditError(f"edit {index} is a no-op")
 
-        occurrence_count = source.count(normalized_old)
+        occurrence_count, start = _count_overlapping_occurrences(source, normalized_old)
         if occurrence_count == 0:
             raise ExactEditError(f"edit {index} old anchor is missing from source")
         if occurrence_count != 1:
             raise ExactEditError(
                 f"edit {index} old anchor is ambiguous: found {occurrence_count} occurrences"
             )
-        start = source.index(normalized_old)
+        assert start is not None
         end = start + len(normalized_old)
         validated.append((start, end, normalized_old, normalized_new, index))
 

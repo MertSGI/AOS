@@ -198,6 +198,8 @@ def test_native_file_worker_replace_exact_is_atomic_and_preserves_unrelated_byte
         (b"alpha beta\n", [{"old": "alpha", "new": "omega"}], "0" * 64, "source SHA mismatch"),
         (b"alpha beta\n", [{"old": "missing", "new": "omega"}], None, "missing from source"),
         (b"alpha alpha\n", [{"old": "alpha", "new": "omega"}], None, "ambiguous"),
+        (b"aaa", [{"old": "aa", "new": "b"}], None, "found 2 occurrences"),
+        (b"aaaa", [{"old": "aa", "new": "b"}], None, "found 3 occurrences"),
         (
             b"abcdef\n",
             [{"old": "abcd", "new": "one"}, {"old": "cdef", "new": "two"}],
@@ -212,7 +214,16 @@ def test_native_file_worker_replace_exact_is_atomic_and_preserves_unrelated_byte
         ),
         (b"alpha beta\n", [{"old": "alpha", "new": "alpha"}], None, "no-op"),
     ],
-    ids=["wrong-sha", "missing", "ambiguous", "overlap", "atomic-multi-edit", "no-op"],
+    ids=[
+        "wrong-sha",
+        "missing",
+        "ambiguous",
+        "overlapping-ambiguity-two",
+        "overlapping-ambiguity-three",
+        "overlap",
+        "atomic-multi-edit",
+        "no-op",
+    ],
 )
 def test_native_file_worker_replace_exact_validation_failure_has_zero_mutation(
     tmp_path: Path, source: bytes, edits, sha_override, error_text: str
