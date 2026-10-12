@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -233,6 +234,65 @@ class RuntimeSupervisor:
         self.last_status: Optional[Dict[str, Any]] = None
         self.stop_event = threading.Event()
         self.control_path = self.root / "control-request.json"
+        self.phase = "INITIALIZED"
+
+    @staticmethod
+    def _sanitize_diagnostic_text(value: Any, *, limit: int = 20000) -> str:
+        """Bound diagnostic text and redact common credential assignments."""
+        import re
+
+        text = str(value or "")[:limit]
+        text = re.sub(
+            r"(?i)(authorization|api[_-]?key|token|secret|password)(\s*[:=]\s*)([^\s,;]+)",
+            r"\1\2<redacted>",
+            text,
+        )
+        return re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>", text)
+
+    def _record_exit_diagnostic(
+        self,
+        exit_kind: str,
+        *,
+        error: Optional[BaseException] = None,
+    ) -> Path:
+        """Persist one sanitized supervisor exit record outside mutable state."""
+        pointer = read_json(self.root / "active-slot.json", {})
+        state = read_json(self.state_path, {})
+        evidence = {
+            "contract_version": CONTRACT_VERSION,
+            "recorded_at": utc_now(),
+            "exit_kind": str(exit_kind),
+            "phase": self.phase,
+            "supervisor_pid": os.getpid(),
+            "singleton_name": self.singleton_name,
+            "active": pointer.get("active"),
+            "stable_slot_id": pointer.get("stable_slot_id"),
+            "candidate_slot_id": pointer.get("candidate_slot_id"),
+            "transition_id": pointer.get("transition_id"),
+            "transition_operation": pointer.get("transition_operation"),
+            "transition_state": pointer.get("transition_state"),
+            "child_slot_id": self.child_slot_id,
+            "child_pid": self.child.pid if self.child is not None else None,
+            "runtime_api_pid": self.runtime_api_pid,
+            "observed_runtime_source_sha": state.get("observed_runtime_source_sha"),
+            "observed_runtime_slot_id": state.get("observed_runtime_slot_id"),
+            "production": "NO_GO",
+            "ag_backend_enabled": False,
+        }
+        if error is not None:
+            evidence.update({
+                "exception_class": type(error).__name__,
+                "exception_message": self._sanitize_diagnostic_text(error, limit=2000),
+                "traceback": self._sanitize_diagnostic_text(traceback.format_exc()),
+            })
+        diagnostics = self.root / "diagnostics"
+        path = diagnostics / f"supervisor-exit-{time.time_ns()}-{os.getpid()}.json"
+        atomic_json(path, evidence)
+        atomic_json(
+            self.root / "supervisor-last-exit.json",
+            {**evidence, "evidence_path": str(path)},
+        )
+        return path
 
     def _panel_paths(self) -> tuple[Path, Path, Path]:
         base = self.config_path.parent
@@ -494,16 +554,35 @@ class RuntimeSupervisor:
         return self.child is not None and self.child.poll() is None
 
     def run(self) -> int:
-        with SupervisorSingleton(self.root, self.singleton_name):
-            self._write_state(
-                state="SUPERVISOR_STARTED",
-                singleton_name=self.singleton_name,
-                singleton_held=True,
-            )
-            try:
-                return self._run_owned_loop()
-            finally:
-                self._shutdown_owned()
+        self.phase = "SINGLETON_ACQUIRE"
+        try:
+            with SupervisorSingleton(self.root, self.singleton_name):
+                self.phase = "SUPERVISOR_STARTED"
+                self._write_state(
+                    state="SUPERVISOR_STARTED",
+                    singleton_name=self.singleton_name,
+                    singleton_held=True,
+                )
+                try:
+                    return self._run_owned_loop()
+                except Exception as exc:
+                    evidence_path = self._record_exit_diagnostic(
+                        "UNEXPECTED_EXCEPTION",
+                        error=exc,
+                    )
+                    self._write_state(
+                        state="FAILED",
+                        singleton_held=True,
+                        failure_phase=self.phase,
+                        failure_evidence=str(evidence_path),
+                    )
+                    raise
+                finally:
+                    self.phase = "FINAL_CLEANUP"
+                    self._shutdown_owned()
+        except SupervisorAlreadyRunning:
+            self._record_exit_diagnostic("SINGLETON_CONFLICT")
+            raise
 
     def _shutdown_requested(self) -> bool:
         request = read_json(self.control_path, {})
@@ -544,14 +623,20 @@ class RuntimeSupervisor:
 
     def _run_owned_loop(self) -> int:
         while not self.stop_event.is_set():
+            self.phase = "CONTROL_REQUEST_CHECK"
             if self._shutdown_requested():
                 self._write_state(state="SHUTDOWN_REQUESTED", singleton_held=True)
+                self._record_exit_diagnostic("SHUTDOWN_REQUEST")
                 return 0
+            self.phase = "READ_SLOT_POINTER"
             pointer = self.slots.read_pointer()
+            self.phase = "READ_ACTIVE_SLOT"
             slot = self.slots.active_slot()
+            self.phase = "LAUNCH_RUNTIME"
             self._launch(slot)
             grace = int(self.config.get("health_grace_seconds", 20))
             deadline = time.time() + max(5, grace)
+            self.phase = "RUNTIME_HEALTH_PROOF"
             while time.time() < deadline:
                 if self._healthy(slot):
                     break
@@ -562,6 +647,7 @@ class RuntimeSupervisor:
 
             if self._healthy(slot):
                 self.failures = 0
+                self.phase = "PANEL_HEALTH_PROOF"
                 panel_healthy = self._ensure_panel(slot.source_sha)
                 if slot.kind == "runtime_v1" and pointer.get("active") == "candidate":
                     self.slots.mark_candidate_healthy()

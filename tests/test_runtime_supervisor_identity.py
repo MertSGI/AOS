@@ -6,7 +6,12 @@ import pytest
 
 import aos.runtime_supervisor as runtime_supervisor_module
 from aos.runtime_slots import SlotRecord
-from aos.runtime_supervisor import RuntimeSupervisor, _runtime_health_matches
+from aos.runtime_supervisor import (
+    RuntimeSupervisor,
+    SupervisorAlreadyRunning,
+    SupervisorSingleton,
+    _runtime_health_matches,
+)
 
 
 def _slot():
@@ -368,3 +373,52 @@ def test_shutdown_acknowledgement_is_idempotent_for_idle_action(tmp_path: Path):
         assert supervisor._shutdown_requested() is False
     finally:
         supervisor.relay_worker.close()
+
+
+def test_unexpected_supervisor_exception_is_durable_before_shutdown(
+    tmp_path: Path,
+    monkeypatch,
+):
+    supervisor = _panel_supervisor(tmp_path)
+    supervisor.singleton_name = f"AOS.Test.Supervisor.Diagnostics.{os.getpid()}"
+
+    def fail_in_pointer_read():
+        supervisor.phase = "READ_SLOT_POINTER"
+        raise RuntimeError("pointer transition rejected")
+
+    monkeypatch.setattr(supervisor, "_run_owned_loop", fail_in_pointer_read)
+
+    with pytest.raises(RuntimeError, match="pointer transition rejected"):
+        supervisor.run()
+
+    evidence = json.loads(
+        (supervisor.root / "supervisor-last-exit.json").read_text(encoding="utf-8")
+    )
+    assert evidence["exit_kind"] == "UNEXPECTED_EXCEPTION"
+    assert evidence["phase"] == "READ_SLOT_POINTER"
+    assert evidence["exception_class"] == "RuntimeError"
+    assert "pointer transition rejected" in evidence["exception_message"]
+    assert "fail_in_pointer_read" in evidence["traceback"]
+    assert Path(evidence["evidence_path"]).is_file()
+
+    final_state = json.loads(supervisor.state_path.read_text(encoding="utf-8"))
+    assert final_state["state"] == "SHUTDOWN"
+    assert final_state["singleton_held"] is False
+
+
+def test_supervisor_singleton_conflict_is_distinct_from_unexpected_exception(
+    tmp_path: Path,
+):
+    supervisor = _panel_supervisor(tmp_path)
+    supervisor.singleton_name = f"AOS.Test.Supervisor.Conflict.{os.getpid()}"
+
+    with SupervisorSingleton(supervisor.root, supervisor.singleton_name):
+        with pytest.raises(SupervisorAlreadyRunning):
+            supervisor.run()
+
+    evidence = json.loads(
+        (supervisor.root / "supervisor-last-exit.json").read_text(encoding="utf-8")
+    )
+    assert evidence["exit_kind"] == "SINGLETON_CONFLICT"
+    assert evidence["phase"] == "SINGLETON_ACQUIRE"
+    assert "exception_class" not in evidence

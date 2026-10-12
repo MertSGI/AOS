@@ -19,6 +19,88 @@ ROOT = Path(__file__).resolve().parent.parent
 BASE_SHA = "ab1e1d248820dd10b7900f8117cd1e0b48687be3"
 
 
+def test_activation_handoff_waits_for_ack_and_owned_process_exit(
+    tmp_path: Path,
+    monkeypatch,
+):
+    supervisor = tmp_path / "supervisor"
+    supervisor.mkdir()
+    atomic_json(supervisor / "supervisor-state.json", {
+        "state": "HEALTHY",
+        "singleton_held": True,
+        "supervisor_pid": 101,
+        "child_pid": 102,
+        "runtime_api_pid": 102,
+        "panel_pid": 103,
+    })
+    alive = {101, 102, 103}
+    monkeypatch.setattr(runtime_deploy, "process_alive", lambda pid: int(pid or 0) in alive)
+
+    def acknowledge(_seconds):
+        request = json.loads(
+            (supervisor / "control-request.json").read_text(encoding="utf-8")
+        )
+        atomic_json(supervisor / "control-request.json", {
+            "contract_version": "1.0.0",
+            "action": "IDLE",
+            "last_consumed_action": "SHUTDOWN",
+            "last_requested_at": request["requested_at"],
+            "last_requested_by": request["requested_by"],
+            "acknowledged_at": "2026-10-12T00:00:01Z",
+            "acknowledged_by": "runtime_supervisor",
+        })
+        atomic_json(supervisor / "supervisor-state.json", {
+            "state": "SHUTDOWN",
+            "singleton_held": False,
+            "supervisor_pid": 101,
+            "child_pid": None,
+            "runtime_api_pid": None,
+            "panel_pid": None,
+        })
+        alive.clear()
+
+    monkeypatch.setattr(runtime_deploy.time, "sleep", acknowledge)
+
+    result = runtime_deploy._handoff_running_supervisor(
+        supervisor,
+        transaction_id="activate-test-handoff",
+        timeout=5,
+    )
+
+    assert result["status"] == "STOPPED"
+    assert result["owned_pids"] == [101, 102, 103]
+    control = json.loads(
+        (supervisor / "control-request.json").read_text(encoding="utf-8")
+    )
+    assert control["last_requested_by"] == (
+        "aos.runtime_deploy:activate-test-handoff"
+    )
+
+
+def test_activation_handoff_does_not_accept_stale_shutdown_state(
+    tmp_path: Path,
+    monkeypatch,
+):
+    supervisor = tmp_path / "supervisor"
+    supervisor.mkdir()
+    atomic_json(supervisor / "supervisor-state.json", {
+        "state": "SHUTDOWN",
+        "singleton_held": False,
+        "supervisor_pid": 201,
+    })
+    monkeypatch.setattr(runtime_deploy, "process_alive", lambda _pid: True)
+    ticks = iter((0.0, 6.0, 6.0))
+    monkeypatch.setattr(runtime_deploy.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(runtime_deploy.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(DeploymentError, match="did not acknowledge"):
+        runtime_deploy._handoff_running_supervisor(
+            supervisor,
+            transaction_id="activate-test-stale-state",
+            timeout=5,
+        )
+
+
 def _record_accepted_source(runtime_home: Path) -> None:
     ledger = ledger_for_runtime(runtime_home)
     record_implementation_receipt(

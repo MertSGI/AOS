@@ -324,6 +324,85 @@ def _health(url: str, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _handoff_running_supervisor(
+    supervisor_root: Path,
+    *,
+    transaction_id: str,
+    timeout: float,
+) -> Dict[str, Any]:
+    """Stop an existing supervisor and prove its singleton/processes released.
+
+    Activation must not expose a prepared-transition pointer to a supervisor
+    that was constructed before that transition existed.  The prior behavior
+    made the old and candidate supervisors race for the singleton: the old one
+    crashed on the pointer while the new one could either win or exit 17.
+    """
+    state_path = supervisor_root / "supervisor-state.json"
+    state = read_json(state_path, {})
+    supervisor_pid = state.get("supervisor_pid")
+    owned_pids = {
+        int(value)
+        for value in (
+            state.get("supervisor_pid"),
+            state.get("child_pid"),
+            state.get("runtime_api_pid"),
+            state.get("panel_pid"),
+        )
+        if str(value or "").isdigit() and int(value) > 0
+    }
+    if not process_alive(supervisor_pid):
+        return {
+            "status": "NOT_RUNNING",
+            "supervisor_pid": supervisor_pid,
+            "owned_pids": sorted(owned_pids),
+        }
+
+    requested_at = utc_now()
+    requested_by = f"aos.runtime_deploy:{transaction_id}"
+    atomic_json(
+        supervisor_root / "control-request.json",
+        {
+            "contract_version": CONTRACT_VERSION,
+            "action": "SHUTDOWN",
+            "requested_at": requested_at,
+            "requested_by": requested_by,
+        },
+    )
+    deadline = time.monotonic() + max(5.0, float(timeout))
+    last_control: Dict[str, Any] = {}
+    last_state: Dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last_control = read_json(supervisor_root / "control-request.json", {})
+        last_state = read_json(state_path, {})
+        acknowledged = (
+            str(last_control.get("action") or "").upper() == "IDLE"
+            and last_control.get("last_consumed_action") == "SHUTDOWN"
+            and last_control.get("last_requested_at") == requested_at
+            and last_control.get("last_requested_by") == requested_by
+            and last_control.get("acknowledged_by") == "runtime_supervisor"
+        )
+        processes_stopped = all(not process_alive(pid) for pid in owned_pids)
+        if (
+            acknowledged
+            and last_state.get("state") == "SHUTDOWN"
+            and last_state.get("singleton_held") is False
+            and processes_stopped
+        ):
+            return {
+                "status": "STOPPED",
+                "supervisor_pid": supervisor_pid,
+                "owned_pids": sorted(owned_pids),
+                "requested_at": requested_at,
+                "acknowledged_at": last_control.get("acknowledged_at"),
+            }
+        time.sleep(0.1)
+    raise DeploymentError(
+        "Existing supervisor did not acknowledge a clean activation handoff "
+        f"for {transaction_id}; state={last_state.get('state')!r}, "
+        f"control={last_control.get('action')!r}"
+    )
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -805,6 +884,32 @@ def activate(
         raise
     transaction["activation_transition_state"] = "PREPARED"
     atomic_json(backup / "transaction.json", transaction)
+
+    if launch:
+        try:
+            transaction["supervisor_handoff"] = _handoff_running_supervisor(
+                supervisor_root,
+                transaction_id=txid,
+                timeout=min(max(5.0, proof_timeout), 30.0),
+            )
+        except Exception as exc:
+            abort_transition(
+                knowledge_ledger,
+                transition_id=transition_id,
+                boundary="aos.runtime_deploy",
+                result_sha=source_sha,
+                reason=f"activation supervisor handoff failed: {exc}",
+                recovered_state={"slot_pointer": previous},
+            )
+            transaction["activation_transition_state"] = "ABORTED"
+            transaction["supervisor_handoff"] = {
+                "status": "FAILED",
+                "error_class": type(exc).__name__,
+                "error": str(exc)[:1000],
+            }
+            atomic_json(backup / "transaction.json", transaction)
+            raise
+        atomic_json(backup / "transaction.json", transaction)
 
     completion_persisted = False
     try:
