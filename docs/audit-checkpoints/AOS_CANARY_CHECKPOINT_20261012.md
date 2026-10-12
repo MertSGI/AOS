@@ -24,8 +24,8 @@
   - Zero fabricated implementation receipts emitted for uncommitted canary workspace.
 - **RESTART_NO_REPLAY**: `PASS` (Clean restart and re-entry evaluated: 4/4 tasks restored from durable checkpoint without duplicate execution; event sequence transitioned `20 -> 36` with `0` duplicate backend invocations).
 - **RUNTIME_PROTECTED_STATE**: `30369cf7871ea4e254ea1615df871507d919e4a1` (`candidate-runtime-v1.8-30369cf7871e`), `HEALTHY`, `PAUSED_SAFE`, `NO_GO`. 12 `HOLD`, 12 `SUPERSEDED` command admissions; zero unauthorized mutations.
-- **PRODUCT_LANE_READINESS**: `READY_POST_CONVERGENCE` (R2 accepted at `06ebf176e411faf6820ded34987f894cc5e7dc9e`; next action is Phase 7 Node 3 R2 Favorites & Fast Rebooking Product Integration under DECISION-024).
-- **UI_V2_READINESS**: `RECONCILIATION_PREPARED` (Bounded to `src/ui-v2`, `src/components/v2`, `tests/ui-v2`; shared path `pages/BookingPage.tsx` ownership protected; security candidate `e12ada695da17d937b6a32a0a9af01f0e02cbaa1` hosted CI passed in `38222159846`).
+- **PRODUCT_LANE_READINESS**: `R2_ACCEPTED` (Phase 7 Node 3 Favorites & Fast Rebooking R2 Product Integration accepted at exact product SHA `06ebf176e411faf6820ded34987f894cc5e7dc9e`; canonical execution base is `06ebf176e411faf6820ded34987f894cc5e7dc9e`).
+- **UI_V2_READINESS**: `SYNCHRONIZATION_PREPARED` (Branching from canonical base `06ebf176e411faf6820ded34987f894cc5e7dc9e`; candidate `e12ada695da17d937b6a32a0a9af01f0e02cbaa1` hosted CI passed in run `38222159846`; shared path `pages/BookingPage.tsx` owned exclusively by `lari`).
 
 ---
 
@@ -99,21 +99,54 @@
 
 ---
 
-## 6. LARI Dual-Lane Readiness & Next Safe Action
+## 6. Canonical Control Plane Reconciliation (`14589d3a68a1654281ceeec2f3b9445fbbaa807a`)
+
+### Canonical Base Authority
+- **Control Plane HEAD**: `14589d3a68a1654281ceeec2f3b9445fbbaa807a` (`control/lari-project-control-plane`)
+- **Execution Base (Both Lanes)**: `06ebf176e411faf6820ded34987f894cc5e7dc9e`
+- **Product R2 State**: `ACCEPTED` at exact product SHA `06ebf176e411faf6820ded34987f894cc5e7dc9e`. Product R2 must NOT be reimplemented.
 
 ### Product Lane (`lari`)
-- **Accepted Product Head**: `06ebf176e411faf6820ded34987f894cc5e7dc9e` (DECISION-024 R2 Accepted).
-- **Execution Base**: `a8740a4a252c83060e8eaad28f49f58140c0ee5a`.
-- **Next Scope**: Phase 7 Node 3 R2 Favorites & Fast Rebooking Product Integration.
-- **Allowed Write Scope**: `src/features/favorites`, `src/features/rebooking`, `supabase/migrations`, `tests/favorites`.
+- **Lane Status**: `R2_ACCEPTED`
+- **Execution Base**: `06ebf176e411faf6820ded34987f894cc5e7dc9e`
+- **Next Authorized Action**: Phase 7 Node 3 R3 visual/browser validation from `06ebf176e411faf6820ded34987f894cc5e7dc9e`.
+- **Allowed Write Scope**:
+  - `pages/AppointmentSelfServicePage.tsx`
+  - `pages/BookingPage.tsx` (exclusively owned by `lari`)
+  - `pages/customer/`
+  - `services/appointmentSelfServiceService.ts`
+  - `services/repositories/supabaseBookingRepository.ts`
+  - `scripts/test-phase7-node3-favorites-rebooking-contracts.mjs`
+  - `supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs`
 
 ### UI Lane (`lari-ui-v2`)
-- **Accepted Base**: `a8740a4a252c83060e8eaad28f49f58140c0ee5a`.
-- **Security / CI Provenance**: `e12ada695da17d937b6a32a0a9af01f0e02cbaa1` (CI run `38222159846` passed).
-- **Allowed Write Scope**: `src/ui-v2`, `src/components/v2`, `tests/ui-v2`.
-- **Shared Path Governance**: `pages/BookingPage.tsx` strictly guarded against concurrent modification without explicit ownership handoff.
+- **Lane Status**: `SYNCHRONIZATION_PENDING`
+- **Execution Base**: `06ebf176e411faf6820ded34987f894cc5e7dc9e`
+- **Security / CI Provenance**: `e12ada695da17d937b6a32a0a9af01f0e02cbaa1` (CI run `38222159846` passed, clean child of `06ebf176`).
+- **Next Authorized Action**: UI-V2 productization synchronization.
+- **Allowed Write Scope**:
+  - `components/SalonWebsiteViewV2.tsx`
+  - `components/layouts/MarketingLayout.tsx`
+  - `components/layouts/SalonBookingLayout.tsx`
+  - `pages/MarketingHomePage.tsx`
+  - `services/tenantService.ts`
+  - `src/components/DiscoveryPortfolio.tsx`
+  - `src/pages/DiscoveryMarketplace.tsx`
+- **Shared Path Governance**: `pages/BookingPage.tsx` is exclusively owned by `lari`; `lari-ui-v2` cannot modify without explicit handoff.
 
-### Immediate Next Safe Action
-Awaiting authenticated operator authorization to:
-1. Promote fully qualified candidate `9dddf1e202da8e227adca492ba1c5020961c65b3` into protected runtime `PAUSED_SAFE`.
-2. Selectively unpause and admit freshly reconciled `lari` and `lari-ui-v2` commands under DECISION-024.
+---
+
+## 7. Machine-Readable Artifact Coverage
+
+The following sanitized machine-readable artifacts are published in this audit checkpoint:
+1. `CANARY_EVENT_MATRIX.json`: Full 36-event execution lifecycle (8 `RUN_CREATED`, 24 `STATE_TRANSITION`, 4 `METADATA_UPDATE`), proving 4 completed tasks and 0 duplicate executions across recovery restart.
+2. `CANARY_HASHES.json`: Exact SHA-256 digests for candidate `9dddf1e202da8e227adca492ba1c5020961c65b3`, fixture inputs/outputs (`alpha.txt`, `beta.txt`), and coordinator receipts.
+3. `KCP_RECEIPT_STATUS.json`: Clear demarcation between implementation receipts (committed code changes), verification receipts (native verification runs), and operational observations. Zero synthetic implementation receipts are emitted for uncommitted canary runs.
+
+---
+
+## 8. Activation Sequence (Operator Authorization Required)
+Awaiting explicit operator authorization to:
+1. Stage and admit bounded command payloads for `lari` (Phase 7 Node 3 R3 visual validation) and `lari-ui-v2` (UI productization sync) in `HOLD` status against base `06ebf176e411faf6820ded34987f894cc5e7dc9e`.
+2. Promote candidate `9dddf1e202da8e227adca492ba1c5020961c65b3` to protected runtime slot in `PAUSED_SAFE`.
+3. Selectively unpause candidate runtime with verified single-lane dispatch.

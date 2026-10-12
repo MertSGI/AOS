@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0.0",
+  "checkpoint_identity": "aos-canary-checkpoint-20261012",
+  "aos_candidate": {
+    "branch": "fix/aos-runstatus-host-receipt-20261012",
+    "commit_sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+    "tree_sha": "fa9aa5a1a5cbf538e60217394c7b81a41879df31",
+    "ci_run_id": 38259843751,
+    "ci_status": "SUCCESS"
+  },
+  "canary_target_repo": {
+    "path": "C:/Projects/AOS-canary-20261012-04",
+    "commit_sha": "dd1e20eb169fa9713f720e5f51594b2e17cccb94",
+    "tree_sha": "0ae2278707e316bf42be6cd44b8a65c43e25124c"
+  },
+  "mutated_artifacts": {
+    "fixtures/alpha.txt": {
+      "sha256": "aec82b6ee66210c89db227346bb22558d07a0523b31f44d30a6e99aba13c11b2",
+      "mutation_run_id": "run-1b55033c2381",
+      "verification_run_id": "run-94b8fafcb88b",
+      "expected_mutation": "CANARY_MUTATION_ALPHA_20261012"
+    },
+    "fixtures/beta.txt": {
+      "sha256": "f5ec2cd141baa2f9a7dcf7c35d1e4ae18100d7eeaeb356b4202ab508ceb67c32",
+      "mutation_run_id": "run-1f4ab7b9bcd1",
+      "verification_run_id": "run-fa4cedb64321",
+      "expected_mutation": "CANARY_MUTATION_BETA_20261012"
+    }
+  },
+  "runtime_hashes": {
+    "host_receipt_sha256": "807908b2da63d8fc45bfeee8fa1cb10f92b70f03e62fba2c4b5744cb438ae76b",
+    "coordinator_checkpoint_sha256": "d07c08d1723f05ce7b568ee611a5b8da22cfb9b8b08d4b31a5eb23bdfcfefcfd"
+  }
+}

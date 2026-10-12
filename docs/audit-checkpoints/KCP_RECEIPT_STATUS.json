@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0.0",
+  "checkpoint_identity": "aos-canary-checkpoint-20261012",
+  "receipt_coverage_truth": {
+    "candidate_9dddf1e": {
+      "implementation_receipt": null,
+      "verification_receipt": null,
+      "status": "NO_RECEIPT_EMITTED_YET",
+      "explanation": "Candidate 9dddf1e202da8e227adca492ba1c5020961c65b3 passed hosted CI (38259843751) and isolated canary batch (4/4 PASS, 0 duplicates). It has NOT been promoted to protected runtime and no KCP implementation or verification receipts have been written to the protected knowledge ledger. Zero synthetic receipts are fabricated."
+    },
+    "isolated_canary_runtime": {
+      "receipts_in_ledger": [
+        {
+          "receipt_id": "57a6b73eedf9748cdb2622cffacee9d1199819540d69a1210633c9da75c57606",
+          "event_type": "CURRENT_TRUTH_OBSERVATION",
+          "authority_class": "OPERATIONAL_TRUTH",
+          "claims": {
+            "does_not_define_current_state": true,
+            "historical_after_observation": true,
+            "observation_fingerprint": "82bbb663f59c9643abef6f483be2b2ab5ff3c1fea7fe257bc2ee79704152306c"
+          }
+        }
+      ],
+      "receipt_distinction": {
+        "implementation_receipts": [],
+        "verification_receipts": [],
+        "operational_receipts": [
+          "57a6b73eedf9748cdb2622cffacee9d1199819540d69a1210633c9da75c57606"
+        ]
+      }
+    },
+    "historical_known_receipts_in_protected_ledger": {
+      "sha_30369cf7871ea4e254ea1615df871507d919e4a1": {
+        "implementation_receipts": [
+          "6a729834a07f401e312d0ce52e89c9d09ea2962b3abfb123e2621961f848b976.json"
+        ],
+        "verification_receipts": [
+          "e488d90f340a9da84edf17449cb55ecd881d3330fa5031ba8656e605c5a8aa78.json",
+          "f14ddedacba81d4e5e79b78fb35d5e8cad4800b32d79bf7f00517f5b0339666e.json"
+        ],
+        "operational_receipts": [
+          "3f793f6aa0b8baa70efe858b194ecc37ccc10d02e20a4135372277f36401eeae.json (CONTEXT_PREFLIGHT_RECEIPT)",
+          "6c09d1d746b52e02861f948f38bc8a1167e97a58f25ec2e2dd661b6a9e6db610.json (CANDIDATE_MATERIALIZATION_RECEIPT)",
+          "c6e050e5725b44080227cd5af2ebb289a87187f586d86df1a81d86a90816d370.json (RUNTIME_TRANSITION_INTENT)",
+          "c5cc1956888ecf65dea37ed498e0c19b20afc50bcff093db510063260954eac1.json (LIVE_PROMOTION_RECEIPT)"
+        ]
+      },
+      "sha_06ebf176e411faf6820ded34987f894cc5e7dc9e": {
+        "implementation_receipts": [
+          "9f3fad208ad06448da39da69dae3bca257be97a2ec9154a6a6247bb3f838e138.json"
+        ],
+        "verification_receipts": [
+          "a6a60d3dd588a2e55c34159451c77f983209eb4740b9e9495156e8e2e2c543db.json"
+        ]
+      }
+    }
+  }
+}
