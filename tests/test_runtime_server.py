@@ -305,6 +305,7 @@ def test_spawn_worker_environment_and_executable_resolution(tmp_path, monkeypatc
         assert pid == 77777
         assert captured["cmd"][0] == _resolve_worker_executable()
         assert captured["kwargs"]["env"]["PYTHONPATH"] == worker_env["PYTHONPATH"]
+        assert captured["kwargs"]["cwd"] == str((tmp_path / "candidate").resolve())
         assert captured["kwargs"]["close_fds"] is True
         assert captured["kwargs"]["detached"] is True
     finally:

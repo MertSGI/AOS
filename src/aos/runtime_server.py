@@ -722,6 +722,7 @@ class RuntimeEngine:
             worker_env = _build_worker_env(str(slot_root) if slot_root else None)
             proc = popen_headless(
                 cmd,
+                cwd=(str(Path(str(slot_root)).expanduser().resolve()) if slot_root else None),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
