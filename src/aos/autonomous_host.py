@@ -121,7 +121,11 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     redact_secrets,
 )
 from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator  # noqa: E402
-from extensions.autonomy_fabric.run_registry import AgentRunRegistry, FileRunJournal  # noqa: E402
+from extensions.autonomy_fabric.run_registry import (  # noqa: E402
+    AgentRunRegistry,
+    FileRunJournal,
+    RunStatus,
+)
 from extensions.autonomy_fabric.task_dag import NodeGateType, TaskDAG  # noqa: E402
 
 

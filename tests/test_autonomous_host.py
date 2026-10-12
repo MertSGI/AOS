@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import subprocess
@@ -11,13 +12,14 @@ from aos.autonomous_host import (
     build_dag,
     load_bound_run_plan,
     refresh_canonical_binding,
+    run_host,
 )
 from aos.planner import PlannerContractError, PlannerTransientError
 from aos.provider_observation import ContractFailureSubtype
 from aos.provider_registry import ProviderRegistry, ProviderRouter
 from aos.source_adapter import ProjectSourceAdapter
 from extensions.autonomy_fabric.execution_backend import ExecutionCapability, ExecutionRequest
-from extensions.autonomy_fabric.run_registry import AgentRunRegistry
+from extensions.autonomy_fabric.run_registry import AgentRunRegistry, RunStatus
 
 
 DESCRIPTOR_PATH = Path(__file__).parent.parent / "descriptors" / "lari.descriptor.json"
@@ -366,3 +368,93 @@ def test_build_dag_preserves_declared_write_scope_and_expected_artifacts():
 
     assert dag.nodes["write"].write_scope == ["src/feature"]
     assert dag.nodes["write"].expected_artifacts == ["src/feature/result.txt"]
+
+
+def test_run_host_records_completed_test_as_verified(monkeypatch, tmp_path):
+    from aos import autonomous_host
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime_dir = tmp_path / "runtime"
+    source_sha = "a" * 40
+    test_run_id = "run-verified-test"
+    node = SimpleNamespace(run_type="TEST", associated_run_id=test_run_id)
+    dag = SimpleNamespace(
+        nodes={"verify": node},
+        compute_progress=lambda: {"completed": 1, "total": 1},
+    )
+
+    class FakeRouter:
+        def close(self):
+            pass
+
+        def get_backend(self, _backend_id):
+            return None
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs):
+            self.registry = kwargs["registry"]
+
+        def run_until_complete(self, max_iterations):
+            assert max_iterations == 20
+            run = self.registry.create_run(
+                project_id="canary",
+                run_type="TEST",
+                authority_id="AUTH",
+                controller_id="controller",
+                agent_provider="native",
+                run_id=test_run_id,
+            )
+            self.registry.transition(run.run_id, RunStatus.STARTING)
+            self.registry.transition(run.run_id, RunStatus.RUNNING)
+            self.registry.transition(run.run_id, RunStatus.COMPLETED)
+            return SimpleNamespace(
+                completed_task_ids=["verify"],
+                failed_task_ids=[],
+                completed_read_observations=[],
+                iteration_count=1,
+                backend_invocation_counts={},
+                backend_attempt_metrics={},
+                backend_attempt_telemetry=[],
+            )
+
+    monkeypatch.setattr(
+        autonomous_host,
+        "refresh_canonical_binding",
+        lambda *_args, **_kwargs: {
+            "project_id": "canary",
+            "source_sha": source_sha,
+            "execution_base_sha": None,
+        },
+    )
+    monkeypatch.setattr(autonomous_host, "assert_workspace_execution_lineage", lambda *_args: None)
+    monkeypatch.setattr(autonomous_host, "load_bound_run_plan", lambda *_args: {"tasks": []})
+    monkeypatch.setattr(autonomous_host, "build_dag", lambda *_args: dag)
+    monkeypatch.setattr(autonomous_host, "build_execution_router", lambda *_args: FakeRouter())
+    monkeypatch.setattr(autonomous_host, "IntegrityReconciler", lambda *_args: object())
+    monkeypatch.setattr(autonomous_host, "PersistentCoordinator", FakeCoordinator)
+    monkeypatch.setattr(
+        autonomous_host,
+        "run_headless",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="b" * 40 + "\n"),
+    )
+    monkeypatch.setattr(autonomous_host, "probe_ollama_models", lambda: {})
+
+    receipt = run_host(
+        tmp_path / "descriptor.json",
+        tmp_path / "plan.json",
+        workspace,
+        runtime_dir,
+        tmp_path / "policy.json",
+    )
+
+    assert receipt["completed_task_ids"] == ["verify"]
+    assert receipt["verified_tasks"] == [{
+        "task_id": "verify",
+        "run_id": test_run_id,
+        "run_type": "TEST",
+        "status": "PASS",
+        "workspace_head_sha": "b" * 40,
+        "canonical_source_sha": source_sha,
+        "canonical_execution_base_sha": None,
+    }]
