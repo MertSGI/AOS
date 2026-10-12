@@ -1,0 +1,70 @@
+{
+  "captured_at": "2026-10-12T19:19:16Z",
+  "activation_gate": "FAIL_CLOSED",
+  "candidate": {
+    "sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+    "tree_sha256": "21ae2aad3e2fadaaa071e5d3c296a1717f20e8b445d4868185490420500a54ad",
+    "ci_run_id": 38259843751,
+    "ci_conclusion": "success",
+    "stage": "PASS",
+    "validate": "PASS",
+    "protected_activation": "FAILED"
+  },
+  "kcp": {
+    "status": "READY",
+    "last_sequence": 548,
+    "unresolved_transitions": [],
+    "implementation_receipt": "4bf16f279dee53369777afce620a8856c6fc251326b2aa5a64ada60442866f1a",
+    "verification_receipt": "ef8e10f8c872bf1d1534eeca7ec2e8678e6b6119ebc809a9a830704720e08a25",
+    "candidate_validation_receipt": "42af27870169d66ca355e545d350052d3bd2aa57e4638e8ecd56c6d0a0166ff2",
+    "materialization_receipt": "4d5789732e085952f2e41e785ea8974572171bf7ca1d2999aefd73a77d17ca41",
+    "unreproducible_historical_hashes_used": false
+  },
+  "activation_attempts": [
+    {
+      "transaction_id": "activate-1791832355-43421ab3",
+      "transition_id": "6cffe9380c884763cb1482a7672a4af8371ab2270ea6f734b91739ef50ee1a89",
+      "state": "ABORTED",
+      "error": "Activation exact-SHA paused health proof failed"
+    },
+    {
+      "transaction_id": "activate-1791832629-72aad81a",
+      "transition_id": "ba16348796cb01f5d9fadcd7cb9976ca455e0605424f1a92fdd36e5d09dc27f6",
+      "state": "ABORTED",
+      "error": "Activation exact-SHA paused health proof failed"
+    }
+  ],
+  "runtime": {
+    "source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "runtime_state": "HEALTHY",
+    "maintenance_state": "PAUSED_SAFE",
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED",
+    "ag_backend_enabled": false,
+    "startup_authority_present": false,
+    "admissions": {
+      "ACTIVE": 0,
+      "HOLD": 12,
+      "SUPERSEDED": 12
+    }
+  },
+  "diagnosis": {
+    "confirmed": "The stable supervisor exited during both protected slot hot-switch attempts before candidate health was established.",
+    "missing": "The internal exception traceback is unavailable because supervisor main suppresses exceptions and the pythonw launch discards stderr.",
+    "required_repair": "Durable supervisor exception capture plus deterministic stable-to-candidate handoff regression and source-grounded fix."
+  },
+  "lari": {
+    "product": "NOT_STARTED",
+    "ui_v2": "NOT_STARTED",
+    "control_sha": "14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+    "execution_base": "06ebf176e411faf6820ded34987f894cc5e7dc9e"
+  },
+  "safety": {
+    "supabase_mutation": false,
+    "production_deployment": false,
+    "canonical_acceptance_changed": false,
+    "paid_fallback_enabled": false,
+    "historical_command_restarted": false
+  }
+}

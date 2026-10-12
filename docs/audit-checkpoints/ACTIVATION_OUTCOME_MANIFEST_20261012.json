@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-10-12T19:19:16Z",
+  "branch": "audit/aos-canary-checkpoint-20261012",
+  "artifacts": [
+    {
+      "path": "docs/audit-checkpoints/CONTROLLER_ACTIVATION_OUTCOME_20261012.md",
+      "sha256": "7a40049b10edac4f7bfe5c141e6e673631d492a5a1f1fc309a20e4afdc400722",
+      "verification": "local SHA-256 computed; remote readback required after push"
+    },
+    {
+      "path": "docs/audit-checkpoints/CONTROLLER_ACTIVATION_OUTCOME_20261012.json",
+      "sha256": "46d9eb9a2267fccb7329cd56c5fadbc8fc069728451ba29c0e5cb85b8949ee87",
+      "verification": "valid JSON; local SHA-256 computed; remote readback required after push"
+    }
+  ],
+  "contains_secrets": false,
+  "runtime_mutation_authority": false,
+  "accepted_source_claim": false
+}
