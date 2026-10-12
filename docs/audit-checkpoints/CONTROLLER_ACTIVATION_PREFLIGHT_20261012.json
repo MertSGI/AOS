@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0.0",
+  "captured_at": "2026-10-12T18:54:11.6360434+00:00",
+  "candidate": {
+    "sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+    "branch": "fix/aos-runstatus-host-receipt-20261012",
+    "ci_run_id": 38259843751,
+    "ci_status": "completed",
+    "ci_conclusion": "success",
+    "canary_gate": "PASS_WITH_CHECKPOINT_HASH_LIMITATIONS"
+  },
+  "canary": {
+    "runtime_root": "C:/Projects/AOS-canary-runtime-20261012-04",
+    "workspace": "C:/Projects/AOS-canary-20261012-04",
+    "native_backend_invocations": 4,
+    "native_file_success": 2,
+    "native_process_success": 2,
+    "recovered_checkpoint_projections": 4,
+    "duplicate_backend_invocations": 0,
+    "runtime_kcp_implementation_receipts": [],
+    "runtime_kcp_verification_receipts": []
+  },
+  "checkpoint_hash_verification": {
+    "status": "NOT_REPRODUCIBLE_FROM_PRESERVED_TREE",
+    "host_receipt": {
+      "published_sha256": "807908b2da63d8fc45bfeee8fa1cb10f92b70f03e62fba2c4b5744cb438ae76b",
+      "current_sha256": "0f41ab06ea02af580e3fd0fff656edf712ac13bb539795d94dff895a4add691f"
+    },
+    "coordinator_checkpoint": {
+      "published_sha256": "d07c08d1723f05ce7b568ee611a5b8da22cfb9b8b08d4b31a5eb23bdfcfefcfd",
+      "current_sha256": "487e8b9b8b0bad34ed0de83eac2b0e72166ad3ccfa0be4a2c79853926d157784"
+    }
+  },
+  "protected_runtime": {
+    "source_sha": "30369cf7871ea4e254ea1615df871507d919e4a1",
+    "slot_id": "candidate-runtime-v1.8-30369cf7871e",
+    "health": "HEALTHY",
+    "maintenance": "PAUSED_SAFE",
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED",
+    "active_pointer": "candidate",
+    "promotion_state": "TRIAL_MAINTENANCE",
+    "stable_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "stable_source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "active_admissions": 0,
+    "hold_admissions": 12,
+    "superseded_admissions": 12,
+    "live_workers": 0,
+    "rollback_transaction_id": "activate-1791794994-83a457b5",
+    "unresolved_runtime_transitions": 0,
+    "ledger_sequence": 530,
+    "ledger_head": "45197fd8dfd67833678aecfb2d60fb51820682df5afe2c7149ff1b9e71c43512",
+    "candidate_kcp_coverage": "MISSING_ACCEPTED_WORK_COVERAGE"
+  },
+  "protected_preconditions": {
+    "runtime_config_sha256": "2e20a0c1ab680f865ce630616041d4ba39b1d57c3b56236bcdd13b2effa34200",
+    "active_slot_sha256": "995f477a8afafc5226a1b25b7f3b9742ebbd99b9dadc8c851ba4306a6171a6a9",
+    "ledger_sha256": "33f3eddc907d080ade6a7f18c6a72e21ae2167eb65c8884a7aa19ebed17fcc4a",
+    "rollback_transaction_sha256": "5ca07b3a323d45da875512fadb9224231f2598d797057abd926077cf180a9ada"
+  },
+  "isolated_activation_preflight": {
+    "path": "C:/Projects/AOS-activation-preflight-20261012-01",
+    "implementation_receipt_id": "01b5dd997d32f331f2d808a90d314fac38ca80950ed3f8f3a16cf67beb815860",
+    "verification_receipt_id": "5bb66aee38fcfb9045144bc39ee8d5cbd30bcacc7b27d12615191b0ad7a025ae",
+    "coverage": "COVERED",
+    "stage": "PASS",
+    "validation": "PASS",
+    "candidate_tree_sha256": "38c4d3986b921ceed5ffa3ae8359ad27944ab5219de0dd4b874b72be891d26f8",
+    "protected_ledger_changed": false
+  },
+  "canonical_lari": {
+    "control_sha": "14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+    "execution_base_sha": "06ebf176e411faf6820ded34987f894cc5e7dc9e",
+    "product_lane": "R2_ACCEPTED_R3_VISUAL_BROWSER_VALIDATION_NEXT",
+    "ui_v2_lane": "SYNCHRONIZATION_PENDING",
+    "booking_page_owner": "lari"
+  },
+  "authorization": {
+    "status": "REQUIRED",
+    "protected_receipt_append": false,
+    "protected_stage": false,
+    "trial_normalization": false,
+    "candidate_activation": false,
+    "runtime_unpause": false,
+    "lane_submission": false
+  }
+}
