@@ -1,0 +1,89 @@
+{
+  "recorded_at": "2026-10-13T06:10:48Z",
+  "source": {
+    "branch": "fix/aos-supervisor-hotswitch-20261012",
+    "parent_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+    "candidate_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+    "remote_sha_verified": true,
+    "changed_files": [
+      "src/aos/runtime_deploy.py",
+      "tests/test_runtime_deploy.py"
+    ]
+  },
+  "verification": {
+    "focused_deploy_tests": {"passed": 11, "failed": 0},
+    "adjacent_runtime_tests": {"passed": 53, "failed": 0},
+    "live_protected_startup_probe": "EXPECTED_FAIL_CLOSED",
+    "hosted_ci": {
+      "run_id": 38354019333,
+      "head_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  },
+  "isolated_runtime": {
+    "path": "C:\\Projects\\AOS-hotswitch-runtime-20261012-02",
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED",
+    "startup_installed": false,
+    "candidate_tree_sha256": "f0bdaaf664c2bc15cf25b55bf4708a094092c7d764a40cbfcd967aa72d47d43e",
+    "stage": "PASS",
+    "separate_validate": "PASS",
+    "activation": {
+      "status": "PASS_MAINTENANCE",
+      "transaction_id": "activate-1791871555-85c6528d",
+      "transition_id": "1ccf42069da711ff0eddda4442a80b117b12c98f249f0e9781029ae56a77a100",
+      "exact_candidate_health": "PASS",
+      "panel_health": "PASS",
+      "maintenance": "PAUSED_SAFE"
+    },
+    "restart_reentry": {
+      "status": "PASS",
+      "old_supervisor_pid": 27192,
+      "new_supervisor_pid": 25968,
+      "singleton_released_before_reentry": true,
+      "command_file_count_before": 0,
+      "command_file_count_after": 0
+    },
+    "rollback": {
+      "status": "PASS",
+      "transition_id": "b850a52ad1e26abb801ce67ecf4e8af471cb7687d74df5f9a1a397e1d6518401",
+      "restored_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+      "stable_reentry_health": "PASS",
+      "final_maintenance": "PAUSED_SAFE"
+    },
+    "kcp": {
+      "status": "READY",
+      "last_sequence": 594,
+      "head_hash": "d594503b00738f3351e6022219a93fa7398cf73d99b8af7f35d7a53692ca9933",
+      "unresolved_transitions": 0,
+      "implementation_receipt": {"sequence": 583, "event_id": "1d8956ea165a61dac280837f0deda83abb21daee16d245baecd3f91bb1d27b71"},
+      "verification_receipt": {"sequence": 584, "event_id": "5b120dd719ed3680b4535ec0aa4dbeb506c8f5edeedd55b5672a7907a128a3a3"},
+      "activation_receipt": {"sequence": 590, "event_id": "6479a98d347aa3b579ace928c0efc7dcb9caaab25fd8722b3592e38283d4ae3c"},
+      "rollback_receipt": {"sequence": 594, "event_id": "d9251b8ee9ee35fbf833a03fac64005c1db404e2eecde3c3229c638df458aa6d"}
+    },
+    "gate": "PASS"
+  },
+  "protected_runtime": {
+    "mutated": false,
+    "active_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "slot": "candidate-runtime-v1.8-85ee6772b02a",
+    "health": "HEALTHY",
+    "maintenance": "PAUSED_SAFE",
+    "active_pointer": "stable",
+    "ledger_sequence": 549,
+    "ledger_head": "31e4a8d1fc2160ba89c2f1b33bb9138e23111dc41f7840b2e11c04289ab6b887",
+    "unresolved_transitions": 0,
+    "admissions": {"HOLD": 12, "SUPERSEDED": 12, "ACTIVE": 0},
+    "historical_running_state_files": 8,
+    "live_command_worker_pids": 0,
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED"
+  },
+  "lari": {
+    "product": "R2_ACCEPTED; R3 visual/browser validation not admitted",
+    "ui_v2": "READY_POST_CONVERGENCE; productization synchronization not admitted",
+    "canonical_control_sha": "14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+    "execution_base_sha": "06ebf176e411faf6820ded34987f894cc5e7dc9e"
+  }
+}

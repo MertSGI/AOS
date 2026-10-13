@@ -1,0 +1,69 @@
+{
+  "observed_at": "2026-10-13T06:10:48Z",
+  "sanitization": "Current-user profile path and account identity are replaced with placeholders; no tokens, credentials, environment values, or raw runtime configuration are included.",
+  "current_user_startup": {
+    "path": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+    "aos_entries": [
+      {
+        "name": "AOS-RuntimeV1-Supervisor.vbs.disabled",
+        "extension": ".disabled",
+        "length": 433,
+        "last_write_utc": "2026-10-09T11:53:39.0762157Z",
+        "sha256": "9501EE5AA2B8D3EA6FA311ED5585B9A97043A6680686E1CC13C1FB71B1748B14",
+        "embedded_candidate_sha": "1dd293ac1722e69b301e22b5dba693a3348d7219",
+        "embedded_launcher_exists": true,
+        "executed_during_inspection": false,
+        "wmi_startup_command": {
+          "name": "AOS-RuntimeV1-Supervisor.vbs",
+          "command": "AOS-RuntimeV1-Supervisor.vbs.disabled",
+          "location": "Startup"
+        }
+      }
+    ],
+    "other_entries": ["Chrome Remote Desktop shortcut", "desktop.ini"]
+  },
+  "common_startup": {
+    "path": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+    "aos_entries": []
+  },
+  "file_associations": {
+    ".vbs": "VBSFile",
+    "VBSFile_open_command": "%WINDIR%\\System32\\WScript.exe \"%1\" %*",
+    ".disabled_machine": "MISSING",
+    ".disabled_current_user": "MISSING",
+    ".vbs_current_user_override": "MISSING"
+  },
+  "other_login_surfaces": {
+    "aos_run_or_runonce_entries": 0,
+    "aos_policy_run_entries": 0,
+    "aos_startup_shortcuts": 0,
+    "winlogon_shell": "explorer.exe",
+    "winlogon_userinit": "%WINDIR%\\system32\\userinit.exe,"
+  },
+  "scheduled_tasks": [
+    {
+      "name": "AOS-RuntimeV1-OneShot-Proof-20261009",
+      "state": "Ready",
+      "trigger_count": 0,
+      "action_candidate_sha": "1dd293ac1722e69b301e22b5dba693a3348d7219",
+      "automatic_logon_execution": false
+    },
+    {
+      "name": "AOS-RuntimeV1-Persistent",
+      "state": "Running",
+      "logon_trigger_enabled": true,
+      "action_candidate_sha": "cf97eb9fe3635c7af7266e2045dac72a11dad1ee",
+      "observed_supervisor_pid": 11668,
+      "singleton_name": "Local\\AOS.RuntimeV1.Supervisor",
+      "dynamically_spawned_active_sha": "85ee6772b02a0ab72f5c79633672083017380269"
+    }
+  ],
+  "old_candidate_process_observed": false,
+  "cause": {
+    "login_dialog": "CONFIRMED_UNASSOCIATED_DISABLED_STARTUP_ENTRY",
+    "current_singleton_interference": "NOT_OBSERVED",
+    "latent_singleton_interference_if_explicitly_opened_with_script_host": true,
+    "relation_to_isolated_hot_switch_race": "INDEPENDENT"
+  },
+  "protected_startup_mutated": false
+}

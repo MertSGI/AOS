@@ -1,0 +1,43 @@
+{
+  "manifest_version": "1.0.0",
+  "created_at": "2026-10-13T06:10:48Z",
+  "package": "docs/audit-checkpoints/2026-10-13-startup-authority-hygiene",
+  "source_candidate_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+  "evidence_branch_parent_sha": "2b6b721fb7cbf0b8d2a2e0829332320b7e59434c",
+  "sanitized": true,
+  "files": [
+    {
+      "path": "NEXT_AUTHORIZATION.md",
+      "length": 2209,
+      "sha256": "9DD6410ECBBD9062C5DA692C5BCC238F0A5A531920E76387EF672ED42576DAEC",
+      "verification": "HASHED"
+    },
+    {
+      "path": "QUALIFICATION_ADDENDUM.json",
+      "length": 3583,
+      "sha256": "FDA7827A0EDDF6E5B6435744A60A8F4432E49A4B6C5EA44F19C3FE76B921635A",
+      "verification": "JSON_PARSED_AND_HASHED"
+    },
+    {
+      "path": "QUARANTINE_PROCEDURE.md",
+      "length": 2644,
+      "sha256": "B987ACED6B4843A19D9F5900E4635745A10940BB4A9B77AA857D7B7D7D4DC61E",
+      "verification": "HASHED_NOT_EXECUTED"
+    },
+    {
+      "path": "STARTUP_AUTHORITY_FINDINGS.md",
+      "length": 4182,
+      "sha256": "5093659D4E06670CDC5EE54D292F3026A747AF20BA4AEA3F46B5B49674A0BD74",
+      "verification": "HASHED"
+    },
+    {
+      "path": "STARTUP_AUTHORITY_INVENTORY.json",
+      "length": 2669,
+      "sha256": "75295262C48D5B3CA858C6BE22DED99A00F487C71E29A9F2CC7204701A383278",
+      "verification": "JSON_PARSED_AND_HASHED"
+    }
+  ],
+  "manifest_self_hash": null,
+  "manifest_self_hash_reason": "Self-hash intentionally omitted to avoid recursive content; Git commit identity covers this manifest.",
+  "publication_verification": "PENDING_GITHUB_READBACK"
+}
