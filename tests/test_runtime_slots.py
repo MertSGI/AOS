@@ -1,6 +1,47 @@
+from pathlib import Path
+
+import pytest
+
+import aos.runtime_slots as runtime_slots
 from aos.runtime_slots import SlotManager, SlotRecord
 from aos.knowledge.ledger import KnowledgeLedger
 from aos.knowledge.receipts import record_implementation_receipt, record_verification_receipt
+
+
+def test_read_pointer_retries_transient_atomic_replace_read(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = SlotManager(tmp_path / "supervisor")
+    expected = {
+        "contract_version": "1.0.0",
+        "stable_slot_id": "stable-slot",
+        "candidate_slot_id": "candidate-slot",
+        "active": "candidate",
+        "promotion_state": "TRIAL_MAINTENANCE",
+    }
+    snapshots = iter(({}, expected))
+    sleeps = []
+    monkeypatch.setattr(runtime_slots, "read_json", lambda _path: next(snapshots))
+    monkeypatch.setattr(runtime_slots.time, "sleep", sleeps.append)
+
+    assert manager.read_pointer() == expected
+    assert sleeps == [0.02]
+
+
+def test_read_pointer_fails_closed_after_bounded_invalid_reads(
+    tmp_path: Path,
+    monkeypatch,
+):
+    manager = SlotManager(tmp_path / "supervisor")
+    sleeps = []
+    monkeypatch.setattr(runtime_slots, "read_json", lambda _path: {})
+    monkeypatch.setattr(runtime_slots.time, "sleep", sleeps.append)
+
+    with pytest.raises(ValueError, match="Invalid or missing active slot pointer"):
+        manager.read_pointer()
+
+    assert sleeps == [0.02, 0.04, 0.06, 0.08]
 
 
 def test_candidate_slot_rolls_back_atomically_to_stable(tmp_path):

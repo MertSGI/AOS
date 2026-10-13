@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -129,8 +130,14 @@ class SlotManager:
         return pointer
 
     def read_pointer(self) -> Dict[str, Any]:
-        value = read_json(self.pointer)
-        if value.get("contract_version") != CONTRACT_VERSION:
+        value: Dict[str, Any] = {}
+        for attempt in range(5):
+            value = read_json(self.pointer)
+            if value.get("contract_version") == CONTRACT_VERSION:
+                break
+            if attempt < 4:
+                time.sleep(0.02 * (attempt + 1))
+        else:
             raise ValueError("Invalid or missing active slot pointer")
         if value.get("active") not in ("stable", "candidate"):
             raise ValueError("Invalid active slot")
