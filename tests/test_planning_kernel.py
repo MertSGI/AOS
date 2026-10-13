@@ -3882,3 +3882,125 @@ def test_completed_batch0_process_task_with_receipt_runs_evidence_satisfies_depe
     assert "TASK-07" not in rejected
     assert contracted["TASK-07"] == ["TASK-05"]
 
+
+def test_completed_real_batch0_telemetry_format_satisfies_dependency(tmp_path):
+    """Targeted regression: Genuine autonomous_host batch format (no runs array, partial progress,
+    telemetry with completed PROCESS tasks) proves task success and contracts dependency."""
+    from dataclasses import replace
+    base_sit = _situation()
+    situation = replace(
+        base_sit,
+        control_sha="14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+        execution_base_sha="06ebf176e411faf6820ded34987f894cc5e7dc9e",
+    )
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    # Real autonomous_host host-receipt format: no runs field, progress 50.0, failed_task_ids present
+    receipt_0 = {
+        "progress": 50.0,
+        "completed_task_ids": ["TASK-01", "TASK-02"],
+        "failed_task_ids": ["TASK-03", "TASK-04"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "verified_tasks": [],
+        "backend_attempt_telemetry": [
+            {
+                "attempt_id": "req-1:1:native_process_worker",
+                "backend_id": "native_process_worker",
+                "final_selection": True,
+                "invocation_mode": "BACKEND_INVOCATION",
+                "request_id": "req-1",
+                "status": "SUCCESS",
+                "task_id": "TASK-01",
+            },
+            {
+                "attempt_id": "req-2:1:native_process_worker",
+                "backend_id": "native_process_worker",
+                "final_selection": True,
+                "invocation_mode": "BACKEND_INVOCATION",
+                "request_id": "req-2",
+                "status": "SUCCESS",
+                "task_id": "TASK-02",
+            },
+            {
+                "attempt_id": "req-3:1:browser_execution_backend",
+                "backend_id": "browser_execution_backend",
+                "final_selection": True,
+                "invocation_mode": "BACKEND_INVOCATION",
+                "request_id": "req-3",
+                "status": "FAILED",
+                "task_id": "TASK-03",
+            },
+        ],
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]},
+            },
+            {
+                "node_id": "TASK-02",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path)
+    assert history.completed_task_evidence["TASK-01"]["status"] == "SUCCESS"
+    assert history.completed_task_evidence["TASK-02"]["status"] == "SUCCESS"
+
+    cand_1 = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]},
+        "expected_artifacts": [],
+    }
+    cand_2 = {
+        "node_id": "TASK-06",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]},
+        "expected_artifacts": [],
+    }
+    browser_1 = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05", "TASK-06"],
+        "payload": {"url": "http://127.0.0.1:5173/#/appointment/manage"},
+    }
+    browser_2 = {
+        "node_id": "TASK-08",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/book"},
+    }
+
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [cand_1, cand_2, browser_1, browser_2],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=history.completed_task_signatures,
+        completed_task_evidence=history.completed_task_evidence,
+    )
+
+    assert "TASK-05" in rejected and "TASK-06" in rejected
+    assert "TASK-05" in satisfied and "TASK-06" in satisfied
+    assert "TASK-07" not in rejected and "TASK-08" not in rejected
+    assert contracted["TASK-07"] == ["TASK-05", "TASK-06"]
+    assert contracted["TASK-08"] == ["TASK-05"]
+

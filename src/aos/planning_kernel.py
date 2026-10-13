@@ -1692,7 +1692,17 @@ def reconstruct_batch_history(
                         if t_id and st:
                             task_status_from_receipt[t_id] = st
 
-            # 2. Check receipt.verified_tasks (TEST/BUILD/CI)
+            # 2. Check receipt.backend_attempt_telemetry (autonomous_host per-task execution log)
+            receipt_telemetry = receipt.get("backend_attempt_telemetry")
+            if isinstance(receipt_telemetry, list):
+                for att in receipt_telemetry:
+                    if isinstance(att, Mapping):
+                        t_id = str(att.get("task_id") or "").strip()
+                        st = str(att.get("status") or "").strip().upper()
+                        if t_id and st:
+                            task_status_from_receipt[t_id] = st
+
+            # 3. Check receipt.verified_tasks (TEST/BUILD/CI)
             receipt_verified = receipt.get("verified_tasks")
             if isinstance(receipt_verified, list):
                 for vt in receipt_verified:
@@ -1702,7 +1712,7 @@ def reconstruct_batch_history(
                         if t_id and st in ("PASS", "SUCCESS", "COMPLETED"):
                             task_status_from_receipt[t_id] = st
 
-            # 3. Check run-events.jsonl for terminal run transitions
+            # 4. Check run-events.jsonl for terminal run transitions
             run_events_path = b_dir / "run-events.jsonl"
             if run_events_path.is_file():
                 try:
@@ -1711,7 +1721,6 @@ def reconstruct_batch_history(
                             continue
                         try:
                             ev_data = json.loads(line)
-                            # Event payload or RUN_CREATED carries task_id or payload.task_id
                             ev_payload = ev_data.get("payload") if isinstance(ev_data.get("payload"), Mapping) else {}
                             ev_tid = str(ev_payload.get("task_id") or "").strip()
                             ev_to_status = str(ev_data.get("to_status") or "").strip().upper()
@@ -1742,7 +1751,9 @@ def reconstruct_batch_history(
                             if not is_read:
                                 completed_signatures.add(sig)
 
-                            # Determine trustworthy status
+                            # Determine trustworthy status:
+                            # 1) Explicit status from receipt runs, telemetry, or verified_tasks
+                            # 2) If absent, only trust as COMPLETED if the batch was completely successful (is_success)
                             known_status = task_status_from_receipt.get(node_id)
                             if known_status:
                                 auth_status = known_status
