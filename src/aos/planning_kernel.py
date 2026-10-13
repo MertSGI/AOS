@@ -1679,6 +1679,49 @@ def reconstruct_batch_history(
             plan_path = b_dir / "generated-run-plan.json"
             objective_id = receipt.get("objective_id") or ""
             plan = _read_json(plan_path) if plan_path.is_file() else {}
+
+            # Authoritative per-task execution evidence extraction
+            task_status_from_receipt: Dict[str, str] = {}
+            # 1. Check receipt.runs list (if present in host-receipt)
+            receipt_runs = receipt.get("runs")
+            if isinstance(receipt_runs, list):
+                for r in receipt_runs:
+                    if isinstance(r, Mapping):
+                        t_id = str(r.get("task_id") or "").strip()
+                        st = str(r.get("status") or "").strip().upper()
+                        if t_id and st:
+                            task_status_from_receipt[t_id] = st
+
+            # 2. Check receipt.verified_tasks (TEST/BUILD/CI)
+            receipt_verified = receipt.get("verified_tasks")
+            if isinstance(receipt_verified, list):
+                for vt in receipt_verified:
+                    if isinstance(vt, Mapping):
+                        t_id = str(vt.get("task_id") or "").strip()
+                        st = str(vt.get("status") or "").strip().upper()
+                        if t_id and st in ("PASS", "SUCCESS", "COMPLETED"):
+                            task_status_from_receipt[t_id] = st
+
+            # 3. Check run-events.jsonl for terminal run transitions
+            run_events_path = b_dir / "run-events.jsonl"
+            if run_events_path.is_file():
+                try:
+                    for line in run_events_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            ev_data = json.loads(line)
+                            # Event payload or RUN_CREATED carries task_id or payload.task_id
+                            ev_payload = ev_data.get("payload") if isinstance(ev_data.get("payload"), Mapping) else {}
+                            ev_tid = str(ev_payload.get("task_id") or "").strip()
+                            ev_to_status = str(ev_data.get("to_status") or "").strip().upper()
+                            if ev_tid and ev_to_status:
+                                task_status_from_receipt[ev_tid] = ev_to_status
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
             if isinstance(plan, dict):
                 if not objective_id:
                     objective_id = str(plan.get("objective_id") or "")
@@ -1688,7 +1731,7 @@ def reconstruct_batch_history(
                         if not isinstance(task, Mapping):
                             continue
                         node_id = str(task.get("node_id") or "").strip()
-                        if node_id in batch_completed_ids:
+                        if node_id in batch_completed_ids and node_id not in failed_ids:
                             payload = task.get("payload", {})
                             is_read = (
                                 task.get("run_type") == "FILE"
@@ -1699,6 +1742,15 @@ def reconstruct_batch_history(
                             if not is_read:
                                 completed_signatures.add(sig)
 
+                            # Determine trustworthy status
+                            known_status = task_status_from_receipt.get(node_id)
+                            if known_status:
+                                auth_status = known_status
+                            elif is_success:
+                                auth_status = "COMPLETED"
+                            else:
+                                auth_status = "UNKNOWN"
+
                             evidence_record = {
                                 "task_id": node_id,
                                 "batch_number": batch_num,
@@ -1706,13 +1758,13 @@ def reconstruct_batch_history(
                                 "canonical_execution_base_sha": receipt.get("canonical_execution_base_sha", ""),
                                 "mutating": bool(task.get("mutating", False)),
                                 "expected_artifacts": list(task.get("expected_artifacts", [])),
-                                "run_type": task.get("run_type"),
+                                "run_type": str(task.get("run_type", "")).upper(),
                                 "signature": sig,
-                                "status": "SUCCESS",
+                                "status": auth_status,
                                 "receipt_ref": f"batches/batch-{batch_num:04d}/host-receipt.json",
                             }
-                            completed_task_evidence[node_id] = evidence_record
                             completed_task_evidence[sig] = evidence_record
+                            completed_task_evidence[node_id] = evidence_record
 
                             if is_read:
                                 raw_path = str(payload.get("path", "")).strip()
@@ -2632,22 +2684,35 @@ def _safe_prune_candidate_tasks(
     for rej_id, rej_reason in list(rejected.items()):
         if rej_reason in ("COMPLETED_ACTION_SIGNATURE", "COMPLETED_TASK_ID"):
             cand = raw_by_id.get(rej_id)
-            cand_sig = _task_signature(cand) if cand else ""
-            ev = evidence_map.get(rej_id) or (evidence_map.get(cand_sig) if cand_sig else None)
+            if not cand or not isinstance(cand, Mapping):
+                continue
+            cand_sig = _task_signature(cand)
+            cand_run_type = str(cand.get("run_type", "")).upper()
+            cand_mutating = bool(cand.get("mutating", False))
+            cand_artifacts = list(cand.get("expected_artifacts", []))
+
+            # Look up evidence primarily by exact candidate signature
+            ev = evidence_map.get(cand_sig) or evidence_map.get(rej_id)
             if ev and isinstance(ev, Mapping):
-                # Verify trustworthy evidence attributes
+                ev_sig = str(ev.get("signature", ""))
+                ev_run_type = str(ev.get("run_type", "")).upper()
                 ev_status = str(ev.get("status", "")).upper()
                 ev_src_sha = str(ev.get("canonical_source_sha", ""))
                 ev_base_sha = str(ev.get("canonical_execution_base_sha", ""))
                 ev_mutating = bool(ev.get("mutating", False))
                 ev_artifacts = list(ev.get("expected_artifacts", []))
 
+                # Exact signature and run-type match required; candidate and evidence must both be non-mutating and without expected artifacts
                 is_proven = (
-                    ev_status in ("SUCCESS", "PASS", "COMPLETED")
-                    and ev_src_sha == situation.control_sha
-                    and ev_base_sha == situation.execution_base_sha
+                    cand_sig == ev_sig
+                    and cand_run_type == ev_run_type
+                    and not cand_mutating
+                    and not cand_artifacts
                     and not ev_mutating
                     and not ev_artifacts
+                    and ev_status in ("SUCCESS", "PASS", "COMPLETED")
+                    and ev_src_sha == situation.control_sha
+                    and ev_base_sha == situation.execution_base_sha
                 )
                 if is_proven:
                     satisfied_dependencies[rej_id] = {
@@ -2657,7 +2722,7 @@ def _safe_prune_candidate_tasks(
                         "evidence_batch_number": ev.get("batch_number"),
                         "canonical_source_sha": ev_src_sha,
                         "canonical_execution_base_sha": ev_base_sha,
-                        "signature": cand_sig or ev.get("signature", ""),
+                        "signature": cand_sig,
                         "receipt_ref": ev.get("receipt_ref", ""),
                         "status": "SATISFIED_HISTORICAL",
                     }

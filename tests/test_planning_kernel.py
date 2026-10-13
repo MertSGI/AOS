@@ -3315,6 +3315,18 @@ def test_completed_dependency_satisfaction_contracts_edges_and_retains_browser_t
         "failed_task_ids": ["TASK-03", "TASK-04"],
         "canonical_source_sha": situation.control_sha,
         "canonical_execution_base_sha": situation.execution_base_sha,
+        "runs": [
+            {
+                "task_id": "TASK-01",
+                "backend": "native_process_worker",
+                "status": "COMPLETED",
+            },
+            {
+                "task_id": "TASK-02",
+                "backend": "native_process_worker",
+                "status": "COMPLETED",
+            },
+        ],
     }
     (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
     b0_plan = {
@@ -3626,4 +3638,247 @@ def test_completed_dependency_fails_closed_when_artifact_producing(tmp_path):
     )
     assert "TASK-05" not in satisfied
     assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_dependency_fails_closed_when_same_node_id_different_signature(tmp_path):
+    """Targeted regression: Reused task ID representing a DIFFERENT action signature must NOT satisfy dependency."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 100.0,
+        "completed_task_ids": ["TASK-01"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "original-task-01.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    # Candidate task reuses TASK-01 node ID, but runs completely different command!
+    cand_reused_id = {
+        "node_id": "TASK-01",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "completely-different-command.js"]},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-01"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path)
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [cand_reused_id, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_ids=["TASK-01"],
+        completed_task_evidence=history.completed_task_evidence,
+    )
+    # TASK-01 rejected due to COMPLETED_TASK_ID
+    assert rejected["TASK-01"] == "COMPLETED_TASK_ID"
+    # But because signatures differ, it CANNOT satisfy the dependency!
+    assert "TASK-01" not in satisfied
+    # And dependent task fails closed
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_dependency_fails_closed_when_run_type_mismatched(tmp_path):
+    """Targeted regression: Matching payload but mismatched run_type must NOT satisfy dependency."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 100.0,
+        "completed_task_ids": ["TASK-01"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "test.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    # Mismatched run_type: TEST instead of PROCESS
+    cand_mismatched_type = {
+        "node_id": "TASK-05",
+        "run_type": "TEST",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "test.js"]},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    # Mock evidence map with PROCESS run_type
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path)
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [cand_mismatched_type, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['TEST:{"cmd":["node","test.js"]}'],
+        completed_task_evidence=history.completed_task_evidence,
+    )
+    assert "TASK-05" not in satisfied
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_dependency_fails_closed_when_evidence_untrustworthy(tmp_path):
+    """Targeted regression: Claimed completion without sufficiently trustworthy execution evidence rejects satisfaction."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    # Batch failed (progress < 100 and no explicit verified/run record)
+    receipt_0 = {
+        "progress": 25.0,
+        "completed_task_ids": ["TASK-01"],
+        "failed_task_ids": ["TASK-02"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "test-1.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path)
+    # Status in evidence should be UNKNOWN because batch was not successful and no per-task run/verified record
+    assert history.completed_task_evidence["TASK-01"]["status"] == "UNKNOWN"
+
+    cand = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "test-1.js"]},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [cand, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['PROCESS:{"cmd":["node","test-1.js"]}'],
+        completed_task_evidence=history.completed_task_evidence,
+    )
+    assert "TASK-05" not in satisfied
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_batch0_process_task_with_receipt_runs_evidence_satisfies_dependency(tmp_path):
+    """Targeted validation: Completed Batch 0 PROCESS task with authoritative receipt.runs status satisfies dependency."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    # Host receipt has runs list with COMPLETED status for TASK-01
+    receipt_0 = {
+        "progress": 50.0,
+        "completed_task_ids": ["TASK-01"],
+        "failed_task_ids": ["TASK-03"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+        "runs": [
+            {
+                "task_id": "TASK-01",
+                "backend": "native_process_worker",
+                "status": "COMPLETED",
+                "evidence_id": "ev-test-123",
+            },
+            {
+                "task_id": "TASK-03",
+                "backend": "browser_execution_backend",
+                "status": "FAILED",
+            },
+        ],
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "test-process.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path)
+    assert history.completed_task_evidence["TASK-01"]["status"] == "COMPLETED"
+
+    cand = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "test-process.js"]},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [cand, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['PROCESS:{"cmd":["node","test-process.js"]}'],
+        completed_task_evidence=history.completed_task_evidence,
+    )
+    assert "TASK-05" in satisfied
+    assert satisfied["TASK-05"]["evidence_task_id"] == "TASK-01"
+    assert "TASK-07" not in rejected
+    assert contracted["TASK-07"] == ["TASK-05"]
 
