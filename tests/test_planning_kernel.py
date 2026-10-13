@@ -3293,3 +3293,337 @@ def test_rejected_plan_never_receives_fabricated_verification_receipts(tmp_path)
     assert not (tmp_path / "runtime" / "host-receipt.json").exists()
     assert not (tmp_path / "runtime" / "batches" / "batch-0007" / "host-receipt.json").exists()
 
+
+def test_completed_dependency_satisfaction_contracts_edges_and_retains_browser_tasks(tmp_path):
+    """Exact regression:
+    - Batch 0 has completed TASK-01 and TASK-02 with durable evidence.
+    - Proposed plan has duplicate TASK-05 & TASK-06 (matching TASK-01 & 02 signatures).
+    - Proposed plan has TASK-07 & TASK-08 (browser tasks) with dependencies=["TASK-05", "TASK-06"].
+    - Assert: TASK-05 & TASK-06 are pruned, dependencies are contracted, TASK-07 & TASK-08 survive and pass normalization.
+    """
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    # Setup batch 0 with TASK-01 and TASK-02
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 50.0,
+        "completed_task_ids": ["TASK-01", "TASK-02"],
+        "failed_task_ids": ["TASK-03", "TASK-04"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]},
+            },
+            {
+                "node_id": "TASK-02",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    # Initial plan fails
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    # Proposed repair plan: 4 tasks
+    dup_1 = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"],
+        "write_scope": [],
+        "payload": {"cmd": ["node", "scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    dup_2 = {
+        "node_id": "TASK-06",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"],
+        "write_scope": [],
+        "payload": {"cmd": ["node", "supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    browser_1 = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": ["TASK-05", "TASK-06"],
+        "scope_tags": ["pages/AppointmentSelfServicePage.tsx"],
+        "write_scope": [],
+        "payload": {"url": "http://127.0.0.1:5173/#/appointment/manage"},
+        "expected_artifacts": [],
+        "tests": ["visual"],
+        "evidence_requirements": ["screenshot"],
+        "completion_criteria": ["done"],
+    }
+    browser_2 = {
+        "node_id": "TASK-08",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": ["TASK-05"],
+        "scope_tags": ["pages/BookingPage.tsx"],
+        "write_scope": [],
+        "payload": {"url": "http://127.0.0.1:5173/#/book"},
+        "expected_artifacts": [],
+        "tests": ["visual"],
+        "evidence_requirements": ["screenshot"],
+        "completion_criteria": ["done"],
+    }
+    repaired = {
+        "schema_version": "1.0.0",
+        "objective_id": objective.objective_id,
+        "tasks": [dup_1, dup_2, browser_1, browser_2],
+        "parallel_safe_groups": [["TASK-05", "TASK-06"], ["TASK-07", "TASK-08"]],
+        "rollback_strategy": "none",
+    }
+
+    forbidden_signatures = (
+        'PROCESS:{"cmd":["node","scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]}',
+        'PROCESS:{"cmd":["node","supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]}',
+    )
+
+    backend = QueueBackend([invalid, repaired])
+    result = compile_execution_plan(
+        situation,
+        objective,
+        tmp_path / "policy.json",
+        runtime_dir,
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=1,
+        forbidden_task_signatures=forbidden_signatures,
+    )
+
+    retained_ids = [t["node_id"] for t in result["tasks"]]
+    assert retained_ids == ["TASK-07", "TASK-08"]
+
+    # Verify dependency edges were contracted
+    task_07 = next(t for t in result["tasks"] if t["node_id"] == "TASK-07")
+    task_08 = next(t for t in result["tasks"] if t["node_id"] == "TASK-08")
+    assert task_07["dependencies"] == []
+    assert task_08["dependencies"] == []
+
+    # Verify durable repair artifact
+    pruning_artifact = json.loads((runtime_dir / "plan-dag-pruning-0001.json").read_text(encoding="utf-8"))
+    assert pruning_artifact["rejected_tasks"]["TASK-05"] == "COMPLETED_ACTION_SIGNATURE"
+    assert pruning_artifact["rejected_tasks"]["TASK-06"] == "COMPLETED_ACTION_SIGNATURE"
+    assert "TASK-05" in pruning_artifact["satisfied_dependencies"]
+    assert "TASK-06" in pruning_artifact["satisfied_dependencies"]
+    assert pruning_artifact["satisfied_dependencies"]["TASK-05"]["evidence_task_id"] == "TASK-01"
+    assert pruning_artifact["satisfied_dependencies"]["TASK-06"]["evidence_task_id"] == "TASK-02"
+    assert pruning_artifact["contracted_edges"]["TASK-07"] == ["TASK-05", "TASK-06"]
+    assert pruning_artifact["contracted_edges"]["TASK-08"] == ["TASK-05"]
+    assert pruning_artifact["retained_task_ids"] == ["TASK-07", "TASK-08"]
+
+
+def test_completed_dependency_fails_closed_when_evidence_sha_mismatched(tmp_path):
+    """Negative safety: If the receipt has a mismatched canonical SHA, the prerequisite
+    cannot satisfy the dependency and downstream dependent tasks are rejected.
+    """
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    # Mismatched canonical_source_sha
+    receipt_0 = {
+        "progress": 100.0,
+        "completed_task_ids": ["TASK-01"],
+        "canonical_source_sha": "mismatched-sha-different-revision",
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": [],
+                "payload": {"cmd": ["node", "test-1.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    dup_1 = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": [],
+        "write_scope": [],
+        "payload": {"cmd": ["node", "test-1.js"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": ["TASK-05"],
+        "scope_tags": [],
+        "write_scope": [],
+        "payload": {"url": "http://127.0.0.1:5173/#/appointment/manage"},
+        "expected_artifacts": [],
+        "tests": ["visual"],
+        "evidence_requirements": ["screenshot"],
+        "completion_criteria": ["done"],
+    }
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [dup_1, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['PROCESS:{"cmd":["node","test-1.js"]}'],
+        completed_task_evidence=planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path).completed_task_evidence,
+    )
+    assert rejected["TASK-05"] == "COMPLETED_ACTION_SIGNATURE"
+    # Dependency not satisfied due to SHA mismatch -> TASK-07 fails closed
+    assert "TASK-05" not in satisfied
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_dependency_fails_closed_when_prerequisite_was_mutating(tmp_path):
+    """Negative safety: A mutating prerequisite cannot be contracted away silently."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 100.0,
+        "completed_task_ids": ["TASK-01"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "FILE",
+                "mutating": True,  # Mutating!
+                "expected_artifacts": [],
+                "payload": {"action": "write_file", "path": "test.txt", "content": "hello"},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    dup_1 = {
+        "node_id": "TASK-05",
+        "run_type": "FILE",
+        "mutating": True,
+        "dependencies": [],
+        "payload": {"action": "write_file", "path": "test.txt", "content": "hello"},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [dup_1, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['FILE:{"action":"write_file","content":"hello","path":"test.txt"}'],
+        completed_task_evidence=planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path).completed_task_evidence,
+    )
+    assert "TASK-05" not in satisfied
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_completed_dependency_fails_closed_when_artifact_producing(tmp_path):
+    """Negative safety: An artifact-producing prerequisite cannot be contracted away."""
+    situation = _situation()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    b0_dir = runtime_dir / "batches" / "batch-0000"
+    b0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 100.0,
+        "completed_task_ids": ["TASK-01"],
+        "canonical_source_sha": situation.control_sha,
+        "canonical_execution_base_sha": situation.execution_base_sha,
+    }
+    (b0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    b0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "mutating": False,
+                "expected_artifacts": ["build/out.js"],  # Declared expected artifacts!
+                "payload": {"cmd": ["node", "build.js"]},
+            },
+        ]
+    }
+    (b0_dir / "generated-run-plan.json").write_text(json.dumps(b0_plan), encoding="utf-8")
+
+    dup_1 = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "mutating": False,
+        "dependencies": [],
+        "payload": {"cmd": ["node", "build.js"]},
+    }
+    dep_browser = {
+        "node_id": "TASK-07",
+        "run_type": "BROWSER",
+        "dependencies": ["TASK-05"],
+        "payload": {"url": "http://127.0.0.1:5173/#/test"},
+    }
+    rejected, satisfied, contracted = planning_kernel._safe_prune_candidate_tasks(
+        [dup_1, dep_browser],
+        situation=situation,
+        workspace=tmp_path,
+        forbidden_signatures=['PROCESS:{"cmd":["node","build.js"]}'],
+        completed_task_evidence=planning_kernel.reconstruct_batch_history(runtime_dir, workspace=tmp_path).completed_task_evidence,
+    )
+    assert "TASK-05" not in satisfied
+    assert rejected["TASK-07"] == "DEPENDS_ON_REJECTED_TASK"
+

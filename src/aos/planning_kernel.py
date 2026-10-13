@@ -351,6 +351,7 @@ class DurableBatchHistory:
     completed_read_observations: Tuple[Dict[str, Any], ...]
     recent_completed_batches: Tuple[Dict[str, Any], ...]
     durable_batches: Tuple[Dict[str, Any], ...]
+    completed_task_evidence: Dict[str, Dict[str, Any]] = dataclasses.field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -364,6 +365,7 @@ class DurableBatchHistory:
             "completed_read_observations": [dict(item) for item in self.completed_read_observations],
             "recent_completed_batches": list(self.recent_completed_batches),
             "durable_batches": list(self.durable_batches),
+            "completed_task_evidence": {k: dict(v) for k, v in self.completed_task_evidence.items()},
         }
 
 
@@ -1604,6 +1606,7 @@ def reconstruct_batch_history(
     completed_signatures: set[str] = set()
     completed_read_paths: set[str] = set()
     completed_read_observations: Dict[str, Dict[str, Any]] = {}
+    completed_task_evidence: Dict[str, Dict[str, Any]] = {}
     successful_count = 0
     failed_count = 0
     highest_batch_number = -1
@@ -1616,7 +1619,6 @@ def reconstruct_batch_history(
                 if m:
                     batch_dirs.append((int(m.group(1)), p))
         batch_dirs.sort(key=lambda x: x[0])
-
         workspace_root = workspace.resolve() if workspace is not None else None
 
         for batch_num, b_dir in batch_dirs:
@@ -1693,8 +1695,25 @@ def reconstruct_batch_history(
                                 and isinstance(payload, Mapping)
                                 and payload.get("action") == "read_file"
                             )
+                            sig = _task_signature(task)
                             if not is_read:
-                                completed_signatures.add(_task_signature(task))
+                                completed_signatures.add(sig)
+
+                            evidence_record = {
+                                "task_id": node_id,
+                                "batch_number": batch_num,
+                                "canonical_source_sha": receipt.get("canonical_source_sha", ""),
+                                "canonical_execution_base_sha": receipt.get("canonical_execution_base_sha", ""),
+                                "mutating": bool(task.get("mutating", False)),
+                                "expected_artifacts": list(task.get("expected_artifacts", [])),
+                                "run_type": task.get("run_type"),
+                                "signature": sig,
+                                "status": "SUCCESS",
+                                "receipt_ref": f"batches/batch-{batch_num:04d}/host-receipt.json",
+                            }
+                            completed_task_evidence[node_id] = evidence_record
+                            completed_task_evidence[sig] = evidence_record
+
                             if is_read:
                                 raw_path = str(payload.get("path", "")).strip()
                                 normalized_path = raw_path.replace("\\", "/")
@@ -1704,7 +1723,7 @@ def reconstruct_batch_history(
                                     if workspace_root is not None:
                                         target = (workspace_root / raw_path).resolve()
                                         if (
-                                            (target == workspace_root or workspace_root in target.parents)
+                                             (target == workspace_root or workspace_root in target.parents)
                                             and target.suffix.casefold() in _PLANNER_READ_CONTEXT_SUFFIXES
                                             and target.is_file()
                                         ):
@@ -1737,6 +1756,7 @@ def reconstruct_batch_history(
         ),
         recent_completed_batches=tuple(recent_batches),
         durable_batches=tuple(executed_batches),
+        completed_task_evidence=dict(completed_task_evidence),
     )
 
 
@@ -2472,13 +2492,17 @@ def _safe_prune_candidate_tasks(
     forbidden_signatures: Sequence[str] = (),
     forbidden_read_identities: Sequence[Tuple[str, str]] = (),
     workspace_source_generation: str = "",
-) -> Dict[str, str]:
-    """Identify independently invalid task nodes from a repair proposal before schema/envelope normalization."""
+    completed_task_evidence: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Tuple[Dict[str, str], Dict[str, Dict[str, Any]], Dict[str, List[str]]]:
+    """Identify invalid task nodes from a repair proposal, contracting proven completed dependencies."""
     rejected: Dict[str, str] = {}
+    satisfied_dependencies: Dict[str, Dict[str, Any]] = {}
+    contracted_edges: Dict[str, List[str]] = {}
     workspace_root = workspace.resolve() if workspace is not None else None
     forbidden_id_set = set(forbidden_ids)
     forbidden_sig_set = set(forbidden_signatures)
     forbidden_read_set = set(forbidden_read_identities)
+    evidence_map = dict(completed_task_evidence or {})
 
     # 1. First pass: individual task inspections
     for raw in raw_tasks:
@@ -2599,7 +2623,46 @@ def _safe_prune_candidate_tasks(
                     rejected[node_id] = "SHARED_PATH_GOVERNANCE_VIOLATION"
                     continue
 
-    # 2. Transitive dependency rejection loop
+    # 1b. Verify completed-action rejections against durable execution evidence
+    raw_by_id = {
+        str(r.get("node_id", "")): r
+        for r in raw_tasks
+        if isinstance(r, Mapping) and str(r.get("node_id", ""))
+    }
+    for rej_id, rej_reason in list(rejected.items()):
+        if rej_reason in ("COMPLETED_ACTION_SIGNATURE", "COMPLETED_TASK_ID"):
+            cand = raw_by_id.get(rej_id)
+            cand_sig = _task_signature(cand) if cand else ""
+            ev = evidence_map.get(rej_id) or (evidence_map.get(cand_sig) if cand_sig else None)
+            if ev and isinstance(ev, Mapping):
+                # Verify trustworthy evidence attributes
+                ev_status = str(ev.get("status", "")).upper()
+                ev_src_sha = str(ev.get("canonical_source_sha", ""))
+                ev_base_sha = str(ev.get("canonical_execution_base_sha", ""))
+                ev_mutating = bool(ev.get("mutating", False))
+                ev_artifacts = list(ev.get("expected_artifacts", []))
+
+                is_proven = (
+                    ev_status in ("SUCCESS", "PASS", "COMPLETED")
+                    and ev_src_sha == situation.control_sha
+                    and ev_base_sha == situation.execution_base_sha
+                    and not ev_mutating
+                    and not ev_artifacts
+                )
+                if is_proven:
+                    satisfied_dependencies[rej_id] = {
+                        "prerequisite_id": rej_id,
+                        "rejection_reason": rej_reason,
+                        "evidence_task_id": ev.get("task_id", rej_id),
+                        "evidence_batch_number": ev.get("batch_number"),
+                        "canonical_source_sha": ev_src_sha,
+                        "canonical_execution_base_sha": ev_base_sha,
+                        "signature": cand_sig or ev.get("signature", ""),
+                        "receipt_ref": ev.get("receipt_ref", ""),
+                        "status": "SATISFIED_HISTORICAL",
+                    }
+
+    # 2. Transitive dependency rejection and contraction loop
     changed = True
     while changed:
         changed = False
@@ -2610,11 +2673,18 @@ def _safe_prune_candidate_tasks(
             if not node_id or node_id in rejected:
                 continue
             deps = raw.get("dependencies")
-            if isinstance(deps, list) and any(str(d) in rejected for d in deps):
-                rejected[node_id] = "DEPENDS_ON_REJECTED_TASK"
-                changed = True
+            if isinstance(deps, list) and deps:
+                unproven_deps = [str(d) for d in deps if str(d) in rejected and str(d) not in satisfied_dependencies]
+                if unproven_deps:
+                    rejected[node_id] = "DEPENDS_ON_REJECTED_TASK"
+                    changed = True
+                else:
+                    # Satisfied dependencies are contracted
+                    proven_contracted = [str(d) for d in deps if str(d) in satisfied_dependencies]
+                    if proven_contracted:
+                        contracted_edges[node_id] = sorted(set(proven_contracted))
 
-    return rejected
+    return rejected, satisfied_dependencies, contracted_edges
 
 
 def _walk_keys(value: Any) -> Iterable[str]:
@@ -3044,6 +3114,31 @@ def _bounded_verification_capabilities(workspace: Optional[Path]) -> Dict[str, A
             and any(token in str(name).lower() for token in ("test", "lint", "check", "type", "build", "verify"))
         }
         result["verification_scripts"] = dict(sorted(selected.items())[:16])
+
+    # Inspect router mode and declared routes from workspace App.tsx / App.jsx
+    router_mode = "browser"
+    declared_routes: List[str] = []
+    ws_root = workspace.resolve()
+    for app_rel in ("App.tsx", "App.jsx", "src/App.tsx", "src/App.jsx"):
+        app_file = ws_root / app_rel
+        if app_file.is_file():
+            try:
+                content = app_file.read_text(encoding="utf-8", errors="replace")
+                if "HashRouter" in content and "VITE_ROUTER_MODE" in content:
+                    router_mode = "hash"
+                elif "HashRouter" in content and "BrowserRouter" not in content:
+                    router_mode = "hash"
+                route_matches = re.findall(r'<Route\s+[^>]*path=["\']([^"\']+)["\']', content)
+                for rm in route_matches:
+                    r_clean = rm.strip()
+                    if r_clean and r_clean not in declared_routes and not r_clean.startswith("*"):
+                        declared_routes.append(r_clean)
+            except OSError:
+                pass
+            break
+    result["router_mode"] = router_mode
+    if declared_routes:
+        result["declared_routes"] = declared_routes[:32]
     return result
 
 
@@ -3394,7 +3489,9 @@ def compile_execution_plan(
         f"{python_workspace_rule}"
         f"AVAILABLE_PROCESS_BINARIES={json.dumps(available_process_binaries)}\n"
         "VERIFICATION_CAPABILITY_RULE=Use only package-declared verification scripts and capabilities below. "
-        "The playwright library does not imply the @playwright/test runner; never invent unsupported test commands.\n"
+        "The playwright library does not imply the @playwright/test runner; never invent unsupported test commands. "
+        "For browser tasks, when router_mode is 'hash', format target URLs with hash paths based on declared_routes "
+        "(e.g. 'http://127.0.0.1:5173/#/appointment/manage' or 'http://127.0.0.1:5173/#/book'); do not invent unsupported browser routes.\n"
         f"VERIFICATION_CAPABILITIES={json.dumps(verification_capabilities, ensure_ascii=False, sort_keys=True)}\n"
         f"{design_intelligence_guidance}\n"
         f"WORKER_CONTRACTS={_worker_contract_summary()}"
@@ -3570,6 +3667,8 @@ def compile_execution_plan(
             if has_dedup_defect:
                 guidance_rules.append(
                     "ACTION_DEDUPLICATION_RULE: Do not repeat action signatures or task identities from previously completed batches. "
+                    "Previously completed and proven actions must not be regenerated as prerequisites. "
+                    "Remaining verification tasks should use satisfied historical requirements rather than executable duplicate dependencies. "
                     "All previously executed actions (e.g. repeated `read_file` on completed paths, identical `git status` commands, or identical task IDs) are strictly forbidden. "
                     "Instead, plan forward-advancing tasks: write new artifacts, inspect novel unexamined files, run different verification checks, or execute authorized non-duplicate milestones."
                 )
@@ -3596,11 +3695,19 @@ def compile_execution_plan(
         )
         try:
             repair_pruned: Dict[str, str] = {}
+            satisfied_deps: Dict[str, Dict[str, Any]] = {}
+            contracted_edges: Dict[str, List[str]] = {}
             pre_salvage_applied = False
             proposal_for_validation = proposal
             if attempt and isinstance(proposal.get("tasks"), list):
                 raw_tasks = proposal["tasks"]
-                repair_pruned = _safe_prune_candidate_tasks(
+                # Reconstruct durable history evidence for completed dependency satisfaction
+                try:
+                    durable_hist = reconstruct_batch_history(runtime_dir, workspace=workspace)
+                    evidence_map = durable_hist.completed_task_evidence
+                except Exception:
+                    evidence_map = {}
+                repair_pruned, satisfied_deps, contracted_edges = _safe_prune_candidate_tasks(
                     raw_tasks,
                     situation=situation,
                     workspace=workspace,
@@ -3608,6 +3715,7 @@ def compile_execution_plan(
                     forbidden_signatures=forbidden_signatures,
                     forbidden_read_identities=forbidden_read_identities,
                     workspace_source_generation=workspace_source_generation,
+                    completed_task_evidence=evidence_map,
                 )
                 if repair_pruned and len(repair_pruned) < len(raw_tasks):
                     pre_salvage_applied = True
@@ -3615,12 +3723,21 @@ def compile_execution_plan(
                         str(task.get("node_id", "")) for task in raw_tasks
                         if isinstance(task, Mapping) and str(task.get("node_id", "")) not in repair_pruned
                     }
+                    salvaged_tasks = []
+                    for task in raw_tasks:
+                        if isinstance(task, Mapping) and str(task.get("node_id", "")) in retained_ids:
+                            task_copy = dict(task)
+                            t_id = str(task_copy.get("node_id", ""))
+                            if t_id in contracted_edges:
+                                contracted_for_task = set(contracted_edges[t_id])
+                                task_copy["dependencies"] = [
+                                    d for d in task_copy.get("dependencies", [])
+                                    if str(d) not in contracted_for_task
+                                ]
+                            salvaged_tasks.append(task_copy)
                     proposal_for_validation = {
                         **proposal,
-                        "tasks": [
-                            task for task in raw_tasks
-                            if isinstance(task, Mapping) and str(task.get("node_id", "")) in retained_ids
-                        ],
+                        "tasks": salvaged_tasks,
                         "parallel_safe_groups": [
                             retained
                             for group in proposal.get("parallel_safe_groups", [])
@@ -3636,6 +3753,8 @@ def compile_execution_plan(
                     "status": "APPLIED",
                     "reason": "REPAIR_RESPONSE_PARTIAL_SALVAGE",
                     "rejected_tasks": repair_pruned,
+                    "satisfied_dependencies": satisfied_deps,
+                    "contracted_edges": contracted_edges,
                     "retained_task_ids": sorted(task["node_id"] for task in normalized["tasks"]),
                 })
             for task in normalized["tasks"]:
