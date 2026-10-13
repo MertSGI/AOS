@@ -1,0 +1,53 @@
+{
+  "recorded_at": "2026-10-13T05:40:43Z",
+  "mutation_performed": false,
+  "runtime": {
+    "source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "active": "stable",
+    "promotion_state": "STABLE",
+    "runtime_state": "HEALTHY",
+    "panel_state": "HEALTHY",
+    "maintenance_state": "PAUSED_SAFE",
+    "production": "NO_GO",
+    "ag_backend_enabled": false,
+    "autonomous_spawning_enabled": false,
+    "supervisor_pid": 11668,
+    "runtime_pid": 16024,
+    "panel_pid": 15584
+  },
+  "kcp": {
+    "status": "READY",
+    "last_sequence": 549,
+    "head_hash": "31e4a8d1fc2160ba89c2f1b33bb9138e23111dc41f7840b2e11c04289ab6b887",
+    "unresolved_deploy_transitions": 0,
+    "qualified_candidate_receipts_present": false,
+    "qualified_candidate_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b"
+  },
+  "admissions": {
+    "HOLD": 12,
+    "SUPERSEDED": 12,
+    "ACTIVE": 0
+  },
+  "legacy_command_artifacts": {
+    "state_running_count": 8,
+    "non_runnable_by_admission": true,
+    "recorded_worker_pid_count": 2,
+    "live_recorded_worker_pid_count": 0,
+    "interpretation": "Historical command state files were not rewritten. Admission state is authoritative for runnability."
+  },
+  "rollback": {
+    "stable_slot_present": true,
+    "stable_slot_healthy": true,
+    "last_historical_transaction_id": "activate-1791794994-83a457b5",
+    "last_historical_transaction_rollback_state": "COMPLETED",
+    "new_activation_will_require_new_transaction": true
+  },
+  "candidate": {
+    "source_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+    "staged_in_protected_runtime": false,
+    "activated_in_protected_runtime": false,
+    "protected_implementation_receipt": false,
+    "protected_verification_receipt": false
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "contract_version": "1.0.0",
+  "recorded_at": "2026-10-13T05:40:43Z",
+  "repository": "MertSGI/AOS",
+  "branch": "audit/aos-canary-checkpoint-20261012",
+  "source_candidate_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+  "protected_mutation": false,
+  "production": "NO_GO",
+  "paid_fallback": "DISABLED",
+  "files": [
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-activation-qualification/FAILURE_DIAGNOSTICS.json",
+      "bytes": 2776,
+      "sha256": "42ba18bb80d9bfa3c7a5a5cdf1892f2d3b5285dfc5ab930b0601b2bc12ad24e8",
+      "verification": "HASHED"
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-activation-qualification/ISOLATED_QUALIFICATION_RESULT.json",
+      "bytes": 3419,
+      "sha256": "85fee7e2ee93283fd1e6da11508bf4ca3577a6846ab4d28f49ccb082fb10cb37",
+      "verification": "HASHED"
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-activation-qualification/NEXT_AUTHORIZATION.md",
+      "bytes": 2280,
+      "sha256": "99338e1cb32cb3a06ebdfa4e627662e187a3ba0a82984c166738cd1e37fafbbe",
+      "verification": "HASHED"
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-activation-qualification/PROTECTED_READINESS.json",
+      "bytes": 1788,
+      "sha256": "61a9f18a911c10c9576b977820660d7a41f0a8fabf28eda1ae96ef86d15f92f6",
+      "verification": "HASHED"
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-activation-qualification/QUALIFICATION_HANDOFF.md",
+      "bytes": 4439,
+      "sha256": "45f5d477250aea8e1775016f54032ea2c6cc157c162451046b634b7fe53c74f6",
+      "verification": "HASHED"
+    }
+  ]
+}

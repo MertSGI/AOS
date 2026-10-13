@@ -1,0 +1,98 @@
+{
+  "recorded_at": "2026-10-13T05:40:43Z",
+  "status": "PASS",
+  "runtime_home": "C:\\Projects\\AOS-hotswitch-runtime-20261012-02",
+  "candidate": {
+    "source_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+    "branch": "fix/aos-supervisor-hotswitch-20261012",
+    "ci_run_id": 38351323428,
+    "ci_conclusion": "success",
+    "candidate_tree_sha256": "a67ff6478e31b940e88fbd20a7a63b0f16d7f31be5e042311c55599ace892d3a",
+    "file_count": 240,
+    "stage": "PASS",
+    "validate": "PASS"
+  },
+  "activation": {
+    "transaction_id": "activate-1791869681-cc170d4c",
+    "transition_id": "afde98a22de2c5a4a3a07203329b31f15a25fbb1ad39557f1de15b80088d9717",
+    "state": "COMPLETED",
+    "result": "PASS_MAINTENANCE",
+    "startup_installed": false,
+    "production": "NO_GO",
+    "paused": true,
+    "handoff": {
+      "status": "STOPPED",
+      "old_supervisor_pid": 23160,
+      "owned_pids": [23160, 24096, 27232],
+      "shutdown_requested_at": "2026-10-13T05:34:41.960085+00:00",
+      "shutdown_acknowledged_at": "2026-10-13T05:34:43.217258+00:00",
+      "singleton_name": "Local\\AOS.RuntimeV1.Supervisor.HotSwitch.20261013.02",
+      "singleton_released": true
+    },
+    "initial_candidate_health": {
+      "supervisor_pid": 21008,
+      "runtime_pid": 27204,
+      "panel_pid": 25160,
+      "source_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+      "runtime_state": "HEALTHY",
+      "panel_state": "HEALTHY",
+      "maintenance_state": "PAUSED_SAFE",
+      "commands": 0,
+      "active_commands": 0
+    },
+    "restart_reentry": {
+      "status": "PASS",
+      "prior_supervisor_pid": 21008,
+      "reentered_supervisor_pid": 26332,
+      "runtime_pid": 22000,
+      "source_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b",
+      "singleton_reacquired": true,
+      "maintenance_state": "PAUSED_SAFE",
+      "commands": 0,
+      "active_commands": 0
+    }
+  },
+  "rollback": {
+    "transition_id": "6cd000cdbc2019829d3b13cde354a6188dca62c64c83e03b92a2f2b2d28e8870",
+    "state": "COMPLETED",
+    "result": "PASS",
+    "restored_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "restored_source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "stable_supervisor_pid": 25540,
+    "stable_runtime_pid": 7860,
+    "stable_panel_pid": 20656,
+    "stable_health": "HEALTHY",
+    "stable_paused": true,
+    "old_candidate_alive": false
+  },
+  "kcp": {
+    "status": "READY",
+    "last_sequence": 582,
+    "head_hash": "221b420dd7c33f726db9b0c5755357e61ad19d46b7053913c185efc1ee3a560b",
+    "unresolved_deploy_transitions": 0,
+    "implementation_receipt": {
+      "sequence": 571,
+      "event_id": "aee91ba953b67120915fe13d20d5856ae3d2fc5592a1ee2582e35d7c83a6f153"
+    },
+    "verification_receipt": {
+      "sequence": 572,
+      "event_id": "2ec784b631023c0e7b3ca9c76bcdec8a9901e4017c91e6017554d1072f189322"
+    },
+    "validation_receipt": {
+      "sequence": 573,
+      "event_id": "f08a4a600f5fad33e3f099b93a85b881343c268d04ed4ec812adffb197e4d3b4"
+    },
+    "materialization_receipt": {
+      "sequence": 574,
+      "event_id": "d4e0fbf5ac501d242640f272fbeb58d72eeea24135ef0616270f41d449ddf55c"
+    },
+    "activation_receipt": {
+      "sequence": 578,
+      "event_id": "c29e0f3fb17717f510a712d16d2c2d93cd2c61cdd2f67acdf9492beed2ae03bd"
+    },
+    "rollback_receipt": {
+      "sequence": 582,
+      "event_id": "52546f7e7bf58662b85bc9467c7ead1671578d4782fbfa51b98e3d1761420193"
+    }
+  }
+}

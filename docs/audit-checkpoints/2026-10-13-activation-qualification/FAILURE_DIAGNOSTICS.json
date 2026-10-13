@@ -1,0 +1,31 @@
+{
+  "recorded_at": "2026-10-13T05:40:43Z",
+  "failures": [
+    {
+      "candidate_sha": "edaab3890e7584024ebc499230f9dd7edd31ccff",
+      "transaction_id": "activate-1791867743-9ead4949",
+      "transition_id": "787957b2b872ad9a8bbf9c8e11553907d5163e7a19da536fd1532c78bf072487",
+      "result": "ABORTED",
+      "exit_kind": "SINGLETON_CONFLICT",
+      "failure_phase": "SINGLETON_ACQUIRE",
+      "candidate_supervisor_pid": 20144,
+      "diagnostic_path": "C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\supervisor\\diagnostics\\supervisor-exit-1791867744621368000-20144.json",
+      "cause": "The handoff accepted shutdown state and PID probes before proving that the configured Windows named mutex could be acquired.",
+      "repair_sha": "36230176b4e6ca3ebeabfdf85931f4d9fb22c734"
+    },
+    {
+      "candidate_sha": "36230176b4e6ca3ebeabfdf85931f4d9fb22c734",
+      "transaction_id": "activate-1791868992-3a25f99e",
+      "transition_id": "5fa1856980ad1377a81165a6db78f0843ae980692a43528d761f915f5c8fc01b",
+      "activation_result": "PASS_MAINTENANCE_THEN_SUPERVISOR_EXIT",
+      "exit_kind": "UNEXPECTED_EXCEPTION",
+      "failure_phase": "READ_ACTIVE_SLOT",
+      "exception_class": "ValueError",
+      "exception_message": "Invalid or missing active slot pointer",
+      "diagnostic_path": "C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\supervisor\\diagnostics\\supervisor-exit-1791869003081290700-26592.json",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\candidate\\36230176b4e6ca3ebeabfdf85931f4d9fb22c734\\site\\aos\\runtime_supervisor.py\", line 567, in run\n    return self._run_owned_loop()\n           ^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\candidate\\36230176b4e6ca3ebeabfdf85931f4d9fb22c734\\site\\aos\\runtime_supervisor.py\", line 634, in _run_owned_loop\n    slot = self.slots.active_slot()\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\candidate\\36230176b4e6ca3ebeabfdf85931f4d9fb22c734\\site\\aos\\runtime_slots.py\", line 210, in active_slot\n    pointer = self.read_pointer()\n              ^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Projects\\AOS-hotswitch-runtime-20261012-02\\candidate\\36230176b4e6ca3ebeabfdf85931f4d9fb22c734\\site\\aos\\runtime_slots.py\", line 134, in read_pointer\n    raise ValueError(\"Invalid or missing active slot pointer\")\nValueError: Invalid or missing active slot pointer\n",
+      "cause": "The final atomic pointer replacement coincided with a transient failed read; read_json returned its empty fallback and SlotManager treated that transient snapshot as permanent corruption.",
+      "repair_sha": "ccf61e807a6b852c66b7aa544dd06676885b5f5b"
+    }
+  ]
+}
