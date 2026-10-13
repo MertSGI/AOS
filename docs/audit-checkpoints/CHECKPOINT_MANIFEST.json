@@ -52,5 +52,10 @@
   "protected_runtime_mutation": false,
   "protected_kcp_mutation": false,
   "accepted_source_claim": false,
-  "remote_verification": "PENDING_COMMIT_AND_READBACK"
+  "remote_verification": {
+    "status": "VERIFIED_GITHUB_READBACK",
+    "verified_commit": "5d3043e97db0817730e90c79a8b6104e2f990411",
+    "verified_artifact_count": 9,
+    "verification_note": "Every artifact was fetched by immutable commit through the connected GitHub service. This final manifest update is bound by the subsequent checkpoint commit."
+  }
 }
