@@ -2463,6 +2463,160 @@ class CanonicalAuthorityResolver:
                                 )
 
 
+def _safe_prune_candidate_tasks(
+    raw_tasks: Sequence[Any],
+    *,
+    situation: ProjectSituation,
+    workspace: Optional[Path],
+    forbidden_ids: Sequence[str] = (),
+    forbidden_signatures: Sequence[str] = (),
+    forbidden_read_identities: Sequence[Tuple[str, str]] = (),
+    workspace_source_generation: str = "",
+) -> Dict[str, str]:
+    """Identify independently invalid task nodes from a repair proposal before schema/envelope normalization."""
+    rejected: Dict[str, str] = {}
+    workspace_root = workspace.resolve() if workspace is not None else None
+    forbidden_id_set = set(forbidden_ids)
+    forbidden_sig_set = set(forbidden_signatures)
+    forbidden_read_set = set(forbidden_read_identities)
+
+    # 1. First pass: individual task inspections
+    for raw in raw_tasks:
+        if not isinstance(raw, Mapping):
+            continue
+        node_id = str(raw.get("node_id", ""))
+        if not node_id:
+            continue
+        run_type = str(raw.get("run_type", "")).upper()
+        mutating = bool(raw.get("mutating", False))
+        payload = raw.get("payload") if isinstance(raw.get("payload"), Mapping) else {}
+
+        # Completed task identity
+        if node_id in forbidden_id_set:
+            rejected[node_id] = "COMPLETED_TASK_ID"
+            continue
+
+        # Completed action signature
+        sig = _task_signature(raw)
+        is_read_task = run_type == "FILE" and payload.get("action") == "read_file"
+        if sig in forbidden_sig_set and not is_read_task:
+            rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
+            continue
+
+        # Completed read identity
+        if is_read_task and workspace is not None:
+            read_identity = _current_read_identity(
+                workspace,
+                str(payload.get("path", "")),
+                workspace_source_generation,
+            )
+            if read_identity in forbidden_read_set:
+                rejected[node_id] = "COMPLETED_READ_PATH"
+                continue
+
+        # Process/test command checks
+        if run_type in ("PROCESS", "TEST", "BUILD"):
+            cmd = payload.get("cmd")
+            if isinstance(cmd, list) and cmd:
+                binary = str(cmd[0])
+                if shutil.which(binary) is None:
+                    rejected[node_id] = "PROCESS_BINARY_UNAVAILABLE"
+                    continue
+                cmd_strings = [str(c) for c in cmd]
+                spec_args = _playwright_test_spec_args(cmd_strings)
+                if spec_args is not None and workspace is not None and not _package_has_playwright_test_runner(workspace):
+                    rejected[node_id] = "PLAYWRIGHT_RUNNER_UNAVAILABLE"
+                    continue
+                executable = Path(binary).name.lower().removesuffix(".exe")
+                if executable in ("python", "py"):
+                    if len(cmd) < 2 or str(cmd[1]).startswith("-"):
+                        rejected[node_id] = "PYTHON_INLINE_OR_MODULE"
+                        continue
+                    if workspace_root is not None:
+                        script = (workspace_root / str(cmd[1])).resolve()
+                        if (
+                            (script != workspace_root and workspace_root not in script.parents)
+                            or not script.is_file()
+                        ):
+                            rejected[node_id] = "PYTHON_SCRIPT_UNAVAILABLE"
+                            continue
+
+        # Synthetic bookkeeping artifacts
+        if run_type == "FILE" and mutating:
+            target_name = Path(str(payload.get("path", "")).replace("\\", "/")).name.lower()
+            target_stem = target_name.split(".", 1)[0]
+            normalized_stem = re.sub(r"[^a-z0-9]+", "_", target_stem).strip("_")
+            synthetic_suffix = any(
+                normalized_stem == marker.replace("-", "_")
+                or normalized_stem.endswith("_" + marker.replace("-", "_"))
+                for marker in _SYNTHETIC_BOOKKEEPING_STEMS
+            )
+            if target_name in _SYNTHETIC_BOOKKEEPING_STEMS or synthetic_suffix:
+                rejected[node_id] = "SYNTHETIC_BOOKKEEPING_ARTIFACT"
+                continue
+
+        # Canonical lane allowed scope violations for mutating FILE/AGENTIC tasks
+        if run_type in {"FILE", "AGENTIC"} and mutating:
+            write_scope = raw.get("write_scope")
+            ws_list = [str(p) for p in write_scope] if isinstance(write_scope, list) else []
+            if situation.lane_allowed_scope is not None:
+                lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in situation.lane_allowed_scope]
+                lane_allowed_exact = [p.replace("\\", "/") for p in situation.lane_allowed_scope]
+                out_of_scope = False
+                for ws in ws_list:
+                    clean_ws = ws.replace("\\", "/")
+                    is_covered = any(clean_ws.startswith(a_pref) or clean_ws + "/" == a_pref for a_pref in lane_allowed_prefixes)
+                    if not is_covered and clean_ws in lane_allowed_exact:
+                        is_covered = True
+                    if not is_covered:
+                        out_of_scope = True
+                        break
+                if out_of_scope:
+                    rejected[node_id] = "OUT_OF_LANE_WRITE_SCOPE"
+                    continue
+
+            # Shared path governance
+            shared_gov = situation.shared_path_governance or {}
+            gov_paths = shared_gov.get("paths", {}) if isinstance(shared_gov, dict) and shared_gov.get("status") == "ENFORCED" else {}
+            explicit_handoff = raw.get("shared_path_handoff") or (raw.get("extensions") or {}).get("shared_path_handoff") if isinstance(raw.get("extensions"), Mapping) else raw.get("shared_path_handoff")
+            if gov_paths:
+                shared_violation = False
+                for ws in ws_list:
+                    clean_ws = ws.replace("\\", "/")
+                    for g_path, g_rule in gov_paths.items():
+                        clean_gp = g_path.replace("\\", "/")
+                        if clean_ws == clean_gp or clean_ws.startswith(clean_gp.rstrip("/") + "/"):
+                            owner_lane = g_rule.get("owner_lane") if isinstance(g_rule, dict) else None
+                            current_lane = situation.project_id
+                            lane_key = "ui_v2" if current_lane == "lari-ui-v2" else ("lari" if current_lane == "lari" else current_lane)
+                            if owner_lane and lane_key != owner_lane and current_lane != owner_lane:
+                                if not explicit_handoff or not (isinstance(explicit_handoff, Mapping) and explicit_handoff.get("valid")):
+                                    shared_violation = True
+                                    break
+                    if shared_violation:
+                        break
+                if shared_violation:
+                    rejected[node_id] = "SHARED_PATH_GOVERNANCE_VIOLATION"
+                    continue
+
+    # 2. Transitive dependency rejection loop
+    changed = True
+    while changed:
+        changed = False
+        for raw in raw_tasks:
+            if not isinstance(raw, Mapping):
+                continue
+            node_id = str(raw.get("node_id", ""))
+            if not node_id or node_id in rejected:
+                continue
+            deps = raw.get("dependencies")
+            if isinstance(deps, list) and any(str(d) in rejected for d in deps):
+                rejected[node_id] = "DEPENDS_ON_REJECTED_TASK"
+                changed = True
+
+    return rejected
+
+
 def _walk_keys(value: Any) -> Iterable[str]:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -3258,39 +3412,85 @@ def compile_execution_plan(
     for attempt in ((1,) if recovered_repair else (0, 1)):
         attempt_prompt = prompt
         if attempt:
-            python_guidance = ""
-            if "CANONICAL_LANE_SCOPE_VIOLATION" in validation_error:
-                python_guidance = (
-                    "\nCANONICAL_SCOPE_REPAIR_RULE: Regenerate the full plan with every mutating write_scope strictly inside "
+            guidance_rules = []
+
+            # 1. Scope / Shared path governance
+            has_scope_violation = (
+                "CANONICAL_LANE_SCOPE_VIOLATION" in validation_error
+                or "OUT_OF_LANE_WRITE_SCOPE" in validation_error
+                or (isinstance(proposal.get("tasks"), list) and any(
+                    isinstance(t, Mapping) and t.get("mutating") and any(
+                        situation.lane_allowed_scope is not None and not any(
+                            ws.replace("\\", "/").startswith(p.replace("\\", "/").rstrip("/") + "/")
+                            or ws.replace("\\", "/") + "/" == p.replace("\\", "/").rstrip("/") + "/"
+                            or ws.replace("\\", "/") == p.replace("\\", "/")
+                            for p in situation.lane_allowed_scope
+                        )
+                        for ws in (t.get("write_scope") or [])
+                    )
+                    for t in proposal.get("tasks", [])
+                ))
+            )
+            if has_scope_violation:
+                guidance_rules.append(
+                    "CANONICAL_SCOPE_REPAIR_RULE: Regenerate the full plan with every mutating write_scope strictly inside "
                     f"the canonical lane_allowed_scope from SITUATION: {json.dumps(list(situation.lane_allowed_scope or ()), ensure_ascii=False)}. "
                     "Remove every out-of-lane path; do not weaken or duplicate the authority source."
                 )
-            elif "SHARED_PATH_OWNERSHIP_REQUIRED" in validation_error:
-                python_guidance = (
-                    "\nSHARED_PATH_REPAIR_RULE: Remove every mutation of a shared path owned by another lane. "
+
+            if "SHARED_PATH_OWNERSHIP_REQUIRED" in validation_error or "SHARED_PATH_GOVERNANCE_VIOLATION" in validation_error:
+                guidance_rules.append(
+                    "SHARED_PATH_REPAIR_RULE: Remove every mutation of a shared path owned by another lane. "
                     "Do not invent an ownership handoff. Regenerate only with paths currently owned by this project in "
                     "SITUATION.shared_path_governance."
                 )
-            elif "Playwright test runner capability is unavailable" in validation_error or "does not declare @playwright/test" in validation_error:
-                python_guidance = (
-                    "\nVERIFICATION_CAPABILITY_REPAIR_RULE: @playwright/test is not declared and MUST NOT be proposed or installed. "
+
+            # 2. Verification capabilities / Playwright runner / Browser URL verification
+            has_playwright_runner_defect = (
+                "Playwright test runner capability is unavailable" in validation_error
+                or "does not declare @playwright/test" in validation_error
+                or "PLAYWRIGHT_RUNNER_UNAVAILABLE" in validation_error
+                or (isinstance(proposal.get("tasks"), list) and any(
+                    isinstance(t, Mapping)
+                    and isinstance(t.get("payload"), Mapping)
+                    and isinstance(t["payload"].get("cmd"), list)
+                    and _playwright_test_spec_args([str(c) for c in t["payload"]["cmd"]]) is not None
+                    and workspace is not None
+                    and not _package_has_playwright_test_runner(workspace)
+                    for t in proposal.get("tasks", [])
+                ))
+            )
+            if has_playwright_runner_defect:
+                guidance_rules.append(
+                    "VERIFICATION_CAPABILITY_REPAIR_RULE: @playwright/test is not declared and MUST NOT be proposed or installed. "
                     "Choose only an exact existing package verification script from VERIFICATION_CAPABILITIES, or a proven available "
-                    "non-Playwright check. Never repeat the unsupported Playwright Test Runner command."
+                    "non-Playwright check. Never repeat the unsupported Playwright Test Runner command. "
+                    "For browser route/UI verification, use ONLY the supported BROWSER run_type with payload.url "
+                    "(e.g. run_type='BROWSER', payload={'url': 'http://localhost:5173/...'}), which executes via the browser execution backend."
                 )
-            elif "inline/module Python execution" in validation_error or "Python payload requires an existing workspace-relative script" in validation_error or "Python script does not exist" in validation_error:
-                python_guidance = (
-                    "\nPYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
+
+            # 3. Process binaries & Python execution
+            if (
+                "inline/module Python execution" in validation_error
+                or "Python payload requires an existing workspace-relative script" in validation_error
+                or "Python script does not exist" in validation_error
+            ):
+                guidance_rules.append(
+                    "PYTHON_PAYLOAD_RULE: Python inline execution (`-c` or `-m`) is prohibited. "
                     "Python commands may ONLY invoke an existing workspace-relative script path (e.g. `python path/to/script.py`). "
                     "For all other execution, you MUST use ONLY the exact binaries present in AVAILABLE_PROCESS_BINARIES (e.g. git). "
                     "Never plan npm, npx, or node if they are not listed in AVAILABLE_PROCESS_BINARIES."
                 )
-            elif "process binary is unavailable in runtime environment" in validation_error:
-                python_guidance = (
-                    f"\nPROCESS_BINARY_RULE: The requested binary is unavailable on this host. "
+
+            if "process binary is unavailable in runtime environment" in validation_error:
+                guidance_rules.append(
+                    f"PROCESS_BINARY_RULE: The requested binary is unavailable on this host. "
                     f"You MUST use ONLY binaries present in AVAILABLE_PROCESS_BINARIES: {json.dumps(available_process_binaries)}. "
                     "Do not plan tasks for npm, npx, node, or any binary not in that list."
                 )
-            elif any(
+
+            # 4. Source patches & File paths
+            if any(
                 marker in validation_error
                 for marker in (
                     "context mismatch against current working-tree content",
@@ -3303,8 +3503,8 @@ def compile_execution_plan(
                     "replace_exact validation failed",
                 )
             ):
-                python_guidance = (
-                    "\nSOURCE_PATCH_REPAIR_RULE: The rejected mutation had invalid context lines, a precondition SHA mismatch, "
+                guidance_rules.append(
+                    "SOURCE_PATCH_REPAIR_RULE: The rejected mutation had invalid context lines, a precondition SHA mismatch, "
                     "a duplicate mutation to the same file, an incompatible Git blob index header, or was a no-op against the real working tree. "
                     "Regenerate the FILE payload using EXACT current lines and raw SHA-256 preconditions from WORKSPACE_SOURCE_CONTEXT, "
                     "without hallucinated imports, git blob hashes, or stale context from Git HEAD. Mutate each file at most once per plan. "
@@ -3312,16 +3512,19 @@ def compile_execution_plan(
                     "structural unified diffs. If an exact anchor is missing or ambiguous, do not force an edit. If the change has "
                     "already been made or cannot be applied cleanly, do not force an invalid mutation."
                 )
-            elif "FILE read target does not exist" in validation_error:
-                python_guidance = (
-                    "\nFILE_PATH_REPAIR_RULE: The rejected plan referenced a nonexistent workspace path. "
+
+            if "FILE read target does not exist" in validation_error:
+                guidance_rules.append(
+                    "FILE_PATH_REPAIR_RULE: The rejected plan referenced a nonexistent workspace path. "
                     "Do not invent replacement paths. Use only exact representative_existing_paths from WORKSPACE_FILE_MANIFEST for reads. "
                     "If the plan creates a brand-new file, use FILE write_file rather than apply_patch against a nonexistent target. "
                     "If a downstream task must read an artifact created earlier in the same DAG, the producer MUST declare that exact workspace-relative path in expected_artifacts "
                     "and the reader MUST depend transitively on that producer. "
                     "If the correct repository location or architecture is uncertain, return a bounded discovery/read batch against existing paths instead of guessing a mutation path."
                 )
-            elif any(
+
+            # 5. Worker payload shape
+            if any(
                 marker in validation_error
                 for marker in (
                     "payload must not be empty",
@@ -3331,29 +3534,47 @@ def compile_execution_plan(
                     "requests unsupported git action",
                 )
             ):
-                python_guidance = (
-                    "\nWORKER_PAYLOAD_REPAIR_RULE: The previous plan used a payload that does not match its run_type. "
+                guidance_rules.append(
+                    "WORKER_PAYLOAD_REPAIR_RULE: The previous plan used a payload that does not match its run_type. "
                     "Correct the full plan using this exact dispatch mapping and do not preserve the mismatched payload shape. "
                     + _run_type_payload_contract_guidance()
                 )
-            elif (
+
+            # 6. Implementation objective requirements
+            if (
                 "Implementation objective requires" in validation_error
                 or "Implementation task" in validation_error
                 or "AGENTIC expected artifact" in validation_error
             ):
-                python_guidance = (
-                    "\nIMPLEMENTATION_REPAIR_RULE: The previous plan was structurally executable but semantically insufficient "
+                guidance_rules.append(
+                    "IMPLEMENTATION_REPAIR_RULE: The previous plan was structurally executable but semantically insufficient "
                     "for an implementation objective. Preparatory checkout/fetch/status work cannot satisfy implementation. "
                     "Return a forward product plan with bounded source mutation (or provider-neutral AGENTIC for multi-file work), "
                     "concrete expected_artifacts, explicit verification/tests, evidence requirements, and completion criteria. "
                     "AGENTIC tasks must keep every expected artifact inside declared write_scope and must never hardcode a provider."
                 )
-            elif "repeats completed FILE read target" in validation_error or "repeats completed action signatures" in validation_error or "repeats completed task identities" in validation_error:
-                python_guidance = (
-                    "\nACTION_DEDUPLICATION_RULE: Do not repeat action signatures or task identities from previously completed batches. "
+
+            # 7. Deduplication of completed actions / task identities
+            has_dedup_defect = (
+                "repeats completed FILE read target" in validation_error
+                or "repeats completed action signatures" in validation_error
+                or "repeats completed task identities" in validation_error
+                or (isinstance(proposal.get("tasks"), list) and any(
+                    isinstance(t, Mapping) and (
+                        str(t.get("node_id", "")) in forbidden_ids
+                        or _task_signature(t) in forbidden_signatures
+                    )
+                    for t in proposal.get("tasks", [])
+                ))
+            )
+            if has_dedup_defect:
+                guidance_rules.append(
+                    "ACTION_DEDUPLICATION_RULE: Do not repeat action signatures or task identities from previously completed batches. "
                     "All previously executed actions (e.g. repeated `read_file` on completed paths, identical `git status` commands, or identical task IDs) are strictly forbidden. "
                     "Instead, plan forward-advancing tasks: write new artifacts, inspect novel unexamined files, run different verification checks, or execute authorized non-duplicate milestones."
                 )
+
+            python_guidance = "".join(f"\n{rule}" for rule in guidance_rules)
             attempt_prompt += (
                 "\n\nVALIDATION_REPAIR_REQUIRED: The previous proposal was rejected locally and was not executed. "
                 "Return a corrected full plan; do not repeat the defect.\n"
@@ -3379,26 +3600,15 @@ def compile_execution_plan(
             proposal_for_validation = proposal
             if attempt and isinstance(proposal.get("tasks"), list):
                 raw_tasks = proposal["tasks"]
-                for task in raw_tasks:
-                    if not isinstance(task, Mapping) or task.get("run_type") not in ("PROCESS", "TEST", "BUILD"):
-                        continue
-                    payload = task.get("payload")
-                    cmd = payload.get("cmd") if isinstance(payload, Mapping) else None
-                    if not isinstance(cmd, list) or len(cmd) < 2:
-                        continue
-                    executable = Path(str(cmd[0])).name.lower().removesuffix(".exe")
-                    if executable in ("python", "py") and str(cmd[1]).startswith("-"):
-                        repair_pruned[str(task.get("node_id", ""))] = "PYTHON_INLINE_OR_MODULE"
-                changed = True
-                while changed:
-                    changed = False
-                    for task in raw_tasks:
-                        node_id = str(task.get("node_id", "")) if isinstance(task, Mapping) else ""
-                        if node_id in repair_pruned or not isinstance(task, Mapping):
-                            continue
-                        if any(str(dependency) in repair_pruned for dependency in task.get("dependencies", [])):
-                            repair_pruned[node_id] = "DEPENDS_ON_REJECTED_TASK"
-                            changed = True
+                repair_pruned = _safe_prune_candidate_tasks(
+                    raw_tasks,
+                    situation=situation,
+                    workspace=workspace,
+                    forbidden_ids=forbidden_ids,
+                    forbidden_signatures=forbidden_signatures,
+                    forbidden_read_identities=forbidden_read_identities,
+                    workspace_source_generation=workspace_source_generation,
+                )
                 if repair_pruned and len(repair_pruned) < len(raw_tasks):
                     pre_salvage_applied = True
                     retained_ids = {
@@ -3420,94 +3630,14 @@ def compile_execution_plan(
             normalized = _normalize_plan_schema_envelope(
                 proposal_for_validation, objective, situation, runtime_dir,
             )
-            if attempt:
-                # A repair response can correct most of a plan while stubbornly
-                # retaining one independently-invalid task.  Preserve the safe,
-                # useful portion instead of discarding the entire bounded batch.
-                # Tasks that depend on a rejected task are rejected transitively;
-                # an all-invalid plan still fails closed below.
-                rejected: Dict[str, str] = dict(repair_pruned)
-                tasks_by_id = {task["node_id"]: task for task in normalized["tasks"]}
-                workspace_root = workspace.resolve() if workspace is not None else None
-                for task in normalized["tasks"]:
-                    node_id = task["node_id"]
-                    signature = _task_signature(task)
-                    if node_id in forbidden_ids:
-                        rejected[node_id] = "COMPLETED_TASK_ID"
-                        continue
-                    is_read_task = (
-                        task["run_type"] == "FILE"
-                        and task["payload"].get("action") == "read_file"
-                    )
-                    if (
-                        signature in forbidden_signatures
-                        and not is_read_task
-                        and not _repeatable_verification_after_novel_mutation(
-                            task, tasks_by_id, forbidden_ids, forbidden_signatures,
-                        )
-                    ):
-                        rejected[node_id] = "COMPLETED_ACTION_SIGNATURE"
-                        continue
-                    if task["run_type"] in ("PROCESS", "TEST", "BUILD"):
-                        cmd = task["payload"]["cmd"]
-                        binary = str(cmd[0])
-                        if shutil.which(binary) is None:
-                            rejected[node_id] = "PROCESS_BINARY_UNAVAILABLE"
-                            continue
-                        executable = Path(binary).name.lower().removesuffix(".exe")
-                        if executable in ("python", "py") and workspace_root is not None:
-                            if len(cmd) < 2 or str(cmd[1]).startswith("-"):
-                                rejected[node_id] = "PYTHON_INLINE_OR_MODULE"
-                                continue
-                            script = (workspace_root / str(cmd[1])).resolve()
-                            if (
-                                (script != workspace_root and workspace_root not in script.parents)
-                                or not script.is_file()
-                            ):
-                                rejected[node_id] = "PYTHON_SCRIPT_UNAVAILABLE"
-                                continue
-                    if task["run_type"] == "FILE" and task["payload"].get("action") == "read_file":
-                        read_identity = _current_read_identity(
-                            workspace,
-                            str(task["payload"].get("path", "")),
-                            workspace_source_generation,
-                        )
-                        if read_identity in forbidden_read_identities:
-                            rejected[node_id] = "COMPLETED_READ_PATH"
-
-                changed = True
-                while changed:
-                    changed = False
-                    for task in normalized["tasks"]:
-                        node_id = task["node_id"]
-                        if node_id in rejected:
-                            continue
-                        if any(dependency in rejected for dependency in task.get("dependencies", [])):
-                            rejected[node_id] = "DEPENDS_ON_REJECTED_TASK"
-                            changed = True
-
-                normalized_rejected = set(rejected) & set(tasks_by_id)
-                post_salvage_applied = False
-                if normalized_rejected and len(normalized_rejected) < len(normalized["tasks"]):
-                    post_salvage_applied = True
-                    retained_ids = set(tasks_by_id) - normalized_rejected
-                    normalized = {
-                        **normalized,
-                        "tasks": [task for task in normalized["tasks"] if task["node_id"] in retained_ids],
-                        "parallel_safe_groups": [
-                            retained
-                            for group in normalized.get("parallel_safe_groups", [])
-                            if (retained := [node_id for node_id in group if node_id in retained_ids])
-                        ],
-                    }
-                if pre_salvage_applied or post_salvage_applied:
-                    _atomic_json(runtime_dir / f"plan-dag-pruning-{int(batch_number or 0):04d}.json", {
-                        "schema_version": "1.0.0",
-                        "status": "APPLIED",
-                        "reason": "REPAIR_RESPONSE_PARTIAL_SALVAGE",
-                        "rejected_tasks": rejected,
-                        "retained_task_ids": sorted(task["node_id"] for task in normalized["tasks"]),
-                    })
+            if attempt and pre_salvage_applied:
+                _atomic_json(runtime_dir / f"plan-dag-pruning-{int(batch_number or 0):04d}.json", {
+                    "schema_version": "1.0.0",
+                    "status": "APPLIED",
+                    "reason": "REPAIR_RESPONSE_PARTIAL_SALVAGE",
+                    "rejected_tasks": repair_pruned,
+                    "retained_task_ids": sorted(task["node_id"] for task in normalized["tasks"]),
+                })
             for task in normalized["tasks"]:
                 if task["run_type"] not in ("PROCESS", "TEST", "BUILD"):
                     continue

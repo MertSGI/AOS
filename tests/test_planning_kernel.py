@@ -2882,3 +2882,414 @@ def test_reason_backend_local_failure_is_distinct_from_provider_wait(tmp_path, m
     assert not isinstance(exc.value, planning_kernel.WaitingForReasoningProvider)
     assert exc.value.failure_class == "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE"
     assert "ANTIGRAVITY_TERMINAL_CONTRACT_FAILURE" in str(exc.value)
+
+
+def test_repaired_proposal_prunes_completed_actions_and_retains_independent_browser_tasks(tmp_path):
+    # Requirement 1 & 4: Repaired proposal containing completed PROCESS actions plus two independent valid BROWSER tasks retains only the latter.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    # Initial plan fails with invalid binary
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    # Repaired proposal contains:
+    # 2 completed PROCESS actions (identical to previous completed batch)
+    # 2 independent valid BROWSER tasks
+    completed_task_1 = {
+        "node_id": "TASK-05",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"],
+        "write_scope": [],
+        "payload": {"cmd": ["node", "scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    completed_task_2 = {
+        "node_id": "TASK-06",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"],
+        "write_scope": [],
+        "payload": {"cmd": ["node", "supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    browser_task_1 = {
+        "node_id": "TASK-03",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["pages/AppointmentSelfServicePage.tsx"],
+        "write_scope": [],
+        "payload": {"url": "http://localhost:5173/customer/appointment/manage"},
+        "expected_artifacts": [],
+        "tests": ["visual"],
+        "evidence_requirements": ["screenshot"],
+        "completion_criteria": ["done"],
+    }
+    browser_task_2 = {
+        "node_id": "TASK-04",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["pages/BookingPage.tsx"],
+        "write_scope": [],
+        "payload": {"url": "http://localhost:5173/booking"},
+        "expected_artifacts": [],
+        "tests": ["visual"],
+        "evidence_requirements": ["screenshot"],
+        "completion_criteria": ["done"],
+    }
+    repaired = {
+        "schema_version": "1.0.0",
+        "objective_id": objective.objective_id,
+        "tasks": [completed_task_1, completed_task_2, browser_task_1, browser_task_2],
+        "parallel_safe_groups": [["TASK-05", "TASK-06"], ["TASK-03", "TASK-04"]],
+        "rollback_strategy": "none",
+    }
+
+    forbidden_signatures = (
+        'PROCESS:{"cmd":["node","scripts/test-phase7-node3-favorites-rebooking-contracts.mjs"]}',
+        'PROCESS:{"cmd":["node","supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs"]}',
+    )
+
+    backend = QueueBackend([invalid, repaired])
+    result = compile_execution_plan(
+        situation,
+        objective,
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=1,
+        forbidden_task_signatures=forbidden_signatures,
+    )
+
+    retained_ids = [t["node_id"] for t in result["tasks"]]
+    assert retained_ids == ["TASK-03", "TASK-04"]
+    pruning_artifact = json.loads((tmp_path / "runtime" / "plan-dag-pruning-0001.json").read_text(encoding="utf-8"))
+    assert pruning_artifact["rejected_tasks"]["TASK-05"] == "COMPLETED_ACTION_SIGNATURE"
+    assert pruning_artifact["rejected_tasks"]["TASK-06"] == "COMPLETED_ACTION_SIGNATURE"
+    assert pruning_artifact["retained_task_ids"] == ["TASK-03", "TASK-04"]
+
+
+def test_repaired_proposal_prunes_undeclared_playwright_runner_even_when_npx_available(tmp_path, monkeypatch):
+    # Requirement 2: Undeclared `npx playwright test` is rejected even when `npx` is available.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    # package.json only has playwright library, NOT @playwright/test runner
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"playwright": "1.60.0"}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("aos.planning_kernel.shutil.which", lambda binary: f"/usr/bin/{binary}")
+
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    repaired = _plan()
+    repaired["tasks"][0]["payload"] = {"cmd": ["npx", "playwright", "test", "tests/e2e/test.spec.ts"]}
+    valid_task = json.loads(json.dumps(_plan()["tasks"][0]))
+    valid_task["node_id"] = "browser-check"
+    valid_task["run_type"] = "BROWSER"
+    valid_task["payload"] = {"url": "http://localhost:5173/booking"}
+    repaired["tasks"].append(valid_task)
+    repaired["parallel_safe_groups"] = [["bounded-test", "browser-check"]]
+
+    backend = QueueBackend([invalid, repaired])
+    result = compile_execution_plan(
+        situation,
+        objective,
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=2,
+    )
+
+    assert [t["node_id"] for t in result["tasks"]] == ["browser-check"]
+    pruning_artifact = json.loads((tmp_path / "runtime" / "plan-dag-pruning-0002.json").read_text(encoding="utf-8"))
+    assert pruning_artifact["rejected_tasks"]["bounded-test"] == "PLAYWRIGHT_RUNNER_UNAVAILABLE"
+
+
+def test_repaired_proposal_prunes_out_of_lane_checkpoint_mutation_pre_normalization(tmp_path):
+    # Requirement 3: Out-of-lane checkpoint FILE mutation is removed at the CORRECT pre-normalization boundary.
+    situation = dataclasses.replace(
+        _situation(),
+        project_id="lari",
+        lane_allowed_scope=("pages/BookingPage.tsx",),
+    )
+    objective = Objective.from_dict(_objective())
+
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    repaired = _plan()
+    out_of_lane_task = {
+        "node_id": "TASK-CHECKPOINT",
+        "run_type": "FILE",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": True,
+        "dependencies": [],
+        "scope_tags": ["control/lari-project-control-plane/"],
+        "write_scope": ["control/lari-project-control-plane/phase7-node3-r3-checkpoint.json"],
+        "payload": {
+            "action": "write_file",
+            "path": "control/lari-project-control-plane/phase7-node3-r3-checkpoint.json",
+            "content": "{}",
+        },
+        "expected_artifacts": ["control/lari-project-control-plane/phase7-node3-r3-checkpoint.json"],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    valid_browser_task = {
+        "node_id": "TASK-BROWSER",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": ["pages/BookingPage.tsx"],
+        "write_scope": [],
+        "payload": {"url": "http://localhost:5173/booking"},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    repaired["tasks"] = [out_of_lane_task, valid_browser_task]
+    repaired["parallel_safe_groups"] = [["TASK-CHECKPOINT", "TASK-BROWSER"]]
+
+    backend = QueueBackend([invalid, repaired])
+    result = compile_execution_plan(
+        situation,
+        objective,
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=3,
+    )
+
+    assert [t["node_id"] for t in result["tasks"]] == ["TASK-BROWSER"]
+    pruning_artifact = json.loads((tmp_path / "runtime" / "plan-dag-pruning-0003.json").read_text(encoding="utf-8"))
+    assert pruning_artifact["rejected_tasks"]["TASK-CHECKPOINT"] == "OUT_OF_LANE_WRITE_SCOPE"
+
+
+def test_repaired_proposal_rejects_transitively_dependent_browser_tasks(tmp_path):
+    # Requirement 5: Browser tasks depending on rejected nodes are rejected transitively.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    repaired = _plan()
+    # Task 1 is invalid python inline
+    invalid_task = {
+        "node_id": "TASK-PROCESS",
+        "run_type": "PROCESS",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": [],
+        "write_scope": [],
+        "payload": {"cmd": ["python", "-c", "print('bad')"]},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    # Task 2 depends on Task 1
+    dependent_browser = {
+        "node_id": "TASK-BROWSER-DEP",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": ["TASK-PROCESS"],
+        "scope_tags": [],
+        "write_scope": [],
+        "payload": {"url": "http://localhost:5173/manage"},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    # Task 3 is independent valid browser task
+    independent_browser = {
+        "node_id": "TASK-BROWSER-IND",
+        "run_type": "BROWSER",
+        "authority_id": "DECISION-020",
+        "risk_class": "R0",
+        "mutating": False,
+        "dependencies": [],
+        "scope_tags": [],
+        "write_scope": [],
+        "payload": {"url": "http://localhost:5173/booking"},
+        "expected_artifacts": [],
+        "tests": ["test"],
+        "evidence_requirements": ["evidence"],
+        "completion_criteria": ["done"],
+    }
+    repaired["tasks"] = [invalid_task, dependent_browser, independent_browser]
+    repaired["parallel_safe_groups"] = [["TASK-PROCESS"], ["TASK-BROWSER-DEP", "TASK-BROWSER-IND"]]
+
+    backend = QueueBackend([invalid, repaired])
+    result = compile_execution_plan(
+        situation,
+        objective,
+        tmp_path / "policy.json",
+        tmp_path / "runtime",
+        backend_override=backend,
+        workspace=tmp_path,
+        batch_number=4,
+    )
+
+    assert [t["node_id"] for t in result["tasks"]] == ["TASK-BROWSER-IND"]
+    pruning_artifact = json.loads((tmp_path / "runtime" / "plan-dag-pruning-0004.json").read_text(encoding="utf-8"))
+    assert pruning_artifact["rejected_tasks"]["TASK-PROCESS"] == "PYTHON_INLINE_OR_MODULE"
+    assert pruning_artifact["rejected_tasks"]["TASK-BROWSER-DEP"] == "DEPENDS_ON_REJECTED_TASK"
+
+
+def test_repaired_proposal_all_invalid_fails_closed(tmp_path):
+    # Requirement 6: All-invalid proposals still fail closed.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    invalid1 = _plan()
+    invalid1["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid1')"]}
+    invalid2 = _plan()
+    invalid2["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid2')"]}
+
+    backend = QueueBackend([invalid1, invalid2])
+    with pytest.raises(planning_kernel.PlannerValidationExhausted):
+        compile_execution_plan(
+            situation,
+            objective,
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            backend_override=backend,
+            workspace=tmp_path,
+            batch_number=5,
+        )
+
+
+def test_malformed_plan_structure_cannot_be_made_acceptable_by_pruning(tmp_path):
+    # Requirement 7: Malformed plan structure cannot be made acceptable by pruning.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    invalid = _plan()
+    invalid["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid')"]}
+
+    # Repaired plan has missing top-level field required by schema
+    repaired = _plan()
+    del repaired["rollback_strategy"]
+    del repaired["schema_version"]
+
+    backend = QueueBackend([invalid, repaired])
+    with pytest.raises(planning_kernel.PlannerValidationExhausted):
+        compile_execution_plan(
+            situation,
+            objective,
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            backend_override=backend,
+            workspace=tmp_path,
+            batch_number=6,
+        )
+
+
+def test_reentry_preserves_completed_batch_count_and_deduplication(tmp_path):
+    # Requirement 8: Re-entry preserves completed batch count, signatures, and evidence without replaying TASK-01/TASK-02.
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text("{}", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    # Simulate batch 0 completed with TASK-01 and TASK-02
+    batch_0_dir = runtime_dir / "batches" / "batch-0000"
+    batch_0_dir.mkdir(parents=True, exist_ok=True)
+    receipt_0 = {
+        "progress": 50.0,
+        "completed_task_ids": ["TASK-01", "TASK-02"],
+        "failed_task_ids": ["TASK-03", "TASK-04"],
+        "timestamp": "2026-10-13T11:10:35+00:00",
+    }
+    (batch_0_dir / "host-receipt.json").write_text(json.dumps(receipt_0), encoding="utf-8")
+    batch_0_plan = {
+        "tasks": [
+            {
+                "node_id": "TASK-01",
+                "run_type": "PROCESS",
+                "payload": {"cmd": ["node", "test-1.js"]},
+            },
+            {
+                "node_id": "TASK-02",
+                "run_type": "PROCESS",
+                "payload": {"cmd": ["node", "test-2.js"]},
+            },
+        ]
+    }
+    (batch_0_dir / "generated-run-plan.json").write_text(json.dumps(batch_0_plan), encoding="utf-8")
+
+    history = planning_kernel.reconstruct_batch_history(runtime_dir, workspace=workspace)
+    assert history.total_executed_batches == 1
+    assert "TASK-01" in history.completed_task_ids
+    assert "TASK-02" in history.completed_task_ids
+    assert 'PROCESS:{"cmd":["node","test-1.js"]}' in history.completed_task_signatures
+    assert 'PROCESS:{"cmd":["node","test-2.js"]}' in history.completed_task_signatures
+
+
+def test_rejected_plan_never_receives_fabricated_verification_receipts(tmp_path):
+    # Requirement 9: A rejected plan never receives fabricated verification or completion receipts.
+    situation = _situation()
+    objective = Objective.from_dict(_objective())
+
+    invalid1 = _plan()
+    invalid1["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid1')"]}
+    invalid2 = _plan()
+    invalid2["tasks"][0]["payload"] = {"cmd": ["python", "-c", "print('invalid2')"]}
+
+    backend = QueueBackend([invalid1, invalid2])
+    with pytest.raises(planning_kernel.PlannerValidationExhausted):
+        compile_execution_plan(
+            situation,
+            objective,
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            backend_override=backend,
+            workspace=tmp_path,
+            batch_number=7,
+        )
+
+    # Confirm no run plan or host receipt or batch execution occurred
+    assert not (tmp_path / "runtime" / "host-receipt.json").exists()
+    assert not (tmp_path / "runtime" / "batches" / "batch-0007" / "host-receipt.json").exists()
+
