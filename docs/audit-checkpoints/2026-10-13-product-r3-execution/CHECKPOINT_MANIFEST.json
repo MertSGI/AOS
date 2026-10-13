@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0.0",
+  "captured_date": "2026-10-13",
+  "status": "COMPLETE",
+  "source_runtime_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+  "product_command_id": "continue-3a7a49c2de91fa8d60e6f9bc",
+  "files": [
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-product-r3-execution/COMMAND_AND_VERIFICATION_RECEIPT.json",
+      "sha256": "c49189c1d18fa57e51d17a969c06a3b0ca015b9204e20ca13d86654fdab76926",
+      "bytes": 2204
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-product-r3-execution/NEXT_UI_V2_GATE.md",
+      "sha256": "6b94f6aa0bbb387c82cffacd0f75a09250b9f59c8180712ef6d44a25302bf8a5",
+      "bytes": 1459
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-product-r3-execution/PRODUCT_R3_EXECUTION_RESULT.md",
+      "sha256": "87c8fba3c44636b2549cfae9d8a82d42280624b667804769c1cb8d534f7c16ab",
+      "bytes": 3823
+    },
+    {
+      "path": "docs/audit-checkpoints/2026-10-13-product-r3-execution/PRODUCT_R3_RUNTIME_STATE.json",
+      "sha256": "40b152870e6188fd61e99e9807d59b4b7249670d7f90db85049ea285051a8ed6",
+      "bytes": 1770
+    }
+  ]
+}

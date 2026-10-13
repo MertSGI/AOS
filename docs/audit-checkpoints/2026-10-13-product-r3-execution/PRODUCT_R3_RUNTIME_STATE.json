@@ -1,0 +1,54 @@
+{
+  "captured_date": "2026-10-13",
+  "runtime": {
+    "source_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+    "slot_id": "candidate-runtime-v1.8-95c4dd5513a3",
+    "health": "HEALTHY",
+    "maintenance": "PAUSED_SAFE",
+    "autonomous_spawning_enabled": false,
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED"
+  },
+  "admissions": {
+    "HOLD": 13,
+    "SUPERSEDED": 12,
+    "ACTIVE": 0,
+    "product_command": {
+      "command_id": "continue-3a7a49c2de91fa8d60e6f9bc",
+      "state": "HOLD",
+      "reason": "Product R3 technical hold: planner repeatedly proposes forbidden canonical-control checkpoint write after valid completed-work recovery; no UI-V2 admission authorized"
+    }
+  },
+  "workers": {
+    "initial_pid": 11300,
+    "recovered_pid": 7144,
+    "live_after_hold": 0,
+    "final_worker_pid": null
+  },
+  "kcp": {
+    "status": "READY",
+    "sequence": 558,
+    "head_hash": "42802e0aeab475f0ef0923c428afa5d43b68ccb30ac931e8219c45ae88ee1b3d",
+    "unresolved_runtime_transitions": 0,
+    "product_command_verification_status": "NOT_VERIFIED",
+    "new_product_receipt": null
+  },
+  "product": {
+    "control_sha": "14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+    "execution_base_sha": "06ebf176e411faf6820ded34987f894cc5e7dc9e",
+    "workspace": "C:\\Projects\\LARI-phase7-node3-r2-converged-20261007-clean2",
+    "branch": "aos/lari-product-r3-runtime-20261013-01",
+    "head_sha": "06ebf176e411faf6820ded34987f894cc5e7dc9e",
+    "worktree_clean": true,
+    "terminal_state": "TECHNICAL_HOLD",
+    "disposition": "COMMAND_ADMISSION_HOLD",
+    "completed_batch_count": 1,
+    "verification": "INCOMPLETE"
+  },
+  "ui_v2": {
+    "admitted": false,
+    "status": "GATED_ON_PRODUCT_TERMINAL_SUCCESS",
+    "dirty_worktree_preserved": true
+  }
+}
+

@@ -1,0 +1,67 @@
+{
+  "command_id": "continue-3a7a49c2de91fa8d60e6f9bc",
+  "objective_id": "OBJ-20261008-PHASE7-NODE3-R3-VISUAL-VERIFICATION",
+  "provider": {
+    "provider_id": "nemotron",
+    "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+    "actual_planning_success": true,
+    "paid_provider_used": false
+  },
+  "batch": {
+    "batch_id": "batch-0000",
+    "progress_percent": 50.0,
+    "verified_tasks": [],
+    "runs": [
+      {
+        "task_id": "TASK-01",
+        "run_id": "run-46f7949b07a8",
+        "backend": "native_process_worker",
+        "operation": "node scripts/test-phase7-node3-favorites-rebooking-contracts.mjs",
+        "status": "COMPLETED",
+        "evidence_id": "ev-9cff85eaddd1"
+      },
+      {
+        "task_id": "TASK-02",
+        "run_id": "run-f563acea8255",
+        "backend": "native_process_worker",
+        "operation": "node supabase/tests/program-v2/phase7-live/test-phase7-node3-favorites-fast-rebooking-behavioral-matrix.mjs",
+        "status": "COMPLETED",
+        "evidence_id": "ev-5b7be021f497"
+      },
+      {
+        "task_id": "TASK-03",
+        "run_id": "run-7a79e5f99e9f",
+        "backend": "browser_execution_backend",
+        "operation": "http://localhost:5173/customer/appointment/manage",
+        "status": "FAILED",
+        "failure": "Page.goto: net::ERR_CONNECTION_REFUSED",
+        "evidence_id": "ev-b94268829074"
+      },
+      {
+        "task_id": "TASK-04",
+        "run_id": "run-9f72bcf6f1bc",
+        "backend": "browser_execution_backend",
+        "operation": "http://localhost:5173/booking",
+        "status": "FAILED",
+        "failure": "Page.goto: net::ERR_CONNECTION_REFUSED",
+        "evidence_id": "ev-12c5daef98f6"
+      }
+    ]
+  },
+  "checkpoint_recovery": {
+    "same_command_preserved": true,
+    "duplicate_command_created": false,
+    "completed_batch_count_preserved": 1,
+    "completed_action_repetition_blocked": true,
+    "canonical_scope_violation_blocked": true,
+    "worker_recovered_event_seq": 32,
+    "worker_admission_held_event_seq": 38
+  },
+  "terminal": {
+    "state": "TECHNICAL_HOLD",
+    "disposition": "COMMAND_ADMISSION_HOLD",
+    "verification": "INCOMPLETE",
+    "kcp_verification_status": "NOT_VERIFIED"
+  }
+}
+
