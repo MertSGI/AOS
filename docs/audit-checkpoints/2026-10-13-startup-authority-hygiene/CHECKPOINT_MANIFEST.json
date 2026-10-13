@@ -39,5 +39,11 @@
   ],
   "manifest_self_hash": null,
   "manifest_self_hash_reason": "Self-hash intentionally omitted to avoid recursive content; Git commit identity covers this manifest.",
-  "publication_verification": "PENDING_GITHUB_READBACK"
+  "publication_verification": {
+    "status": "VERIFIED",
+    "verified_commit": "e758635e026e8d11a8dc87fe1676af3275e3f502",
+    "method": "Exact-commit raw GitHub readback and SHA-256 comparison",
+    "verified_file_count": 6,
+    "all_declared_payload_hashes_matched": true
+  }
 }
