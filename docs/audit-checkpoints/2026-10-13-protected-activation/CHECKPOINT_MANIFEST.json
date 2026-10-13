@@ -1,0 +1,37 @@
+{
+  "contract_version": "1.0.0",
+  "created_at": "2026-10-13T10:38:19Z",
+  "candidate_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+  "transaction_id": "activate-1791887810-11058200",
+  "sanitization": "No credentials, tokens, environment values, private runtime configuration, or user data are included.",
+  "files": [
+    {
+      "path": "NEXT_RESUME_ACTION.md",
+      "bytes": 1210,
+      "sha256": "ea4bacc3a38db74a8b8a6ab8f0eb61bb846230735ba53e69178d5ad5ecd1305e",
+      "verification": "LOCAL_HASH_VERIFIED"
+    },
+    {
+      "path": "PROTECTED_ACTIVATION_RESULT.md",
+      "bytes": 3819,
+      "sha256": "73890415b188383335f64b13203487efbc661fc2e1dd9140ab709d1d6e0c4005",
+      "verification": "LOCAL_HASH_VERIFIED"
+    },
+    {
+      "path": "PROTECTED_ACTIVATION_STATE.json",
+      "bytes": 3904,
+      "sha256": "57dc7d6de137f8d28ec984c2eb610b76ea1d530b2d1881cbe257ec1109b11eee",
+      "verification": "LOCAL_HASH_VERIFIED"
+    }
+  ],
+  "activation_evidence": {
+    "stage": "PASS",
+    "validate": "PASS",
+    "activation": "PASS_MAINTENANCE",
+    "durability_readback": "PASS",
+    "kcp": "READY_SEQUENCE_557",
+    "rollback": "READY",
+    "global_unpause": "NOT_PERFORMED",
+    "lari_admission": "NOT_PERFORMED"
+  }
+}

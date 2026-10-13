@@ -1,0 +1,102 @@
+{
+  "recorded_at": "2026-10-13T10:38:19Z",
+  "activation_gate": "PASS_MAINTENANCE",
+  "source": {
+    "branch": "fix/aos-supervisor-hotswitch-20261012",
+    "sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+    "remote_sha_verified": true,
+    "worktree_clean": true,
+    "hosted_ci_run": 38354019333,
+    "hosted_ci_conclusion": "success"
+  },
+  "stage": {
+    "status": "PASS",
+    "slot_id": "candidate-runtime-v1.8-95c4dd5513a3",
+    "tree_sha256": "29b5a0edfbf3df2cfb9c30b5cb5770248c35c4d31f7ec08dc4610bd0e2239725",
+    "file_count": 240
+  },
+  "validate": "PASS",
+  "activation": {
+    "transaction_id": "activate-1791887810-11058200",
+    "transition_id": "2691a34a493daa2c2dacb924ee180fa568964c30ff8f72ef766e9f3768ed6b5b",
+    "transition_state": "COMPLETED",
+    "previous_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "shutdown_acknowledged": true,
+    "previous_supervisor_pid": 11668,
+    "previous_owned_pids": [11668, 15584, 16024],
+    "singleton_released": true,
+    "startup_installed": false
+  },
+  "runtime": {
+    "active_pointer": "candidate",
+    "promotion_state": "TRIAL_MAINTENANCE",
+    "source_sha": "95c4dd5513a37e6a9a2b486a3ccfdadb7966ca68",
+    "slot_id": "candidate-runtime-v1.8-95c4dd5513a3",
+    "tree_sha256": "29b5a0edfbf3df2cfb9c30b5cb5770248c35c4d31f7ec08dc4610bd0e2239725",
+    "runtime_state": "HEALTHY",
+    "panel_state": "HEALTHY",
+    "maintenance_state": "PAUSED_SAFE",
+    "paused": true,
+    "autonomous_spawning_enabled": false,
+    "production": "NO_GO",
+    "paid_fallback": "DISABLED",
+    "supervisor_pid": 23488,
+    "runtime_pid": 18264,
+    "panel_pid": 24632
+  },
+  "startup_quarantine": {
+    "status": "PASS",
+    "original_startup_path_present": false,
+    "quarantine_length": 433,
+    "backup_length": 433,
+    "quarantine_sha256": "9501EE5AA2B8D3EA6FA311ED5585B9A97043A6680686E1CC13C1FB71B1748B14",
+    "backup_sha256": "9501EE5AA2B8D3EA6FA311ED5585B9A97043A6680686E1CC13C1FB71B1748B14",
+    "current_user_startup_aos_entries": 0,
+    "common_startup_aos_entries": 0
+  },
+  "scheduled_task": {
+    "name": "AOS-RuntimeV1-Persistent",
+    "state_after_handoff": "Ready",
+    "entrypoint_source_sha": "cf97eb9fe3635c7af7266e2045dac72a11dad1ee",
+    "modified": false,
+    "restart_count": 0,
+    "restart_interval": null,
+    "start_when_available": false,
+    "multiple_instances": "IgnoreNew",
+    "isolated_dynamic_slot_compatibility": "PASS",
+    "reboot_or_login_persistence_proven": false
+  },
+  "kcp": {
+    "status": "READY",
+    "last_sequence": 557,
+    "head_hash": "3903711346b67c662c146bd9283eae7571345d34048d7c437cd1e5d414d826f6",
+    "unresolved_deployment_transitions": 0,
+    "implementation_receipt": "660903d35e0f8a1eea8f5d9d64c490a1a40275b0154819e1a366becad3d995e3",
+    "verification_receipt": "46818a955a6f13118f4c7e8b4aa587f795b4ecd6cd1201338928eb6597581eff",
+    "validation_receipt": "a74dbbf79695e6de4fa9d5bb9e943c47b34333dec0b89639362439eede6aacef",
+    "materialization_receipt": "3c8ad003789ad64458d33e96726860192208815cb81eed26b64c77b40d4a7501",
+    "activation_intent": "de0272090bb0302db7594798775f2eb138767effb56da1454097c4590a2292b8",
+    "activation_receipt": "8c57232aa707c62f3ed98bf092ae87aec20b76f72ffcafb151c6e77f2d689bb4"
+  },
+  "commands": {
+    "hold": 12,
+    "superseded": 12,
+    "active": 0,
+    "live_workers": 0,
+    "historical_commands_replayed": 0
+  },
+  "rollback": {
+    "ready": true,
+    "stable_source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "stable_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "stable_slot_record_present": true,
+    "stable_candidate_root_present": true,
+    "transaction_backup_present": true
+  },
+  "lari": {
+    "product": "R2_ACCEPTED; R3_NOT_ADMITTED",
+    "ui_v2": "PRODUCTIZATION_NOT_ADMITTED",
+    "control_sha": "14589d3a68a1654281ceeec2f3b9445fbbaa807a",
+    "execution_base_sha": "06ebf176e411faf6820ded34987f894cc5e7dc9e"
+  }
+}
