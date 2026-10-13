@@ -456,5 +456,42 @@ def test_startup_validation_rejects_duplicate_authorities(tmp_path: Path):
         'WScript.Quit 0',
         encoding="utf-8",
     )
-    with pytest.raises(DeploymentError, match="Duplicate enabled AOS startup authorities"):
+    with pytest.raises(DeploymentError, match="Conflicting AOS Startup artifacts"):
         validate_startup_ownership(startup, startup / "AOS-Runtime-V1-Supervisor.pyw")
+
+
+@pytest.mark.parametrize(
+    "artifact_name",
+    [
+        "AOS-RuntimeV1-Supervisor.vbs",
+        "AOS-RuntimeV1-Supervisor.vbs.disabled",
+        "AOS-Runtime-V1-Supervisor.vbs.disabled",
+        "AOS-Runtime-V1-Supervisor.vbs.disabled-by-runtime-v1",
+    ],
+)
+def test_startup_validation_rejects_legacy_and_disabled_artifacts(
+    tmp_path: Path,
+    artifact_name: str,
+):
+    startup = tmp_path / "Startup"
+    startup.mkdir()
+    expected = startup / "AOS-Runtime-V1-Supervisor.vbs"
+    expected.write_text("WScript.Quit 0", encoding="utf-8")
+    (startup / artifact_name).write_text("WScript.Quit 0", encoding="utf-8")
+
+    with pytest.raises(DeploymentError, match="Conflicting AOS Startup artifacts"):
+        validate_startup_ownership(startup, expected)
+
+
+def test_startup_validation_accepts_only_the_expected_authority(tmp_path: Path):
+    startup = tmp_path / "Startup"
+    startup.mkdir()
+    expected = startup / "AOS-Runtime-V1-Supervisor.vbs"
+    expected.write_text("WScript.Quit 0", encoding="utf-8")
+
+    result = validate_startup_ownership(startup, expected)
+
+    assert result == {
+        "startup_authority_count": 1,
+        "entries": [str(expected)],
+    }

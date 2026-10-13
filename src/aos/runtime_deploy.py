@@ -240,12 +240,21 @@ def _startup_path(startup_dir: Path) -> Path:
 
 def validate_startup_ownership(startup_dir: Path, expected: Optional[Path] = None) -> Dict[str, Any]:
     startup_dir.mkdir(parents=True, exist_ok=True)
-    enabled_suffixes = {".cmd", ".bat", ".lnk", ".pyw", ".py", ".vbs", ".exe"}
-    entries = [p for p in startup_dir.iterdir() if "aos" in p.name.lower() and p.suffix.lower() in enabled_suffixes]
+    # Explorer enumerates every file in the Startup directory at logon.  A
+    # compound suffix such as ``.vbs.disabled`` is therefore not inert: if its
+    # final extension is unassociated, Windows prompts the user to choose an
+    # application, and choosing a script host can reactivate the stale
+    # authority.  Treat every AOS-named file as an ownership artifact instead
+    # of relying on a list of known executable suffixes.
+    entries = [
+        path
+        for path in startup_dir.iterdir()
+        if path.is_file() and "aos" in path.name.lower()
+    ]
     allowed = {expected.resolve()} if expected is not None and expected.exists() else set()
     duplicates = [str(p) for p in entries if p.resolve() not in allowed]
     if duplicates:
-        raise DeploymentError(f"Duplicate enabled AOS startup authorities: {duplicates}")
+        raise DeploymentError(f"Conflicting AOS Startup artifacts: {duplicates}")
     return {"startup_authority_count": len(entries), "entries": [str(p) for p in entries]}
 
 
