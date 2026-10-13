@@ -28,6 +28,7 @@ def test_activation_handoff_waits_for_ack_and_owned_process_exit(
     atomic_json(supervisor / "supervisor-state.json", {
         "state": "HEALTHY",
         "singleton_held": True,
+        "singleton_name": "Local\\AOS.RuntimeV1.Supervisor.Test",
         "supervisor_pid": 101,
         "child_pid": 102,
         "runtime_api_pid": 102,
@@ -35,6 +36,12 @@ def test_activation_handoff_waits_for_ack_and_owned_process_exit(
     })
     alive = {101, 102, 103}
     monkeypatch.setattr(runtime_deploy, "process_alive", lambda pid: int(pid or 0) in alive)
+    singleton_probes = iter((False, True))
+    monkeypatch.setattr(
+        runtime_deploy,
+        "_supervisor_singleton_released",
+        lambda _root, _name: next(singleton_probes),
+    )
 
     def acknowledge(_seconds):
         request = json.loads(
@@ -52,6 +59,7 @@ def test_activation_handoff_waits_for_ack_and_owned_process_exit(
         atomic_json(supervisor / "supervisor-state.json", {
             "state": "SHUTDOWN",
             "singleton_held": False,
+            "singleton_name": "Local\\AOS.RuntimeV1.Supervisor.Test",
             "supervisor_pid": 101,
             "child_pid": None,
             "runtime_api_pid": None,
@@ -68,6 +76,8 @@ def test_activation_handoff_waits_for_ack_and_owned_process_exit(
     )
 
     assert result["status"] == "STOPPED"
+    assert result["singleton_released"] is True
+    assert result["singleton_name"] == "Local\\AOS.RuntimeV1.Supervisor.Test"
     assert result["owned_pids"] == [101, 102, 103]
     control = json.loads(
         (supervisor / "control-request.json").read_text(encoding="utf-8")
@@ -86,6 +96,7 @@ def test_activation_handoff_does_not_accept_stale_shutdown_state(
     atomic_json(supervisor / "supervisor-state.json", {
         "state": "SHUTDOWN",
         "singleton_held": False,
+        "singleton_name": "Local\\AOS.RuntimeV1.Supervisor.Test",
         "supervisor_pid": 201,
     })
     monkeypatch.setattr(runtime_deploy, "process_alive", lambda _pid: True)

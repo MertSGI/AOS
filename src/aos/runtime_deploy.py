@@ -324,6 +324,18 @@ def _health(url: str, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _supervisor_singleton_released(supervisor_root: Path, singleton_name: str) -> bool:
+    """Prove that a stopped supervisor has released its ownership guard."""
+    from aos.runtime_supervisor import SupervisorAlreadyRunning, SupervisorSingleton
+
+    try:
+        with SupervisorSingleton(supervisor_root, singleton_name):
+            pass
+    except SupervisorAlreadyRunning:
+        return False
+    return True
+
+
 def _handoff_running_supervisor(
     supervisor_root: Path,
     *,
@@ -340,6 +352,7 @@ def _handoff_running_supervisor(
     state_path = supervisor_root / "supervisor-state.json"
     state = read_json(state_path, {})
     supervisor_pid = state.get("supervisor_pid")
+    singleton_name = str(state.get("singleton_name") or "")
     owned_pids = {
         int(value)
         for value in (
@@ -382,16 +395,23 @@ def _handoff_running_supervisor(
             and last_control.get("acknowledged_by") == "runtime_supervisor"
         )
         processes_stopped = all(not process_alive(pid) for pid in owned_pids)
+        singleton_released = bool(singleton_name) and _supervisor_singleton_released(
+            supervisor_root,
+            singleton_name,
+        )
         if (
             acknowledged
             and last_state.get("state") == "SHUTDOWN"
             and last_state.get("singleton_held") is False
             and processes_stopped
+            and singleton_released
         ):
             return {
                 "status": "STOPPED",
                 "supervisor_pid": supervisor_pid,
                 "owned_pids": sorted(owned_pids),
+                "singleton_name": singleton_name,
+                "singleton_released": True,
                 "requested_at": requested_at,
                 "acknowledged_at": last_control.get("acknowledged_at"),
             }
