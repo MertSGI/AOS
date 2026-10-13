@@ -98,3 +98,11 @@ Remote `randapp/control/lari-project-control-plane` is exactly `14589d3a68a16542
 ## Authorization boundary
 
 No protected action has been taken. Explicit operator authorization is required for the receipt append, protected stage, trial rollback/normalization, activation, unpause, and lane submissions described above.
+
+## Surgical Planner Repair Status (2026-10-13)
+
+Surgical planner recovery repair has been implemented and qualified on branch `fix/aos-planner-recovery-repair-20261013` at commit `0cf2c869dfaa6d76337a130722e608cc01a08003`.
+Hosted GitHub CI passed (`validate-and-test` run 38399455635).
+Isolated replay confirmed that independent valid `BROWSER` tasks (`TASK-03`, `TASK-04`) are retained while completed process actions, undeclared Playwright runners, and out-of-lane control writes are safely pruned pre-normalization.
+Product command `continue-3a7a49c2de91fa8d60e6f9bc` remains on `HOLD` in protected runtime `PAUSED_SAFE` awaiting operator activation authorization.
+
