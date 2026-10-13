@@ -1,0 +1,75 @@
+{
+  "captured_at": "2026-10-13T05:46:42+03:00",
+  "classification": "OBSERVATIONAL_CHECKPOINT",
+  "protected_runtime": {
+    "source_sha": "85ee6772b02a0ab72f5c79633672083017380269",
+    "runtime_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "active_pointer": "stable",
+    "stable_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "candidate_slot_id": "candidate-runtime-v1.8-85ee6772b02a",
+    "promotion_state": "STABLE",
+    "runtime_state": "HEALTHY",
+    "maintenance_state": "PAUSED_SAFE",
+    "paused": true,
+    "production": "NO_GO",
+    "ag_backend_enabled": false,
+    "paid_fallback": "DISABLED_NO_CHANGE",
+    "startup_authority_enabled": false,
+    "supervisor_pid": 15952,
+    "runtime_api_pid": 18428
+  },
+  "admissions": {
+    "ACTIVE": 0,
+    "HOLD": 12,
+    "SUPERSEDED": 12
+  },
+  "workers": {
+    "live_runtime_workers": 0,
+    "stale_running_state_records": 8,
+    "recorded_worker_pids_checked": [29296, 10844],
+    "recorded_worker_pids_alive": []
+  },
+  "protected_kcp": {
+    "last_sequence": 548,
+    "last_event_type": "RUNTIME_TRANSITION_ABORTED",
+    "last_event_id": "d9158374b373d1cd478920daca88d12aafe422e2a8da881fcb551356059c7a42",
+    "last_content_hash": "c622f6a34cf6fd5b9abde35ab3eca4f63f84310830948d6fbba6ae52505c150c",
+    "relevant_candidate_sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+    "implementation_receipt": "4bf16f279dee53369777afce620a8856c6fc251326b2aa5a64ada60442866f1a",
+    "verification_receipt": "ef8e10f8c872bf1d1534eeca7ec2e8678e6b6119ebc809a9a830704720e08a25",
+    "validation_receipt": "42af27870169d66ca355e545d350052d3bd2aa57e4638e8ecd56c6d0a0166ff2",
+    "materialization_receipt": "4d5789732e085952f2e41e785ea8974572171bf7ca1d2999aefd73a77d17ca41",
+    "new_repair_sha_receipts": "MISSING_NOT_WRITTEN"
+  },
+  "protected_activation_transactions": [
+    {
+      "transaction_id": "activate-1791832355-43421ab3",
+      "candidate_sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+      "state": "ABORTED"
+    },
+    {
+      "transaction_id": "activate-1791832629-72aad81a",
+      "candidate_sha": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+      "state": "ABORTED"
+    }
+  ],
+  "repair_candidate": {
+    "source_sha": "edaab3890e7584024ebc499230f9dd7edd31ccff",
+    "remote_branch": "fix/aos-supervisor-hotswitch-20261012",
+    "hosted_ci_run": 38305877797,
+    "hosted_ci_result": "SUCCESS",
+    "official_stage": "NOT_RUN",
+    "official_validate": "NOT_RUN",
+    "isolated_activation": "NOT_RUN",
+    "protected_activation": "NOT_AUTHORIZED_NOT_RUN"
+  },
+  "safety_actions": {
+    "protected_runtime_mutated": false,
+    "protected_kcp_appended": false,
+    "lari_command_admitted": false,
+    "supabase_mutated": false,
+    "production_deployed": false,
+    "canonical_acceptance_changed": false,
+    "paid_fallback_enabled": false
+  }
+}

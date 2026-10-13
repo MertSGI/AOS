@@ -1,0 +1,56 @@
+{
+  "captured_at": "2026-10-13T05:46:42+03:00",
+  "repository": "MertSGI/AOS",
+  "branch": "audit/aos-canary-checkpoint-20261012",
+  "package": "AOS_SUPERVISOR_HOTSWITCH_CONTINUATION_20261013",
+  "artifacts": [
+    {
+      "path": "docs/audit-checkpoints/CURRENT_EXECUTION_STATE.md",
+      "sha256": "366bffdcd002ab31629caaa9c74a4f9c3afb55ca581a814f6d92bb51e21fbfd9",
+      "verification": "VALIDATED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/SUPERVISOR_DEBUG_STATUS.md",
+      "sha256": "2ffcf489665349d94d77c67f196e3eae62a5882f7cfb37d728dfb736d215b827",
+      "verification": "VALIDATED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/SOURCE_CHANGES_AND_DIFFS.md",
+      "sha256": "cb4a2c293ea230c3f39840128857c1cd589e4332379c2c48efe20d6b855ac990",
+      "verification": "VALIDATED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/TEST_AND_CI_RESULTS.md",
+      "sha256": "9ad78f9913b5965ab322d8def854325c8240c551f93c7a0c1ff3516c2d8aae6d",
+      "verification": "VALIDATED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/RUNTIME_KCP_SAFETY_STATE.json",
+      "sha256": "dbf18208a0ace8734e8f287c6f2e757220eb5bc830ff216e91d565c2f51fb6e0",
+      "verification": "VALID_JSON_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/NEXT_RESUME_ACTION.md",
+      "sha256": "90c2438b6fc7cfd1769b9dfb41a6d60ad9347103a5a5e409ce38b2efb249aa4e",
+      "verification": "VALIDATED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/SUPERVISOR_FAILURE_DIAGNOSTIC.json",
+      "sha256": "74e9654feadde338a8ed0e07dc7b095e4b3fa27d67555231806ea7c9e019ad26",
+      "verification": "VALID_JSON_SANITIZED_LOCAL"
+    },
+    {
+      "path": "docs/audit-checkpoints/ISOLATED_RUNTIME_CHECKPOINT.json",
+      "sha256": "cfa549a8ee47a74e14120db1e5ce4b85e4be627c56c698d97aa5aff08e022035",
+      "verification": "VALID_JSON_LOCAL"
+    }
+  ],
+  "manifest_self_hash": null,
+  "manifest_self_hash_reason": "Self-referential hash intentionally omitted; commit SHA binds the manifest.",
+  "contains_credentials_or_tokens": false,
+  "contains_raw_runtime_configuration": false,
+  "protected_runtime_mutation": false,
+  "protected_kcp_mutation": false,
+  "accepted_source_claim": false,
+  "remote_verification": "PENDING_COMMIT_AND_READBACK"
+}

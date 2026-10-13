@@ -1,0 +1,36 @@
+{
+  "captured_at": "2026-10-13T05:46:42+03:00",
+  "runtime_01": {
+    "path": "C:\\Projects\\AOS-hotswitch-runtime-20261012-01",
+    "last_activation_transaction": "activate-1791837337-95ede1e0",
+    "last_activation_transition": "bb60b6991794362651838dc0268edd74848e7991afc71b54f9af4be612155c09",
+    "activation_result": "PASS_MAINTENANCE_AFTER_OLD_SUPERVISOR_CRASH_RACE",
+    "active_source_before_shutdown": "9dddf1e202da8e227adca492ba1c5020961c65b3",
+    "maintenance_state_before_shutdown": "PAUSED_SAFE",
+    "shutdown_via_authenticated_interface": true,
+    "final_supervisor_state": "SHUTDOWN",
+    "singleton_held": false,
+    "runtime_health_reachable": false,
+    "evidence_preserved": true
+  },
+  "runtime_02": {
+    "path": "C:\\Projects\\AOS-hotswitch-runtime-20261012-02",
+    "directories_created": [
+      "candidate",
+      "knowledge",
+      "Startup",
+      "state",
+      "supervisor",
+      "workspace"
+    ],
+    "knowledge_source": "COPY_OF_PROTECTED_LEDGER_AT_SEQUENCE_548",
+    "runtime_config_created": false,
+    "candidate_materialized": false,
+    "kcp_appended": false,
+    "process_started": false,
+    "test_started": false,
+    "activation_started": false,
+    "last_failed_command": "python scripts/materialize_slot.py --help",
+    "last_error": "python.exe: can't open file C:\\Projects\\AOS-supervisor-hotswitch-20261012\\scripts\\materialize_slot.py: [Errno 2] No such file or directory"
+  }
+}
