@@ -604,20 +604,35 @@ def _extract_completed_batch_receipts(
                 if isinstance(vt, Mapping):
                     vt_run_type = str(vt.get("run_type", "")).upper()
                     vt_status = str(vt.get("status", "")).upper()
-                    if vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
+                    if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
                         has_verification_proof = True
+                    elif vt_run_type == "BROWSER" and vt_status == "PASS":
+                        # Must have valid non-empty assertions in browser_evidence or assertion_results
+                        b_ev = vt.get("browser_evidence") or {}
+                        assertions = b_ev.get("assertions") if isinstance(b_ev, dict) else None
+                        if assertions is None:
+                            assertions = vt.get("assertion_results")
+                        if assertions and isinstance(assertions, list) and all(str(a.get("status", "")).upper() == "PASS" for a in assertions if isinstance(a, dict)):
+                            has_verification_proof = True
 
     # Top-level verification proof in receipt
-    if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence") or receipt.get("browser_evidence"):
+    if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence"):
         has_verification_proof = True
-    if any(str(k).upper() in ("TEST", "BUILD", "CI", "BROWSER") for k in receipt.get("verified_run_types", [])):
+    if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in receipt.get("verified_run_types", [])):
         has_verification_proof = True
     for vt in receipt.get("verified_tasks", []):
         if isinstance(vt, Mapping):
             vt_run_type = str(vt.get("run_type", "")).upper()
             vt_status = str(vt.get("status", "")).upper()
-            if vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
+            if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
                 has_verification_proof = True
+            elif vt_run_type == "BROWSER" and vt_status == "PASS":
+                b_ev = vt.get("browser_evidence") or {}
+                assertions = b_ev.get("assertions") if isinstance(b_ev, dict) else None
+                if assertions is None:
+                    assertions = vt.get("assertion_results")
+                if assertions and isinstance(assertions, list) and all(str(a.get("status", "")).upper() == "PASS" for a in assertions if isinstance(a, dict)):
+                    has_verification_proof = True
 
     return valid_batches, all_completed_tasks, all_failed_tasks, has_failed, has_verification_proof
 
@@ -700,6 +715,30 @@ def _record_kcp_verification_receipt(
 
             # Must match completed task ID and verification task type and PASS status
             if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
+                # For BROWSER tasks, independently verify non-empty passing assertions and supporting evidence
+                if vt_run_type == "BROWSER":
+                    b_ev = vt.get("browser_evidence") or {}
+                    assertions = b_ev.get("assertions") if isinstance(b_ev, dict) else None
+                    if assertions is None:
+                        assertions = vt.get("assertion_results")
+                    if not assertions or not isinstance(assertions, list) or len(assertions) == 0:
+                        return None
+                    if any(str(a.get("status", "")).upper() != "PASS" for a in assertions if isinstance(a, dict)):
+                        return None
+                    # Verify screenshot files and hashes if specified
+                    s_paths = (b_ev.get("screenshot_paths") if isinstance(b_ev, dict) else None) or vt.get("screenshot_paths") or {}
+                    f_hashes = (b_ev.get("file_hashes") if isinstance(b_ev, dict) else None) or vt.get("file_hashes") or {}
+                    if s_paths:
+                        for vp, spath in s_paths.items():
+                            if not spath or not os.path.isfile(str(spath)):
+                                return None
+                            expected_hash = f_hashes.get(str(vp)) or f_hashes.get(int(vp) if str(vp).isdigit() else vp)
+                            if expected_hash:
+                                with open(str(spath), "rb") as fh:
+                                    actual_h = hashlib.sha256(fh.read()).hexdigest()
+                                if actual_h.lower() != str(expected_hash).lower():
+                                    return None
+
                 # Check task-level project ID if present
                 vt_proj = str(vt.get("project_id") or "").strip()
                 if vt_proj and vt_proj != project_id:
@@ -728,6 +767,28 @@ def _record_kcp_verification_receipt(
         vt_run_type = str(vt.get("run_type") or "").upper()
         vt_status = str(vt.get("status") or "").upper()
         if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
+            if vt_run_type == "BROWSER":
+                b_ev = vt.get("browser_evidence") or {}
+                assertions = b_ev.get("assertions") if isinstance(b_ev, dict) else None
+                if assertions is None:
+                    assertions = vt.get("assertion_results")
+                if not assertions or not isinstance(assertions, list) or len(assertions) == 0:
+                    return None
+                if any(str(a.get("status", "")).upper() != "PASS" for a in assertions if isinstance(a, dict)):
+                    return None
+                s_paths = (b_ev.get("screenshot_paths") if isinstance(b_ev, dict) else None) or vt.get("screenshot_paths") or {}
+                f_hashes = (b_ev.get("file_hashes") if isinstance(b_ev, dict) else None) or vt.get("file_hashes") or {}
+                if s_paths:
+                    for vp, spath in s_paths.items():
+                        if not spath or not os.path.isfile(str(spath)):
+                            return None
+                        expected_hash = f_hashes.get(str(vp)) or f_hashes.get(int(vp) if str(vp).isdigit() else vp)
+                        if expected_hash:
+                            with open(str(spath), "rb") as fh:
+                                actual_h = hashlib.sha256(fh.read()).hexdigest()
+                            if actual_h.lower() != str(expected_hash).lower():
+                                return None
+
             vt_proj = str(vt.get("project_id") or "").strip()
             if vt_proj and vt_proj != project_id:
                 return None

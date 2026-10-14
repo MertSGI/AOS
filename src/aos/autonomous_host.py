@@ -1168,20 +1168,69 @@ def run_host(
             or str(getattr(run_status, "value", run_status)).upper() == "COMPLETED"
         )
         if is_completed:
-            verified_task_entry = {
-                "task_id": tid,
-                "run_id": run_id,
-                "run_type": run_type,
-                "status": "PASS",
-                "workspace_head_sha": actual_workspace_head,
-                "canonical_source_sha": canonical_binding.get("source_sha"),
-                "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
-            }
             if run_type == "BROWSER":
-                # Attach URL and assertion count if available from task node payload
+                # autonomous_host.py must NOT mark a BROWSER task PASS merely because its RunStatus is COMPLETED.
+                # Require verified nonempty functional assertions and real browser artifacts.
                 node_payload = getattr(node, "payload", {}) if isinstance(getattr(node, "payload", {}), Mapping) else {}
-                if node_payload.get("url"):
-                    verified_task_entry["url"] = node_payload["url"]
+                target_url = str(node_payload.get("url") or "")
+                expected_route = node_payload.get("expected_route")
+
+                ev_payload = getattr(run_obj, "evidence_payload", {}) if run_obj else {}
+                if not isinstance(ev_payload, dict):
+                    ev_payload = {}
+                assertion_results = ev_payload.get("assertion_results") or []
+                screenshot_paths = ev_payload.get("screenshot_paths") or {}
+                
+                # Check assertions: must be non-empty and all PASS
+                if not assertion_results:
+                    continue
+                if any(str(a.get("status", "")).upper() != "PASS" for a in assertion_results if isinstance(a, dict)):
+                    continue
+
+                # Require real screenshot artifact files to exist
+                real_artifacts_exist = True
+                if not screenshot_paths:
+                    continue
+                for vp, s_path in screenshot_paths.items():
+                    if not s_path or not os.path.isfile(str(s_path)):
+                        real_artifacts_exist = False
+                        break
+                if not real_artifacts_exist:
+                    continue
+
+                verified_task_entry = {
+                    "task_id": tid,
+                    "run_id": run_id,
+                    "command_id": lineage,
+                    "run_type": run_type,
+                    "status": "PASS",
+                    "workspace_head_sha": actual_workspace_head,
+                    "canonical_control_sha": canonical_binding.get("source_sha"),
+                    "canonical_source_sha": canonical_binding.get("source_sha"),
+                    "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
+                    "exact_url": target_url,
+                    "expected_route": expected_route,
+                    "assertion_results": assertion_results,
+                    "screenshot_paths": screenshot_paths,
+                    "file_hashes": getattr(run_obj, "artifact_hashes", {}) or ev_payload.get("file_hashes", {}),
+                    "browser_evidence": {
+                        "url": target_url,
+                        "expected_route": expected_route,
+                        "assertions": assertion_results,
+                        "screenshot_paths": screenshot_paths,
+                        "file_hashes": getattr(run_obj, "artifact_hashes", {}) or ev_payload.get("file_hashes", {}),
+                    },
+                }
+            else:
+                verified_task_entry = {
+                    "task_id": tid,
+                    "run_id": run_id,
+                    "run_type": run_type,
+                    "status": "PASS",
+                    "workspace_head_sha": actual_workspace_head,
+                    "canonical_source_sha": canonical_binding.get("source_sha"),
+                    "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
+                }
             verified_tasks.append(verified_task_entry)
 
     receipt = {

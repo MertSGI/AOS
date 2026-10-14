@@ -2935,7 +2935,10 @@ def test_repaired_proposal_prunes_completed_actions_and_retains_independent_brow
         "dependencies": [],
         "scope_tags": ["pages/AppointmentSelfServicePage.tsx"],
         "write_scope": [],
-        "payload": {"url": "http://localhost:5173/customer/appointment/manage"},
+        "payload": {
+            "url": "http://localhost:5173/customer/appointment/manage",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["visual"],
         "evidence_requirements": ["screenshot"],
@@ -2950,7 +2953,10 @@ def test_repaired_proposal_prunes_completed_actions_and_retains_independent_brow
         "dependencies": [],
         "scope_tags": ["pages/BookingPage.tsx"],
         "write_scope": [],
-        "payload": {"url": "http://localhost:5173/booking"},
+        "payload": {
+            "url": "http://localhost:5173/booking",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["visual"],
         "evidence_requirements": ["screenshot"],
@@ -3010,7 +3016,10 @@ def test_repaired_proposal_prunes_undeclared_playwright_runner_even_when_npx_ava
     valid_task = json.loads(json.dumps(_plan()["tasks"][0]))
     valid_task["node_id"] = "browser-check"
     valid_task["run_type"] = "BROWSER"
-    valid_task["payload"] = {"url": "http://localhost:5173/booking"}
+    valid_task["payload"] = {
+        "url": "http://localhost:5173/booking",
+        "assertions": [{"type": "selector_visible", "target": "#root"}],
+    }
     repaired["tasks"].append(valid_task)
     repaired["parallel_safe_groups"] = [["bounded-test", "browser-check"]]
 
@@ -3071,7 +3080,10 @@ def test_repaired_proposal_prunes_out_of_lane_checkpoint_mutation_pre_normalizat
         "dependencies": [],
         "scope_tags": ["pages/BookingPage.tsx"],
         "write_scope": [],
-        "payload": {"url": "http://localhost:5173/booking"},
+        "payload": {
+            "url": "http://localhost:5173/booking",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["test"],
         "evidence_requirements": ["evidence"],
@@ -3131,7 +3143,10 @@ def test_repaired_proposal_rejects_transitively_dependent_browser_tasks(tmp_path
         "dependencies": ["TASK-PROCESS"],
         "scope_tags": [],
         "write_scope": [],
-        "payload": {"url": "http://localhost:5173/manage"},
+        "payload": {
+            "url": "http://localhost:5173/manage",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["test"],
         "evidence_requirements": ["evidence"],
@@ -3147,7 +3162,10 @@ def test_repaired_proposal_rejects_transitively_dependent_browser_tasks(tmp_path
         "dependencies": [],
         "scope_tags": [],
         "write_scope": [],
-        "payload": {"url": "http://localhost:5173/booking"},
+        "payload": {
+            "url": "http://localhost:5173/booking",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["test"],
         "evidence_requirements": ["evidence"],
@@ -3393,7 +3411,10 @@ def test_completed_dependency_satisfaction_contracts_edges_and_retains_browser_t
         "dependencies": ["TASK-05", "TASK-06"],
         "scope_tags": ["pages/AppointmentSelfServicePage.tsx"],
         "write_scope": [],
-        "payload": {"url": "http://127.0.0.1:5173/#/appointment/manage"},
+        "payload": {
+            "url": "http://127.0.0.1:5173/#/appointment/manage",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["visual"],
         "evidence_requirements": ["screenshot"],
@@ -3408,7 +3429,10 @@ def test_completed_dependency_satisfaction_contracts_edges_and_retains_browser_t
         "dependencies": ["TASK-05"],
         "scope_tags": ["pages/BookingPage.tsx"],
         "write_scope": [],
-        "payload": {"url": "http://127.0.0.1:5173/#/book"},
+        "payload": {
+            "url": "http://127.0.0.1:5173/#/book",
+            "assertions": [{"type": "selector_visible", "target": "#root"}],
+        },
         "expected_artifacts": [],
         "tests": ["visual"],
         "evidence_requirements": ["screenshot"],

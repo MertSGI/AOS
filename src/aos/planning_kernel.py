@@ -420,7 +420,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
                         "description": (
                             "Run-type dispatch contract: FILE requires payload.action; "
                             "GIT requires payload.action; PROCESS/TEST/BUILD require payload.cmd; "
-                            "CI requires payload.sha; BROWSER requires payload.url; "
+                            "CI requires payload.sha; BROWSER requires payload.url and payload.assertions; "
                             "MODEL_REASONING requires payload.prompt plus payload.schema; "
                             "AGENTIC requires payload.prompt. Local validation rejects cross-type payloads."
                         ),
@@ -468,6 +468,24 @@ PLAN_SCHEMA: Dict[str, Any] = {
                             "sha": {"type": "string"},
                             "repo": {"type": "string"},
                             "url": {"type": "string"},
+                            "expected_route": {"type": "string"},
+                            "assertions": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "required": ["type", "target"],
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "enum": ["selector_visible", "selector", "text_visible", "text", "route_exact", "route"],
+                                        },
+                                        "target": {"type": "string", "minLength": 1},
+                                        "description": {"type": "string"},
+                                    },
+                                },
+                            },
                             "run_id": {"type": "string"},
                             "prompt": {"type": "string"},
                             "schema": {"type": "object"},
@@ -794,7 +812,7 @@ def _run_type_payload_contract_guidance() -> str:
         "GIT -> payload.action is required and must be one NativeGitWorker action, with payload.args as an argv array; "
         "PROCESS/TEST/BUILD -> payload.cmd is required and must be a non-empty argv array; "
         "CI -> payload.sha is required; "
-        "BROWSER -> payload.url is required; "
+        "BROWSER -> payload.url and non-empty payload.assertions (objects with type, target, optional description) are required, and payload.expected_route is supported; "
         "MODEL_REASONING -> payload.prompt and payload.schema are both required; "
         "AGENTIC -> payload.prompt is required. "
         "Do not mix payload contracts across run types. "
@@ -2686,6 +2704,8 @@ def _safe_prune_candidate_tasks(
                     rejected[node_id] = "SHARED_PATH_GOVERNANCE_VIOLATION"
                     continue
 
+
+
     # 1b. Verify completed-action rejections against durable execution evidence
     raw_by_id = {
         str(r.get("node_id", "")): r
@@ -3127,8 +3147,25 @@ def _validate_worker_payload(node_id: str, run_type: str, payload: Mapping[str, 
 
     if run_type == "CI" and not str(payload.get("sha", "")).strip():
         raise PlanningKernelError(f"Task {node_id} CI payload requires explicit sha")
-    if run_type == "BROWSER" and not str(payload.get("url", "")).strip():
-        raise PlanningKernelError(f"Task {node_id} BROWSER payload requires url")
+    if run_type == "BROWSER":
+        url = str(payload.get("url", "")).strip()
+        if not url:
+            raise PlanningKernelError(f"Task {node_id} BROWSER payload requires url")
+        assertions = payload.get("assertions")
+        if not isinstance(assertions, list) or len(assertions) == 0:
+            raise PlanningKernelError(f"Task {node_id} BROWSER payload requires non-empty assertions list")
+        allowed_assertion_types = {"selector_visible", "selector", "text_visible", "text", "route_exact", "route"}
+        for idx, a in enumerate(assertions):
+            if not isinstance(a, dict):
+                raise PlanningKernelError(f"Task {node_id} BROWSER assertion[{idx}] must be an object")
+            a_type = str(a.get("type", "")).strip().lower()
+            if a_type not in allowed_assertion_types:
+                raise PlanningKernelError(f"Task {node_id} BROWSER assertion[{idx}] has unsupported type '{a_type}'")
+            target = str(a.get("target", "")).strip()
+            if not target:
+                raise PlanningKernelError(f"Task {node_id} BROWSER assertion[{idx}] requires non-empty target")
+        if "expected_route" in payload and not str(payload.get("expected_route", "")).strip():
+            raise PlanningKernelError(f"Task {node_id} BROWSER payload expected_route cannot be empty when specified")
     if run_type == "MODEL_REASONING":
         if not str(payload.get("prompt", "")).strip() or not isinstance(payload.get("schema"), dict):
             raise PlanningKernelError(f"Task {node_id} MODEL_REASONING payload requires prompt and schema")
@@ -3396,7 +3433,7 @@ def compile_execution_plan(
 
             ws_root = workspace.resolve()
             try:
-                render_entry = resolve_render_entry(ws_root)
+                render_entry = resolve_render_entry(ws_root, runtime_dir=runtime_dir)
             except (FileNotFoundError, ValueError) as render_exc:
                 di_pre_evidence = {
                     "schema_version": "1.0.0",
@@ -4749,7 +4786,7 @@ def run_autonomous_project(
 
                 ws_root = workspace.resolve()
                 try:
-                    render_entry = resolve_render_entry(ws_root)
+                    render_entry = resolve_render_entry(ws_root, runtime_dir=runtime_dir)
                 except (FileNotFoundError, ValueError) as render_exc:
                     di_post_blockers.append(f"DESIGN_EVIDENCE_UNAVAILABLE: {render_exc}")
                     recent_receipt["design_intelligence_post_evidence"] = {

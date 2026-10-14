@@ -545,7 +545,12 @@ class PersistentCoordinator:
                         last_terminal_event=identity.last_terminal_event or "turn.completed",
                     )
                     self.state.agentic_execution_checkpoints[node.node_id] = identity.to_dict()
-                self.registry.transition(run.run_id, RunStatus.COMPLETED, phase="EXECUTION_SUCCESS")
+                self.registry.transition(
+                    run.run_id,
+                    RunStatus.COMPLETED,
+                    phase="EXECUTION_SUCCESS",
+                    payload=res.to_dict(),
+                )
                 if node.node_id not in self.state.completed_task_ids:
                     self.state.completed_task_ids.append(node.node_id)
                 self._record_completed_read(node, res)

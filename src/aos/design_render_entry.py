@@ -94,45 +94,52 @@ def _looks_like_dynamic_application(root: Path, entry: Path) -> bool:
     return bool(module_sources and (uses_vite or source_module))
 
 
-def resolve_render_entry(workspace: Path) -> RenderEntry:
-    """Resolve an explicit project contract, dynamic loopback entry, or bounded static conventions."""
+def resolve_render_entry(workspace: Path, runtime_dir: Optional[Path] = None) -> RenderEntry:
+    """Resolve an explicit project contract, command-local runtime contract, or dynamic loopback entry."""
     root = workspace.expanduser().resolve()
-    contract_path = root / ".aos" / "render-entry.json"
-    if contract_path.is_file():
-        value = json.loads(contract_path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict) or value.get("schema_version") != "1.0.0":
-            raise ValueError("Render entry contract must use schema_version 1.0.0")
-        render_type = str(value.get("render_type") or "").upper()
-        if render_type == "DYNAMIC_LOOPBACK_HTTP":
-            origin = str(value.get("origin") or "http://127.0.0.1:5173")
-            if not is_authorized_loopback_url(origin):
-                raise ValueError(f"Origin must be an authorized loopback URL, got: {origin}")
-            entrypoint_val = value.get("entrypoint") or "index.html"
-            entry = _under_workspace(root, str(entrypoint_val))
+    
+    # Check command-local runtime render contract first (does not mutate Product worktree)
+    contract_paths = []
+    if runtime_dir is not None:
+        contract_paths.append((Path(runtime_dir) / "render-entry.json", "COMMAND_LOCAL_CONTRACT"))
+    contract_paths.append((root / ".aos" / "render-entry.json", "PROJECT_CONTRACT"))
+
+    for contract_path, contract_source in contract_paths:
+        if contract_path.is_file():
+            value = json.loads(contract_path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or value.get("schema_version") != "1.0.0":
+                raise ValueError("Render entry contract must use schema_version 1.0.0")
+            render_type = str(value.get("render_type") or "").upper()
+            if render_type == "DYNAMIC_LOOPBACK_HTTP":
+                origin = str(value.get("origin") or "http://127.0.0.1:5173")
+                if not is_authorized_loopback_url(origin):
+                    raise ValueError(f"Origin must be an authorized loopback URL, got: {origin}")
+                entrypoint_val = value.get("entrypoint") or "index.html"
+                entry = _under_workspace(root, str(entrypoint_val))
+                stylesheet = None
+                if value.get("stylesheet"):
+                    stylesheet = _under_workspace(root, str(value["stylesheet"]))
+                routes = list(value.get("routes", []))
+                return RenderEntry(
+                    entry,
+                    stylesheet,
+                    contract_source,
+                    contract_path,
+                    render_type="DYNAMIC_LOOPBACK_HTTP",
+                    origin=origin,
+                    routes=routes,
+                )
+            elif render_type != "STATIC_HTML":
+                raise ValueError("Only STATIC_HTML and DYNAMIC_LOOPBACK_HTTP render entries are currently proven")
+            entry = _under_workspace(root, str(value.get("entrypoint") or ""))
+            if not entry.is_file() or entry.suffix.lower() not in {".html", ".htm"}:
+                raise ValueError(f"Render entrypoint is unavailable: {entry}")
             stylesheet = None
             if value.get("stylesheet"):
                 stylesheet = _under_workspace(root, str(value["stylesheet"]))
-            routes = list(value.get("routes", []))
-            return RenderEntry(
-                entry,
-                stylesheet,
-                "PROJECT_CONTRACT",
-                contract_path,
-                render_type="DYNAMIC_LOOPBACK_HTTP",
-                origin=origin,
-                routes=routes,
-            )
-        elif render_type != "STATIC_HTML":
-            raise ValueError("Only STATIC_HTML and DYNAMIC_LOOPBACK_HTTP render entries are currently proven")
-        entry = _under_workspace(root, str(value.get("entrypoint") or ""))
-        if not entry.is_file() or entry.suffix.lower() not in {".html", ".htm"}:
-            raise ValueError(f"Render entrypoint is unavailable: {entry}")
-        stylesheet = None
-        if value.get("stylesheet"):
-            stylesheet = _under_workspace(root, str(value["stylesheet"]))
-            if not stylesheet.is_file():
-                raise ValueError(f"Render stylesheet is unavailable: {stylesheet}")
-        return RenderEntry(entry, stylesheet, "PROJECT_CONTRACT", contract_path, render_type="STATIC_HTML")
+                if not stylesheet.is_file():
+                    raise ValueError(f"Render stylesheet is unavailable: {stylesheet}")
+            return RenderEntry(entry, stylesheet, contract_source, contract_path, render_type="STATIC_HTML")
 
     for relative in ("index.html", "public/index.html", "dist/index.html", "build/index.html"):
         entry = root / relative

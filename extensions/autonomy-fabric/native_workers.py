@@ -952,9 +952,6 @@ class BrowserExecutionBackend(ExecutionBackend):
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         url = request.payload.get("url", "")
         run_id = request.payload.get("run_id", request.task_id)
-        assertions = request.payload.get("assertions") or []
-        expected_route = request.payload.get("expected_route")
-
         from aos.design_render_entry import is_authorized_loopback_url
 
         # Bounded loopback security check: only authorized loopback HTTP/HTTPS or local file/data URIs
@@ -972,6 +969,22 @@ class BrowserExecutionBackend(ExecutionBackend):
                     sanitized_errors=[f"UNAUTHORIZED_BROWSER_ORIGIN: URL '{url}' does not target an authorized loopback interface (127.0.0.1, localhost, ::1)"],
                     evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
                 )
+
+        assertions = request.payload.get("assertions")
+        if not assertions or not isinstance(assertions, list) or len(assertions) == 0:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="browser_adapter",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=request.workspace,
+                stdout_digest="Browser verification failed: assertions set is required and cannot be empty",
+                sanitized_errors=["BROWSER_ASSERTIONS_REQUIRED: Non-empty functional assertion set is required for BROWSER verification"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+        expected_route = request.payload.get("expected_route")
 
         adapter = self.capture_adapter
         if not adapter:

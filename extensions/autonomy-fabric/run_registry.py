@@ -139,6 +139,8 @@ class RunIdentity:
     completed_work_unit_signatures: Dict[str, str] = field(default_factory=dict)
     artifact_hashes: Dict[str, str] = field(default_factory=dict)
     superseded_session_ids: List[str] = field(default_factory=list)
+    evidence_payload: Dict[str, Any] = field(default_factory=dict)
+    execution_status: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -210,7 +212,7 @@ _REPLAYABLE_FIELDS = {
     "backend_version", "executable_sha256", "auth_mode", "objective_id",
     "last_terminal_event", "completed_work_unit_ids",
     "completed_work_unit_signatures", "artifact_hashes",
-    "superseded_session_ids",
+    "superseded_session_ids", "evidence_payload", "execution_status",
 }
 
 
