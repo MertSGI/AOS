@@ -3408,18 +3408,19 @@ def compile_execution_plan(
                 }
             else:
                 index_html_path = render_entry.entrypoint
-                real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
+                real_html = index_html_path.read_text(encoding="utf-8", errors="replace") if index_html_path.is_file() else "<html></html>"
                 real_css = (
                     render_entry.stylesheet.read_text(encoding="utf-8", errors="replace")
-                    if render_entry.stylesheet else ""
+                    if render_entry.stylesheet and render_entry.stylesheet.is_file() else ""
                 )
 
                 evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-pre"
                 evidence_dir.mkdir(parents=True, exist_ok=True)
                 capture_adapter = capture_adapter_override or RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
 
+                target_url = render_entry.origin or str(index_html_path)
                 try:
-                    visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"pre-{int(batch_number or 0):04d}")
+                    visual_manifest = capture_adapter.capture_manifest(target_url, f"pre-{int(batch_number or 0):04d}")
                 except Exception as capture_exc:
                     exc_msg = str(capture_exc)
                     unavail_tokens = ("not installed", "executable doesn't exist", "please run", "browser", "playwright")
@@ -4041,10 +4042,22 @@ def detect_completion(
         canonical_complete = any(token in status for token in ("COMPLETE", "CLOSED", "DONE")) or any(
             token in next_action for token in ("PROJECT COMPLETE", "NO FURTHER", "CLOSED", "COMPLETE")
         )
+        # Never infer completion from batch progress alone without canonical completion or verified evidence
         if not canonical_complete:
             proposal = dict(proposal)
             proposal["disposition"] = "REPLAN"
             proposal["rationale"] = "Provider proposed PROJECT_COMPLETE but canonical state does not prove project completion"
+        else:
+            # If the recent batch completed browser verification tasks, confirm verified evidence is present
+            has_failed_verification = any(
+                str(t.get("status", "")).upper() not in ("PASS", "SUCCESS", "COMPLETED")
+                for t in recent_receipt.get("verified_tasks", [])
+                if isinstance(t, Mapping)
+            )
+            if has_failed_verification:
+                proposal = dict(proposal)
+                proposal["disposition"] = "REPLAN"
+                proposal["rationale"] = "Completion proposed but verified task evidence contains failed assertions"
     _shadow_deliberate(
         runtime_dir,
         situation,
@@ -4748,16 +4761,17 @@ def run_autonomous_project(
                     render_entry = None
                 if render_entry is not None:
                     index_html_path = render_entry.entrypoint
-                    real_html = index_html_path.read_text(encoding="utf-8", errors="replace")
+                    real_html = index_html_path.read_text(encoding="utf-8", errors="replace") if index_html_path.is_file() else "<html></html>"
                     real_css = (
                         render_entry.stylesheet.read_text(encoding="utf-8", errors="replace")
-                        if render_entry.stylesheet else ""
+                        if render_entry.stylesheet and render_entry.stylesheet.is_file() else ""
                     )
 
                     evidence_dir = runtime_dir / "screenshots" / f"batch-{int(batch_number or 0):04d}-post"
                     evidence_dir.mkdir(parents=True, exist_ok=True)
                     capture_adapter = RealBrowserCaptureAdapter(output_dir=str(evidence_dir))
-                    visual_manifest = capture_adapter.capture_manifest(str(index_html_path), f"post-{int(batch_number or 0):04d}")
+                    target_url = render_entry.origin or str(index_html_path)
+                    visual_manifest = capture_adapter.capture_manifest(target_url, f"post-{int(batch_number or 0):04d}")
 
                     brief = DesignProjectBrief(
                         brief_id=f"brief-{situation.project_id}",

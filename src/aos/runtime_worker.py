@@ -596,27 +596,27 @@ def _extract_completed_batch_receipts(
                 all_completed_tasks.add(c_id)
 
             # Check for verification proof in batch
-            if nested_receipt.get("verification_evidence") or nested_receipt.get("test_evidence") or nested_receipt.get("build_evidence"):
+            if nested_receipt.get("verification_evidence") or nested_receipt.get("test_evidence") or nested_receipt.get("build_evidence") or nested_receipt.get("browser_evidence"):
                 has_verification_proof = True
-            if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in nested_receipt.get("verified_run_types", [])):
+            if any(str(k).upper() in ("TEST", "BUILD", "CI", "BROWSER") for k in nested_receipt.get("verified_run_types", [])):
                 has_verification_proof = True
             for vt in nested_receipt.get("verified_tasks", []):
                 if isinstance(vt, Mapping):
                     vt_run_type = str(vt.get("run_type", "")).upper()
                     vt_status = str(vt.get("status", "")).upper()
-                    if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                    if vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
                         has_verification_proof = True
 
     # Top-level verification proof in receipt
-    if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence"):
+    if receipt.get("verification_evidence") or receipt.get("test_evidence") or receipt.get("build_evidence") or receipt.get("browser_evidence"):
         has_verification_proof = True
-    if any(str(k).upper() in ("TEST", "BUILD", "CI") for k in receipt.get("verified_run_types", [])):
+    if any(str(k).upper() in ("TEST", "BUILD", "CI", "BROWSER") for k in receipt.get("verified_run_types", [])):
         has_verification_proof = True
     for vt in receipt.get("verified_tasks", []):
         if isinstance(vt, Mapping):
             vt_run_type = str(vt.get("run_type", "")).upper()
             vt_status = str(vt.get("status", "")).upper()
-            if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+            if vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
                 has_verification_proof = True
 
     return valid_batches, all_completed_tasks, all_failed_tasks, has_failed, has_verification_proof
@@ -656,7 +656,7 @@ def _record_kcp_verification_receipt(
         return None
 
     # BOUNDED_RUN_EXHAUSTED with completed tasks is not an automatic PASS.
-    # It requires real verified test/build tasks from a completed batch.
+    # It requires real verified test/build/browser tasks from a completed batch.
     if disposition == "BOUNDED_RUN_EXHAUSTED":
         has_real_verified_task = False
         for vb in valid_batches:
@@ -664,7 +664,7 @@ def _record_kcp_verification_receipt(
                 if isinstance(vt, Mapping):
                     vt_run_type = str(vt.get("run_type", "")).upper()
                     vt_status = str(vt.get("status", "")).upper()
-                    if vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+                    if vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
                         has_real_verified_task = True
                         break
             if has_real_verified_task:
@@ -679,7 +679,7 @@ def _record_kcp_verification_receipt(
     # A genuine verified task must match:
     # 1. Project ID (if present in task or receipt)
     # 2. Completed task IDs
-    # 3. Verification task type (TEST, BUILD, CI)
+    # 3. Verification task type (TEST, BUILD, CI, BROWSER)
     # 4. Successful outcome (PASS)
     # 5. Clean, valid 40-hex workspace_head_sha
     verified_task_shas: set[str] = set()
@@ -699,7 +699,7 @@ def _record_kcp_verification_receipt(
             vt_status = str(vt.get("status") or "").upper()
 
             # Must match completed task ID and verification task type and PASS status
-            if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+            if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
                 # Check task-level project ID if present
                 vt_proj = str(vt.get("project_id") or "").strip()
                 if vt_proj and vt_proj != project_id:
@@ -727,7 +727,7 @@ def _record_kcp_verification_receipt(
         vt_task_id = str(vt.get("task_id") or "").strip()
         vt_run_type = str(vt.get("run_type") or "").upper()
         vt_status = str(vt.get("status") or "").upper()
-        if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI") and vt_status == "PASS":
+        if vt_task_id in completed_task_ids and vt_run_type in ("TEST", "BUILD", "CI", "BROWSER") and vt_status == "PASS":
             vt_proj = str(vt.get("project_id") or "").strip()
             if vt_proj and vt_proj != project_id:
                 return None

@@ -14,6 +14,9 @@ class RenderEntry:
     stylesheet: Optional[Path]
     source: str
     contract_path: Optional[Path] = None
+    render_type: str = "STATIC_HTML"
+    origin: Optional[str] = None
+    routes: Optional[list[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
@@ -25,6 +28,28 @@ def _under_workspace(workspace: Path, value: str) -> Path:
     if candidate != workspace and workspace not in candidate.parents:
         raise ValueError("Render entry escapes the project workspace")
     return candidate
+
+
+def is_authorized_loopback_url(url: str) -> bool:
+    """Validate that a URL targets an authorized loopback origin."""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    from urllib.parse import urlparse
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        return False
+    hostname = (parsed.hostname or "").lower()
+    return hostname in ("127.0.0.1", "localhost", "::1")
+
+
+def _probe_loopback_port(host: str, port: int, timeout: float = 0.5) -> bool:
+    """Check if a TCP port is currently open on loopback."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (OSError, socket.timeout):
+        return False
 
 
 def _looks_like_dynamic_application(root: Path, entry: Path) -> bool:
@@ -70,15 +95,35 @@ def _looks_like_dynamic_application(root: Path, entry: Path) -> bool:
 
 
 def resolve_render_entry(workspace: Path) -> RenderEntry:
-    """Resolve an explicit project contract, then bounded static conventions."""
+    """Resolve an explicit project contract, dynamic loopback entry, or bounded static conventions."""
     root = workspace.expanduser().resolve()
     contract_path = root / ".aos" / "render-entry.json"
     if contract_path.is_file():
         value = json.loads(contract_path.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or value.get("schema_version") != "1.0.0":
             raise ValueError("Render entry contract must use schema_version 1.0.0")
-        if value.get("render_type") != "STATIC_HTML":
-            raise ValueError("Only STATIC_HTML render entries are currently proven")
+        render_type = str(value.get("render_type") or "").upper()
+        if render_type == "DYNAMIC_LOOPBACK_HTTP":
+            origin = str(value.get("origin") or "http://127.0.0.1:5173")
+            if not is_authorized_loopback_url(origin):
+                raise ValueError(f"Origin must be an authorized loopback URL, got: {origin}")
+            entrypoint_val = value.get("entrypoint") or "index.html"
+            entry = _under_workspace(root, str(entrypoint_val))
+            stylesheet = None
+            if value.get("stylesheet"):
+                stylesheet = _under_workspace(root, str(value["stylesheet"]))
+            routes = list(value.get("routes", []))
+            return RenderEntry(
+                entry,
+                stylesheet,
+                "PROJECT_CONTRACT",
+                contract_path,
+                render_type="DYNAMIC_LOOPBACK_HTTP",
+                origin=origin,
+                routes=routes,
+            )
+        elif render_type != "STATIC_HTML":
+            raise ValueError("Only STATIC_HTML and DYNAMIC_LOOPBACK_HTTP render entries are currently proven")
         entry = _under_workspace(root, str(value.get("entrypoint") or ""))
         if not entry.is_file() or entry.suffix.lower() not in {".html", ".htm"}:
             raise ValueError(f"Render entrypoint is unavailable: {entry}")
@@ -87,7 +132,7 @@ def resolve_render_entry(workspace: Path) -> RenderEntry:
             stylesheet = _under_workspace(root, str(value["stylesheet"]))
             if not stylesheet.is_file():
                 raise ValueError(f"Render stylesheet is unavailable: {stylesheet}")
-        return RenderEntry(entry, stylesheet, "PROJECT_CONTRACT", contract_path)
+        return RenderEntry(entry, stylesheet, "PROJECT_CONTRACT", contract_path, render_type="STATIC_HTML")
 
     for relative in ("index.html", "public/index.html", "dist/index.html", "build/index.html"):
         entry = root / relative
@@ -104,7 +149,7 @@ def resolve_render_entry(workspace: Path) -> RenderEntry:
             root / "index.css",
         )
         stylesheet = next((path for path in css_candidates if path.is_file()), None)
-        return RenderEntry(entry.resolve(), stylesheet.resolve() if stylesheet else None, "BOUNDED_STATIC_DISCOVERY")
+        return RenderEntry(entry.resolve(), stylesheet.resolve() if stylesheet else None, "BOUNDED_STATIC_DISCOVERY", render_type="STATIC_HTML")
     raise FileNotFoundError(
         "No proven UI render entry. Add .aos/render-entry.json or a supported static entrypoint."
     )

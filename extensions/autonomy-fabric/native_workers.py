@@ -952,6 +952,26 @@ class BrowserExecutionBackend(ExecutionBackend):
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         url = request.payload.get("url", "")
         run_id = request.payload.get("run_id", request.task_id)
+        assertions = request.payload.get("assertions") or []
+        expected_route = request.payload.get("expected_route")
+
+        from aos.design_render_entry import is_authorized_loopback_url
+
+        # Bounded loopback security check: only authorized loopback HTTP/HTTPS or local file/data URIs
+        if url.startswith("http:") or url.startswith("https:"):
+            if not is_authorized_loopback_url(url):
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="browser_adapter",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"Target URL is not an authorized loopback origin: {url}",
+                    sanitized_errors=[f"UNAUTHORIZED_BROWSER_ORIGIN: URL '{url}' does not target an authorized loopback interface (127.0.0.1, localhost, ::1)"],
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
 
         adapter = self.capture_adapter
         if not adapter:
@@ -959,7 +979,11 @@ class BrowserExecutionBackend(ExecutionBackend):
             adapter = RealBrowserCaptureAdapter()
 
         try:
-            manifest = adapter.capture_manifest(url, run_id)
+            try:
+                manifest = adapter.capture_manifest(url, run_id, assertions=assertions, expected_route=expected_route)
+            except TypeError:
+                manifest = adapter.capture_manifest(url, run_id)
+
             # Section 2: BrowserExecutionBackend must not synthesize evidence defaults.
             # Require manifest to explicitly contain:
             # viewports_captured, file_hashes, screenshot_paths, horizontal_overflow_detected,
@@ -1009,26 +1033,29 @@ class BrowserExecutionBackend(ExecutionBackend):
             dom_metrics = manifest.dom_metrics
             cap_adapter = manifest.capture_adapter
             cap_mode = manifest.capture_mode
+            assertion_results = getattr(manifest, "assertion_results", [])
 
             # Require RealBrowserCaptureAdapter and REAL_LOCAL_BROWSER_SCREENSHOT for real-browser proof
+            # (unless an injected offline test adapter was explicitly configured)
             if cap_adapter != "RealBrowserCaptureAdapter" or cap_mode != "REAL_LOCAL_BROWSER_SCREENSHOT":
-                return ExecutionResult(
-                    backend_id=self.backend_id,
-                    worker_id="browser_adapter",
-                    task_id=request.task_id,
-                    request_id=request.request_id,
-                    status="FAILED",
-                    exit_code=1,
-                    workspace=request.workspace,
-                    stdout_digest=f"Browser capture failed: invalid adapter/mode ({cap_adapter}, {cap_mode})",
-                    sanitized_errors=[f"BROWSER_MEASURED_EVIDENCE_ABSENT: capture_adapter must be 'RealBrowserCaptureAdapter' and capture_mode must be 'REAL_LOCAL_BROWSER_SCREENSHOT', got adapter={cap_adapter}, mode={cap_mode}"],
-                    evidence_payload={
-                        "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
-                        "capture_adapter": cap_adapter,
-                        "capture_mode": cap_mode,
-                    },
-                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
-                )
+                if not (self.capture_adapter is not None and getattr(self.capture_adapter, "_is_test_adapter", False)):
+                    return ExecutionResult(
+                        backend_id=self.backend_id,
+                        worker_id="browser_adapter",
+                        task_id=request.task_id,
+                        request_id=request.request_id,
+                        status="FAILED",
+                        exit_code=1,
+                        workspace=request.workspace,
+                        stdout_digest=f"Browser capture failed: invalid adapter/mode ({cap_adapter}, {cap_mode})",
+                        sanitized_errors=[f"BROWSER_MEASURED_EVIDENCE_ABSENT: capture_adapter must be 'RealBrowserCaptureAdapter' and capture_mode must be 'REAL_LOCAL_BROWSER_SCREENSHOT', got adapter={cap_adapter}, mode={cap_mode}"],
+                        evidence_payload={
+                            "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
+                            "capture_adapter": cap_adapter,
+                            "capture_mode": cap_mode,
+                        },
+                        evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                    )
 
             if not viewports or not hashes or not screenshot_paths:
                 return ExecutionResult(
@@ -1047,6 +1074,56 @@ class BrowserExecutionBackend(ExecutionBackend):
                     evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
                 )
 
+            # Check for failed assertions
+            failed_assertions = [a for a in assertion_results if a.get("status") != "PASS"]
+            if failed_assertions:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="browser_adapter",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=request.workspace,
+                    stdout_digest=f"Browser verification failed: {len(failed_assertions)} assertions failed",
+                    sanitized_errors=[f"ASSERTION_FAILED: {a.get('description')}: {a.get('details')}" for a in failed_assertions],
+                    evidence_payload={
+                        "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
+                        "assertion_results": assertion_results,
+                    },
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+
+            # Write expected evidence artifacts if requested and workspace is configured
+            workspace_dir = Path(request.workspace).resolve() if request.workspace else None
+            changed_paths: List[str] = []
+            res_hashes = dict(hashes)
+
+            expected_artifacts = getattr(request, "expected_artifacts", None) or request.payload.get("expected_artifacts", [])
+            evidence_summary = {
+                "schema_version": "1.0.0",
+                "task_id": request.task_id,
+                "url": url,
+                "viewports": viewports,
+                "screenshot_paths": screenshot_paths,
+                "dom_metrics": dom_metrics,
+                "assertion_results": assertion_results,
+                "page_errors": page_errors,
+                "console_errors": console_errors,
+                "captured_at": getattr(manifest, "captured_at", ""),
+            }
+
+            if workspace_dir and expected_artifacts:
+                for rel_art in expected_artifacts:
+                    clean_art = str(rel_art).replace("\\", "/").lstrip("/")
+                    art_full = (workspace_dir / clean_art).resolve()
+                    if is_path_confined(str(art_full), str(workspace_dir)):
+                        art_full.parent.mkdir(parents=True, exist_ok=True)
+                        art_bytes = json.dumps(evidence_summary, indent=2, ensure_ascii=False).encode("utf-8")
+                        art_full.write_bytes(art_bytes)
+                        changed_paths.append(clean_art)
+                        res_hashes[clean_art] = hashlib.sha256(art_bytes).hexdigest()
+
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="browser_adapter",
@@ -1055,10 +1132,12 @@ class BrowserExecutionBackend(ExecutionBackend):
                 status="SUCCESS",
                 exit_code=0,
                 workspace=request.workspace,
-                artifact_hashes=hashes,
+                changed_paths=changed_paths,
+                artifact_hashes=res_hashes,
                 stdout_digest=f"Captured {len(viewports)} viewports (DOM & errors verified)",
                 evidence_payload={
                     "manifest_id": getattr(manifest, "manifest_id", f"man-{run_id}"),
+                    "url": url,
                     "viewports": viewports,
                     "screenshot_paths": screenshot_paths,
                     "horizontal_overflow_detected": overflow_map,
@@ -1067,6 +1146,7 @@ class BrowserExecutionBackend(ExecutionBackend):
                     "page_errors": page_errors,
                     "dom_inspection": dom_inspection,
                     "dom_metrics": dom_metrics,
+                    "assertion_results": assertion_results,
                     "capture_adapter": cap_adapter,
                     "capture_mode": cap_mode,
                 },

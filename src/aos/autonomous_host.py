@@ -1158,7 +1158,7 @@ def run_host(
         if not node:
             continue
         run_type = str(getattr(node, "run_type", "")).upper()
-        if run_type not in ("TEST", "BUILD", "CI"):
+        if run_type not in ("TEST", "BUILD", "CI", "BROWSER"):
             continue
         run_id = getattr(node, "associated_run_id", None)
         run_obj = registry.get_run(run_id) if run_id else None
@@ -1168,7 +1168,7 @@ def run_host(
             or str(getattr(run_status, "value", run_status)).upper() == "COMPLETED"
         )
         if is_completed:
-            verified_tasks.append({
+            verified_task_entry = {
                 "task_id": tid,
                 "run_id": run_id,
                 "run_type": run_type,
@@ -1176,7 +1176,13 @@ def run_host(
                 "workspace_head_sha": actual_workspace_head,
                 "canonical_source_sha": canonical_binding.get("source_sha"),
                 "canonical_execution_base_sha": canonical_binding.get("execution_base_sha"),
-            })
+            }
+            if run_type == "BROWSER":
+                # Attach URL and assertion count if available from task node payload
+                node_payload = getattr(node, "payload", {}) if isinstance(getattr(node, "payload", {}), Mapping) else {}
+                if node_payload.get("url"):
+                    verified_task_entry["url"] = node_payload["url"]
+            verified_tasks.append(verified_task_entry)
 
     receipt = {
         "schema_version": "1.0.0",

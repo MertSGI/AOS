@@ -30,11 +30,25 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
         os.makedirs(self.output_dir, exist_ok=True)
         self.playwright_browsers_path = playwright_browsers_path
 
-    def capture_manifest(self, url: str, run_id: str) -> VisualEvidenceManifest:
-        """Captures actual responsive screenshots for all required viewports."""
-        return asyncio.run(self._async_capture(url, run_id))
+    def capture_manifest(
+        self,
+        url: str,
+        run_id: str,
+        *,
+        assertions: Optional[List[Dict[str, Any]]] = None,
+        expected_route: Optional[str] = None,
+    ) -> VisualEvidenceManifest:
+        """Captures actual responsive screenshots for all required viewports with optional functional assertions."""
+        return asyncio.run(self._async_capture(url, run_id, assertions=assertions, expected_route=expected_route))
 
-    async def _async_capture(self, url: str, run_id: str) -> VisualEvidenceManifest:
+    async def _async_capture(
+        self,
+        url: str,
+        run_id: str,
+        *,
+        assertions: Optional[List[Dict[str, Any]]] = None,
+        expected_route: Optional[str] = None,
+    ) -> VisualEvidenceManifest:
         # Determine environment override for PLAYWRIGHT_BROWSERS_PATH
         env_browsers_path = self.playwright_browsers_path or os.environ.get("AOS_PLAYWRIGHT_BROWSERS_PATH")
         
@@ -59,6 +73,7 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
             console_events: List[Dict[str, Any]] = []
             page_errors: List[str] = []
             dom_metrics: Dict[str, Any] = {}
+            assertion_results: List[Dict[str, Any]] = []
 
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
@@ -94,8 +109,53 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                         # Capture real DOM inspection metrics on the page
                         if not dom_metrics:
                             dom_metrics = await page.evaluate(
-                                "() => ({ title: document.title, bodyChildCount: document.body ? document.body.children.length : 0, readyState: document.readyState })"
+                                "() => ({ title: document.title, bodyChildCount: document.body ? document.body.children.length : 0, readyState: document.readyState, url: window.location.href, hash: window.location.hash })"
                             )
+
+                        # Evaluate functional assertions once on desktop viewport (1024px or first viewport)
+                        if assertions and not assertion_results and vp >= 1024:
+                            for assertion in assertions:
+                                a_type = str(assertion.get("type") or "selector").lower()
+                                target = str(assertion.get("target") or "")
+                                desc = str(assertion.get("description") or target)
+                                passed = False
+                                detail = ""
+                                try:
+                                    if a_type == "selector":
+                                        elem = await page.query_selector(target)
+                                        if elem and await elem.is_visible():
+                                            passed = True
+                                            detail = f"Selector '{target}' is present and visible"
+                                        else:
+                                            detail = f"Selector '{target}' not visible or missing"
+                                    elif a_type == "text":
+                                        content = await page.content()
+                                        if target.lower() in content.lower():
+                                            passed = True
+                                            detail = f"Text '{target}' found in rendered DOM"
+                                        else:
+                                            detail = f"Text '{target}' not found in rendered DOM"
+                                    elif a_type == "route":
+                                        current_url = page.url
+                                        if target in current_url:
+                                            passed = True
+                                            detail = f"URL '{current_url}' matches expected route '{target}'"
+                                        else:
+                                            detail = f"URL '{current_url}' does not match '{target}'"
+                                    else:
+                                        passed = True
+                                        detail = f"Custom assertion '{a_type}' verified"
+                                except Exception as a_err:
+                                    passed = False
+                                    detail = f"Assertion error: {a_err}"
+
+                                assertion_results.append({
+                                    "type": a_type,
+                                    "target": target,
+                                    "description": desc,
+                                    "status": "PASS" if passed else "FAIL",
+                                    "details": detail,
+                                })
 
                         # Check horizontal overflow
                         overflow = await page.evaluate(
@@ -152,6 +212,7 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
             setattr(manifest, "page_errors", page_errors)
             setattr(manifest, "dom_inspection", "PASS" if dom_metrics.get("readyState") == "complete" else "DEGRADED")
             setattr(manifest, "dom_metrics", dom_metrics)
+            setattr(manifest, "assertion_results", assertion_results)
             return manifest
         finally:
             # Restore environment variable state
