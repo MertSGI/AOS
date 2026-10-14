@@ -25,10 +25,16 @@ from extensions.design_intelligence.visual_qa import (
 class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
     """Production Playwright-based browser capture adapter."""
 
-    def __init__(self, output_dir: Optional[str] = None, playwright_browsers_path: Optional[str] = None):
+    def __init__(
+        self,
+        output_dir: Optional[str] = None,
+        playwright_browsers_path: Optional[str] = None,
+        viewports: Optional[List[int]] = None,
+    ):
         self.output_dir = output_dir or os.path.join(tempfile.gettempdir(), "aos_evidence", "screenshots")
         os.makedirs(self.output_dir, exist_ok=True)
         self.playwright_browsers_path = playwright_browsers_path
+        self.viewports = viewports
 
     def capture_manifest(
         self,
@@ -37,9 +43,11 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
         *,
         assertions: Optional[List[Dict[str, Any]]] = None,
         expected_route: Optional[str] = None,
+        viewports: Optional[List[int]] = None,
     ) -> VisualEvidenceManifest:
-        """Captures actual responsive screenshots for all required viewports with optional functional assertions."""
-        return asyncio.run(self._async_capture(url, run_id, assertions=assertions, expected_route=expected_route))
+        """Captures actual responsive screenshots with optional functional assertions."""
+        vps = viewports if viewports is not None else self.viewports
+        return asyncio.run(self._async_capture(url, run_id, assertions=assertions, expected_route=expected_route, viewports=vps))
 
     async def _async_capture(
         self,
@@ -48,6 +56,7 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
         *,
         assertions: Optional[List[Dict[str, Any]]] = None,
         expected_route: Optional[str] = None,
+        viewports: Optional[List[int]] = None,
     ) -> VisualEvidenceManifest:
         # Determine environment override for PLAYWRIGHT_BROWSERS_PATH
         env_browsers_path = self.playwright_browsers_path or os.environ.get("AOS_PLAYWRIGHT_BROWSERS_PATH")
@@ -89,7 +98,8 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                     page.on("console", handle_console)
                     page.on("pageerror", handle_pageerror)
 
-                    for vp in REQUIRED_VIEWPORTS:
+                    active_viewports = viewports if viewports is not None else REQUIRED_VIEWPORTS
+                    for vp in active_viewports:
                         await page.set_viewport_size({"width": vp, "height": 900})
 
                         target_dest = None
@@ -124,8 +134,8 @@ class RealBrowserCaptureAdapter(BaseBrowserScreenshotAdapter):
                                 "() => ({ title: document.title, bodyChildCount: document.body ? document.body.children.length : 0, readyState: document.readyState, url: window.location.href, hash: window.location.hash })"
                             )
 
-                        # Evaluate functional assertions once on desktop viewport (1024px or first viewport)
-                        if not assertion_results and vp >= 1024:
+                        # Evaluate functional assertions once (on first viewport or desktop viewport)
+                        if not assertion_results and (vp >= 1024 or vp == active_viewports[0]):
                             from urllib.parse import urlparse
                             parsed_final = urlparse(final_nav_url)
                             final_pathname = parsed_final.path or "/"

@@ -95,7 +95,7 @@ class TestBrowserAcceptanceNegativeMatrix:
             )
 
         # 2. Adapter boundary
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             "data:text/html,<html><body><div id='test'>hi</div></body></html>",
             "run-unknown-type",
@@ -107,7 +107,7 @@ class TestBrowserAcceptanceNegativeMatrix:
 
     def test_negative_invalid_selector_fails_closed(self, tmp_path: Path):
         """Invalid CSS selector syntax fails closed and reports syntax error."""
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             "data:text/html,<html><body><div id='root'>app</div></body></html>",
             "run-invalid-selector",
@@ -119,7 +119,7 @@ class TestBrowserAcceptanceNegativeMatrix:
 
     def test_negative_missing_ui_control_fails_closed(self, tmp_path: Path):
         """Missing required DOM element / button fails closed."""
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             "data:text/html,<html><body><div id='root'>app</div></body></html>",
             "run-missing-control",
@@ -143,7 +143,7 @@ class TestBrowserAcceptanceNegativeMatrix:
         </body>
         </html>
         """
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             f"data:text/html,{html}",
             "run-script-text",
@@ -155,7 +155,7 @@ class TestBrowserAcceptanceNegativeMatrix:
 
     def test_negative_wrong_route_fails_closed(self, tmp_path: Path):
         """Navigating to an unexpected route fails closed on expected_route exact comparison."""
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             "data:text/html,<html><head><script>window.location.hash='#/login';</script></head><body>Login</body></html>",
             "run-wrong-route",
@@ -320,7 +320,7 @@ class TestBrowserAcceptanceNegativeMatrix:
         </body>
         </html>
         """
-        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path))
+        adapter = RealBrowserCaptureAdapter(output_dir=str(tmp_path), viewports=[1024])
         manifest = adapter.capture_manifest(
             f"data:text/html,{html}",
             "run-auth-flow",
