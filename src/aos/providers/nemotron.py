@@ -229,11 +229,59 @@ class NemotronPlannerProvider:
         if errors:
             error = errors[0]
             pointer = "/" + "/".join(str(item) for item in error.absolute_path) if error.absolute_path else "/"
-            raise PlannerContractError(
-                "Nemotron output failed canonical JSON schema validation",
-                subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
-                safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
-            )
+
+            # Bounded correction attempt: allow at most ONE retry providing exact enum and validator feedback
+            # Check if this error is an enum or schema constraint failure that can be corrected
+            repaired = False
+            try:
+                allowed_enums_hint = ""
+                if "assertions" in pointer and error.validator == "enum":
+                    allowed_enums_hint = " Allowed assertion types are exactly: ['selector_visible', 'selector', 'text_visible', 'text', 'route_exact', 'route']."
+                repair_instructions = (
+                    f"{instructions}\n"
+                    f"SCHEMA_CORRECTION_REQUIRED: Your previous response failed schema validation at '{pointer}' "
+                    f"with error '{error.message}'.{allowed_enums_hint} "
+                    "You MUST correct this schema error and return the full corrected JSON strictly adhering to PLAN_SCHEMA."
+                )
+                repair_response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": repair_instructions},
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "planner_decision",
+                            "strict": True,
+                            "schema": provider_schema,
+                        },
+                    },
+                    max_tokens=nemotron_max_output_tokens(schema),
+                    temperature=0.0,
+                    store=False,
+                    extra_body=extra_body,
+                )
+                if repair_response.choices:
+                    repair_choice = repair_response.choices[0]
+                    repair_content = getattr(repair_choice.message, "content", None)
+                    if repair_content:
+                        repaired_decision = json.loads(repair_content)
+                        repaired_decision = _sanitize_planner_output(repaired_decision, schema)
+                        repair_errors = list(validator.iter_errors(repaired_decision))
+                        if not repair_errors:
+                            parsed_decision = repaired_decision
+                            response = repair_response
+                            repaired = True
+            except Exception:
+                repaired = False
+
+            if not repaired:
+                raise PlannerContractError(
+                    "Nemotron output failed canonical JSON schema validation",
+                    subtype=ContractFailureSubtype.SCHEMA_VALIDATION,
+                    safe_detail=safe_contract_detail(validator_keyword=error.validator, json_pointer=pointer),
+                )
 
         response_id = getattr(response, "id", None)
 

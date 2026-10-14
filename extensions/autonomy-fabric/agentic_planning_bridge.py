@@ -279,6 +279,9 @@ class AgenticStructuredPlanningBridge(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
+        from aos.providers.schema_utils import sanitize_planner_output
+        proposal = sanitize_planner_output(proposal, schema)
+
         # Validate against Draft202012 schema
         validator = Draft202012Validator(schema)
         errors = list(validator.iter_errors(proposal))

@@ -622,3 +622,228 @@ def test_nemotron_null_property_pruning(monkeypatch):
     assert "optional_str" not in result
     assert "optional_obj" not in result
 
+
+# 15. Pre-Planner Structured Schema Recovery: Deterministic Normalization & Bounded Correction
+def test_nemotron_assertion_alias_deterministic_normalization(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # Raw candidate with semantics-preserving aliases in assertions:
+    # "visible" -> "selector_visible"
+    # "exists" -> "selector"
+    # "contains_text" -> "text_visible"
+    # "url" -> "route"
+    # "url_exact" -> "route_exact"
+    raw_plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "visible", "target": "#submit-btn"},
+                        {"type": "exists", "selector": "#header"},
+                        {"type": "contains_text", "target": "Confirm Booking"},
+                        {"type": "url", "target": "#/book"},
+                        {"type": "url_exact", "target": "http://127.0.0.1:5173/#/book"},
+                    ],
+                },
+            }
+        ],
+    }
+
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = json.dumps(raw_plan)
+    mock_choice.message.refusal = None
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.id = "resp-123"
+    mock_response.usage = None
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        result, resp_id, usage = provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assertions = result["tasks"][0]["payload"]["assertions"]
+    assert assertions[0]["type"] == "selector_visible"
+    assert assertions[0]["target"] == "#submit-btn"
+    assert assertions[1]["type"] == "selector"
+    assert assertions[1]["target"] == "#header"
+    assert assertions[2]["type"] == "text_visible"
+    assert assertions[2]["target"] == "Confirm Booking"
+    assert assertions[3]["type"] == "route"
+    assert assertions[3]["target"] == "#/book"
+    assert assertions[4]["type"] == "route_exact"
+    assert assertions[4]["target"] == "http://127.0.0.1:5173/#/book"
+
+
+def test_nemotron_unknown_assertion_type_fails_closed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # Invalid unknown assertion type "magic_check" must NOT be guessed and must fail closed
+    invalid_plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "magic_check", "target": "#submit-btn"},
+                    ],
+                },
+            }
+        ],
+    }
+
+    mock_choice = MagicMock()
+    mock_choice.finish_reason = "stop"
+    mock_choice.message.content = json.dumps(invalid_plan)
+    mock_choice.message.refusal = None
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.id = "resp-123"
+    mock_response.usage = None
+
+    mock_client = MagicMock()
+    # Both initial and retry return invalid
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        with pytest.raises(PlannerContractError) as exc_info:
+            provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert exc_info.value.safe_detail["json_pointer"] == "/tasks/0/payload/assertions/0/type"
+    assert exc_info.value.safe_detail["validator_keyword"] == "enum"
+
+
+def test_nemotron_bounded_single_repair_attempt_succeeds(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    invalid_plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "custom_ui_type", "target": "#submit-btn"},
+                    ],
+                },
+            }
+        ],
+    }
+
+    valid_corrected_plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "selector_visible", "target": "#submit-btn"},
+                    ],
+                },
+            }
+        ],
+    }
+
+    choice1 = MagicMock()
+    choice1.finish_reason = "stop"
+    choice1.message.content = json.dumps(invalid_plan)
+    choice1.message.refusal = None
+    resp1 = MagicMock(choices=[choice1], id="resp-1", usage=None)
+
+    choice2 = MagicMock()
+    choice2.finish_reason = "stop"
+    choice2.message.content = json.dumps(valid_corrected_plan)
+    choice2.message.refusal = None
+    resp2 = MagicMock(choices=[choice2], id="resp-2", usage=None)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = [resp1, resp2]
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        result, resp_id, usage = provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert mock_client.chat.completions.create.call_count == 2
+    # Verify the second call received the correction instructions and allowed enums hint
+    call2_messages = mock_client.chat.completions.create.call_args_list[1][1]["messages"]
+    system_msg = next(m["content"] for m in call2_messages if m["role"] == "system")
+    assert "SCHEMA_CORRECTION_REQUIRED" in system_msg
+    assert "Allowed assertion types are exactly: ['selector_visible', 'selector', 'text_visible', 'text', 'route_exact', 'route']" in system_msg
+    assert result["tasks"][0]["payload"]["assertions"][0]["type"] == "selector_visible"
+
+
