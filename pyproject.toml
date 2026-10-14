@@ -25,6 +25,9 @@ dev = [
 postgres = [
     "psycopg[binary]>=3.2,<4",
 ]
+browser = [
+    "playwright>=1.40.0",
+]
 
 [project.scripts]
 aos-validate = "aos.validate:main"
