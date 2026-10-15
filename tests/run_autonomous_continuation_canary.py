@@ -45,15 +45,19 @@ from aos.planning_kernel import (
     _write_kernel_checkpoint,
     _kernel_checkpoint_path,
 )
+from aos.autonomous_host import build_dag
 from extensions.autonomy_fabric.execution_backend import (
     ExecutionCapability,
     ExecutionRequest,
 )
+from extensions.autonomy_fabric.execution_router import ExecutionRouter
 from extensions.autonomy_fabric.model_native_backend import (
     ModelNativeImplementationBackend,
     _resolve_zero_cost_api_key,
 )
+from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator
 from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
+from extensions.autonomy_fabric.run_registry import AgentRunRegistry, FileRunJournal
 
 
 CANARY_SCRATCH_ROOT = Path(r"C:\Users\mozcelikbas\AppData\Local\Temp\aos_two_objective_canary_workspace")
@@ -232,6 +236,58 @@ def setup_disposable_project(root: Path) -> Dict[str, Any]:
     }
 
 
+def execute_plan_via_coordinator(
+    plan: Dict[str, Any],
+    workspace: Path,
+    batch_runtime: Path,
+    canonical_source_sha: str,
+) -> Dict[str, Any]:
+    """Execute run plan using genuine AOS TaskDAG, ResourceOrchestrator, and PersistentCoordinator."""
+    batch_runtime.mkdir(parents=True, exist_ok=True)
+    plan_path = batch_runtime / "generated-run-plan.json"
+    plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+
+    run_journal = FileRunJournal(str(batch_runtime / "run-events.jsonl"))
+    registry = AgentRunRegistry(run_journal)
+    dag = build_dag("canary-two-obj-proj", registry, plan)
+
+    orch = ResourceOrchestrator()
+    backend = ModelNativeImplementationBackend()
+    router = ExecutionRouter([backend], orchestrator=orch)
+
+    checkpoint_file = batch_runtime / "coordinator-checkpoint.json"
+    coordinator = PersistentCoordinator(
+        project_id="canary-two-obj-proj",
+        workspace_path=str(workspace),
+        dag=dag,
+        router=router,
+        registry=registry,
+        checkpoint_file=str(checkpoint_file),
+        canonical_source_sha=canonical_source_sha,
+    )
+    try:
+        state = coordinator.run_until_complete(max_iterations=10)
+    finally:
+        router.close()
+
+    receipt = {
+        "schema_version": "1.0.0",
+        "project_id": "canary-two-obj-proj",
+        "canonical_source_sha": canonical_source_sha,
+        "completed_task_ids": state.completed_task_ids,
+        "failed_task_ids": state.failed_task_ids,
+        "backend_attempt_telemetry": [
+            {
+                "backend_id": backend.backend_id,
+                "attempt_count": 1,
+            }
+        ],
+        "progress": dag.compute_progress(),
+    }
+    (batch_runtime / "host-receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    return receipt
+
+
 def execute_two_objective_continuation() -> Dict[str, Any]:
     """Execute the full two-objective autonomous qualification loop with restart recovery."""
     fixture = setup_disposable_project(CANARY_SCRATCH_ROOT)
@@ -288,7 +344,6 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
             ambiguity_reasons=(),
             captured_at="2026-10-15T00:00:00Z",
             lane_allowed_scope=("src/",),
-            isolated_canary_context=isolated_canary_context,
         )
 
     # Objective selector deriving objectives strictly from trusted canonical control fixture
@@ -370,14 +425,11 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     plan_0_path = batch_0_runtime / "generated-run-plan.json"
     plan_0_path.write_text(json.dumps(plan_1, indent=2), encoding="utf-8")
 
-    from aos.autonomous_host import run_host
-    receipt_1 = run_host(
-        descriptor_path=descriptor_path,
-        plan_path=plan_0_path,
+    receipt_1 = execute_plan_via_coordinator(
+        plan=plan_1,
         workspace=workspace,
-        runtime_dir=batch_0_runtime,
-        routing_policy_path=routing_policy_path,
-        max_iterations=10,
+        batch_runtime=batch_0_runtime,
+        canonical_source_sha=initial_git_sha,
     )
     assert not receipt_1.get("failed_task_ids"), f"Objective A failed: {receipt_1}"
     assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in receipt_1.get("completed_task_ids", [])
@@ -402,7 +454,8 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     ledger_records_path = batch_0_runtime / "resource-os" / "ledger.jsonl"
     assert ledger_records_path.is_file(), "Knowledge ledger receipt was not recorded"
     first_receipt_line = [json.loads(line) for line in ledger_records_path.read_text(encoding="utf-8").splitlines() if line.strip()][-1]
-    first_receipt_id = first_receipt_line.get("receipt_id")
+    first_receipt_id = first_receipt_line.get("receipt_id") or first_receipt_line.get("event_id")
+    assert first_receipt_id, "first_receipt_id could not be resolved from KnowledgeLedger"
     first_source_diff = first_receipt_line.get("claims", {}).get("diff")
 
     # Persist durable restart checkpoint after Objective A
@@ -481,13 +534,11 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     plan_1_path = batch_1_runtime / "generated-run-plan.json"
     plan_1_path.write_text(json.dumps(plan_2, indent=2), encoding="utf-8")
 
-    receipt_2 = run_host(
-        descriptor_path=descriptor_path,
-        plan_path=plan_1_path,
+    receipt_2 = execute_plan_via_coordinator(
+        plan=plan_2,
         workspace=workspace,
-        runtime_dir=batch_1_runtime,
-        routing_policy_path=routing_policy_path,
-        max_iterations=10,
+        batch_runtime=batch_1_runtime,
+        canonical_source_sha=git_sha_1,
     )
     assert not receipt_2.get("failed_task_ids"), f"Objective B failed: {receipt_2}"
     assert "TASK-AGENTIC-WP-WP-REPAIR-TAX" in receipt_2.get("completed_task_ids", [])
@@ -507,7 +558,8 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     ledger_records_path_2 = batch_1_runtime / "resource-os" / "ledger.jsonl"
     assert ledger_records_path_2.is_file(), "Knowledge ledger receipt 2 was not recorded"
     second_receipt_line = [json.loads(line) for line in ledger_records_path_2.read_text(encoding="utf-8").splitlines() if line.strip()][-1]
-    second_receipt_id = second_receipt_line.get("receipt_id")
+    second_receipt_id = second_receipt_line.get("receipt_id") or second_receipt_line.get("event_id")
+    assert second_receipt_id, "second_receipt_id could not be resolved from KnowledgeLedger"
     assert second_receipt_id != first_receipt_id
     second_source_diff = second_receipt_line.get("claims", {}).get("diff")
 
