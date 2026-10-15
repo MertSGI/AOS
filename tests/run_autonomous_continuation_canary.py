@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 from aos.intent_compiler import (
     PLAN_INTENT_SCHEMA,
     build_intent_catalog,
