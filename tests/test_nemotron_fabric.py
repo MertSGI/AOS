@@ -123,7 +123,7 @@ def test_nemotron_error_mapping(monkeypatch):
 def test_nemotron_max_output_tokens_budget():
     from aos.providers.nemotron import nemotron_max_output_tokens
 
-    assert nemotron_max_output_tokens({"properties": {"objective_id": {}, "tasks": {}, "parallel_safe_groups": {}}}) == 3200
+    assert nemotron_max_output_tokens({"properties": {"objective_id": {}, "tasks": {}, "parallel_safe_groups": {}}}) == 6144
     assert nemotron_max_output_tokens({"properties": {"objective_id": {}, "parallel_candidates": {}, "completion_criteria": {}}}) == 1000
     assert nemotron_max_output_tokens({"properties": {"disposition": {}, "satisfied_criteria": {}, "unsatisfied_criteria": {}}}) == 1000
     assert nemotron_max_output_tokens({}) == 2200
