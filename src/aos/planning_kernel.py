@@ -48,6 +48,9 @@ from aos.intent_compiler import (
     UnknownTargetRefError,
     UnknownVerificationRefError,
     SourceGenerationMismatchError,
+    MismatchedRouteVerificationSpecError,
+    UnapprovedVerificationSpecError,
+    UnverifiedTestCommandError,
     build_intent_catalog,
     compile_intent_to_plan,
 )
@@ -321,9 +324,13 @@ class Objective:
     scope_tags: Tuple[str, ...]
     completion_criteria: Tuple[str, ...]
     parallel_candidates: Tuple[str, ...]
+    kind: Optional[str] = None
+    lane: Optional[str] = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "Objective":
+        raw_kind = value.get("kind")
+        raw_lane = value.get("lane")
         return cls(
             objective_id=_bounded_text(value.get("objective_id"), 120, "objective_id"),
             title=_bounded_text(value.get("title"), 240, "title"),
@@ -334,7 +341,55 @@ class Objective:
             scope_tags=tuple(_string_list(value.get("scope_tags"), "scope_tags", 32, 120)),
             completion_criteria=tuple(_string_list(value.get("completion_criteria"), "completion_criteria", 32, 500)),
             parallel_candidates=tuple(_string_list(value.get("parallel_candidates", []), "parallel_candidates", 16, 240)),
+            kind=_bounded_text(raw_kind, 64, "kind") if raw_kind else None,
+            lane=_bounded_text(raw_lane, 64, "lane") if raw_lane else None,
         )
+
+
+def is_implementation_objective(objective: Objective, situation: Optional[Any] = None) -> bool:
+    """Accurately classify whether an Objective represents Product implementation rather than verification."""
+    # 1. Check explicit kind
+    kind = str(getattr(objective, "kind", "") or "").upper()
+    if kind == "IMPLEMENTATION":
+        return True
+    if kind in ("VERIFICATION", "VALIDATION", "INSPECTION"):
+        return False
+
+    # 2. Check explicit lane
+    lane = str(getattr(objective, "lane", "") or "").upper()
+    if lane in ("FRONTEND", "BACKEND", "CORE", "IMPLEMENTATION"):
+        # Unless scope tags explicitly mark it as purely verification
+        if not any("VERIF" in str(tag).upper() for tag in getattr(objective, "scope_tags", [])):
+            return True
+
+    # 3. Check scope tags
+    scope_tags_upper = [str(t).upper() for t in getattr(objective, "scope_tags", [])]
+    if "IMPLEMENTATION" in scope_tags_upper or "FEATURE" in scope_tags_upper or "REFACTOR" in scope_tags_upper:
+        return True
+    if "VERIFICATION" in scope_tags_upper or "QA" in scope_tags_upper or "CANARY" in scope_tags_upper:
+        return False
+
+    # 4. Check title and completion criteria tokens
+    title_lower = str(getattr(objective, "title", "")).lower()
+    criteria_text = " ".join(str(c).lower() for c in getattr(objective, "completion_criteria", []))
+    desc_text = str(getattr(objective, "description", "")).lower()
+
+    impl_verbs = {"implement", "build", "create", "add", "mutate", "refactor", "wire", "connect", "integrate"}
+    verif_verbs = {"verify", "assert", "check", "inspect", "validate", "test", "audit"}
+
+    has_impl_verb = any(v in title_lower for v in impl_verbs)
+    has_verif_verb = any(v in title_lower for v in verif_verbs)
+
+    if has_impl_verb and not has_verif_verb:
+        return True
+
+    # 5. Check canonical next action from situation
+    if situation is not None:
+        next_action = str(getattr(situation, "canonical_next_action", "")).upper()
+        if next_action in ("IMPLEMENT", "MUTATE", "BUILD") and not has_verif_verb:
+            return True
+
+    return False
 
 
 def _objective_task_class(objective: "Objective") -> str:
@@ -3825,18 +3880,11 @@ def compile_execution_plan(
             workspace_source_generation=workspace_source_generation,
         )
 
-        obj_kind = str(getattr(objective, "kind", "")).upper()
-        # Compact intent catalog supports verification and observed reads.
-        # If the objective is implementation and requires mutation, do not silently substitute verification.
-        is_implementation_objective = (
-            obj_kind == "IMPLEMENTATION"
-            or "IMPLEMENTATION" in str(getattr(objective, "scope_tags", []))
-            or str(getattr(objective, "lane", "")).upper() in ("FRONTEND", "BACKEND", "CORE")
-            and "VERIFICATION" not in obj_kind
-        )
+        # Check implementation-objective classification gate
+        obj_is_impl = is_implementation_objective(objective, situation)
 
         proposal = None
-        if catalog.candidates and not is_implementation_objective:
+        if catalog.candidates and not obj_is_impl:
             if len(catalog.candidates) == 1:
                 # 5. Eliminate unnecessary model calls:
                 # If exactly one safe, authorized, source-grounded next action is known,

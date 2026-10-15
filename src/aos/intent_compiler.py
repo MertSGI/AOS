@@ -73,6 +73,97 @@ class SourceGenerationMismatchError(IntentCompilerError):
     pass
 
 
+class MismatchedRouteVerificationSpecError(IntentCompilerError):
+    """Typed rejection when a route is paired with another route's assertion specification."""
+    pass
+
+
+class UnapprovedVerificationSpecError(IntentCompilerError):
+    """Typed rejection when a verification spec lacks verified approval or source binding."""
+    pass
+
+
+class UnverifiedTestCommandError(IntentCompilerError):
+    """Typed blocker raised when a declared test script command is not verified non-mutating."""
+    pass
+
+
+# Allowlisted bounded non-mutating test command binaries and runners
+_SAFE_TEST_BINARY_ALLOWLIST = frozenset({
+    "vitest",
+    "playwright",
+    "jest",
+    "pytest",
+    "mocha",
+    "tsc",
+    "eslint",
+})
+
+# Mutating or dangerous tokens in test scripts that cause fail-closed rejection
+_MUTATING_SCRIPT_TOKENS = (
+    "rm ",
+    "rmdir",
+    "del ",
+    "delete",
+    "unlink",
+    "cp ",
+    "copy ",
+    "mv ",
+    "move ",
+    "sed ",
+    "patch ",
+    "curl ",
+    "wget ",
+    "npm install",
+    "npm i ",
+    "npm update",
+    "npm publish",
+    "git commit",
+    "git push",
+    "git checkout",
+    "git reset",
+    "git clean",
+    "--fix",
+    "--update",
+    "--write",
+    "-u",
+    "--watch",
+    "-w",
+)
+
+
+def is_safe_test_command(cmd_text: str) -> bool:
+    """Validate that a declared script command is strictly verified, allowlisted, bounded, non-mutating."""
+    if not isinstance(cmd_text, str) or not cmd_text.strip():
+        return False
+    cmd_lower = cmd_text.strip().lower()
+
+    # Reject chaining / shell injection operators
+    if any(sep in cmd_lower for sep in (";", "&&", "||", "|", "`", "$(")):
+        return False
+
+    # Reject any mutating tokens
+    if any(mut in cmd_lower for mut in _MUTATING_SCRIPT_TOKENS):
+        return False
+
+    # Extract initial executable / runner
+    tokens = cmd_lower.split()
+    if not tokens:
+        return False
+
+    first = tokens[0]
+    # Check for direct safe runner: vitest, playwright, jest, pytest, eslint, etc.
+    if first in _SAFE_TEST_BINARY_ALLOWLIST:
+        return True
+
+    # Check for npx <runner>: e.g., npx vitest run, npx playwright test
+    if first == "npx" and len(tokens) > 1 and tokens[1] in _SAFE_TEST_BINARY_ALLOWLIST:
+        return True
+
+    # Check for node <script> (only if not mutating, but node scripts are generally unverified unless specific)
+    return False
+
+
 @dataclasses.dataclass(frozen=True)
 class IntentCandidate:
     intent_type: str
@@ -109,6 +200,9 @@ class IntentCatalog:
     candidates: Tuple[IntentCandidate, ...]
     browser_verification_specs: Dict[str, Dict[str, Any]] = dataclasses.field(default_factory=dict)
     render_origin: Optional[str] = None
+    control_sha: str = ""
+    execution_base_sha: Optional[str] = None
+    workspace_source_generation: Optional[str] = None
 
     def get_candidate(self, intent_type: str, target_ref: str) -> Optional[IntentCandidate]:
         for c in self.candidates:
@@ -121,17 +215,79 @@ class IntentCatalog:
             "objective_id": self.objective_id,
             "candidate_count": len(self.candidates),
             "candidates": [c.to_dict() for c in self.candidates],
+            "control_sha": self.control_sha,
+            "execution_base_sha": self.execution_base_sha,
+            "workspace_source_generation": self.workspace_source_generation,
         }
+
+
+def _validate_assertion_spec(spec: Dict[str, Any]) -> bool:
+    """Validate assertion specification structure and check that assertions are non-empty and well-formed."""
+    if not isinstance(spec, dict):
+        return False
+    assertions = spec.get("assertions")
+    if not isinstance(assertions, list) or not assertions:
+        return False
+    for a in assertions:
+        if not isinstance(a, dict) or "type" not in a:
+            return False
+    return True
 
 
 def _discover_browser_verification_specs(
     workspace: Optional[Path],
     runtime_dir: Optional[Path],
+    expected_source_generation: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Discover accepted source-grounded browser verification specifications."""
+    """Discover accepted, approved, source-grounded browser verification specifications."""
     specs: Dict[str, Dict[str, Any]] = {}
 
-    # Check search locations for explicit verification spec files
+    # 1. Discover from contract path in resolve_render_entry
+    if workspace is not None:
+        try:
+            render_entry = resolve_render_entry(workspace.resolve(), runtime_dir=runtime_dir)
+            contract_path = render_entry.contract_path
+            if contract_path and contract_path.is_file():
+                try:
+                    cdata = json.loads(contract_path.read_text(encoding="utf-8"))
+                    if isinstance(cdata, dict):
+                        # Contract-level source generation verification if specified
+                        contract_gen = cdata.get("workspace_source_generation")
+                        if (
+                            expected_source_generation
+                            and contract_gen
+                            and contract_gen != expected_source_generation
+                        ):
+                            # Stale source generation contract ignored
+                            pass
+                        else:
+                            raw_c_specs = cdata.get("verification_specs") or cdata.get("specs") or {}
+                            if isinstance(raw_c_specs, dict):
+                                for k, v in raw_c_specs.items():
+                                    if _validate_assertion_spec(v):
+                                        spec_copy = dict(v)
+                                        # Bind route explicitly into spec
+                                        if "route" not in spec_copy:
+                                            spec_copy["route"] = str(k)
+                                        specs[str(k)] = spec_copy
+                            raw_routes = cdata.get("routes")
+                            if isinstance(raw_routes, dict):
+                                for k, v in raw_routes.items():
+                                    if _validate_assertion_spec(v):
+                                        spec_copy = dict(v)
+                                        if "route" not in spec_copy:
+                                            spec_copy["route"] = str(k)
+                                        specs[str(k)] = spec_copy
+                            elif isinstance(raw_routes, list):
+                                for item in raw_routes:
+                                    if isinstance(item, dict) and "route" in item and _validate_assertion_spec(item):
+                                        specs[str(item["route"])] = dict(item)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # 2. Check search locations for explicit approved verification spec files
     search_paths = []
     if runtime_dir is not None:
         search_paths.extend([
@@ -152,43 +308,26 @@ def _discover_browser_verification_specs(
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    # Could be keyed by route/ref or have a "specs" dict
-                    raw_specs = data.get("specs", data)
+                    # Reject unapproved standalone local verification files
+                    if not data.get("approved", False) and not data.get("verification_specs"):
+                        continue
+                    file_gen = data.get("workspace_source_generation")
+                    if (
+                        expected_source_generation
+                        and file_gen
+                        and file_gen != expected_source_generation
+                    ):
+                        continue
+                    raw_specs = data.get("verification_specs") or data.get("specs") or data
                     if isinstance(raw_specs, dict):
                         for k, v in raw_specs.items():
-                            if isinstance(v, dict) and "assertions" in v:
-                                specs[str(k)] = v
+                            if isinstance(v, dict) and _validate_assertion_spec(v):
+                                spec_copy = dict(v)
+                                if "route" not in spec_copy:
+                                    spec_copy["route"] = str(k)
+                                specs[str(k)] = spec_copy
             except Exception:
                 pass
-
-    # Inspect render-entry contract
-    if workspace is not None:
-        try:
-            render_entry = resolve_render_entry(workspace.resolve(), runtime_dir=runtime_dir)
-            contract_path = render_entry.contract_path
-            if contract_path and contract_path.is_file():
-                try:
-                    cdata = json.loads(contract_path.read_text(encoding="utf-8"))
-                    if isinstance(cdata, dict):
-                        raw_c_specs = cdata.get("verification_specs") or cdata.get("specs") or {}
-                        if isinstance(raw_c_specs, dict):
-                            for k, v in raw_c_specs.items():
-                                if isinstance(v, dict) and "assertions" in v:
-                                    specs[str(k)] = v
-                        # In addition, check if routes is a dict of route -> spec or list of objects
-                        raw_routes = cdata.get("routes")
-                        if isinstance(raw_routes, dict):
-                            for k, v in raw_routes.items():
-                                if isinstance(v, dict) and "assertions" in v:
-                                    specs[str(k)] = v
-                        elif isinstance(raw_routes, list):
-                            for item in raw_routes:
-                                if isinstance(item, dict) and "route" in item and "assertions" in item:
-                                    specs[str(item["route"])] = item
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     return specs
 
@@ -212,7 +351,14 @@ def build_intent_catalog(
     forbidden_signatures = forbidden_signatures or set()
     forbidden_read_identities = forbidden_read_identities or set()
 
-    browser_specs = _discover_browser_verification_specs(workspace, runtime_dir)
+    control_sha = str(getattr(situation, "control_sha", "")).strip()
+    execution_base_sha = getattr(situation, "execution_base_sha", None)
+
+    browser_specs = _discover_browser_verification_specs(
+        workspace,
+        runtime_dir,
+        expected_source_generation=workspace_source_generation,
+    )
     render_origin = None
 
     # 1. BROWSER_VERIFY candidates from verified render-entry routes or verification specs
@@ -238,13 +384,20 @@ def build_intent_catalog(
                 if not r_clean:
                     continue
                 full_url = render_origin.rstrip("/") + ("/" + r_clean.lstrip("/") if not r_clean.startswith("#") else "/" + r_clean)
-                
+
                 # Check if an accepted source-grounded verification_ref exists for this route or URL
                 matched_spec_ref = None
                 if r_clean in browser_specs:
-                    matched_spec_ref = r_clean
+                    spec = browser_specs[r_clean]
+                    # Ensure route binding in spec matches target route
+                    spec_route = str(spec.get("route", "")).strip()
+                    if not spec_route or spec_route == r_clean:
+                        matched_spec_ref = r_clean
                 elif full_url in browser_specs:
-                    matched_spec_ref = full_url
+                    spec = browser_specs[full_url]
+                    spec_route = str(spec.get("route", "")).strip()
+                    if not spec_route or spec_route in (r_clean, full_url):
+                        matched_spec_ref = full_url
 
                 # Do not manufacture browser verification intents without accepted verification specs
                 if matched_spec_ref is not None:
@@ -260,12 +413,15 @@ def build_intent_catalog(
         except Exception:
             pass
 
-    # 2. RUN_DECLARED_TEST candidates from verified package.json scripts
+    # 2. RUN_DECLARED_TEST candidates from verified package.json scripts (only admitted if safe)
     if verification_capabilities:
         scripts = verification_capabilities.get("verification_scripts", {})
         if isinstance(scripts, Mapping):
             for script_name, cmd_text in scripts.items():
                 s_name = str(script_name).strip()
+                # Verify non-mutating safety: only admit safe, allowlisted, bounded test commands
+                if not is_safe_test_command(str(cmd_text)):
+                    continue
                 candidates.append(
                     IntentCandidate(
                         intent_type="RUN_DECLARED_TEST",
@@ -342,6 +498,9 @@ def build_intent_catalog(
         candidates=tuple(deduped_candidates),
         browser_verification_specs=browser_specs,
         render_origin=render_origin,
+        control_sha=control_sha,
+        execution_base_sha=str(execution_base_sha) if execution_base_sha is not None else None,
+        workspace_source_generation=workspace_source_generation,
     )
 
 
@@ -376,16 +535,36 @@ def compile_intent_to_plan(
     if intent_type not in SUPPORTED_INTENT_TYPES:
         raise IntentCompilerError(f"Unsupported intent_type: {intent_type!r}")
 
+    # Verify canonical source identity binding against catalog originating source identity
+    current_control_sha = getattr(situation, "control_sha", "")
+    if current_control_sha:
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", current_control_sha):
+            raise SourceGenerationMismatchError("Canonical control SHA is invalid or drifting")
+        if catalog.control_sha and catalog.control_sha != current_control_sha:
+            raise SourceGenerationMismatchError(
+                f"Catalog control_sha {catalog.control_sha!r} does not match situation {current_control_sha!r}"
+            )
+
+    situation_base_sha = getattr(situation, "execution_base_sha", None)
+    if situation_base_sha and catalog.execution_base_sha and catalog.execution_base_sha != situation_base_sha:
+        raise SourceGenerationMismatchError(
+            f"Catalog execution_base_sha {catalog.execution_base_sha!r} does not match situation {situation_base_sha!r}"
+        )
+
+    if (
+        workspace_source_generation
+        and catalog.workspace_source_generation
+        and catalog.workspace_source_generation != workspace_source_generation
+    ):
+        raise SourceGenerationMismatchError(
+            f"Catalog workspace_source_generation {catalog.workspace_source_generation!r} does not match {workspace_source_generation!r}"
+        )
+
     candidate = catalog.get_candidate(intent_type, target_ref)
     if candidate is None:
         raise UnknownTargetRefError(
             f"target_ref {target_ref!r} is not present in trusted catalog for intent_type {intent_type!r}"
         )
-
-    # Verify source generation / SHA preconditions if situation provides them
-    current_control_sha = getattr(situation, "control_sha", "")
-    if current_control_sha and not re.fullmatch(r"[0-9a-fA-F]{40,64}", current_control_sha):
-        raise SourceGenerationMismatchError("Canonical control SHA is invalid or drifting")
 
     authority_id = str(getattr(objective, "authority_id", "")).strip()
     if not authority_id:
@@ -433,6 +612,13 @@ def compile_intent_to_plan(
                 f"SOURCE_GROUNDED_VERIFICATION_SPEC_MISSING: No accepted browser verification specification found for route {r_clean!r}"
             )
 
+        # Enforce route-assertion binding: Route A cannot be verified with Route B's spec
+        spec_route = str(spec.get("route", "")).strip()
+        if spec_route and spec_route not in (r_clean, full_url):
+            raise MismatchedRouteVerificationSpecError(
+                f"MISMATCHED_ROUTE_VERIFICATION_SPEC: Target route {r_clean!r} does not match verification spec route {spec_route!r}"
+            )
+
         assertions = list(spec.get("assertions", []))
         if not assertions:
             raise SourceGroundedVerificationSpecMissing(
@@ -450,11 +636,13 @@ def compile_intent_to_plan(
         task["evidence_requirements"] = ["REAL_LOCAL_BROWSER_SCREENSHOT", "dom_inspection", "assertion_results"]
 
     elif intent_type == "RUN_DECLARED_TEST":
+        # Check command safety
+        cmd = candidate.payload_preview.get("cmd", ["npm", "run", target_ref])
         clean_ref = re.sub(r'[^a-zA-Z0-9_-]', '_', target_ref).strip('_')[:24]
         task["node_id"] = f"TASK-TEST-{clean_ref.upper()}"
         task["run_type"] = "PROCESS"
         task["payload"] = {
-            "cmd": ["npm", "run", target_ref],
+            "cmd": list(cmd),
         }
         task["evidence_requirements"] = ["exit_code_zero", "process_output"]
         task["tests"] = [f"npm run {target_ref}"]
@@ -481,3 +669,4 @@ def compile_intent_to_plan(
     }
 
     return plan
+

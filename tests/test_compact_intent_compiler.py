@@ -30,6 +30,10 @@ from aos.intent_compiler import (
     UnknownTargetRefError,
     UnknownVerificationRefError,
     SourceGenerationMismatchError,
+    MismatchedRouteVerificationSpecError,
+    UnapprovedVerificationSpecError,
+    UnverifiedTestCommandError,
+    is_safe_test_command,
     build_intent_catalog,
     compile_intent_to_plan,
 )
@@ -43,6 +47,7 @@ from aos.planning_kernel import (
     _normalize_plan_schema_envelope,
     _task_signature,
     _validate_worker_payload,
+    is_implementation_objective,
 )
 
 
@@ -413,3 +418,223 @@ class TestCompactIntentCompiler:
             "tests", "evidence_requirements", "completion_criteria",
         }
         assert required_task_fields.issubset(set(t.keys()))
+
+    def test_route_a_paired_with_route_b_assertion_spec_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Route A paired with Route B's assertion specification is strictly rejected."""
+        mismatched_catalog = IntentCatalog(
+            objective_id="OBJ-01",
+            candidates=(
+                IntentCandidate(
+                    intent_type="BROWSER_VERIFY",
+                    target_ref="#/route/alpha",
+                    verification_ref="spec-beta",
+                    description="Verify route alpha",
+                    payload_preview={"url": "http://127.0.0.1:5173/#/route/alpha"},
+                ),
+            ),
+            browser_verification_specs={
+                "spec-beta": {
+                    "route": "#/route/beta",
+                    "assertions": [
+                        {"type": "selector_visible", "target": "#beta-card"},
+                        {"type": "route_exact", "target": "#/route/beta"},
+                    ],
+                }
+            },
+            render_origin="http://127.0.0.1:5173",
+        )
+        intent = {
+            "schema_version": "1.0.0",
+            "objective_id": "OBJ-01",
+            "intent_type": "BROWSER_VERIFY",
+            "target_ref": "#/route/alpha",
+            "verification_ref": "spec-beta",
+        }
+        with pytest.raises(MismatchedRouteVerificationSpecError):
+            compile_intent_to_plan(
+                intent, mismatched_catalog, base_situation, base_objective, tmp_path, tmp_path
+            )
+
+    def test_unapproved_local_verification_json_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Unapproved local verification JSON without approved: true or contract is rejected."""
+        aos_dir = tmp_path / ".aos"
+        aos_dir.mkdir(parents=True, exist_ok=True)
+        unapproved_file = aos_dir / "browser-verification-specs.json"
+        unapproved_file.write_text(
+            json.dumps({
+                "#/unapproved": {
+                    "route": "#/unapproved",
+                    "assertions": [{"type": "selector_visible", "target": "#evil"}],
+                }
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=tmp_path,
+        )
+        # Should not discover specs from unapproved file
+        assert "#/unapproved" not in catalog.browser_verification_specs
+        assert all(c.target_ref != "#/unapproved" for c in catalog.candidates)
+
+    def test_stale_source_sha_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Stale but correctly formatted 40-char source SHA is rejected against catalog."""
+        catalog_with_sha = IntentCatalog(
+            objective_id="OBJ-01",
+            candidates=(
+                IntentCandidate(
+                    intent_type="READ_OBSERVED_SOURCE",
+                    target_ref="src/app.tsx",
+                    description="Read source",
+                    payload_preview={"action": "read_file", "path": "src/app.tsx"},
+                ),
+            ),
+            control_sha="a" * 40,
+        )
+        # Situation has a valid 40-char SHA but differing from catalog
+        stale_situation = dataclasses.replace(base_situation, control_sha="b" * 40)
+        intent = {
+            "schema_version": "1.0.0",
+            "objective_id": "OBJ-01",
+            "intent_type": "READ_OBSERVED_SOURCE",
+            "target_ref": "src/app.tsx",
+        }
+        with pytest.raises(SourceGenerationMismatchError):
+            compile_intent_to_plan(
+                intent, catalog_with_sha, stale_situation, base_objective, tmp_path, tmp_path
+            )
+
+    def test_changed_workspace_generation_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Changed workspace source generation raises SourceGenerationMismatchError."""
+        catalog_with_gen = IntentCatalog(
+            objective_id="OBJ-01",
+            candidates=(
+                IntentCandidate(
+                    intent_type="READ_OBSERVED_SOURCE",
+                    target_ref="src/app.tsx",
+                    description="Read source",
+                    payload_preview={"action": "read_file", "path": "src/app.tsx"},
+                ),
+            ),
+            control_sha="a" * 40,
+            workspace_source_generation="gen-alpha-12345",
+        )
+        intent = {
+            "schema_version": "1.0.0",
+            "objective_id": "OBJ-01",
+            "intent_type": "READ_OBSERVED_SOURCE",
+            "target_ref": "src/app.tsx",
+        }
+        with pytest.raises(SourceGenerationMismatchError):
+            compile_intent_to_plan(
+                intent,
+                catalog_with_gen,
+                base_situation,
+                base_objective,
+                tmp_path,
+                tmp_path,
+                workspace_source_generation="gen-beta-67890",
+            )
+
+    def test_potentially_mutating_package_script_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Potentially mutating scripts (build, lint:fix, sed, rm) are excluded from catalog."""
+        scripts = {
+            "test:unit": "vitest run",
+            "test:e2e": "playwright test",
+            "build": "vite build",
+            "lint:fix": "eslint --fix .",
+            "clean": "rm -rf dist",
+            "mutate:node": "node scripts/mutate.js",
+            "format": "prettier --write .",
+        }
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=tmp_path,
+            verification_capabilities={"verification_scripts": scripts},
+        )
+        admitted = {c.target_ref for c in catalog.candidates if c.intent_type == "RUN_DECLARED_TEST"}
+        assert "test:unit" in admitted
+        assert "test:e2e" in admitted
+        assert "build" not in admitted
+        assert "lint:fix" not in admitted
+        assert "clean" not in admitted
+        assert "mutate:node" not in admitted
+        assert "format" not in admitted
+
+    def test_implementation_objective_classification_gate(
+        self, base_situation: ProjectSituation
+    ):
+        """Negative regression: Implementation objectives are strictly classified and not routed to verification."""
+        impl_obj1 = Objective(
+            objective_id="OBJ-IMPL-01",
+            title="Implement responsive navbar component",
+            description="Create navbar with brand logo and mobile menu",
+            authority_id="AUTH-VALID-01",
+            risk_class="R0",
+            rationale="Feature requirement",
+            scope_tags=("ui", "frontend"),
+            completion_criteria=("Navbar rendered",),
+            parallel_candidates=(),
+            kind="IMPLEMENTATION",
+        )
+        assert is_implementation_objective(impl_obj1, base_situation) is True
+
+        impl_obj2 = Objective(
+            objective_id="OBJ-IMPL-02",
+            title="Wire backend appointment booking endpoint",
+            description="Add database query handler",
+            authority_id="AUTH-VALID-01",
+            risk_class="R0",
+            rationale="Backend feature",
+            scope_tags=("backend", "feature"),
+            completion_criteria=("Endpoint returns 200",),
+            parallel_candidates=(),
+        )
+        assert is_implementation_objective(impl_obj2, base_situation) is True
+
+        verif_obj = Objective(
+            objective_id="OBJ-VERIF-01",
+            title="Verify appointment management UI route",
+            description="Check that root container renders and route matches",
+            authority_id="AUTH-VALID-01",
+            risk_class="R0",
+            rationale="QA check",
+            scope_tags=("ui", "verification"),
+            completion_criteria=("Route verified",),
+            parallel_candidates=(),
+            kind="VERIFICATION",
+        )
+        assert is_implementation_objective(verif_obj, base_situation) is False
+
+    def test_completed_action_under_different_task_id_deduplicated(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Action previously completed under task-id TASK-OLD is excluded by semantic signature."""
+        # Signature of running npm run test:unit
+        sig = "PROCESS:" + json.dumps({"cmd": ["npm", "run", "test:unit"]}, sort_keys=True, separators=(",", ":"))
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=tmp_path,
+            verification_capabilities={"verification_scripts": {"test:unit": "vitest run"}},
+            # Completed under a different task ID, but signature is tracked in forbidden_signatures
+            forbidden_ids={"TASK-HISTORICAL-BATCH-999"},
+            forbidden_signatures={sig},
+        )
+        assert all(c.target_ref != "test:unit" for c in catalog.candidates)
+
