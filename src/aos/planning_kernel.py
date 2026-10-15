@@ -3882,9 +3882,10 @@ def compile_execution_plan(
 
         # Check implementation-objective classification gate
         obj_is_impl = is_implementation_objective(objective, situation)
+        has_impl_candidates = any(c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE" for c in catalog.candidates)
 
         proposal = None
-        if catalog.candidates and not obj_is_impl:
+        if catalog.candidates and (not obj_is_impl or has_impl_candidates):
             if len(catalog.candidates) == 1:
                 # 5. Eliminate unnecessary model calls:
                 # If exactly one safe, authorized, source-grounded next action is known,

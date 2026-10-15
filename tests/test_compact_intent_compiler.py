@@ -23,6 +23,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from aos.intent_compiler import (
     PLAN_INTENT_SCHEMA,
+    AuthorizedWorkPackage,
     IntentCandidate,
     IntentCatalog,
     IntentCompilerError,
@@ -32,6 +33,8 @@ from aos.intent_compiler import (
     SourceGenerationMismatchError,
     MismatchedRouteVerificationSpecError,
     UnapprovedVerificationSpecError,
+    UnapprovedWorkPackageError,
+    UnauthorizedWriteScopeError,
     UnverifiedTestCommandError,
     is_safe_test_command,
     build_intent_catalog,
@@ -637,4 +640,233 @@ class TestCompactIntentCompiler:
             forbidden_signatures={sig},
         )
         assert all(c.target_ref != "test:unit" for c in catalog.candidates)
+
+    def test_compile_authorized_work_package_to_agentic_plan(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Positive: IMPLEMENT_AUTHORIZED_WORK_PACKAGE compiles into an authoritative AGENTIC task."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "source_sha": base_situation.control_sha,
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-001-ADD-HELPER",
+                        "target_files": ["src/helper.py"],
+                        "expected_artifacts": ["src/helper.py"],
+                        "instruction": "Implement calculate_tax function in src/helper.py",
+                        "tests": ["pytest tests/test_helper.py"],
+                        "risk_class": "R0",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+        )
+        assert any(c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE" for c in catalog.candidates)
+        wp_candidate = next(c for c in catalog.candidates if c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE")
+        assert wp_candidate.target_ref == "WP-001-ADD-HELPER"
+
+        intent = {
+            "schema_version": "1.0.0",
+            "objective_id": base_objective.objective_id,
+            "intent_type": "IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
+            "target_ref": "WP-001-ADD-HELPER",
+        }
+        plan = compile_intent_to_plan(
+            intent=intent,
+            catalog=catalog,
+            situation=base_situation,
+            objective=base_objective,
+            runtime_dir=runtime_dir,
+            workspace=tmp_path,
+        )
+
+        # Verify PLAN_SCHEMA compliance
+        validator = Draft202012Validator(PLAN_SCHEMA, format_checker=FormatChecker())
+        validator.validate(plan)
+
+        task = plan["tasks"][0]
+        assert task["run_type"] == "AGENTIC"
+        assert task["mutating"] is True
+        assert task["write_scope"] == ["src/helper.py"]
+        assert task["expected_artifacts"] == ["src/helper.py"]
+        assert task["tests"] == ["pytest tests/test_helper.py"]
+        assert task["payload"]["prompt"] == "Implement calculate_tax function in src/helper.py"
+        assert "changed_file_hashes" in task["evidence_requirements"]
+
+    def test_unknown_work_package_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Model inventing a non-existent work package ref is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+        )
+
+        intent = {
+            "schema_version": "1.0.0",
+            "objective_id": base_objective.objective_id,
+            "intent_type": "IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
+            "target_ref": "WP-SPOOFED-INVENTED-REF",
+        }
+        with pytest.raises(UnknownTargetRefError) as exc_info:
+            compile_intent_to_plan(
+                intent=intent,
+                catalog=catalog,
+                situation=base_situation,
+                objective=base_objective,
+                runtime_dir=runtime_dir,
+                workspace=tmp_path,
+            )
+        assert "WP-SPOOFED-INVENTED-REF" in str(exc_info.value)
+
+    def test_unapproved_work_package_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package lacking approved: true is rejected during discovery and compilation."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": False,
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-UNAPPROVED",
+                        "target_files": ["src/malicious.py"],
+                        "instruction": "Do bad things",
+                        "approved": False,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+        )
+        # Not admitted to catalog
+        assert all(c.target_ref != "WP-UNAPPROVED" for c in catalog.candidates)
+
+    def test_work_package_source_sha_mismatch_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package bound to stale / drifting source SHA is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        stale_sha = "b" * 40
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "source_sha": stale_sha,
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-STALE-SHA",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Implement helper",
+                        "source_sha": stale_sha,
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+        )
+        # Ignored because source_sha does not match situation control_sha
+        assert all(c.target_ref != "WP-STALE-SHA" for c in catalog.candidates)
+
+    def test_work_package_unauthorized_write_scope_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package targeting out-of-lane files is rejected by lane boundary."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        # Situation allows only src/
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "source_sha": base_situation.control_sha,
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-OUT-OF-LANE",
+                        "target_files": ["protected/core.py"],
+                        "instruction": "Mutate protected code",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+        )
+        # Out-of-lane target is rejected during catalog candidate generation
+        assert all(c.target_ref != "WP-OUT-OF-LANE" for c in catalog.candidates)
+
+    def test_completed_work_package_deduplicated(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Previously completed AGENTIC work package is deduplicated by signature."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "source_sha": base_situation.control_sha,
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-COMPLETED-01",
+                        "target_files": ["src/done.py"],
+                        "expected_artifacts": ["src/done.py"],
+                        "instruction": "Already done task",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        completed_sig = "AGENTIC:" + json.dumps({
+            "expected_artifacts": ["src/done.py"],
+            "prompt": "Already done task",
+            "write_scope": ["src/done.py"],
+        }, sort_keys=True, separators=(",", ":"))
+
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            forbidden_signatures={completed_sig},
+        )
+        assert all(c.target_ref != "WP-COMPLETED-01" for c in catalog.candidates)
+
 

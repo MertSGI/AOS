@@ -34,7 +34,12 @@ PLAN_INTENT_SCHEMA: Dict[str, Any] = {
         "objective_id": {"type": "string"},
         "intent_type": {
             "type": "string",
-            "enum": ["BROWSER_VERIFY", "RUN_DECLARED_TEST", "READ_OBSERVED_SOURCE"],
+            "enum": [
+                "BROWSER_VERIFY",
+                "RUN_DECLARED_TEST",
+                "READ_OBSERVED_SOURCE",
+                "IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
+            ],
         },
         "target_ref": {"type": "string"},
         "verification_ref": {"type": "string"},
@@ -45,6 +50,7 @@ SUPPORTED_INTENT_TYPES = frozenset({
     "BROWSER_VERIFY",
     "RUN_DECLARED_TEST",
     "READ_OBSERVED_SOURCE",
+    "IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
 })
 
 
@@ -80,6 +86,16 @@ class MismatchedRouteVerificationSpecError(IntentCompilerError):
 
 class UnapprovedVerificationSpecError(IntentCompilerError):
     """Typed rejection when a verification spec lacks verified approval or source binding."""
+    pass
+
+
+class UnapprovedWorkPackageError(IntentCompilerError):
+    """Typed rejection when a work package lacks verified approval or canonical source binding."""
+    pass
+
+
+class UnauthorizedWriteScopeError(IntentCompilerError):
+    """Typed rejection when a work package targets paths outside canonical lane allowed scope."""
     pass
 
 
@@ -195,10 +211,37 @@ class IntentCandidate:
 
 
 @dataclasses.dataclass(frozen=True)
+class AuthorizedWorkPackage:
+    work_package_id: str
+    target_files: Tuple[str, ...]
+    instruction: str
+    expected_artifacts: Tuple[str, ...]
+    tests: Tuple[str, ...] = ()
+    authority_id: Optional[str] = None
+    source_sha: Optional[str] = None
+    risk_class: str = "R0"
+    approved: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "work_package_id": self.work_package_id,
+            "target_files": list(self.target_files),
+            "instruction": self.instruction,
+            "expected_artifacts": list(self.expected_artifacts),
+            "tests": list(self.tests),
+            "authority_id": self.authority_id,
+            "source_sha": self.source_sha,
+            "risk_class": self.risk_class,
+            "approved": self.approved,
+        }
+
+
+@dataclasses.dataclass(frozen=True)
 class IntentCatalog:
     objective_id: str
     candidates: Tuple[IntentCandidate, ...]
     browser_verification_specs: Dict[str, Dict[str, Any]] = dataclasses.field(default_factory=dict)
+    work_packages: Dict[str, AuthorizedWorkPackage] = dataclasses.field(default_factory=dict)
     render_origin: Optional[str] = None
     control_sha: str = ""
     execution_base_sha: Optional[str] = None
@@ -332,6 +375,98 @@ def _discover_browser_verification_specs(
     return specs
 
 
+def _discover_authorized_work_packages(
+    workspace: Optional[Path],
+    runtime_dir: Optional[Path],
+    expected_source_generation: Optional[str] = None,
+    expected_source_sha: Optional[str] = None,
+) -> Dict[str, AuthorizedWorkPackage]:
+    """Discover approved, source-bound work packages from trusted control or canary fixture."""
+    work_packages: Dict[str, AuthorizedWorkPackage] = {}
+    search_paths = []
+    if runtime_dir is not None:
+        search_paths.extend([
+            Path(runtime_dir) / "authorized-work-packages.json",
+            Path(runtime_dir) / "work-packages.json",
+            Path(runtime_dir) / "work-package.json",
+        ])
+    if workspace is not None:
+        ws_root = workspace.resolve()
+        search_paths.extend([
+            ws_root / ".aos" / "authorized-work-packages.json",
+            ws_root / ".aos" / "work-packages.json",
+            ws_root / ".aos" / "work-package.json",
+        ])
+
+    for p in search_paths:
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    continue
+                # Explicit approval required
+                if not data.get("approved", False):
+                    continue
+                # Source generation binding check if specified
+                file_gen = data.get("workspace_source_generation")
+                if expected_source_generation and file_gen and file_gen != expected_source_generation:
+                    continue
+                file_sha = data.get("source_sha") or data.get("canonical_source_sha")
+                if expected_source_sha and file_sha and file_sha != expected_source_sha:
+                    continue
+
+                raw_packages = data.get("work_packages") or data.get("packages")
+                if raw_packages is None and "work_package_id" in data:
+                    raw_packages = [data]
+                elif isinstance(raw_packages, dict):
+                    raw_packages = list(raw_packages.values())
+
+                if isinstance(raw_packages, list):
+                    for wp_item in raw_packages:
+                        if not isinstance(wp_item, dict):
+                            continue
+                        wp_id = str(wp_item.get("work_package_id") or wp_item.get("id") or "").strip()
+                        if not wp_id:
+                            continue
+                        # Target files / write scope
+                        raw_targets = wp_item.get("target_files") or wp_item.get("write_scope") or []
+                        target_files = tuple(
+                            str(t).strip().replace("\\", "/") for t in raw_targets if str(t).strip()
+                        )
+                        if not target_files:
+                            continue
+                        instruction = str(wp_item.get("instruction") or wp_item.get("prompt") or "").strip()
+                        if not instruction:
+                            continue
+                        raw_artifacts = wp_item.get("expected_artifacts") or target_files
+                        expected_artifacts = tuple(
+                            str(a).strip().replace("\\", "/") for a in raw_artifacts if str(a).strip()
+                        )
+                        raw_tests = wp_item.get("tests") or []
+                        if isinstance(raw_tests, str):
+                            raw_tests = [raw_tests]
+                        tests = tuple(str(t).strip() for t in raw_tests if str(t).strip())
+                        authority_id = str(wp_item.get("authority_id") or data.get("authority_id") or "").strip() or None
+                        pkg_sha = str(wp_item.get("source_sha") or file_sha or "").strip() or None
+                        risk_class = str(wp_item.get("risk_class") or "R0").strip()
+
+                        work_packages[wp_id] = AuthorizedWorkPackage(
+                            work_package_id=wp_id,
+                            target_files=target_files,
+                            instruction=instruction,
+                            expected_artifacts=expected_artifacts,
+                            tests=tests,
+                            authority_id=authority_id,
+                            source_sha=pkg_sha,
+                            risk_class=risk_class,
+                            approved=bool(wp_item.get("approved", True)),
+                        )
+            except Exception:
+                pass
+
+    return work_packages
+
+
 def build_intent_catalog(
     situation: Any,
     objective: Any,
@@ -358,6 +493,12 @@ def build_intent_catalog(
         workspace,
         runtime_dir,
         expected_source_generation=workspace_source_generation,
+    )
+    work_packages = _discover_authorized_work_packages(
+        workspace,
+        runtime_dir,
+        expected_source_generation=workspace_source_generation,
+        expected_source_sha=control_sha or (str(execution_base_sha) if execution_base_sha else None),
     )
     render_origin = None
 
@@ -464,6 +605,40 @@ def build_intent_catalog(
                     )
                 )
 
+    # 4. IMPLEMENT_AUTHORIZED_WORK_PACKAGE candidates from trusted work packages
+    lane_allowed_scope = getattr(situation, "lane_allowed_scope", None)
+    for wp_id, wp in work_packages.items():
+        if not wp.approved:
+            continue
+        # Verify write_scope against canonical lane allowed scope if defined
+        if lane_allowed_scope is not None:
+            lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in lane_allowed_scope]
+            lane_allowed_exact = [p.replace("\\", "/") for p in lane_allowed_scope]
+            scope_ok = True
+            for tf in wp.target_files:
+                clean_tf = tf.replace("\\", "/")
+                is_covered = any(clean_tf.startswith(pref) or clean_tf + "/" == pref for pref in lane_allowed_prefixes)
+                if not is_covered and clean_tf in lane_allowed_exact:
+                    is_covered = True
+                if not is_covered:
+                    scope_ok = False
+                    break
+            if not scope_ok:
+                continue
+
+        candidates.append(
+            IntentCandidate(
+                intent_type="IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
+                target_ref=wp_id,
+                description=f"Implement authorized work package {wp_id}: {wp.instruction[:60]}",
+                payload_preview={
+                    "prompt": wp.instruction,
+                    "write_scope": list(wp.target_files),
+                    "expected_artifacts": list(wp.expected_artifacts),
+                },
+            )
+        )
+
     # Deduplicate against completed signatures
     deduped_candidates: List[IntentCandidate] = []
     for c in candidates:
@@ -471,6 +646,7 @@ def build_intent_catalog(
             "BROWSER_VERIFY": "BROWSER",
             "RUN_DECLARED_TEST": "PROCESS",
             "READ_OBSERVED_SOURCE": "FILE",
+            "IMPLEMENT_AUTHORIZED_WORK_PACKAGE": "AGENTIC",
         }
         r_type = run_type_map.get(c.intent_type, "")
         sig_payload = dict(c.payload_preview)
@@ -497,6 +673,7 @@ def build_intent_catalog(
         objective_id=str(getattr(objective, "objective_id", "")),
         candidates=tuple(deduped_candidates),
         browser_verification_specs=browser_specs,
+        work_packages=work_packages,
         render_origin=render_origin,
         control_sha=control_sha,
         execution_base_sha=str(execution_base_sha) if execution_base_sha is not None else None,
@@ -657,6 +834,55 @@ def compile_intent_to_plan(
             "path": clean_path,
         }
         task["evidence_requirements"] = ["read_identity_hash"]
+
+    elif intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE":
+        wp = catalog.work_packages.get(target_ref)
+        if wp is None:
+            raise UnknownTargetRefError(
+                f"work_package_ref {target_ref!r} not found in trusted authorized work packages"
+            )
+        if not wp.approved:
+            raise UnapprovedWorkPackageError(
+                f"Work package {target_ref!r} lacks verified approval"
+            )
+        if wp.source_sha and current_control_sha and wp.source_sha != current_control_sha:
+            raise SourceGenerationMismatchError(
+                f"Work package source_sha {wp.source_sha!r} does not match current control_sha {current_control_sha!r}"
+            )
+        if wp.source_sha and situation_base_sha and wp.source_sha != situation_base_sha:
+            raise SourceGenerationMismatchError(
+                f"Work package source_sha {wp.source_sha!r} does not match situation execution_base_sha {situation_base_sha!r}"
+            )
+
+        # Enforce canonical lane allowed scope
+        lane_allowed_scope = getattr(situation, "lane_allowed_scope", None)
+        if lane_allowed_scope is not None:
+            lane_allowed_prefixes = [p.replace("\\", "/").rstrip("/") + "/" for p in lane_allowed_scope]
+            lane_allowed_exact = [p.replace("\\", "/") for p in lane_allowed_scope]
+            for tf in wp.target_files:
+                clean_tf = tf.replace("\\", "/")
+                is_covered = any(clean_tf.startswith(pref) or clean_tf + "/" == pref for pref in lane_allowed_prefixes)
+                if not is_covered and clean_tf in lane_allowed_exact:
+                    is_covered = True
+                if not is_covered:
+                    raise UnauthorizedWriteScopeError(
+                        f"Work package target file {clean_tf!r} is outside canonical lane allowed scope: CANONICAL_LANE_SCOPE_VIOLATION"
+                    )
+
+        clean_ref = re.sub(r'[^a-zA-Z0-9_-]', '_', target_ref).strip('_')[:24]
+        task["node_id"] = f"TASK-AGENTIC-WP-{clean_ref.upper()}"
+        task["run_type"] = "AGENTIC"
+        task["mutating"] = True
+        task["risk_class"] = wp.risk_class or "R0"
+        if wp.authority_id:
+            task["authority_id"] = wp.authority_id
+        task["write_scope"] = list(wp.target_files)
+        task["expected_artifacts"] = list(wp.expected_artifacts)
+        task["tests"] = list(wp.tests)
+        task["payload"] = {
+            "prompt": wp.instruction,
+        }
+        task["evidence_requirements"] = ["changed_file_hashes", "test_pass_evidence", "source_diff"]
 
     # Wrap into the existing unchanged PLAN_SCHEMA envelope
     node_id = task["node_id"]
