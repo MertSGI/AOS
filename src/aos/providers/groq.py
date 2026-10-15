@@ -20,6 +20,7 @@ from aos.providers.schema_utils import sanitize_planner_output as _sanitize_plan
 UNSUPPORTED_GROQ_KEYWORDS = {"$schema", "$id"}
 GROQ_MAX_OUTPUT_TOKENS = 2200
 GROQ_PLAN_MAX_OUTPUT_TOKENS = 3200
+GROQ_INTENT_MAX_OUTPUT_TOKENS = 800
 GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS = 1000
 GROQ_COMPLETION_MAX_OUTPUT_TOKENS = 1000
 
@@ -30,6 +31,8 @@ def groq_max_output_tokens(schema: Dict[str, Any]) -> int:
     if not isinstance(properties, dict):
         return GROQ_MAX_OUTPUT_TOKENS
     keys = set(properties)
+    if {"intent_type", "target_ref"}.issubset(keys):
+        return GROQ_INTENT_MAX_OUTPUT_TOKENS
     if {"objective_id", "parallel_candidates", "completion_criteria"}.issubset(keys) and "tasks" not in keys:
         return GROQ_OBJECTIVE_MAX_OUTPUT_TOKENS
     if {"disposition", "satisfied_criteria", "unsatisfied_criteria"}.issubset(keys):
@@ -37,6 +40,40 @@ def groq_max_output_tokens(schema: Dict[str, Any]) -> int:
     if {"objective_id", "tasks", "parallel_safe_groups"}.issubset(keys):
         return GROQ_PLAN_MAX_OUTPUT_TOKENS
     return GROQ_MAX_OUTPUT_TOKENS
+
+
+def groq_system_instruction(schema: Dict[str, Any]) -> str:
+    """Determine schema-aware system instructions for reasoning tasks."""
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    keys = set(properties) if isinstance(properties, dict) else set()
+    if {"intent_type", "target_ref"}.issubset(keys):
+        return (
+            "You are the AOS Execution Planner. Your task is to evaluate the project context and "
+            "select ONE compact intent matching the provided schema. You may only select an exact "
+            "objective_id, an allowed intent_type, a target_ref from the catalog, and a verification_ref "
+            "where required. Output a single JSON object matching the schema."
+        )
+    if {"objective_id", "parallel_candidates", "completion_criteria"}.issubset(keys) and "tasks" not in keys:
+        return (
+            "You are the AOS Objective Planner. Your task is to evaluate canonical project control "
+            "context and select the next canonical objective matching the provided schema."
+        )
+    if {"disposition", "satisfied_criteria", "unsatisfied_criteria"}.issubset(keys):
+        return (
+            "You are the AOS Completion Evaluator. Your task is to evaluate batch evidence against "
+            "canonical completion criteria and return a completion assessment matching the provided schema."
+        )
+    if {"objective_id", "tasks", "parallel_safe_groups"}.issubset(keys):
+        return (
+            "You are the AOS Execution Planner. Your task is to produce a bounded execution plan "
+            "for the selected objective matching the provided schema."
+        )
+    return (
+        "You are the AOS Shadow Planner. Your task is to evaluate canonical project control "
+        "context and output a bounded planner decision JSON matching the provided schema. "
+        "You MUST select the canonical milestone and canonical next_action EXACTLY as provided "
+        "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
+    )
 
 
 def _is_transient_capacity_error(exc: Exception) -> bool:
@@ -125,12 +162,7 @@ class GroqPlannerProvider:
         import openai
         client = openai.OpenAI(api_key=api_key, base_url=self.GROQ_BASE_URL)
 
-        instructions = (
-            "You are the AOS Shadow Planner. Your task is to evaluate canonical project control "
-            "context and output a bounded planner decision JSON matching the provided schema. "
-            "You MUST select the canonical milestone and canonical next_action EXACTLY as provided "
-            "in the bounded input. In shadow mode, mutation_intent MUST be 'NONE' and risk_class MUST be 'R0'."
-        )
+        instructions = groq_system_instruction(schema)
 
         provider_schema = project_groq_schema(schema)
         strict_schema = groq_strict_schema_compatible(provider_schema)
@@ -210,7 +242,14 @@ class GroqPlannerProvider:
         choice = response.choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
-            raise PlannerTransientError("Groq response reached the configured output capacity before completing JSON")
+            truncation_err = PlannerTransientError("Groq response reached the configured output capacity before completing JSON")
+            u = getattr(response, "usage", None)
+            truncation_err.safe_detail = safe_contract_detail(
+                finish_reason="length",
+                output_tokens=getattr(u, "completion_tokens", None) if u else None,
+                total_tokens=getattr(u, "total_tokens", None) if u else None,
+            )
+            raise truncation_err
         if finish_reason and finish_reason != "stop":
             raise PlannerContractError(
                 f"Groq response finished with unacceptable reason: {finish_reason}",

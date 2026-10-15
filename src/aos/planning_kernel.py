@@ -39,6 +39,18 @@ from aos.providers.council import (
 )
 from aos.source_adapter import ProjectSourceAdapter
 from aos.validate import validate_file
+from aos.intent_compiler import (
+    PLAN_INTENT_SCHEMA,
+    IntentCatalog,
+    IntentCandidate,
+    IntentCompilerError,
+    SourceGroundedVerificationSpecMissing,
+    UnknownTargetRefError,
+    UnknownVerificationRefError,
+    SourceGenerationMismatchError,
+    build_intent_catalog,
+    compile_intent_to_plan,
+)
 
 
 def _ensure_repo_extensions_importable() -> None:
@@ -3795,18 +3807,98 @@ def compile_execution_plan(
                 f"{python_guidance}\n"
                 f"PREVIOUS_INVALID_PLAN={json.dumps(proposal, ensure_ascii=False, sort_keys=True)[:2500]}"
             )
-        proposal = _reason(
-            situation,
-            routing_policy_path,
-            runtime_dir,
-            "plan-dag" if attempt == 0 else "plan-dag-repair",
-            attempt_prompt,
-            PLAN_SCHEMA,
-            objective.authority_id,
-            backend_override=backend_override,
-            task_class=_objective_task_class(objective),
+
+        # RFC-001 Compact Intent Compilation:
+        # Build trusted catalog of actionable intents strictly from current runtime context.
+        # If objective is an implementation objective or non-verification task requiring mutation/DAG,
+        # we preserve existing AGENTIC/general DAG planning.
+        catalog = build_intent_catalog(
+            situation=situation,
+            objective=objective,
             workspace=workspace,
+            runtime_dir=runtime_dir,
+            workspace_manifest=workspace_manifest,
+            verification_capabilities=verification_capabilities,
+            forbidden_ids=forbidden_ids,
+            forbidden_signatures=forbidden_signatures,
+            forbidden_read_identities=forbidden_read_identities,
+            workspace_source_generation=workspace_source_generation,
         )
+
+        obj_kind = str(getattr(objective, "kind", "")).upper()
+        # Compact intent catalog supports verification and observed reads.
+        # If the objective is implementation and requires mutation, do not silently substitute verification.
+        is_implementation_objective = (
+            obj_kind == "IMPLEMENTATION"
+            or "IMPLEMENTATION" in str(getattr(objective, "scope_tags", []))
+            or str(getattr(objective, "lane", "")).upper() in ("FRONTEND", "BACKEND", "CORE")
+            and "VERIFICATION" not in obj_kind
+        )
+
+        proposal = None
+        if catalog.candidates and not is_implementation_objective:
+            if len(catalog.candidates) == 1:
+                # 5. Eliminate unnecessary model calls:
+                # If exactly one safe, authorized, source-grounded next action is known,
+                # the native system compiles it directly without invoking reasoning providers.
+                proposal = compile_intent_to_plan(
+                    catalog.candidates[0].to_dict(),
+                    catalog,
+                    situation,
+                    objective,
+                    runtime_dir,
+                    workspace,
+                    workspace_source_generation=workspace_source_generation,
+                )
+            else:
+                # If selection is genuinely required, request ONE compact intent from the eligible reasoning provider.
+                intent_prompt = (
+                    "You are the AOS Compact Intent Selector. Select exactly ONE compact intent from the trusted catalog below.\n"
+                    "Do NOT generate an entire execution plan DAG.\n"
+                    "The response MUST strictly conform to PLAN_INTENT_SCHEMA.\n\n"
+                    f"OBJECTIVE={json.dumps(dataclasses.asdict(objective), ensure_ascii=False, sort_keys=True)}\n"
+                    f"INTENT_CATALOG={json.dumps(catalog.to_dict(), ensure_ascii=False, sort_keys=True)}\n"
+                )
+                if attempt:
+                    intent_prompt += (
+                        f"\nVALIDATION_REPAIR_REQUIRED: {validation_error}\n"
+                    )
+                intent_proposal = _reason(
+                    situation,
+                    routing_policy_path,
+                    runtime_dir,
+                    "plan-intent" if attempt == 0 else "plan-intent-repair",
+                    intent_prompt,
+                    PLAN_INTENT_SCHEMA,
+                    objective.authority_id,
+                    backend_override=backend_override,
+                    task_class=_objective_task_class(objective),
+                    workspace=workspace,
+                )
+                proposal = compile_intent_to_plan(
+                    intent_proposal,
+                    catalog,
+                    situation,
+                    objective,
+                    runtime_dir,
+                    workspace,
+                    workspace_source_generation=workspace_source_generation,
+                )
+
+        if proposal is None:
+            # Fall back to general execution planning DAG (e.g. implementation / multi-task DAGs)
+            proposal = _reason(
+                situation,
+                routing_policy_path,
+                runtime_dir,
+                "plan-dag" if attempt == 0 else "plan-dag-repair",
+                attempt_prompt,
+                PLAN_SCHEMA,
+                objective.authority_id,
+                backend_override=backend_override,
+                task_class=_objective_task_class(objective),
+                workspace=workspace,
+            )
         try:
             repair_pruned: Dict[str, str] = {}
             satisfied_deps: Dict[str, Dict[str, Any]] = {}
