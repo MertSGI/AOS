@@ -53,7 +53,7 @@ extensions = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-m 'not live_read_only and not postgres_integration'"
 markers = [
     "live_read_only: mark test as requiring live GitHub network access",

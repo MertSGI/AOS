@@ -120,6 +120,9 @@ from extensions.autonomy_fabric.native_workers import (  # noqa: E402
     NativeProcessWorker,
     redact_secrets,
 )
+from extensions.autonomy_fabric.model_native_backend import (  # noqa: E402
+    ModelNativeImplementationBackend,
+)
 from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator  # noqa: E402
 from extensions.autonomy_fabric.run_registry import (  # noqa: E402
     AgentRunRegistry,
@@ -1063,6 +1066,7 @@ def build_execution_router(policy_path: Path, runtime_dir: Path) -> ExecutionRou
             NativeGitWorker(),
             GitHubCIWorker(),
             BrowserExecutionBackend(),
+            ModelNativeImplementationBackend(),
             LlamaCppQwenReasoningBackend(lifecycle_manager=get_qwen_lifecycle_manager()),
             reasoning_backend,
             ag_backend,

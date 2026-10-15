@@ -941,10 +941,44 @@ class TestCompactIntentCompiler:
         )
         assert all(c.target_ref != "WP-SUPERSEDED-AUTH" for c in catalog.candidates)
 
-    def test_synthetic_canary_authority_rejected_in_product_lane(
+    def test_spoofed_canary_authority_string_rejected_without_context(
         self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
     ):
-        """Negative regression: Synthetic CANARY authority is never admitted in a protected Product lane."""
+        """Negative regression: Work package naming itself CANARY-* or TEST-* without isolated canary context is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "CANARY-AUTH-SPOOFED",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-SPOOFED-CANARY",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Spoofed canary",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+            # isolated_canary_context is None -> must fail closed
+        )
+        assert all(c.target_ref != "WP-SPOOFED-CANARY" for c in catalog.candidates)
+
+    def test_canary_authority_rejected_in_product_lane_even_with_context(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Canary authority context is strictly rejected if product_id is protected Product lane."""
         runtime_dir = tmp_path / "runtime"
         runtime_dir.mkdir(parents=True, exist_ok=True)
         wp_file = runtime_dir / "authorized-work-packages.json"
@@ -967,14 +1001,98 @@ class TestCompactIntentCompiler:
         )
         # Modify situation to represent a protected Product lane: "lari"
         product_situation = dataclasses.replace(base_situation, project_id="lari")
+        canary_ctx = {
+            "isolated_workspace": True,
+            "canary_authority_id": "CANARY-AUTH-01",
+            "canary_run_id": "RUN-TEST-001",
+        }
         catalog = build_intent_catalog(
             situation=product_situation,
             objective=base_objective,
             workspace=tmp_path,
             runtime_dir=runtime_dir,
             workspace_source_generation="gen-1",
+            isolated_canary_context=canary_ctx,
         )
         assert all(c.target_ref != "WP-CANARY-PRODUCT-ESCAPE" for c in catalog.candidates)
+
+    def test_verified_isolated_canary_context_admits_matching_authority(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Positive: Verified controller-supplied isolated canary context admits matching work package in non-product lane."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "CANARY-AUTH-01",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-GENUINE-CANARY",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Genuine canary mutation",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        canary_ctx = {
+            "isolated_workspace": True,
+            "canary_authority_id": "CANARY-AUTH-01",
+            "canary_run_id": "RUN-CANARY-999",
+        }
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+            isolated_canary_context=canary_ctx,
+        )
+        assert any(c.target_ref == "WP-GENUINE-CANARY" for c in catalog.candidates)
+
+    def test_canary_context_with_mismatched_authority_id_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Canary context authority ID does not match work package authority ID."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "CANARY-AUTH-02",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-MISMATCHED-CANARY",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Mismatched canary mutation",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        canary_ctx = {
+            "isolated_workspace": True,
+            "canary_authority_id": "CANARY-AUTH-01",  # mismatch with CANARY-AUTH-02
+            "canary_run_id": "RUN-CANARY-999",
+        }
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+            isolated_canary_context=canary_ctx,
+        )
+        assert all(c.target_ref != "WP-MISMATCHED-CANARY" for c in catalog.candidates)
 
     def test_work_package_unauthorized_write_scope_rejected(
         self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective

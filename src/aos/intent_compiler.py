@@ -382,17 +382,34 @@ def _discover_authorized_work_packages(
     expected_source_sha: Optional[str] = None,
     canonical_authority_records: Optional[Mapping[str, Any]] = None,
     project_id: Optional[str] = None,
+    isolated_canary_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, AuthorizedWorkPackage]:
     """Discover approved, source-bound work packages strictly from trusted canonical authorization.
 
     Editable workspace JSON files (.aos/work-packages.json) are NEVER treated as permission
     to execute mutating tasks on their own. They are treated solely as work-package DATA
     which must be attested by an independent canonical authorization record in the situation.
-    A synthetic canary authority (e.g. CANARY-AUTH-*) is only admitted when isolated test/canary
-    mode is active and project_id is NOT a protected Product lane.
+    A canary authority is only admitted when an explicit, trusted controller-supplied
+    isolated canary authorization context is provided and verified.
+    No authority name or project ID string heuristic can establish canary mode.
+    Protected Product execution always requires independent canonical authority.
     """
     work_packages: Dict[str, AuthorizedWorkPackage] = {}
     is_protected_product_lane = str(project_id or "").strip().lower() in ("lari", "lari-ui-v2", "product")
+
+    # Validate controller-supplied isolated canary authorization context if present
+    is_valid_isolated_canary = False
+    canary_allowed_authority_id = None
+    if isolated_canary_context and isinstance(isolated_canary_context, Mapping):
+        # Protected Product execution NEVER allows canary authority bypass
+        if not is_protected_product_lane:
+            c_isolated = bool(isolated_canary_context.get("isolated_workspace", False))
+            c_auth_id = str(isolated_canary_context.get("canary_authority_id") or "").strip().upper()
+            c_run_id = str(isolated_canary_context.get("canary_run_id") or "").strip()
+            # Must prove actual isolated workspace, non-empty canary authority, and active canary run
+            if c_isolated and c_auth_id and c_run_id:
+                is_valid_isolated_canary = True
+                canary_allowed_authority_id = c_auth_id
 
     # Canonical authority records map: authority_id (upper) -> AuthorityRecord
     auth_records = {
@@ -481,12 +498,15 @@ def _discover_authorized_work_packages(
 
                 # Canonical Authority Verification
                 auth_record = auth_records.get(pkg_authority_id.upper())
-                is_canary_auth = "CANARY" in pkg_authority_id.upper() or pkg_authority_id.upper().startswith("TEST-")
-                if is_canary_auth and is_protected_product_lane:
-                    # Synthetic canary authority must NEVER be exposed to protected Product execution
-                    continue
 
-                if auth_record is None and not is_canary_auth:
+                # Check if authorized via verified controller-supplied isolated canary context
+                is_canary_authorized = (
+                    is_valid_isolated_canary
+                    and canary_allowed_authority_id is not None
+                    and pkg_authority_id.upper() == canary_allowed_authority_id
+                )
+
+                if auth_record is None and not is_canary_authorized:
                     # Reject absent / unverified canonical authority
                     continue
                 if auth_record is not None:
@@ -545,6 +565,7 @@ def build_intent_catalog(
     forbidden_signatures: Optional[set[str]] = None,
     forbidden_read_identities: Optional[set[str]] = None,
     workspace_source_generation: Optional[str] = None,
+    isolated_canary_context: Optional[Mapping[str, Any]] = None,
 ) -> IntentCatalog:
     """Build trusted catalog of actionable intents strictly from current runtime context."""
     candidates: List[IntentCandidate] = []
@@ -554,6 +575,9 @@ def build_intent_catalog(
 
     control_sha = str(getattr(situation, "control_sha", "")).strip()
     execution_base_sha = getattr(situation, "execution_base_sha", None)
+
+    # Use explicitly passed isolated_canary_context, or situation-level isolated_canary_context if present
+    effective_canary_context = isolated_canary_context or getattr(situation, "isolated_canary_context", None)
 
     browser_specs = _discover_browser_verification_specs(
         workspace,
@@ -567,6 +591,7 @@ def build_intent_catalog(
         expected_source_sha=control_sha or (str(execution_base_sha) if execution_base_sha else None),
         canonical_authority_records=getattr(situation, "authority_records", None),
         project_id=getattr(situation, "project_id", None),
+        isolated_canary_context=effective_canary_context,
     )
     render_origin = None
 
