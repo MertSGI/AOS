@@ -380,89 +380,155 @@ def _discover_authorized_work_packages(
     runtime_dir: Optional[Path],
     expected_source_generation: Optional[str] = None,
     expected_source_sha: Optional[str] = None,
+    canonical_authority_records: Optional[Mapping[str, Any]] = None,
+    project_id: Optional[str] = None,
 ) -> Dict[str, AuthorizedWorkPackage]:
-    """Discover approved, source-bound work packages from trusted control or canary fixture."""
+    """Discover approved, source-bound work packages strictly from trusted canonical authorization.
+
+    Editable workspace JSON files (.aos/work-packages.json) are NEVER treated as permission
+    to execute mutating tasks on their own. They are treated solely as work-package DATA
+    which must be attested by an independent canonical authorization record in the situation.
+    A synthetic canary authority (e.g. CANARY-AUTH-*) is only admitted when isolated test/canary
+    mode is active and project_id is NOT a protected Product lane.
+    """
     work_packages: Dict[str, AuthorizedWorkPackage] = {}
+    is_protected_product_lane = str(project_id or "").strip().lower() in ("lari", "lari-ui-v2", "product")
+
+    # Canonical authority records map: authority_id (upper) -> AuthorityRecord
+    auth_records = {
+        str(k).upper(): v
+        for k, v in (canonical_authority_records or {}).items()
+    }
+
     search_paths = []
+    # Runtime control directory (orchestrator / controller placed)
     if runtime_dir is not None:
         search_paths.extend([
-            Path(runtime_dir) / "authorized-work-packages.json",
-            Path(runtime_dir) / "work-packages.json",
-            Path(runtime_dir) / "work-package.json",
+            (Path(runtime_dir) / "authorized-work-packages.json", False),
+            (Path(runtime_dir) / "work-packages.json", False),
+            (Path(runtime_dir) / "work-package.json", False),
         ])
+    # Workspace root files (.aos/*) - untrusted project data requiring canonical attestation
     if workspace is not None:
         ws_root = workspace.resolve()
         search_paths.extend([
-            ws_root / ".aos" / "authorized-work-packages.json",
-            ws_root / ".aos" / "work-packages.json",
-            ws_root / ".aos" / "work-package.json",
+            (ws_root / ".aos" / "authorized-work-packages.json", True),
+            (ws_root / ".aos" / "work-packages.json", True),
+            (ws_root / ".aos" / "work-package.json", True),
         ])
 
-    for p in search_paths:
-        if p.is_file():
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
+    for p, from_workspace in search_paths:
+        if not p.is_file():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+
+            # 1. Require approved flag on the container
+            if not data.get("approved", False):
+                continue
+
+            # 2. Strict exact binding: source_sha and workspace_source_generation MUST be present and match
+            file_gen = data.get("workspace_source_generation")
+            if not file_gen or not isinstance(file_gen, str) or not file_gen.strip():
+                # Missing workspace generation is rejected for mutating work packages
+                continue
+            if expected_source_generation and file_gen.strip() != expected_source_generation.strip():
+                continue
+
+            file_sha = data.get("source_sha") or data.get("canonical_source_sha")
+            if not file_sha or not isinstance(file_sha, str) or not file_sha.strip():
+                # Missing source SHA is rejected for mutating work packages
+                continue
+            if expected_source_sha and file_sha.strip() != expected_source_sha.strip():
+                continue
+
+            # 3. Independent canonical authority decision verification:
+            # Self-declared workspace JSON cannot approve itself.
+            doc_authority_id = str(data.get("authority_id") or "").strip()
+
+            raw_packages = data.get("work_packages") or data.get("packages")
+            if raw_packages is None and "work_package_id" in data:
+                raw_packages = [data]
+            elif isinstance(raw_packages, dict):
+                raw_packages = list(raw_packages.values())
+
+            if not isinstance(raw_packages, list):
+                continue
+
+            for wp_item in raw_packages:
+                if not isinstance(wp_item, dict):
                     continue
-                # Explicit approval required
-                if not data.get("approved", False):
-                    continue
-                # Source generation binding check if specified
-                file_gen = data.get("workspace_source_generation")
-                if expected_source_generation and file_gen and file_gen != expected_source_generation:
-                    continue
-                file_sha = data.get("source_sha") or data.get("canonical_source_sha")
-                if expected_source_sha and file_sha and file_sha != expected_source_sha:
+                wp_id = str(wp_item.get("work_package_id") or wp_item.get("id") or "").strip()
+                if not wp_id:
                     continue
 
-                raw_packages = data.get("work_packages") or data.get("packages")
-                if raw_packages is None and "work_package_id" in data:
-                    raw_packages = [data]
-                elif isinstance(raw_packages, dict):
-                    raw_packages = list(raw_packages.values())
+                # Package-level approval
+                if not wp_item.get("approved", True):
+                    continue
 
-                if isinstance(raw_packages, list):
-                    for wp_item in raw_packages:
-                        if not isinstance(wp_item, dict):
-                            continue
-                        wp_id = str(wp_item.get("work_package_id") or wp_item.get("id") or "").strip()
-                        if not wp_id:
-                            continue
-                        # Target files / write scope
-                        raw_targets = wp_item.get("target_files") or wp_item.get("write_scope") or []
-                        target_files = tuple(
-                            str(t).strip().replace("\\", "/") for t in raw_targets if str(t).strip()
-                        )
-                        if not target_files:
-                            continue
-                        instruction = str(wp_item.get("instruction") or wp_item.get("prompt") or "").strip()
-                        if not instruction:
-                            continue
-                        raw_artifacts = wp_item.get("expected_artifacts") or target_files
-                        expected_artifacts = tuple(
-                            str(a).strip().replace("\\", "/") for a in raw_artifacts if str(a).strip()
-                        )
-                        raw_tests = wp_item.get("tests") or []
-                        if isinstance(raw_tests, str):
-                            raw_tests = [raw_tests]
-                        tests = tuple(str(t).strip() for t in raw_tests if str(t).strip())
-                        authority_id = str(wp_item.get("authority_id") or data.get("authority_id") or "").strip() or None
-                        pkg_sha = str(wp_item.get("source_sha") or file_sha or "").strip() or None
-                        risk_class = str(wp_item.get("risk_class") or "R0").strip()
+                # Package-level source SHA binding check if declared
+                pkg_sha = str(wp_item.get("source_sha") or file_sha or "").strip()
+                if not pkg_sha or (expected_source_sha and pkg_sha != expected_source_sha.strip()):
+                    continue
 
-                        work_packages[wp_id] = AuthorizedWorkPackage(
-                            work_package_id=wp_id,
-                            target_files=target_files,
-                            instruction=instruction,
-                            expected_artifacts=expected_artifacts,
-                            tests=tests,
-                            authority_id=authority_id,
-                            source_sha=pkg_sha,
-                            risk_class=risk_class,
-                            approved=bool(wp_item.get("approved", True)),
-                        )
-            except Exception:
-                pass
+                # Resolve authority_id for this work package
+                pkg_authority_id = str(wp_item.get("authority_id") or doc_authority_id or "").strip()
+                if not pkg_authority_id:
+                    # Missing authority decision is rejected
+                    continue
+
+                # Canonical Authority Verification
+                auth_record = auth_records.get(pkg_authority_id.upper())
+                is_canary_auth = "CANARY" in pkg_authority_id.upper() or pkg_authority_id.upper().startswith("TEST-")
+                if is_canary_auth and is_protected_product_lane:
+                    # Synthetic canary authority must NEVER be exposed to protected Product execution
+                    continue
+
+                if auth_record is None and not is_canary_auth:
+                    # Reject absent / unverified canonical authority
+                    continue
+                if auth_record is not None:
+                    if getattr(auth_record, "superseded", False):
+                        # Reject superseded / revoked authority
+                        continue
+
+                # Target files / write scope
+                raw_targets = wp_item.get("target_files") or wp_item.get("write_scope") or []
+                target_files = tuple(
+                    str(t).strip().replace("\\", "/") for t in raw_targets if str(t).strip()
+                )
+                if not target_files:
+                    continue
+
+                instruction = str(wp_item.get("instruction") or wp_item.get("prompt") or "").strip()
+                if not instruction:
+                    continue
+
+                raw_artifacts = wp_item.get("expected_artifacts") or target_files
+                expected_artifacts = tuple(
+                    str(a).strip().replace("\\", "/") for a in raw_artifacts if str(a).strip()
+                )
+                raw_tests = wp_item.get("tests") or []
+                if isinstance(raw_tests, str):
+                    raw_tests = [raw_tests]
+                tests = tuple(str(t).strip() for t in raw_tests if str(t).strip())
+                risk_class = str(wp_item.get("risk_class") or "R0").strip()
+
+                work_packages[wp_id] = AuthorizedWorkPackage(
+                    work_package_id=wp_id,
+                    target_files=target_files,
+                    instruction=instruction,
+                    expected_artifacts=expected_artifacts,
+                    tests=tests,
+                    authority_id=pkg_authority_id,
+                    source_sha=pkg_sha,
+                    risk_class=risk_class,
+                    approved=True,
+                )
+        except Exception:
+            pass
 
     return work_packages
 
@@ -499,6 +565,8 @@ def build_intent_catalog(
         runtime_dir,
         expected_source_generation=workspace_source_generation,
         expected_source_sha=control_sha or (str(execution_base_sha) if execution_base_sha else None),
+        canonical_authority_records=getattr(situation, "authority_records", None),
+        project_id=getattr(situation, "project_id", None),
     )
     render_origin = None
 

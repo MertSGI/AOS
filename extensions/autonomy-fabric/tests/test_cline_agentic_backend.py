@@ -165,8 +165,58 @@ def test_proof_d_e_f_g_h_i_execution_lifecycle(tmp_path):
     argv = calls[0][0]
     assert "--json" in argv
     assert "--auto-approve" in argv
+    assert "--cwd" in argv
+    assert "-c" not in argv
     assert "--data-dir" in argv
     assert "--config" in argv
+
+
+def test_build_cline_argv_contract():
+    """Verify build_cline_argv complies with installed Cline CLI contract."""
+    argv = build_cline_argv(
+        "cline.exe",
+        "/workspace/test",
+        data_dir="/data",
+        config_dir="/config",
+        provider="openai-compatible",
+        model="test-model",
+        prompt="Fix the bug",
+    )
+    assert argv[0] == "cline.exe"
+    assert "--cwd" in argv
+    cwd_idx = argv.index("--cwd")
+    assert argv[cwd_idx + 1] == "/workspace/test"
+    assert "-c" not in argv
+    assert argv[-1] == "Fix the bug"
+
+
+def test_unauthenticated_profile_returns_provider_auth_unavailable(tmp_path):
+    """Verify that an isolated Cline profile lacking authorized free-provider config reports AUTH_UNAVAILABLE."""
+    source_sha = _repo(tmp_path)
+    empty_data_dir = tmp_path / "empty_data"
+    empty_data_dir.mkdir(parents=True)
+    empty_config_dir = tmp_path / "empty_config"
+    empty_config_dir.mkdir(parents=True)
+
+    backend = ClineAgenticExecutionBackend(
+        runner=lambda *_args: pytest.fail("Must not launch runner"),
+        capability_status_provider=lambda: "OPERATIONAL",
+        executable_identity=IDENTITY,
+        data_dir=str(empty_data_dir),
+        config_dir=str(empty_config_dir),
+        underlying_provider="openai-compatible",
+        underlying_model="nvidia/nemotron-3-ultra-550b-a55b",
+        underlying_cost_class="FREE_TIER_CLOUD",
+    )
+    avail = backend.get_availability()
+    assert avail.state == ExecutionAvailabilityState.AUTH_UNAVAILABLE
+    assert avail.evidence.get("status") == "PROVIDER_AUTH_UNAVAILABLE"
+
+    # Execution should fail without launching runner
+    req = _request(tmp_path, source_sha)
+    result = backend.execute(req)
+    assert result.status == "DEGRADED"
+    assert result.sanitized_errors == ["CLINE_AUTH_UNAVAILABLE"]
 
 
 # Proof J, K: session resume using exact session ID, retains context
@@ -345,7 +395,6 @@ def test_real_mode_uses_durable_history_session_id_not_stream_task_id(tmp_path):
     source_sha = _repo(tmp_path)
     data_dir = tmp_path.parent / f"{tmp_path.name}-cline-data"
     durable_id = "1791344906919_y44r4"
-
     def runner(argv, cwd, prompt, timeout, env):
         session_dir = data_dir / "sessions" / durable_id
         session_dir.mkdir(parents=True)
@@ -357,6 +406,19 @@ def test_real_mode_uses_durable_history_session_id_not_stream_task_id(tmp_path):
             "status": "completed",
         }), encoding="utf-8")
         return subprocess.CompletedProcess(argv, 0, _success_output("conv_stream_task"), "")
+
+    settings_dir = data_dir / "settings"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    (settings_dir / "providers.json").write_text(json.dumps({
+        "providers": {
+            "openai-compatible": {
+                "settings": {
+                    "apiKey": "test-key",
+                    "model": "qwen-local",
+                }
+            }
+        }
+    }), encoding="utf-8")
 
     backend = _backend(
         runner,

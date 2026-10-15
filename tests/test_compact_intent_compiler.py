@@ -651,7 +651,9 @@ class TestCompactIntentCompiler:
         wp_file.write_text(
             json.dumps({
                 "approved": True,
+                "authority_id": "AUTH-VALID-01",
                 "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
                 "work_packages": [
                     {
                         "work_package_id": "WP-001-ADD-HELPER",
@@ -672,6 +674,7 @@ class TestCompactIntentCompiler:
             objective=base_objective,
             workspace=tmp_path,
             runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
         )
         assert any(c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE" for c in catalog.candidates)
         wp_candidate = next(c for c in catalog.candidates if c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE")
@@ -690,6 +693,7 @@ class TestCompactIntentCompiler:
             objective=base_objective,
             runtime_dir=runtime_dir,
             workspace=tmp_path,
+            workspace_source_generation="gen-1",
         )
 
         # Verify PLAN_SCHEMA compliance
@@ -745,6 +749,9 @@ class TestCompactIntentCompiler:
         wp_file.write_text(
             json.dumps({
                 "approved": False,
+                "authority_id": "AUTH-VALID-01",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
                 "work_packages": [
                     {
                         "work_package_id": "WP-UNAPPROVED",
@@ -761,6 +768,7 @@ class TestCompactIntentCompiler:
             objective=base_objective,
             workspace=tmp_path,
             runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
         )
         # Not admitted to catalog
         assert all(c.target_ref != "WP-UNAPPROVED" for c in catalog.candidates)
@@ -776,7 +784,9 @@ class TestCompactIntentCompiler:
         wp_file.write_text(
             json.dumps({
                 "approved": True,
+                "authority_id": "AUTH-VALID-01",
                 "source_sha": stale_sha,
+                "workspace_source_generation": "gen-1",
                 "work_packages": [
                     {
                         "work_package_id": "WP-STALE-SHA",
@@ -794,9 +804,177 @@ class TestCompactIntentCompiler:
             objective=base_objective,
             workspace=tmp_path,
             runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
         )
         # Ignored because source_sha does not match situation control_sha
         assert all(c.target_ref != "WP-STALE-SHA" for c in catalog.candidates)
+
+    def test_work_package_missing_sha_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package with missing source SHA is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "AUTH-VALID-01",
+                "workspace_source_generation": "gen-1",
+                # source_sha absent
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-NO-SHA",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Implement helper",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+        )
+        assert all(c.target_ref != "WP-NO-SHA" for c in catalog.candidates)
+
+    def test_work_package_missing_generation_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package with missing workspace_source_generation is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "AUTH-VALID-01",
+                "source_sha": base_situation.control_sha,
+                # workspace_source_generation absent
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-NO-GEN",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Implement helper",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+        )
+        assert all(c.target_ref != "WP-NO-GEN" for c in catalog.candidates)
+
+    def test_project_file_self_approval_without_canonical_authority_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Workspace file self-declaring approved=true with unknown authority is rejected."""
+        aos_dir = tmp_path / ".aos"
+        aos_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = aos_dir / "work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "AUTH-INVENTED-BY-REPO",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-SELF-APPROVED",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Self approved mutation",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=None,
+            workspace_source_generation="gen-1",
+        )
+        assert all(c.target_ref != "WP-SELF-APPROVED" for c in catalog.candidates)
+
+    def test_work_package_superseded_authority_rejected(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Work package bound to superseded canonical authority is rejected."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "AUTH-SUPERSEDED-02",  # Record exists but superseded=True
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-SUPERSEDED-AUTH",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Mutate with old authority",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        catalog = build_intent_catalog(
+            situation=base_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+        )
+        assert all(c.target_ref != "WP-SUPERSEDED-AUTH" for c in catalog.candidates)
+
+    def test_synthetic_canary_authority_rejected_in_product_lane(
+        self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
+    ):
+        """Negative regression: Synthetic CANARY authority is never admitted in a protected Product lane."""
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        wp_file = runtime_dir / "authorized-work-packages.json"
+        wp_file.write_text(
+            json.dumps({
+                "approved": True,
+                "authority_id": "CANARY-AUTH-01",
+                "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
+                "work_packages": [
+                    {
+                        "work_package_id": "WP-CANARY-PRODUCT-ESCAPE",
+                        "target_files": ["src/helper.py"],
+                        "instruction": "Canary in product lane",
+                        "approved": True,
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+        # Modify situation to represent a protected Product lane: "lari"
+        product_situation = dataclasses.replace(base_situation, project_id="lari")
+        catalog = build_intent_catalog(
+            situation=product_situation,
+            objective=base_objective,
+            workspace=tmp_path,
+            runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
+        )
+        assert all(c.target_ref != "WP-CANARY-PRODUCT-ESCAPE" for c in catalog.candidates)
 
     def test_work_package_unauthorized_write_scope_rejected(
         self, tmp_path: Path, base_situation: ProjectSituation, base_objective: Objective
@@ -809,7 +987,9 @@ class TestCompactIntentCompiler:
         wp_file.write_text(
             json.dumps({
                 "approved": True,
+                "authority_id": "AUTH-VALID-01",
                 "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
                 "work_packages": [
                     {
                         "work_package_id": "WP-OUT-OF-LANE",
@@ -826,6 +1006,7 @@ class TestCompactIntentCompiler:
             objective=base_objective,
             workspace=tmp_path,
             runtime_dir=runtime_dir,
+            workspace_source_generation="gen-1",
         )
         # Out-of-lane target is rejected during catalog candidate generation
         assert all(c.target_ref != "WP-OUT-OF-LANE" for c in catalog.candidates)
@@ -840,7 +1021,9 @@ class TestCompactIntentCompiler:
         wp_file.write_text(
             json.dumps({
                 "approved": True,
+                "authority_id": "AUTH-VALID-01",
                 "source_sha": base_situation.control_sha,
+                "workspace_source_generation": "gen-1",
                 "work_packages": [
                     {
                         "work_package_id": "WP-COMPLETED-01",
@@ -866,6 +1049,7 @@ class TestCompactIntentCompiler:
             workspace=tmp_path,
             runtime_dir=runtime_dir,
             forbidden_signatures={completed_sig},
+            workspace_source_generation="gen-1",
         )
         assert all(c.target_ref != "WP-COMPLETED-01" for c in catalog.candidates)
 

@@ -160,7 +160,7 @@ def build_cline_argv(
         executable,
         "--json",
         "--auto-approve", "true",
-        "-c", workspace,
+        "--cwd", workspace,
         "--data-dir", data_dir,
         "--config", config_dir,
     ]
@@ -253,6 +253,45 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             identity=self._identity(), capability_store=self._store_path
         )
 
+    def _has_authorized_provider_configuration(self) -> bool:
+        """Check whether the isolated Cline profile actually has an authorized provider configuration."""
+        if self._capability_status() == "TEST_DOUBLE":
+            return True
+        # Check providers.json in data_dir / settings / providers.json
+        candidate_paths = [
+            Path(self._data_dir) / "settings" / "providers.json",
+            Path(self._config_dir) / "data" / "settings" / "providers.json",
+            Path(self._config_dir) / "settings" / "providers.json",
+        ]
+        target_provider = str(self.underlying_provider or "").strip().lower()
+        for cp in candidate_paths:
+            if not cp.is_file():
+                continue
+            try:
+                data = json.loads(cp.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    continue
+                providers = data.get("providers", {})
+                if not isinstance(providers, dict):
+                    continue
+                for pname, pconf in providers.items():
+                    if target_provider and pname.lower() != target_provider:
+                        continue
+                    if not isinstance(pconf, dict):
+                        continue
+                    st = pconf.get("settings", {})
+                    if not isinstance(st, dict):
+                        continue
+                    # Check for apiKey or accessToken
+                    api_key = str(st.get("apiKey") or "").strip()
+                    auth = st.get("auth") or {}
+                    token = str(auth.get("accessToken") or "").strip() if isinstance(auth, dict) else ""
+                    if api_key or token:
+                        return True
+            except Exception:
+                pass
+        return False
+
     def get_availability(self) -> ExecutionAvailabilitySnapshot:
         status = self._capability_status()
         if status not in {"OPERATIONAL", "OPERATIONAL_START_ONLY", "TEST_DOUBLE"}:
@@ -261,6 +300,18 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 self._now_iso(),
                 source="CLINE_CAPABILITY_ATTESTATION",
                 evidence={"status": status, "api_key_fallback": "DISABLED"},
+            )
+        if not self._has_authorized_provider_configuration():
+            return ExecutionAvailabilitySnapshot(
+                ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+                self._now_iso(),
+                source="CLINE_CAPABILITY_ATTESTATION",
+                evidence={
+                    "status": "PROVIDER_AUTH_UNAVAILABLE",
+                    "reason": "NO_AUTHORIZED_FREE_PROVIDER_CONFIGURATION",
+                    "provider": self.underlying_provider,
+                    "model": self.underlying_model,
+                },
             )
         return ExecutionAvailabilitySnapshot(
             ExecutionAvailabilityState.AVAILABLE,
