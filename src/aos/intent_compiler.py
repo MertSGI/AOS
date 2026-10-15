@@ -91,6 +91,17 @@ class IntentCandidate:
             d["verification_ref"] = self.verification_ref
         return d
 
+    def to_intent_dict(self, objective_id: str) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "schema_version": "1.0.0",
+            "objective_id": objective_id,
+            "intent_type": self.intent_type,
+            "target_ref": self.target_ref,
+        }
+        if self.verification_ref:
+            d["verification_ref"] = self.verification_ref
+        return d
+
 
 @dataclasses.dataclass(frozen=True)
 class IntentCatalog:
@@ -274,9 +285,20 @@ def build_intent_catalog(
                     continue
                 # Check if already read under this generation
                 if workspace is not None and workspace_source_generation:
-                    rid = build_read_identity(workspace.resolve(), p_str, workspace_source_generation)
-                    if rid in forbidden_read_identities:
-                        continue
+                    try:
+                        ws_root = workspace.resolve()
+                        target = (ws_root / p_str).resolve()
+                        if target.is_file():
+                            c_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                            rid = build_read_identity(
+                                normalized_path=normalize_read_path(p_str),
+                                content_sha256=c_hash,
+                                workspace_source_generation=workspace_source_generation,
+                            )
+                            if rid in forbidden_read_identities:
+                                continue
+                    except Exception:
+                        pass
                 candidates.append(
                     IntentCandidate(
                         intent_type="READ_OBSERVED_SOURCE",

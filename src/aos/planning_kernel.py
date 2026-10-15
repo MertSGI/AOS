@@ -3842,7 +3842,7 @@ def compile_execution_plan(
                 # If exactly one safe, authorized, source-grounded next action is known,
                 # the native system compiles it directly without invoking reasoning providers.
                 proposal = compile_intent_to_plan(
-                    catalog.candidates[0].to_dict(),
+                    catalog.candidates[0].to_intent_dict(str(getattr(objective, "objective_id", ""))),
                     catalog,
                     situation,
                     objective,
