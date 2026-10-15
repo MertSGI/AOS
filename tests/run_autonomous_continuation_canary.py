@@ -241,6 +241,11 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     routing_policy_path = fixture["routing_policy_path"]
     initial_git_sha = fixture["initial_git_sha"]
 
+    if not os.environ.get("NVIDIA_API_KEY"):
+        key = _resolve_zero_cost_api_key()
+        if key:
+            os.environ["NVIDIA_API_KEY"] = key
+
     isolated_canary_context = {
         "isolated_workspace": True,
         "canary_authority_ids": ["CANARY-AUTH-OBJ-A", "CANARY-AUTH-OBJ-B"],
