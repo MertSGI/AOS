@@ -23,8 +23,10 @@ import difflib
 import hashlib
 import json
 import os
+import shlex
+import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from aos.process_utils import run_headless
 from aos.runtime_store import atomic_json
@@ -88,6 +90,64 @@ def _resolve_zero_cost_api_key() -> Optional[str]:
     return None
 
 
+def _resolve_and_validate_test_command(
+    raw_cmd: str | Sequence[str],
+    workspace: Path,
+) -> List[str]:
+    """Convert an authorized test specification into a safe, validated argv vector.
+
+    Rejects shell metacharacters, pipeline/redirection operators, and unauthorized binaries.
+    Portably resolves Python interpreter and validates test path confinement and existence.
+    """
+    if isinstance(raw_cmd, str):
+        # Reject shell operators and metacharacters
+        for char in [";", "&", "|", ">", "<", "`", "$"]:
+            if char in raw_cmd:
+                raise ValueError(f"SHELL_METATOKEN_DISALLOWED: Disallowed shell token '{char}' in test command")
+        tokens = shlex.split(raw_cmd, posix=(os.name != "nt"))
+    elif isinstance(raw_cmd, (list, tuple)):
+        tokens = [str(tok).strip() for tok in raw_cmd if str(tok).strip()]
+    else:
+        raise ValueError(f"INVALID_TEST_COMMAND_TYPE: Expected str or sequence of str, got {type(raw_cmd)}")
+
+    if not tokens:
+        raise ValueError("EMPTY_TEST_COMMAND: Test command contains no tokens")
+
+    cmd0 = tokens[0]
+    approved_argv: List[str] = []
+
+    # Safe binary resolution
+    normalized_cmd0 = Path(cmd0).name.lower()
+    if normalized_cmd0 in ("python", "python3", "python.exe") or cmd0 == sys.executable:
+        approved_argv.append(sys.executable)
+        rest = tokens[1:]
+    elif normalized_cmd0 in ("pytest", "pytest.exe"):
+        approved_argv.extend([sys.executable, "-m", "pytest"])
+        rest = tokens[1:]
+    else:
+        raise ValueError(f"UNAUTHORIZED_TEST_EXECUTABLE: Only python/pytest invocations are permitted, got {cmd0!r}")
+
+    for arg in rest:
+        # Reject flags that allow arbitrary inline code execution
+        if arg in ("-c", "--command"):
+            raise ValueError(f"DISALLOWED_PYTHON_FLAG: Inline command flag {arg!r} is prohibited")
+
+        # If argument references a file/path target, validate confinement and existence
+        if arg.endswith(".py") or "/" in arg or "\\" in arg:
+            clean_arg = arg.replace("\\", "/").strip("/")
+            if ".." in clean_arg:
+                raise ValueError(f"PATH_TRAVERSAL_IN_TEST_ARG: Argument {arg!r} contains directory traversal")
+            arg_path = (workspace / clean_arg).resolve()
+            if os.path.commonpath([str(workspace), str(arg_path)]) != str(workspace):
+                raise ValueError(f"WORKSPACE_CONFINEMENT_VIOLATION: Test target {arg!r} escapes workspace")
+            if not arg.startswith("-") and not arg_path.exists():
+                raise ValueError(f"TEST_TARGET_NOT_FOUND: Test target file {arg!r} does not exist at {arg_path}")
+
+        approved_argv.append(arg)
+
+    return approved_argv
+
+
 class ModelNativeImplementationBackend(ExecutionBackend):
     """Bounded MODEL + NATIVE implementation worker for a single authorized file."""
 
@@ -95,14 +155,12 @@ class ModelNativeImplementationBackend(ExecutionBackend):
     backend_class = BackendClass.NATIVE_EXECUTION_BACKEND
     trust_zone = ExecutionTrustZone.RESTRICTED_WORKSPACE
     cost = ExecutionCost.FREE_TIER_CLOUD
+    # Narrowed capabilities: single-file bounded implementation only, NOT general LONG_HORIZON_AGENTIC_WORK
     supported_capabilities: Set[ExecutionCapability] = {
         ExecutionCapability.FILE_READ,
         ExecutionCapability.FILE_WRITE,
-        ExecutionCapability.PATCH_APPLY,
-        ExecutionCapability.PROCESS_EXEC,
         ExecutionCapability.TEST_EXECUTION,
         ExecutionCapability.MODEL_REASONING,
-        ExecutionCapability.LONG_HORIZON_AGENTIC_WORK,
     }
 
     def __init__(
@@ -137,7 +195,7 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence={"provider": "nemotron", "billing_class": "FREE_TIER"},
             )
         return ExecutionAvailabilitySnapshot(
-            ExecutionAvailabilityState.UNAVAILABLE,
+            ExecutionAvailabilityState.AUTH_UNAVAILABLE,
             observed_at=now_iso,
             source="MODEL_NATIVE_RESOLVER",
             evidence={"reason": "RESOURCE_UNAVAILABLE"},
@@ -207,6 +265,37 @@ class ModelNativeImplementationBackend(ExecutionBackend):
         """Execute single authorized file repair with native isolated verification."""
         workspace = Path(request.workspace).resolve()
 
+        # 0. Capability Gate: verify request does not demand unsupported or long-horizon work
+        for req_cap in (request.required_capabilities or []):
+            if req_cap == ExecutionCapability.LONG_HORIZON_AGENTIC_WORK:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_native_worker",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=str(workspace),
+                    sanitized_errors=[
+                        "UNSUPPORTED_CAPABILITY: Long-horizon agentic work is not supported by bounded model-native worker"
+                    ],
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+            if req_cap not in self.supported_capabilities:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_native_worker",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=str(workspace),
+                    sanitized_errors=[
+                        f"UNSUPPORTED_CAPABILITY: {req_cap.value if hasattr(req_cap, 'value') else req_cap}"
+                    ],
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+
         # 1. Validate single authorized target file and write scope
         write_scope = [p.replace("\\", "/").strip("/") for p in (request.write_scope or []) if p.strip()]
         if not write_scope:
@@ -222,7 +311,7 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        if len(write_scope) > 1:
+        if len(write_scope) != 1:
             return ExecutionResult(
                 backend_id=self.backend_id,
                 worker_id="model_native_worker",
@@ -317,15 +406,77 @@ class ModelNativeImplementationBackend(ExecutionBackend):
         orig_sha256 = hashlib.sha256(orig_bytes).hexdigest()
         orig_text = orig_bytes.decode("utf-8", errors="replace")
 
-        # 2. Pre-authorized test commands
+        # 2. Mandatory Pre-Authorized Functional Test Requirement
         raw_tests = request.payload.get("tests") or getattr(request, "tests", []) or []
         if isinstance(raw_tests, str):
             raw_tests = [raw_tests]
-        pre_authorized_tests = [str(t).strip() for t in raw_tests if str(t).strip()]
+        pre_authorized_test_specs = [str(t).strip() for t in raw_tests if str(t).strip()]
+
+        if not pre_authorized_test_specs:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=["NO_FUNCTIONAL_TESTS: Mutating execution requires at least one pre-authorized functional test"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        # Pre-validate all test commands to argv vectors before calling model
+        validated_test_commands: List[List[str]] = []
+        for raw_spec in pre_authorized_test_specs:
+            try:
+                argv = _resolve_and_validate_test_command(raw_spec, workspace)
+                validated_test_commands.append(argv)
+            except Exception as e:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_native_worker",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=str(workspace),
+                    sanitized_errors=[f"TEST_VALIDATION_ERROR: {str(e)}"],
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
+
+        # 3. Verify Git Lineage Preconditions
+        head_proc = run_headless(["git", "-C", str(workspace), "rev-parse", "HEAD"], check=False, timeout=30.0)
+        base_git_sha = head_proc.stdout.strip().lower() if head_proc.returncode == 0 else ""
+        if len(base_git_sha) != 40:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=["GIT_LINEAGE_UNVERIFIABLE: Cannot verify 40-character base Git commit in workspace"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        expected_source_sha = str(request.payload.get("source_sha") or "").strip().lower()
+        if expected_source_sha and len(expected_source_sha) == 40 and expected_source_sha != base_git_sha:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=[f"SOURCE_SHA_MISMATCH: Expected {expected_source_sha}, actual HEAD is {base_git_sha}"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
 
         instruction = str(request.payload.get("prompt") or request.payload.get("instruction") or "").strip()
 
-        # 3. Model Request (exactly one live attempt)
+        # 4. Model Request (exactly one live attempt)
         try:
             model_response = self._call_model(
                 relative_path=authorized_rel_path,
@@ -348,7 +499,7 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        # 4. Validate Model Response Fields strictly
+        # 5. Validate Model Response Fields strictly
         allowed_keys = {"relative_path", "expected_original_sha256", "new_content"}
         actual_keys = set(model_response.keys())
         if actual_keys != allowed_keys:
@@ -421,11 +572,24 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        # 5. Native Atomic File Application
+        # Verify source change: reject unchanged source
         new_bytes = new_content.encode("utf-8")
         new_sha256 = hashlib.sha256(new_bytes).hexdigest()
 
-        # Compute diff before writing
+        if new_sha256 == orig_sha256 or new_content == orig_text:
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=["UNCHANGED_SOURCE: Candidate content is identical to original source"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        # 6. Native Atomic File Application
         diff_lines = list(difflib.unified_diff(
             orig_text.splitlines(keepends=True),
             new_content.splitlines(keepends=True),
@@ -456,20 +620,18 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        # 6. Run ONLY Pre-Authorized Test Command(s)
+        # 7. Run ONLY Pre-Authorized Test Command(s) via validated argv
         test_results = []
         all_tests_passed = True
-        for test_cmd in pre_authorized_tests:
-            # Execute natively via run_headless (never shell=True with user string)
-            # Use split tokens for Windows PowerShell or cmd
+        for test_argv in validated_test_commands:
             proc = run_headless(
-                test_cmd,
+                test_argv,
                 cwd=str(workspace),
-                timeout=120,
+                timeout=120.0,
                 check=False,
             )
             test_results.append({
-                "cmd": test_cmd,
+                "cmd": test_argv,
                 "exit_code": proc.returncode,
                 "stdout": proc.stdout[:2000] if proc.stdout else "",
                 "stderr": proc.stderr[:2000] if proc.stderr else "",
@@ -478,7 +640,7 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 all_tests_passed = False
                 break
 
-        if pre_authorized_tests and not all_tests_passed:
+        if not all_tests_passed:
             # Revert candidate modification on test failure
             target_file.write_bytes(orig_bytes)
             return ExecutionResult(
@@ -497,7 +659,75 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
             )
 
-        # 7. Generate Durable Implementation Receipt
+        # 8. Git Commit Integrity: Stage, Commit, and Verify Distinct Result SHA
+        add_proc = run_headless(["git", "-C", str(workspace), "add", authorized_rel_path], check=False, timeout=30.0)
+        if add_proc.returncode != 0:
+            target_file.write_bytes(orig_bytes)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=[f"GIT_ADD_FAILED: {add_proc.stderr or add_proc.stdout}"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        commit_proc = run_headless(
+            ["git", "-C", str(workspace), "commit", "-m", f"AOS Model+Native repair: {authorized_rel_path}"],
+            check=False,
+            timeout=30.0,
+        )
+        if commit_proc.returncode != 0:
+            target_file.write_bytes(orig_bytes)
+            run_headless(["git", "-C", str(workspace), "checkout", "--", authorized_rel_path], check=False, timeout=30.0)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=[f"GIT_COMMIT_FAILED: {commit_proc.stderr or commit_proc.stdout}"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        head_after = run_headless(["git", "-C", str(workspace), "rev-parse", "HEAD"], check=False, timeout=30.0)
+        result_git_sha = head_after.stdout.strip().lower() if head_after.returncode == 0 else ""
+        if len(result_git_sha) != 40:
+            target_file.write_bytes(orig_bytes)
+            run_headless(["git", "-C", str(workspace), "reset", "--hard", base_git_sha], check=False, timeout=30.0)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=["GIT_LINEAGE_UNVERIFIABLE: Cannot determine result Git commit"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        if result_git_sha == base_git_sha:
+            target_file.write_bytes(orig_bytes)
+            run_headless(["git", "-C", str(workspace), "reset", "--hard", base_git_sha], check=False, timeout=30.0)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=["GIT_SHA_UNCHANGED: Result Git commit SHA is identical to base SHA"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
+
+        # 9. Generate Durable Implementation Receipt in Knowledge Ledger
         receipt_dict = None
         runtime_dir_str = request.payload.get("runtime_dir")
         runtime_dir = Path(runtime_dir_str) if runtime_dir_str else (workspace / ".aos" / "runtime")
@@ -506,28 +736,6 @@ class ModelNativeImplementationBackend(ExecutionBackend):
             ledger_dir = runtime_dir / "resource-os"
             ledger_dir.mkdir(parents=True, exist_ok=True)
             ledger = KnowledgeLedger(ledger_dir)
-
-            # Determine base git SHA and result git SHA
-            base_git_sha = str(request.payload.get("source_sha") or "").strip().lower()
-            if len(base_git_sha) != 40:
-                head_proc = run_headless(["git", "-C", str(workspace), "rev-parse", "HEAD"], check=False, timeout=30.0)
-                if head_proc.returncode == 0 and len(head_proc.stdout.strip()) == 40:
-                    base_git_sha = head_proc.stdout.strip().lower()
-                else:
-                    base_git_sha = "0" * 40
-
-            # Commit the candidate change in isolated workspace to establish verifiable result Git SHA
-            run_headless(["git", "-C", str(workspace), "add", authorized_rel_path], check=False, timeout=30.0)
-            commit_proc = run_headless(
-                ["git", "-C", str(workspace), "commit", "-m", f"AOS Model+Native repair: {authorized_rel_path}"],
-                check=False,
-                timeout=30.0,
-            )
-            head_after = run_headless(["git", "-C", str(workspace), "rev-parse", "HEAD"], check=False, timeout=30.0)
-            if head_after.returncode == 0 and len(head_after.stdout.strip()) == 40:
-                result_git_sha = head_after.stdout.strip().lower()
-            else:
-                result_git_sha = base_git_sha
 
             receipt_dict = record_implementation_receipt(
                 ledger,
@@ -549,7 +757,19 @@ class ModelNativeImplementationBackend(ExecutionBackend):
                 },
             )
         except Exception as e:
-            receipt_dict = {"error": str(e)}
+            target_file.write_bytes(orig_bytes)
+            run_headless(["git", "-C", str(workspace), "reset", "--hard", base_git_sha], check=False, timeout=30.0)
+            return ExecutionResult(
+                backend_id=self.backend_id,
+                worker_id="model_native_worker",
+                task_id=request.task_id,
+                request_id=request.request_id,
+                status="FAILED",
+                exit_code=1,
+                workspace=str(workspace),
+                sanitized_errors=[f"RECEIPT_RECORDING_FAILED: {str(e)}"],
+                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+            )
 
         return ExecutionResult(
             backend_id=self.backend_id,
