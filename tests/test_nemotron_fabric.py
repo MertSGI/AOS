@@ -634,8 +634,6 @@ def test_nemotron_assertion_alias_deterministic_normalization(monkeypatch):
     # "visible" -> "selector_visible"
     # "exists" -> "selector"
     # "contains_text" -> "text_visible"
-    # "url" -> "route"
-    # "url_exact" -> "route_exact"
     raw_plan = {
         "schema_version": "1.0.0",
         "objective_id": "OBJ-TEST",
@@ -661,8 +659,6 @@ def test_nemotron_assertion_alias_deterministic_normalization(monkeypatch):
                         {"type": "visible", "target": "#submit-btn"},
                         {"type": "exists", "selector": "#header"},
                         {"type": "contains_text", "target": "Confirm Booking"},
-                        {"type": "url", "target": "#/book"},
-                        {"type": "url_exact", "target": "http://127.0.0.1:5173/#/book"},
                     ],
                 },
             }
@@ -692,10 +688,195 @@ def test_nemotron_assertion_alias_deterministic_normalization(monkeypatch):
     assert assertions[1]["target"] == "#header"
     assert assertions[2]["type"] == "text_visible"
     assert assertions[2]["target"] == "Confirm Booking"
-    assert assertions[3]["type"] == "route"
-    assert assertions[3]["target"] == "#/book"
-    assert assertions[4]["type"] == "route_exact"
-    assert assertions[4]["target"] == "http://127.0.0.1:5173/#/book"
+
+
+def test_nemotron_exact_text_rejected_fails_closed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # exact_text is ambiguous with substring text check and must fail closed
+    plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "exact_text", "target": "Confirm Booking"},
+                    ],
+                },
+            }
+        ],
+    }
+    mock_choice = MagicMock(finish_reason="stop", message=MagicMock(content=json.dumps(plan), refusal=None))
+    mock_response = MagicMock(choices=[mock_choice], id="resp-1", usage=None)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        with pytest.raises(PlannerContractError) as exc_info:
+            provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert exc_info.value.safe_detail["json_pointer"] == "/tasks/0/payload/assertions/0/type"
+    assert exc_info.value.safe_detail["validator_keyword"] == "enum"
+
+
+def test_nemotron_full_url_assertion_fails_closed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # Full URL in route assertion cannot be evaluated as route-only and must fail closed
+    plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "route_exact", "target": "http://127.0.0.1:5173/#/book"},
+                    ],
+                },
+            }
+        ],
+    }
+    mock_choice = MagicMock(finish_reason="stop", message=MagicMock(content=json.dumps(plan), refusal=None))
+    mock_response = MagicMock(choices=[mock_choice], id="resp-1", usage=None)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        with pytest.raises(PlannerContractError) as exc_info:
+            provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert exc_info.value.safe_detail["json_pointer"] == "/tasks/0/payload/assertions/0/type"
+    assert exc_info.value.safe_detail["validator_keyword"] == "enum"
+
+
+def test_nemotron_unknown_assertion_keys_fail_closed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # Unknown fields like 'negate', 'count', 'operator' must NOT be silently dropped
+    plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "selector_visible", "target": "#submit", "negate": True},
+                    ],
+                },
+            }
+        ],
+    }
+    mock_choice = MagicMock(finish_reason="stop", message=MagicMock(content=json.dumps(plan), refusal=None))
+    mock_response = MagicMock(choices=[mock_choice], id="resp-1", usage=None)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        with pytest.raises(PlannerContractError) as exc_info:
+            provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert exc_info.value.safe_detail["json_pointer"] == "/tasks/0/payload/assertions/0"
+    assert exc_info.value.safe_detail["validator_keyword"] == "additionalProperties"
+
+
+def test_nemotron_conflicting_target_fields_fail_closed(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-fake-key")
+    provider = NemotronPlannerProvider()
+    from aos.planning_kernel import PLAN_SCHEMA
+
+    # Conflicting target and selector fields must NOT silently overwrite target; must fail closed
+    plan = {
+        "schema_version": "1.0.0",
+        "objective_id": "OBJ-TEST",
+        "rollback_strategy": "Rollback",
+        "parallel_safe_groups": [["TASK-1"]],
+        "tasks": [
+            {
+                "node_id": "TASK-1",
+                "authority_id": "AUTH-1",
+                "run_type": "BROWSER",
+                "risk_class": "R0",
+                "mutating": False,
+                "dependencies": [],
+                "write_scope": [],
+                "expected_artifacts": ["test.png"],
+                "completion_criteria": ["Criteria 1"],
+                "evidence_requirements": ["Evidence 1"],
+                "tests": ["Test 1"],
+                "scope_tags": ["scope"],
+                "payload": {
+                    "url": "http://127.0.0.1:5173/#/book",
+                    "assertions": [
+                        {"type": "selector_visible", "target": "#primary", "selector": "#secondary"},
+                    ],
+                },
+            }
+        ],
+    }
+    mock_choice = MagicMock(finish_reason="stop", message=MagicMock(content=json.dumps(plan), refusal=None))
+    mock_response = MagicMock(choices=[mock_choice], id="resp-1", usage=None)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        with pytest.raises(PlannerContractError) as exc_info:
+            provider.generate_plan("prompt", PLAN_SCHEMA)
+
+    assert exc_info.value.safe_detail["json_pointer"] == "/tasks/0/payload/assertions/0"
+    assert exc_info.value.safe_detail["validator_keyword"] == "additionalProperties"
+
 
 
 def test_nemotron_unknown_assertion_type_fails_closed(monkeypatch):
