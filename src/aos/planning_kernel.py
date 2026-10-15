@@ -1572,9 +1572,14 @@ def _resolve_normalized_workspace_path(workspace_root: Path, normalized_path: st
 
 def _task_signature(task: Mapping[str, Any]) -> str:
     payload = task.get("payload", {})
-    normalized_payload = payload if isinstance(payload, Mapping) else {}
+    normalized_payload = dict(payload) if isinstance(payload, Mapping) else {}
+    if str(task.get("run_type", "")).upper() == "AGENTIC":
+        if "expected_artifacts" not in normalized_payload and "expected_artifacts" in task:
+            normalized_payload["expected_artifacts"] = list(task["expected_artifacts"])
+        if "write_scope" not in normalized_payload and "write_scope" in task:
+            normalized_payload["write_scope"] = list(task["write_scope"])
     return f"{str(task.get('run_type', '')).upper()}:" + json.dumps(
-        dict(normalized_payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        normalized_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )
 
 
@@ -2061,7 +2066,15 @@ def _hydrate_credentials() -> None:
         from aos.secure_store import hydrate_environment
         hydrate_environment(overwrite=True)
     except Exception:
-        return
+        pass
+    if not os.environ.get("NVIDIA_API_KEY"):
+        try:
+            from extensions.autonomy_fabric.model_native_backend import _resolve_zero_cost_api_key
+            k = _resolve_zero_cost_api_key()
+            if k:
+                os.environ["NVIDIA_API_KEY"] = k
+        except Exception:
+            pass
 
 
 def build_planning_resource_requirements(

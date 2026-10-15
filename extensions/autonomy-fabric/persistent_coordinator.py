@@ -378,7 +378,14 @@ class PersistentCoordinator:
                 if not payload:
                     payload = {"cmd": ["python", "-c", "pass"]}
             elif node.run_type in ("AGENTIC", "ANTIGRAVITY", "CODEX"):
-                caps = [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK]
+                if (
+                    node.run_type == "AGENTIC"
+                    and len(node.write_scope) == 1
+                    and (payload.get("tests") or getattr(node, "tests", None))
+                ):
+                    caps = [ExecutionCapability.FILE_WRITE, ExecutionCapability.TEST_EXECUTION]
+                else:
+                    caps = [ExecutionCapability.LONG_HORIZON_AGENTIC_WORK]
 
             prior_identity = None
             raw_identity = self.state.agentic_execution_checkpoints.get(node.node_id)
@@ -435,6 +442,11 @@ class PersistentCoordinator:
                 expected_artifacts=list(node.expected_artifacts),
                 payload={
                     **payload,
+                    **(
+                        {"runtime_dir": str(Path(self.checkpoint_file).parent)}
+                        if self.checkpoint_file and "runtime_dir" not in payload
+                        else {}
+                    ),
                     **(
                         {"source_sha": self.canonical_source_sha}
                         if self.canonical_source_sha and "source_sha" not in payload

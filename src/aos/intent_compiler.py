@@ -399,17 +399,21 @@ def _discover_authorized_work_packages(
 
     # Validate controller-supplied isolated canary authorization context if present
     is_valid_isolated_canary = False
-    canary_allowed_authority_id = None
+    canary_allowed_authority_ids: Set[str] = set()
     if isolated_canary_context and isinstance(isolated_canary_context, Mapping):
         # Protected Product execution NEVER allows canary authority bypass
         if not is_protected_product_lane:
             c_isolated = bool(isolated_canary_context.get("isolated_workspace", False))
+            c_auth_ids = isolated_canary_context.get("canary_authority_ids")
+            if isinstance(c_auth_ids, (list, tuple, set)):
+                canary_allowed_authority_ids = {str(a).strip().upper() for a in c_auth_ids if str(a).strip()}
             c_auth_id = str(isolated_canary_context.get("canary_authority_id") or "").strip().upper()
+            if c_auth_id:
+                canary_allowed_authority_ids.add(c_auth_id)
             c_run_id = str(isolated_canary_context.get("canary_run_id") or "").strip()
             # Must prove actual isolated workspace, non-empty canary authority, and active canary run
-            if c_isolated and c_auth_id and c_run_id:
+            if c_isolated and canary_allowed_authority_ids and c_run_id:
                 is_valid_isolated_canary = True
-                canary_allowed_authority_id = c_auth_id
 
     # Canonical authority records map: authority_id (upper) -> AuthorityRecord
     auth_records = {
@@ -502,8 +506,8 @@ def _discover_authorized_work_packages(
                 # Check if authorized via verified controller-supplied isolated canary context
                 is_canary_authorized = (
                     is_valid_isolated_canary
-                    and canary_allowed_authority_id is not None
-                    and pkg_authority_id.upper() == canary_allowed_authority_id
+                    and bool(canary_allowed_authority_ids)
+                    and pkg_authority_id.upper() in canary_allowed_authority_ids
                 )
 
                 if auth_record is None and not is_canary_authorized:
@@ -700,6 +704,7 @@ def build_intent_catalog(
 
     # 4. IMPLEMENT_AUTHORIZED_WORK_PACKAGE candidates from trusted work packages
     lane_allowed_scope = getattr(situation, "lane_allowed_scope", None)
+    obj_auth_id = str(getattr(objective, "authority_id", "") or "").strip().upper()
     for wp_id, wp in work_packages.items():
         if not wp.approved:
             continue
@@ -731,6 +736,18 @@ def build_intent_catalog(
                 },
             )
         )
+
+    # If the objective explicitly targets a specific authority with matching candidates, focus on those
+    if obj_auth_id and obj_auth_id != "NONE":
+        matching_auth = [
+            c for c in candidates
+            if c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE"
+            and c.target_ref in work_packages
+            and work_packages[c.target_ref].authority_id.upper() == obj_auth_id
+        ]
+        if matching_auth:
+            non_wp = [c for c in candidates if c.intent_type != "IMPLEMENT_AUTHORIZED_WORK_PACKAGE"]
+            candidates = matching_auth + non_wp
 
     # Deduplicate against completed signatures
     deduped_candidates: List[IntentCandidate] = []

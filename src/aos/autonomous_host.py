@@ -1025,7 +1025,9 @@ def build_dag(project_id: str, registry: AgentRunRegistry, plan: Dict[str, Any])
             expected_artifacts=item.get("expected_artifacts", []),
         )
         # PersistentCoordinator intentionally treats payload as an extensible node field.
-        node.payload = item.get("payload", {})
+        node.payload = dict(item.get("payload", {}))
+        if "tests" in item and "tests" not in node.payload:
+            node.payload["tests"] = list(item["tests"])
     return dag
 
 
