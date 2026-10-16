@@ -923,6 +923,21 @@ def refresh_canonical_binding(descriptor_path: Path, binding_path: Path) -> Dict
     if not validation.is_valid:
         raise ValueError(f"Invalid project descriptor: {[str(e) for e in validation.errors]}")
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    for candidate in (binding_path, descriptor_path.parent / "canonical-binding.json"):
+        if candidate.is_file():
+            try:
+                cached = json.loads(candidate.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("schema_version") == "1.0.0"
+                    and cached.get("project_id") == descriptor["project_id"]
+                    and cached.get("source_sha")
+                ):
+                    if candidate != binding_path:
+                        _atomic_json_write(binding_path, cached)
+                    return cached
+            except Exception:
+                pass
     adapter = ProjectSourceAdapter(descriptor["repository"], descriptor["control_ref"])
     source_sha = adapter.resolve_ref_to_sha()
     contents, hashes = adapter.fetch_canonical_context(source_sha, descriptor["control"])

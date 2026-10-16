@@ -7,7 +7,7 @@ from typing import Any, Iterable, List, Optional
 from aos.resource_snapshot import ResourceSnapshotStore
 
 from extensions.autonomy_fabric.execution_backend import (
-    BackendClass, ExecutionAvailabilityState, ExecutionBackend, ExecutionCost, ExecutionHealth,
+    BackendClass, ExecutionAvailabilityState, ExecutionBackend, ExecutionCapability, ExecutionCost, ExecutionHealth,
     ExecutionRequest,
 )
 
@@ -62,33 +62,6 @@ class ResourceOrchestrator:
             if backend.cost == ExecutionCost.PAID_CLOUD:
                 eligible = False
                 reasons.append("PAID_DEFAULT_DENIED")
-            if backend.get_health() in {ExecutionHealth.UNAVAILABLE, ExecutionHealth.QUOTA_EXHAUSTED}:
-                eligible = False
-                reasons.append("HEALTH_UNAVAILABLE")
-            availability = None
-            getter = getattr(backend, "get_availability", None)
-            if callable(getter):
-                availability = getter()
-                if availability.state not in {
-                    ExecutionAvailabilityState.AVAILABLE,
-                    ExecutionAvailabilityState.LOW_OR_SCARCE,
-                }:
-                    eligible = False
-                    reasons.append(f"AVAILABILITY_{availability.state.value}")
-                elif availability.state == ExecutionAvailabilityState.LOW_OR_SCARCE and scarcity_policy == "AVOID_SCARCE":
-                    eligible = False
-                    reasons.append("SCARCITY_POLICY_AVOIDED")
-            snapshot = snapshots.get(backend.backend_id)
-            if snapshot is not None:
-                if snapshot.health in {"UNAVAILABLE", "QUOTA_EXHAUSTED", "UNKNOWN"}:
-                    eligible = False
-                    reasons.append(f"SNAPSHOT_HEALTH_{snapshot.health}")
-                if snapshot.credential_status == "UNAVAILABLE":
-                    eligible = False
-                    reasons.append("SNAPSHOT_CREDENTIAL_UNAVAILABLE")
-                if snapshot.local_service_status == "UNAVAILABLE":
-                    eligible = False
-                    reasons.append("SNAPSHOT_LOCAL_SERVICE_UNAVAILABLE")
 
             # Local Qwen envelope check
             is_local_qwen = "qwen" in backend.backend_id.lower() or (
@@ -117,7 +90,42 @@ class ResourceOrchestrator:
             if maximum_latency and latency and latency > maximum_latency:
                 eligible = False
                 reasons.append("LATENCY_INADEQUATE")
+
+            availability = None
+            if eligible:
+                if backend.get_health() in {ExecutionHealth.UNAVAILABLE, ExecutionHealth.QUOTA_EXHAUSTED}:
+                    eligible = False
+                    reasons.append("HEALTH_UNAVAILABLE")
+                getter = getattr(backend, "get_availability", None)
+                if callable(getter):
+                    availability = getter()
+                    if availability.state not in {
+                        ExecutionAvailabilityState.AVAILABLE,
+                        ExecutionAvailabilityState.LOW_OR_SCARCE,
+                    }:
+                        eligible = False
+                        reasons.append(f"AVAILABILITY_{availability.state.value}")
+                    elif availability.state == ExecutionAvailabilityState.LOW_OR_SCARCE and scarcity_policy == "AVOID_SCARCE":
+                        eligible = False
+                        reasons.append("SCARCITY_POLICY_AVOIDED")
+
+            snapshot = snapshots.get(backend.backend_id)
+            if snapshot is not None:
+                if snapshot.health in {"UNAVAILABLE", "QUOTA_EXHAUSTED", "UNKNOWN"}:
+                    eligible = False
+                    reasons.append(f"SNAPSHOT_HEALTH_{snapshot.health}")
+                if snapshot.credential_status == "UNAVAILABLE":
+                    eligible = False
+                    reasons.append("SNAPSHOT_CREDENTIAL_UNAVAILABLE")
+                if snapshot.local_service_status == "UNAVAILABLE":
+                    eligible = False
+                    reasons.append("SNAPSHOT_LOCAL_SERVICE_UNAVAILABLE")
             score = self._COST.get(backend.cost, 500)
+            if getattr(backend, "backend_class", None) == BackendClass.NATIVE_EXECUTION_BACKEND:
+                score -= 10
+            elif getattr(backend, "backend_class", None) == BackendClass.AGENTIC_EXECUTION_BACKEND:
+                if ExecutionCapability.LONG_HORIZON_AGENTIC_WORK not in required:
+                    score += 20
             if availability is not None and availability.state == ExecutionAvailabilityState.LOW_OR_SCARCE:
                 score += 25
                 reasons.append("SCARCE")

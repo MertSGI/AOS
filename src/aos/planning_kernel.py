@@ -2119,6 +2119,19 @@ def build_planning_resource_requirements(
         or (context_tokens <= 1500 and not is_high_complexity)
     )
 
+    local_qwen_allowed = True
+    agentic_planning_allowed = True
+    if os.environ.get("AOS_LOCAL_QWEN_DISABLED") == "1":
+        local_qwen_allowed = False
+    if os.environ.get("AOS_AGENTIC_PLANNING_DISABLED") == "1":
+        agentic_planning_allowed = False
+    if situation is not None:
+        constraints_str = " ".join(str(c).lower() for c in (situation.constraints or ()))
+        if "no_local" in constraints_str or "cloud_only" in constraints_str or "zero_cost_cloud" in constraints_str:
+            local_qwen_allowed = False
+        if "no_agentic" in constraints_str or "bounded_only" in constraints_str:
+            agentic_planning_allowed = False
+
     if is_small_reasoning:
         return {
             "task_class": c_task_class,
@@ -2127,8 +2140,8 @@ def build_planning_resource_requirements(
             "request_token_budget": request_token_budget,
             "minimum_quality": 1,
             "complexity_class": "LOW",
-            "local_qwen_allowed": True,
-            "agentic_planning_allowed": True,
+            "local_qwen_allowed": local_qwen_allowed,
+            "agentic_planning_allowed": agentic_planning_allowed,
             "maximum_latency_ms": 10000,
             "scarcity_policy": "ALLOW_SCARCE",
         }
@@ -2140,8 +2153,8 @@ def build_planning_resource_requirements(
             "request_token_budget": request_token_budget,
             "minimum_quality": 3,
             "complexity_class": "HIGH",
-            "local_qwen_allowed": True,
-            "agentic_planning_allowed": True,
+            "local_qwen_allowed": local_qwen_allowed,
+            "agentic_planning_allowed": agentic_planning_allowed,
             "maximum_latency_ms": 30000,
             "scarcity_policy": "ALLOW_SCARCE",
         }
@@ -2153,8 +2166,8 @@ def build_planning_resource_requirements(
             "request_token_budget": request_token_budget,
             "minimum_quality": 2,
             "complexity_class": "MEDIUM",
-            "local_qwen_allowed": True,
-            "agentic_planning_allowed": True,
+            "local_qwen_allowed": local_qwen_allowed,
+            "agentic_planning_allowed": agentic_planning_allowed,
             "maximum_latency_ms": 15000,
             "scarcity_policy": "ALLOW_SCARCE",
         }
@@ -4859,10 +4872,32 @@ def run_autonomous_project(
             _write_kernel_checkpoint(runtime_dir, {**result, "phase": "HUMAN_REQUIRED"})
             return result
 
+        if isinstance(plan, dict):
+            if "project_id" not in plan or not plan.get("project_id"):
+                plan["project_id"] = situation.project_id
+            if "bound_source_sha" not in plan or not plan.get("bound_source_sha"):
+                plan["bound_source_sha"] = situation.control_sha
+            if situation.execution_base_sha and ("bound_execution_base_sha" not in plan or not plan.get("bound_execution_base_sha")):
+                plan["bound_execution_base_sha"] = situation.execution_base_sha
+
         current_plan_fingerprint = _plan_fingerprint(plan)
         batch_runtime = runtime_dir / "batches" / f"batch-{batch_number:04d}"
         plan_path = batch_runtime / "generated-run-plan.json"
         _atomic_json(plan_path, plan)
+        _atomic_json(batch_runtime / "canonical-binding.json", {
+            "schema_version": "1.0.0",
+            "verified_at": _utc_now(),
+            "project_id": situation.project_id,
+            "repository": situation.repository,
+            "source_ref": situation.control_ref,
+            "source_sha": situation.control_sha,
+            "input_file_hashes": dict(situation.canonical_hashes or {}),
+            "current_status": situation.current_status,
+            "current_milestone": situation.current_milestone,
+            "canonical_next_action": situation.canonical_next_action,
+            "target_base_sha": situation.control_sha,
+            "execution_base_sha": situation.execution_base_sha,
+        })
         _write_kernel_checkpoint(runtime_dir, {
             "project_id": situation.project_id,
             "goal": goal,

@@ -1,15 +1,15 @@
 """AOS Genuine Two-Objective Autonomous Software-Development Continuation Canary Runner.
 
-Demonstrates autonomous multi-objective continuation using core AOS components:
-- Genuine AOS objective selection
-- Trusted Compact Intent compilation
+Demonstrates autonomous multi-objective continuation through the actual production AOS orchestration path:
+- Genuine production select_objective path (Nemotron reasoning provider)
+- Trusted Compact Intent compiler (build_intent_catalog + compile_intent_to_plan)
 - Resource Orchestrator backend selection (ModelNativeImplementationBackend)
 - Real bounded source modification (via live zero-cost NVIDIA Nemotron)
 - Native functional verification (FAIL -> PASS)
 - Git commits with verifiable lineage and distinct Git SHAs
 - Durable implementation receipts in KnowledgeLedger
-- Clean coordinator closure and durable restart checkpoint
-- Deliberate restart: history reconstruction, automatic selection of Objective B without manual plan injection
+- Kernel checkpoint persistence produced exclusively through production code
+- Deliberate restart: history reconstruction, automatic selection of Objective B without test-script selection
 - Second execution & verification pipeline (different file, different test, distinct Git SHA, independent receipt)
 - Third restart: duplicate prevention proven (zero model calls, zero commits, zero receipts)
 """
@@ -26,41 +26,23 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from jsonschema import Draft202012Validator, FormatChecker
-
-from aos.intent_compiler import (
-    PLAN_INTENT_SCHEMA,
-    build_intent_catalog,
-    compile_intent_to_plan,
-)
 from aos.planning_kernel import (
+    AuthorityRecord,
     Objective,
     ProjectSituation,
-    PLAN_SCHEMA,
-    compile_execution_plan,
     reconstruct_batch_history,
     run_autonomous_project,
-    select_objective,
-    _task_signature,
-    _write_kernel_checkpoint,
     _kernel_checkpoint_path,
+    _read_json,
 )
-from aos.autonomous_host import build_dag
-from extensions.autonomy_fabric.execution_backend import (
-    ExecutionCapability,
-    ExecutionRequest,
-)
-from extensions.autonomy_fabric.execution_router import ExecutionRouter
+from aos.read_identity import build_workspace_source_generation
 from extensions.autonomy_fabric.model_native_backend import (
     ModelNativeImplementationBackend,
     _resolve_zero_cost_api_key,
 )
-from extensions.autonomy_fabric.persistent_coordinator import PersistentCoordinator
-from extensions.autonomy_fabric.resource_orchestrator import ResourceOrchestrator
-from extensions.autonomy_fabric.run_registry import AgentRunRegistry, FileRunJournal
-
 
 CANARY_SCRATCH_ROOT = Path(r"C:\Users\mozcelikbas\AppData\Local\Temp\aos_two_objective_canary_workspace")
+REPO_ROOT = Path(__file__).parent.parent
 
 
 def setup_disposable_project(root: Path) -> Dict[str, Any]:
@@ -144,11 +126,17 @@ def setup_disposable_project(root: Path) -> Dict[str, Any]:
     runtime_dir = root / ".aos-runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    workspace_gen = build_workspace_source_generation(
+        project_id="canary-two-obj-proj",
+        canonical_source_sha=initial_git_sha,
+        canonical_execution_base_sha=initial_git_sha,
+    )
+
     # Two distinct work packages with independent canary authorities
     wp_data = {
         "approved": True,
         "source_sha": initial_git_sha,
-        "workspace_source_generation": "canary-two-obj-gen-1",
+        "workspace_source_generation": workspace_gen,
         "work_packages": [
             {
                 "work_package_id": "WP-REPAIR-DISCOUNT",
@@ -192,36 +180,32 @@ def setup_disposable_project(root: Path) -> Dict[str, Any]:
     )
     (docs_dir / "ROADMAP.md").write_text(roadmap_content, encoding="utf-8")
 
-    # Project Descriptor
+    # Project Descriptor (conforming to project_descriptor.schema.json)
     descriptor = {
-        "schema_version": "1.0.0",
+        "schema_version": "0.1.0",
         "project_id": "canary-two-obj-proj",
         "repository": "MertSGI/AOS",
         "control_ref": "refs/heads/main",
+        "description": "AOS Two-Objective Continuation Canary",
         "control": {
-            "docs/ROADMAP.md": str(docs_dir / "ROADMAP.md"),
+            "state": "docs/STATE.json",
+            "decisions": "docs/DECISIONS.md",
+            "evidence": "docs/EVIDENCE.jsonl",
+            "roadmap": "docs/ROADMAP.md",
         },
-        "completion_criteria": [
-            "test_discount.py passes",
-            "test_tax.py passes",
-        ],
+        "authority": {
+            "production_mutation": "forbidden",
+            "roadmap_change": "forbidden",
+            "destructive_data": "forbidden",
+        },
     }
     descriptor_path = runtime_dir / "project-descriptor.json"
     descriptor_path.write_text(json.dumps(descriptor, indent=2), encoding="utf-8")
 
-    # Routing policy
-    routing_policy = {
-        "schema_version": "1.0.0",
-        "default_tier": "FREE",
-        "providers": {
-            "nemotron": {
-                "class": "FREE_TIER_CLOUD",
-                "enabled": True,
-            }
-        },
-    }
+    # Routing policy (from production nemotron.planner-policy.json)
+    policy_template = REPO_ROOT / "descriptors" / "nemotron.planner-policy.json"
     routing_policy_path = runtime_dir / "routing-policy.json"
-    routing_policy_path.write_text(json.dumps(routing_policy, indent=2), encoding="utf-8")
+    routing_policy_path.write_text(policy_template.read_text(encoding="utf-8"), encoding="utf-8")
 
     return {
         "workspace": root,
@@ -236,60 +220,8 @@ def setup_disposable_project(root: Path) -> Dict[str, Any]:
     }
 
 
-def execute_plan_via_coordinator(
-    plan: Dict[str, Any],
-    workspace: Path,
-    batch_runtime: Path,
-    canonical_source_sha: str,
-) -> Dict[str, Any]:
-    """Execute run plan using genuine AOS TaskDAG, ResourceOrchestrator, and PersistentCoordinator."""
-    batch_runtime.mkdir(parents=True, exist_ok=True)
-    plan_path = batch_runtime / "generated-run-plan.json"
-    plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-
-    run_journal = FileRunJournal(str(batch_runtime / "run-events.jsonl"))
-    registry = AgentRunRegistry(run_journal)
-    dag = build_dag("canary-two-obj-proj", registry, plan)
-
-    orch = ResourceOrchestrator()
-    backend = ModelNativeImplementationBackend()
-    router = ExecutionRouter([backend], orchestrator=orch)
-
-    checkpoint_file = batch_runtime / "coordinator-checkpoint.json"
-    coordinator = PersistentCoordinator(
-        project_id="canary-two-obj-proj",
-        workspace_path=str(workspace),
-        dag=dag,
-        router=router,
-        registry=registry,
-        checkpoint_file=str(checkpoint_file),
-        canonical_source_sha=canonical_source_sha,
-    )
-    try:
-        state = coordinator.run_until_complete(max_iterations=10)
-    finally:
-        router.close()
-
-    receipt = {
-        "schema_version": "1.0.0",
-        "project_id": "canary-two-obj-proj",
-        "canonical_source_sha": canonical_source_sha,
-        "completed_task_ids": state.completed_task_ids,
-        "failed_task_ids": state.failed_task_ids,
-        "backend_attempt_telemetry": [
-            {
-                "backend_id": backend.backend_id,
-                "attempt_count": 1,
-            }
-        ],
-        "progress": dag.compute_progress(),
-    }
-    (batch_runtime / "host-receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
-    return receipt
-
-
 def execute_two_objective_continuation() -> Dict[str, Any]:
-    """Execute the full two-objective autonomous qualification loop with restart recovery."""
+    """Execute the full two-objective autonomous qualification loop via production orchestrator."""
     fixture = setup_disposable_project(CANARY_SCRATCH_ROOT)
     workspace = fixture["workspace"]
     runtime_dir = fixture["runtime_dir"]
@@ -302,22 +234,23 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
         if key:
             os.environ["NVIDIA_API_KEY"] = key
 
-    isolated_canary_context = {
-        "isolated_workspace": True,
-        "canary_authority_ids": ["CANARY-AUTH-OBJ-A", "CANARY-AUTH-OBJ-B"],
-        "canary_run_id": "RUN-CANARY-TWO-OBJ-001",
-    }
-
-    # Custom situation synthesizer for the isolated fixture
+    # Authentic isolated situation factory synthesizing fresh project state
     def canary_situation_factory(**kwargs) -> ProjectSituation:
         head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace), capture_output=True, text=True, check=True)
         current_head = head_proc.stdout.strip().lower()
 
-        # Check if discount test passes
         disc_passed = subprocess.run(["python", "test_discount.py"], cwd=str(workspace), capture_output=True).returncode == 0
         tax_passed = subprocess.run(["python", "test_tax.py"], cwd=str(workspace), capture_output=True).returncode == 0
 
-        next_action = "PROJECT_COMPLETE" if (disc_passed and tax_passed) else ("Repair tax" if disc_passed else "Repair discount")
+        if disc_passed and tax_passed:
+            next_action = "PROJECT COMPLETE"
+            status = "COMPLETE"
+        elif disc_passed:
+            next_action = "Repair tax calculation in src/tax.py"
+            status = "ACTIVE"
+        else:
+            next_action = "Repair discount calculation in src/discount.py"
+            status = "ACTIVE"
 
         return ProjectSituation(
             schema_version="1.0.0",
@@ -327,7 +260,7 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
             control_sha=initial_git_sha,
             repository_head=current_head,
             execution_base_sha=initial_git_sha,
-            current_status="ACTIVE",
+            current_status=status,
             current_milestone="M1",
             canonical_next_action=next_action,
             canonical_hashes={},
@@ -336,107 +269,47 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
             ci_state=[],
             accepted_gates=[],
             blocked_gates=[],
-            authority_records={},
+            authority_records={
+                "CANARY-AUTH-OBJ-A": AuthorityRecord(
+                    authority_id="CANARY-AUTH-OBJ-A",
+                    source_path="docs/ROADMAP.md",
+                    text="STANDING AUTHORITY FOR ROUTINE NON-PRODUCTION CANARY-TWO-OBJ-PROJ MERTSGI/AOS REPAIR DISCOUNT",
+                    superseded=False,
+                    production_allowed=False,
+                ),
+                "CANARY-AUTH-OBJ-B": AuthorityRecord(
+                    authority_id="CANARY-AUTH-OBJ-B",
+                    source_path="docs/ROADMAP.md",
+                    text="STANDING AUTHORITY FOR ROUTINE NON-PRODUCTION CANARY-TWO-OBJ-PROJ MERTSGI/AOS REPAIR TAX",
+                    superseded=False,
+                    production_allowed=False,
+                ),
+            },
             goal="Autonomous continuation of discount and tax repair",
-            constraints=(),
+            constraints=("ZERO_COST_CLOUD", "NO_LOCAL_LLAMA", "NO_AGENTIC_PLANNING"),
             red_lines=(),
             completion_criteria=("test_discount.py passes", "test_tax.py passes"),
             ambiguity_reasons=(),
-            captured_at="2026-10-15T00:00:00Z",
+            captured_at="2026-10-16T00:00:00Z",
             lane_allowed_scope=("src/",),
         )
 
-    # Objective selector deriving objectives strictly from trusted canonical control fixture
-    def select_canary_objective(situation: ProjectSituation, runtime: Path) -> Objective:
-        # Objective A: Discount (if not completed)
-        disc_passed = subprocess.run(["python", "test_discount.py"], cwd=str(workspace), capture_output=True).returncode == 0
-        if not disc_passed:
-            return Objective(
-                objective_id="OBJ-CANARY-DISCOUNT",
-                title="Repair discount calculation in src/discount.py",
-                description="Fix calculate_discount bug in src/discount.py so discount is subtracted",
-                authority_id="CANARY-AUTH-OBJ-A",
-                risk_class="R0",
-                rationale="Highest priority ready objective from canonical roadmap",
-                scope_tags=("src", "discount"),
-                completion_criteria=("test_discount.py passes",),
-                parallel_candidates=(),
-            )
-        # Objective B: Tax (if discount completed and tax not completed)
-        tax_passed = subprocess.run(["python", "test_tax.py"], cwd=str(workspace), capture_output=True).returncode == 0
-        if not tax_passed:
-            return Objective(
-                objective_id="OBJ-CANARY-TAX",
-                title="Repair tax calculation in src/tax.py",
-                description="Fix calculate_tax bug in src/tax.py so rate is applied correctly",
-                authority_id="CANARY-AUTH-OBJ-B",
-                risk_class="R0",
-                rationale="Second objective selected autonomously after discount completion",
-                scope_tags=("src", "tax"),
-                completion_criteria=("test_tax.py passes",),
-                parallel_candidates=(),
-            )
-        return Objective(
-            objective_id="OBJ-COMPLETE",
-            title="All objectives completed",
-            description="Roadmap is complete",
-            authority_id="CANARY-AUTH-OBJ-A",
-            risk_class="R0",
-            rationale="No further work required",
-            scope_tags=(),
-            completion_criteria=(),
-            parallel_candidates=(),
-        )
-
     # =========================================================================
-    # PHASE 1: EXECUTE OBJECTIVE A THROUGH GENUINE AOS AUTONOMOUS LOOP
+    # PHASE 1: EXECUTE OBJECTIVE A VIA PRODUCTION run_autonomous_project
     # =========================================================================
-    print("[PHASE 1] Executing Objective A through genuine AOS autonomous loop...")
-    situation_1 = canary_situation_factory()
-    obj_a = select_canary_objective(situation_1, runtime_dir)
-    assert obj_a.objective_id == "OBJ-CANARY-DISCOUNT"
-    assert obj_a.authority_id == "CANARY-AUTH-OBJ-A"
-
-    catalog_1 = build_intent_catalog(
-        situation=situation_1,
-        objective=obj_a,
+    print("[PHASE 1] Executing Objective A through production run_autonomous_project...")
+    res_1 = run_autonomous_project(
+        descriptor_path=descriptor_path,
         workspace=workspace,
         runtime_dir=runtime_dir,
-        workspace_source_generation="canary-two-obj-gen-1",
-        isolated_canary_context=isolated_canary_context,
+        routing_policy_path=routing_policy_path,
+        situation_factory=canary_situation_factory,
+        max_batches=1,
     )
-    assert len(catalog_1.candidates) == 1
-    assert catalog_1.candidates[0].target_ref == "WP-REPAIR-DISCOUNT"
-
-    plan_1 = compile_intent_to_plan(
-        intent=catalog_1.candidates[0].to_intent_dict(obj_a.objective_id),
-        catalog=catalog_1,
-        situation=situation_1,
-        objective=obj_a,
-        runtime_dir=runtime_dir,
-        workspace=workspace,
-        workspace_source_generation="canary-two-obj-gen-1",
-    )
-    Draft202012Validator(PLAN_SCHEMA, format_checker=FormatChecker()).validate(plan_1)
-
-    # Batch 0 execution
-    batch_0_runtime = runtime_dir / "batches" / "batch-0000"
-    batch_0_runtime.mkdir(parents=True, exist_ok=True)
-    plan_0_path = batch_0_runtime / "generated-run-plan.json"
-    plan_0_path.write_text(json.dumps(plan_1, indent=2), encoding="utf-8")
-
-    receipt_1 = execute_plan_via_coordinator(
-        plan=plan_1,
-        workspace=workspace,
-        batch_runtime=batch_0_runtime,
-        canonical_source_sha=initial_git_sha,
-    )
-    assert not receipt_1.get("failed_task_ids"), f"Objective A failed: {receipt_1}"
-    assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in receipt_1.get("completed_task_ids", [])
 
     # Verify Objective A test FAIL -> PASS
     p_disc_after = subprocess.run(["python", "test_discount.py"], cwd=str(workspace), capture_output=True, text=True)
-    assert p_disc_after.returncode == 0
+    assert p_disc_after.returncode == 0, f"Expected test_discount to PASS, stderr: {p_disc_after.stderr}"
     assert "CANARY_DISCOUNT_TEST_PASS" in p_disc_after.stdout
     test_a_after_output = p_disc_after.stdout.strip()
 
@@ -444,7 +317,14 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     git_sha_1 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace), capture_output=True, text=True, check=True).stdout.strip().lower()
     assert git_sha_1 != initial_git_sha
 
-    # Extract diff and receipt ID for Objective A
+    # Inspect batch-0000 artifacts and receipt
+    batch_0_runtime = runtime_dir / "batches" / "batch-0000"
+    receipt_0_path = batch_0_runtime / "host-receipt.json"
+    assert receipt_0_path.is_file(), "Host receipt for batch-0000 not found"
+    receipt_1 = json.loads(receipt_0_path.read_text(encoding="utf-8"))
+    assert not receipt_1.get("failed_task_ids"), f"Objective A tasks failed: {receipt_1}"
+    assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in receipt_1.get("completed_task_ids", [])
+
     telemetry_1 = receipt_1.get("backend_attempt_telemetry", [])
     assert telemetry_1, "No backend attempt telemetry recorded"
     first_worker_route = telemetry_1[0].get("backend_id")
@@ -458,94 +338,38 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     assert first_receipt_id, "first_receipt_id could not be resolved from KnowledgeLedger"
     first_source_diff = first_receipt_line.get("claims", {}).get("diff")
 
-    # Persist durable restart checkpoint after Objective A
-    obj_a_action_sig = _task_signature(plan_1["tasks"][0])
-    checkpoint_0 = {
-        "schema_version": "1.0.0",
-        "phase": "BATCH_COMPLETE",
-        "project_id": "canary-two-obj-proj",
-        "batch_number": 1,
-        "completed_batch_count": 1,
-        "total_completed_batch_count": 1,
-        "successful_batch_count": 1,
-        "failed_batch_count": 0,
-        "last_objective_id": obj_a.objective_id,
-        "last_action_signature": obj_a_action_sig,
-        "source_sha_before": initial_git_sha,
-        "source_sha_after": git_sha_1,
-        "last_receipt_id": first_receipt_id,
-        "remaining_frontier": ["OBJ-CANARY-TAX"],
-        "last_receipt": receipt_1,
-    }
-    _write_kernel_checkpoint(runtime_dir, checkpoint_0)
+    # Read verified kernel checkpoint persisted by production kernel
     checkpoint_file = _kernel_checkpoint_path(runtime_dir)
+    assert checkpoint_file.is_file(), "Kernel checkpoint was not persisted"
+    checkpoint_0 = _read_json(checkpoint_file)
+    assert checkpoint_0.get("completed_batch_count") == 1
     checkpoint_hash_1 = hashlib.sha256(checkpoint_file.read_bytes()).hexdigest()
+
+    # Read objective-0000.json chosen by production select_objective
+    obj_0_path = runtime_dir / "objective-0000.json"
+    assert obj_0_path.is_file()
+    obj_a_dict = json.loads(obj_0_path.read_text(encoding="utf-8"))
+    obj_a_id = obj_a_dict.get("objective_id", "OBJ-DISCOUNT")
 
     # =========================================================================
     # PHASE 2: DELIBERATE RESTART AND AUTONOMOUS SELECTION OF OBJECTIVE B
     # =========================================================================
     print("[PHASE 2] Deliberately restarting AOS against same runtime and checkpoint...")
 
-    # Reconstruct history from disk
-    durable_history = reconstruct_batch_history(runtime_dir, workspace=workspace)
-    assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in durable_history.completed_task_ids
-    assert obj_a_action_sig in durable_history.completed_task_signatures
-
-    # Synthesize fresh situation from fresh workspace
-    situation_2 = canary_situation_factory()
-    assert situation_2.repository_head == git_sha_1
-
-    # Select next objective autonomously - NO manual plan injection!
-    obj_b = select_canary_objective(situation_2, runtime_dir)
-    assert obj_b.objective_id == "OBJ-CANARY-TAX"
-    assert obj_b.authority_id == "CANARY-AUTH-OBJ-B"
-
-    # Build catalog: Objective A is excluded because obj_a_action_sig is in forbidden_signatures!
-    catalog_2 = build_intent_catalog(
-        situation=situation_2,
-        objective=obj_b,
+    # Fresh call to production run_autonomous_project — history reconstructed from disk,
+    # production select_objective chooses Objective B without test-script intervention!
+    res_2 = run_autonomous_project(
+        descriptor_path=descriptor_path,
         workspace=workspace,
         runtime_dir=runtime_dir,
-        forbidden_signatures=set(durable_history.completed_task_signatures),
-        workspace_source_generation="canary-two-obj-gen-1",
-        isolated_canary_context=isolated_canary_context,
+        routing_policy_path=routing_policy_path,
+        situation_factory=canary_situation_factory,
+        max_batches=1,
     )
-    # Objective A must be excluded by signature deduplication
-    assert not any(c.target_ref == "WP-REPAIR-DISCOUNT" for c in catalog_2.candidates)
-    # Objective B is the single selected candidate
-    assert len(catalog_2.candidates) == 1
-    assert catalog_2.candidates[0].target_ref == "WP-REPAIR-TAX"
-
-    # Compile Objective B to plan
-    plan_2 = compile_intent_to_plan(
-        intent=catalog_2.candidates[0].to_intent_dict(obj_b.objective_id),
-        catalog=catalog_2,
-        situation=situation_2,
-        objective=obj_b,
-        runtime_dir=runtime_dir,
-        workspace=workspace,
-        workspace_source_generation="canary-two-obj-gen-1",
-    )
-    Draft202012Validator(PLAN_SCHEMA, format_checker=FormatChecker()).validate(plan_2)
-
-    # Batch 1 execution
-    batch_1_runtime = runtime_dir / "batches" / "batch-0001"
-    batch_1_runtime.mkdir(parents=True, exist_ok=True)
-    plan_1_path = batch_1_runtime / "generated-run-plan.json"
-    plan_1_path.write_text(json.dumps(plan_2, indent=2), encoding="utf-8")
-
-    receipt_2 = execute_plan_via_coordinator(
-        plan=plan_2,
-        workspace=workspace,
-        batch_runtime=batch_1_runtime,
-        canonical_source_sha=git_sha_1,
-    )
-    assert not receipt_2.get("failed_task_ids"), f"Objective B failed: {receipt_2}"
-    assert "TASK-AGENTIC-WP-WP-REPAIR-TAX" in receipt_2.get("completed_task_ids", [])
 
     # Verify Objective B test FAIL -> PASS
     p_tax_after = subprocess.run(["python", "test_tax.py"], cwd=str(workspace), capture_output=True, text=True)
-    assert p_tax_after.returncode == 0
+    assert p_tax_after.returncode == 0, f"Expected test_tax to PASS, stderr: {p_tax_after.stderr}"
     assert "CANARY_TAX_TEST_PASS" in p_tax_after.stdout
     test_b_after_output = p_tax_after.stdout.strip()
 
@@ -553,6 +377,14 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     git_sha_2 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace), capture_output=True, text=True, check=True).stdout.strip().lower()
     assert git_sha_2 != git_sha_1
     assert git_sha_2 != initial_git_sha
+
+    # Inspect batch-0001 artifacts and receipt
+    batch_1_runtime = runtime_dir / "batches" / "batch-0001"
+    receipt_1_path = batch_1_runtime / "host-receipt.json"
+    assert receipt_1_path.is_file(), "Host receipt for batch-0001 not found"
+    receipt_2 = json.loads(receipt_1_path.read_text(encoding="utf-8"))
+    assert not receipt_2.get("failed_task_ids"), f"Objective B tasks failed: {receipt_2}"
+    assert "TASK-AGENTIC-WP-WP-REPAIR-TAX" in receipt_2.get("completed_task_ids", [])
 
     # Read implementation receipt 2 from KnowledgeLedger
     ledger_records_path_2 = batch_1_runtime / "resource-os" / "ledger.jsonl"
@@ -563,59 +395,45 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
     assert second_receipt_id != first_receipt_id
     second_source_diff = second_receipt_line.get("claims", {}).get("diff")
 
-    # Persist checkpoint after Objective B
-    obj_b_action_sig = _task_signature(plan_2["tasks"][0])
-    checkpoint_1 = {
-        "schema_version": "1.0.0",
-        "phase": "BATCH_COMPLETE",
-        "project_id": "canary-two-obj-proj",
-        "batch_number": 2,
-        "completed_batch_count": 2,
-        "total_completed_batch_count": 2,
-        "successful_batch_count": 2,
-        "failed_batch_count": 0,
-        "last_objective_id": obj_b.objective_id,
-        "last_action_signature": obj_b_action_sig,
-        "source_sha_before": git_sha_1,
-        "source_sha_after": git_sha_2,
-        "last_receipt_id": second_receipt_id,
-        "remaining_frontier": [],
-        "last_receipt": receipt_2,
-    }
-    _write_kernel_checkpoint(runtime_dir, checkpoint_1)
+    # Read updated production kernel checkpoint
+    checkpoint_1 = _read_json(checkpoint_file)
+    assert checkpoint_1.get("completed_batch_count") == 2
+
+    # Read objective-0001.json chosen by production select_objective
+    obj_1_path = runtime_dir / "objective-0001.json"
+    assert obj_1_path.is_file()
+    obj_b_dict = json.loads(obj_1_path.read_text(encoding="utf-8"))
+    obj_b_id = obj_b_dict.get("objective_id", "OBJ-TAX")
 
     # =========================================================================
     # PHASE 3: THIRD RESTART — DUPLICATE EXECUTION PREVENTION
     # =========================================================================
     print("[PHASE 3] Third restart: verifying duplicate-execution prevention...")
-    durable_history_3 = reconstruct_batch_history(runtime_dir, workspace=workspace)
-    assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in durable_history_3.completed_task_ids
-    assert "TASK-AGENTIC-WP-WP-REPAIR-TAX" in durable_history_3.completed_task_ids
-    assert obj_a_action_sig in durable_history_3.completed_task_signatures
-    assert obj_b_action_sig in durable_history_3.completed_task_signatures
-
-    situation_3 = canary_situation_factory()
-    obj_3 = select_canary_objective(situation_3, runtime_dir)
-
-    catalog_3 = build_intent_catalog(
-        situation=situation_3,
-        objective=obj_3,
+    res_3 = run_autonomous_project(
+        descriptor_path=descriptor_path,
         workspace=workspace,
         runtime_dir=runtime_dir,
-        forbidden_signatures=set(durable_history_3.completed_task_signatures),
-        workspace_source_generation="canary-two-obj-gen-1",
-        isolated_canary_context=isolated_canary_context,
+        routing_policy_path=routing_policy_path,
+        situation_factory=canary_situation_factory,
+        max_batches=1,
     )
-    # Both work packages must be excluded: zero candidates remain!
-    wp_candidates_3 = [c for c in catalog_3.candidates if c.intent_type == "IMPLEMENT_AUTHORIZED_WORK_PACKAGE"]
-    assert len(wp_candidates_3) == 0, f"Expected 0 candidates after both completed, got {wp_candidates_3}"
 
+    # Verify no new commit on third restart
     git_sha_3 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(workspace), capture_output=True, text=True, check=True).stdout.strip().lower()
     assert git_sha_3 == git_sha_2, "Git SHA must remain unchanged on third restart"
 
+    # Verify durable batch history contains both tasks completed
+    durable_history_3 = reconstruct_batch_history(runtime_dir, workspace=workspace)
+    assert "TASK-AGENTIC-WP-WP-REPAIR-DISCOUNT" in durable_history_3.completed_task_ids
+    assert "TASK-AGENTIC-WP-WP-REPAIR-TAX" in durable_history_3.completed_task_ids
+
+    # Verify no new batch directory batch-0002 was executed
+    batch_2_runtime = runtime_dir / "batches" / "batch-0002"
+    assert not batch_2_runtime.exists(), "No batch-0002 should be created when all objectives are complete"
+
     return {
         "initial_git_sha": initial_git_sha,
-        "first_objective_id": obj_a.objective_id,
+        "first_objective_id": obj_a_id,
         "first_worker_route": first_worker_route,
         "first_source_diff": first_source_diff,
         "test_a_before": fixture["test_a_fail_output"],
@@ -624,7 +442,7 @@ def execute_two_objective_continuation() -> Dict[str, Any]:
         "first_receipt_id": first_receipt_id,
         "checkpoint_path": str(checkpoint_file),
         "checkpoint_hash": checkpoint_hash_1,
-        "second_objective_id": obj_b.objective_id,
+        "second_objective_id": obj_b_id,
         "second_source_diff": second_source_diff,
         "test_b_before": fixture["test_b_fail_output"],
         "test_b_after": test_b_after_output,

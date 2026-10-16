@@ -160,7 +160,6 @@ class ModelNativeImplementationBackend(ExecutionBackend):
         ExecutionCapability.FILE_READ,
         ExecutionCapability.FILE_WRITE,
         ExecutionCapability.TEST_EXECUTION,
-        ExecutionCapability.MODEL_REASONING,
     }
 
     def __init__(
@@ -169,12 +168,12 @@ class ModelNativeImplementationBackend(ExecutionBackend):
         model_caller: Optional[Callable[[str, str, str, str], Dict[str, Any]]] = None,
         orchestrator: Optional[ResourceOrchestrator] = None,
         base_url: str = "https://integrate.api.nvidia.com/v1",
-        default_model: str = "nvidia/nemotron-3-ultra-550b-a55b",
+        default_model: str = "nvidia/nemotron-3-super-120b-a12b",
     ) -> None:
         self._model_caller = model_caller
         self._orchestrator = orchestrator or ResourceOrchestrator()
         self._base_url = base_url
-        self._default_model = default_model
+        self._default_model = os.environ.get("NEMOTRON_MODEL") or default_model
 
     def get_health(self) -> ExecutionHealth:
         if self._model_caller is not None:
@@ -220,7 +219,7 @@ class ModelNativeImplementationBackend(ExecutionBackend):
 
         import openai
 
-        client = openai.OpenAI(api_key=api_key, base_url=self._base_url)
+        client = openai.OpenAI(api_key=api_key, base_url=self._base_url, timeout=45.0)
 
         system_instruction = (
             "You are a precise autonomous software repair engine. "
@@ -241,16 +240,38 @@ class ModelNativeImplementationBackend(ExecutionBackend):
             f"Return valid JSON with 'relative_path', 'expected_original_sha256', and the complete 'new_content'."
         )
 
-        resp = client.chat.completions.create(
-            model=self._default_model,
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=2048,
-            temperature=0.0,
-        )
+        extra_body: Dict[str, Any] = {
+            "chat_template_kwargs": {"enable_thinking": False}
+        }
+
+        try:
+            resp = client.chat.completions.create(
+                model=self._default_model,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=2048,
+                temperature=0.0,
+                extra_body=extra_body,
+            )
+        except Exception as exc:
+            fallback_model = "nvidia/nemotron-3-super-120b-a12b"
+            if self._default_model != fallback_model:
+                resp = client.chat.completions.create(
+                    model=fallback_model,
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=2048,
+                    temperature=0.0,
+                    extra_body=extra_body,
+                )
+            else:
+                raise exc
 
         raw_content = resp.choices[0].message.content or "{}"
         if len(raw_content) > MAX_ALLOWED_FILE_OUTPUT_CHARS:
@@ -462,17 +483,30 @@ class ModelNativeImplementationBackend(ExecutionBackend):
 
         expected_source_sha = str(request.payload.get("source_sha") or "").strip().lower()
         if expected_source_sha and len(expected_source_sha) == 40 and expected_source_sha != base_git_sha:
-            return ExecutionResult(
-                backend_id=self.backend_id,
-                worker_id="model_native_worker",
-                task_id=request.task_id,
-                request_id=request.request_id,
-                status="FAILED",
-                exit_code=1,
-                workspace=str(workspace),
-                sanitized_errors=[f"SOURCE_SHA_MISMATCH: Expected {expected_source_sha}, actual HEAD is {base_git_sha}"],
-                evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
-            )
+            is_ancestor = False
+            try:
+                ancestry = run_headless(
+                    ["git", "-C", str(workspace), "merge-base", "--is-ancestor", expected_source_sha, base_git_sha],
+                    check=False,
+                    timeout=10.0,
+                )
+                if ancestry.returncode == 0:
+                    is_ancestor = True
+            except Exception:
+                is_ancestor = False
+
+            if not is_ancestor:
+                return ExecutionResult(
+                    backend_id=self.backend_id,
+                    worker_id="model_native_worker",
+                    task_id=request.task_id,
+                    request_id=request.request_id,
+                    status="FAILED",
+                    exit_code=1,
+                    workspace=str(workspace),
+                    sanitized_errors=[f"SOURCE_SHA_MISMATCH: Expected {expected_source_sha}, actual HEAD is {base_git_sha}"],
+                    evidence_class=EvidenceClass.LOCAL_RUNTIME_PROOF,
+                )
 
         instruction = str(request.payload.get("prompt") or request.payload.get("instruction") or "").strip()
 

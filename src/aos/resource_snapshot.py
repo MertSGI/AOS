@@ -5,7 +5,8 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+import time
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from aos.runtime_contract import CONTRACT_VERSION, utc_now
 from aos.resource_ledger import ResourceEventType, ResourceLedger
@@ -44,6 +45,10 @@ class ResourceSnapshot:
 class ResourceSnapshotStore:
     """Persists one honest current observation per registered resource."""
 
+    _observation_cache: Dict[str, Tuple[float, ResourceSnapshot]] = {}
+    CACHE_TTL_SECONDS: float = 60.0
+    _last_recorded_at: float = 0.0
+
     def __init__(self, path: Path, *, ledger: Optional[ResourceLedger] = None) -> None:
         self.path = path.expanduser().resolve()
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
@@ -51,6 +56,12 @@ class ResourceSnapshotStore:
 
     @staticmethod
     def observe_backend(backend: Any) -> ResourceSnapshot:
+        backend_id = str(getattr(backend, "backend_id", UNKNOWN))
+        now = time.monotonic()
+        cached = ResourceSnapshotStore._observation_cache.get(backend_id)
+        if cached is not None and (now - cached[0]) < ResourceSnapshotStore.CACHE_TTL_SECONDS:
+            return cached[1]
+
         health = UNKNOWN
         get_health = getattr(backend, "get_health", None)
         if callable(get_health):
@@ -76,7 +87,7 @@ class ResourceSnapshotStore:
         service = evidence.get("local_service_status")
         if service is None and "local_service_available" in evidence:
             service = "AVAILABLE" if evidence["local_service_available"] else "UNAVAILABLE"
-        return ResourceSnapshot(
+        snapshot = ResourceSnapshot(
             resource_id=str(getattr(backend, "backend_id", UNKNOWN)),
             resource_class=str(getattr(backend_class, "value", backend_class) or UNKNOWN),
             capability=capabilities,
@@ -107,6 +118,8 @@ class ResourceSnapshotStore:
             observed_at=str(getattr(availability, "observed_at", "") or utc_now()),
             evidence=evidence,
         )
+        ResourceSnapshotStore._observation_cache[backend_id] = (now, snapshot)
+        return snapshot
 
     def record(self, snapshots: Iterable[ResourceSnapshot]) -> Dict[str, Any]:
         with exclusive_file_lock(self.lock_path):
@@ -153,8 +166,11 @@ class ResourceSnapshotStore:
             return document
 
     def observe_and_record(self, backends: Iterable[Any]) -> Dict[str, ResourceSnapshot]:
+        now = time.monotonic()
         observations = [self.observe_backend(backend) for backend in backends]
-        self.record(observations)
+        if (now - self._last_recorded_at) >= self.CACHE_TTL_SECONDS or not self.path.exists():
+            self.record(observations)
+            self._last_recorded_at = now
         return {item.resource_id: item for item in observations}
 
     def read(self) -> Dict[str, Any]:
