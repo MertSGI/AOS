@@ -26,7 +26,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 import threading
 
-CHECKOUT_ROOT = Path(r"C:\Projects\AOS-independent-integration-20261016")
+CHECKOUT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CHECKOUT_ROOT / "src"))
 sys.path.insert(0, str(CHECKOUT_ROOT))
 
