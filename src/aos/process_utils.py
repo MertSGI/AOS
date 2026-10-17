@@ -395,9 +395,14 @@ class _WindowsJob:
     def assign(self, process: subprocess.Popen[Any]) -> None:
         if self.handle is None:
             return
+        if process.poll() is not None:
+            return
         import ctypes
         if not self._kernel32.AssignProcessToJobObject(self.handle, int(process._handle)):  # type: ignore[attr-defined]
-            raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+            error = ctypes.get_last_error()
+            if process.poll() is not None:
+                return
+            raise OSError(error, "AssignProcessToJobObject failed")
 
     def terminate(self, code: int = 1) -> None:
         if self.handle is not None:
@@ -429,6 +434,12 @@ class _WindowsJob:
         if self.handle is not None:
             self._kernel32.CloseHandle(self.handle)
             self.handle = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class OwnedProcess:
