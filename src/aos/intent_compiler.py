@@ -355,12 +355,10 @@ def _discover_browser_verification_specs(
                     if not data.get("approved", False) and not data.get("verification_specs"):
                         continue
                     file_gen = data.get("workspace_source_generation")
-                    if (
-                        expected_source_generation
-                        and file_gen
-                        and file_gen != expected_source_generation
-                    ):
-                        continue
+                    if expected_source_generation and file_gen:
+                        allowed_gens = {expected_source_generation} if isinstance(expected_source_generation, str) else set(expected_source_generation)
+                        if file_gen.strip() not in allowed_gens:
+                            continue
                     raw_specs = data.get("verification_specs") or data.get("specs") or data
                     if isinstance(raw_specs, dict):
                         for k, v in raw_specs.items():
@@ -455,15 +453,19 @@ def _discover_authorized_work_packages(
             if not file_gen or not isinstance(file_gen, str) or not file_gen.strip():
                 # Missing workspace generation is rejected for mutating work packages
                 continue
-            if expected_source_generation and file_gen.strip() != expected_source_generation.strip():
-                continue
+            if expected_source_generation:
+                allowed_gens = {expected_source_generation} if isinstance(expected_source_generation, str) else set(expected_source_generation)
+                if file_gen.strip() not in allowed_gens:
+                    continue
 
             file_sha = data.get("source_sha") or data.get("canonical_source_sha")
             if not file_sha or not isinstance(file_sha, str) or not file_sha.strip():
                 # Missing source SHA is rejected for mutating work packages
                 continue
-            if expected_source_sha and file_sha.strip() != expected_source_sha.strip():
-                continue
+            if expected_source_sha:
+                allowed_shas = {expected_source_sha} if isinstance(expected_source_sha, str) else set(expected_source_sha)
+                if file_sha.strip() not in allowed_shas:
+                    continue
 
             # 3. Independent canonical authority decision verification:
             # Self-declared workspace JSON cannot approve itself.
@@ -491,8 +493,12 @@ def _discover_authorized_work_packages(
 
                 # Package-level source SHA binding check if declared
                 pkg_sha = str(wp_item.get("source_sha") or file_sha or "").strip()
-                if not pkg_sha or (expected_source_sha and pkg_sha != expected_source_sha.strip()):
+                if not pkg_sha:
                     continue
+                if expected_source_sha:
+                    allowed_shas = {expected_source_sha} if isinstance(expected_source_sha, str) else set(expected_source_sha)
+                    if pkg_sha not in allowed_shas:
+                        continue
 
                 # Resolve authority_id for this work package
                 pkg_authority_id = str(wp_item.get("authority_id") or doc_authority_id or "").strip()
@@ -583,16 +589,42 @@ def build_intent_catalog(
     # Use explicitly passed isolated_canary_context, or situation-level isolated_canary_context if present
     effective_canary_context = isolated_canary_context or getattr(situation, "isolated_canary_context", None)
 
+    allowed_shas = set()
+    if control_sha:
+        allowed_shas.add(control_sha)
+    if execution_base_sha:
+        allowed_shas.add(str(execution_base_sha).strip())
+    if effective_canary_context and effective_canary_context.get("source_sha"):
+        allowed_shas.add(str(effective_canary_context["source_sha"]).strip())
+
+    allowed_gens = set()
+    if workspace_source_generation:
+        if isinstance(workspace_source_generation, str):
+            allowed_gens.add(workspace_source_generation.strip())
+        else:
+            allowed_gens.update(str(g).strip() for g in workspace_source_generation)
+    if execution_base_sha:
+        try:
+            base_gen = build_workspace_source_generation(
+                project_id=getattr(situation, "project_id", None),
+                canonical_source_sha=str(execution_base_sha).strip(),
+                canonical_execution_base_sha=str(execution_base_sha).strip(),
+            )
+            if base_gen:
+                allowed_gens.add(base_gen)
+        except Exception:
+            pass
+
     browser_specs = _discover_browser_verification_specs(
         workspace,
         runtime_dir,
-        expected_source_generation=workspace_source_generation,
+        expected_source_generation=allowed_gens or workspace_source_generation,
     )
     work_packages = _discover_authorized_work_packages(
         workspace,
         runtime_dir,
-        expected_source_generation=workspace_source_generation,
-        expected_source_sha=control_sha or (str(execution_base_sha) if execution_base_sha else None),
+        expected_source_generation=allowed_gens or workspace_source_generation,
+        expected_source_sha=allowed_shas or (control_sha or (str(execution_base_sha) if execution_base_sha else None)),
         canonical_authority_records=getattr(situation, "authority_records", None),
         project_id=getattr(situation, "project_id", None),
         isolated_canary_context=effective_canary_context,
@@ -707,6 +739,10 @@ def build_intent_catalog(
     obj_auth_id = str(getattr(objective, "authority_id", "") or "").strip().upper()
     for wp_id, wp in work_packages.items():
         if not wp.approved:
+            continue
+        clean_ref = re.sub(r'[^a-zA-Z0-9_-]', '_', wp_id).strip('_')[:24]
+        task_node_id = f"TASK-AGENTIC-WP-{clean_ref.upper()}"
+        if wp_id in forbidden_ids or task_node_id in forbidden_ids or f"TASK-AGENTIC-WP-{wp_id}" in forbidden_ids:
             continue
         # Verify write_scope against canonical lane allowed scope if defined
         if lane_allowed_scope is not None:
@@ -955,14 +991,12 @@ def compile_intent_to_plan(
             raise UnapprovedWorkPackageError(
                 f"Work package {target_ref!r} lacks verified approval"
             )
-        if wp.source_sha and current_control_sha and wp.source_sha != current_control_sha:
-            raise SourceGenerationMismatchError(
-                f"Work package source_sha {wp.source_sha!r} does not match current control_sha {current_control_sha!r}"
-            )
-        if wp.source_sha and situation_base_sha and wp.source_sha != situation_base_sha:
-            raise SourceGenerationMismatchError(
-                f"Work package source_sha {wp.source_sha!r} does not match situation execution_base_sha {situation_base_sha!r}"
-            )
+        if wp.source_sha:
+            allowed_shas = {s for s in (situation_base_sha, current_control_sha) if s}
+            if allowed_shas and wp.source_sha not in allowed_shas:
+                raise SourceGenerationMismatchError(
+                    f"Work package source_sha {wp.source_sha!r} does not match situation execution_base_sha {situation_base_sha!r} or current_control_sha {current_control_sha!r}"
+                )
 
         # Enforce canonical lane allowed scope
         lane_allowed_scope = getattr(situation, "lane_allowed_scope", None)

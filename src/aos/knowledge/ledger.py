@@ -74,7 +74,11 @@ class KnowledgeLedger:
     """Hash-chained JSONL ledger. Historical bytes are never rewritten."""
 
     def __init__(self, knowledge_root: Path, *, clock: Callable[[], str] = utc_now) -> None:
-        self.root = Path(knowledge_root).expanduser().resolve()
+        resolved_root = Path(knowledge_root).expanduser().resolve()
+        if os.name == "nt" and len(str(resolved_root)) >= 240 and not str(resolved_root).startswith("\\\\?\\"):
+            self.root = Path("\\\\?\\" + str(resolved_root))
+        else:
+            self.root = resolved_root
         self.log_path = self.root / "ledger.jsonl"
         self.index_path = self.root / "index.json"
         self.lock_path = self.root / "ledger.lock"

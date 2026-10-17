@@ -918,7 +918,7 @@ def probe_ollama_models(base_url: str = "http://localhost:11434", timeout: float
         return {"available": False, "models": []}
 
 
-def refresh_canonical_binding(descriptor_path: Path, binding_path: Path) -> Dict[str, Any]:
+def refresh_canonical_binding(descriptor_path: Path, binding_path: Path, workspace: Optional[Path] = None) -> Dict[str, Any]:
     validation, _ = validate_file("project_descriptor", str(descriptor_path))
     if not validation.is_valid:
         raise ValueError(f"Invalid project descriptor: {[str(e) for e in validation.errors]}")
@@ -938,7 +938,7 @@ def refresh_canonical_binding(descriptor_path: Path, binding_path: Path) -> Dict
                     return cached
             except Exception:
                 pass
-    adapter = ProjectSourceAdapter(descriptor["repository"], descriptor["control_ref"])
+    adapter = ProjectSourceAdapter(descriptor["repository"], descriptor["control_ref"], workspace=workspace)
     source_sha = adapter.resolve_ref_to_sha()
     contents, hashes = adapter.fetch_canonical_context(source_sha, descriptor["control"])
     snapshot = adapter.build_normalized_snapshot(
@@ -1108,7 +1108,7 @@ def run_host(
 ) -> Dict[str, Any]:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     canonical_binding = refresh_canonical_binding(
-        descriptor_path, runtime_dir / "canonical-binding.json"
+        descriptor_path, runtime_dir / "canonical-binding.json", workspace=workspace
     )
     assert_workspace_execution_lineage(workspace, canonical_binding.get("execution_base_sha"))
     plan = load_bound_run_plan(

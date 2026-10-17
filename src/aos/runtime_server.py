@@ -105,8 +105,11 @@ def _build_worker_env(slot_root: Optional[str] = None) -> Dict[str, str]:
             None,
         )
     module_parent = Path(__file__).resolve().parent.parent
-    if not slot_root and module_parent.is_dir():
-        site_dirs.append(str(module_parent))
+    if not slot_root:
+        if module_parent.is_dir():
+            site_dirs.append(str(module_parent))
+        if module_parent.parent.is_dir():
+            site_dirs.append(str(module_parent.parent))
     all_parts = [p for p in site_dirs if p]
     if all_parts:
         env["PYTHONPATH"] = os.pathsep.join(all_parts)

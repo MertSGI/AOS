@@ -9,6 +9,7 @@ import re
 import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from aos.process_utils import run_headless
@@ -54,11 +55,13 @@ class ProjectSourceAdapter:
         control_ref: str,
         user_agent: str = "AOS-Source-Adapter",
         tls_context: Optional[ssl.SSLContext] = None,
+        workspace: Optional[Any] = None,
     ):
         self.repository = repository
         self.control_ref = control_ref
         self.user_agent = user_agent
         self.tls_context = tls_context if tls_context is not None else _create_system_trust_tls_context()
+        self.workspace = Path(workspace).resolve() if workspace else None
 
     def _validated_github_coordinates(self) -> tuple[str, str]:
         repository = str(self.repository).strip()
@@ -120,6 +123,19 @@ class ProjectSourceAdapter:
 
     def resolve_ref_to_sha(self) -> str:
         """Resolve configured control ref to exact 40-character commit SHA."""
+        if self.workspace and (self.workspace / ".git").is_dir():
+            target_ref = self.control_ref
+            clean_ref = target_ref[11:] if target_ref.startswith("refs/heads/") else target_ref
+            for cand in (target_ref, clean_ref, f"refs/heads/{clean_ref}", "HEAD"):
+                try:
+                    proc = run_headless(["git", "-C", str(self.workspace), "rev-parse", cand], timeout=10, check=False)
+                    if proc.returncode == 0 and proc.stdout:
+                        sha = proc.stdout.strip().lower()
+                        if re.match(r"^[0-9a-f]{40}$", sha):
+                            return sha
+                except Exception:
+                    pass
+
         url = f"https://api.github.com/repos/{self.repository}/branches/{self.control_ref}"
         req = urllib.request.Request(url, headers={
             "Accept": "application/vnd.github+json",
@@ -155,6 +171,14 @@ class ProjectSourceAdapter:
         if not isinstance(exact_sha, str) or not re.match(r"^[0-9a-f]{40}$", exact_sha):
             raise ValueError(f"Invalid exact SHA format for revision existence verification: '{exact_sha}'")
 
+        if self.workspace and (self.workspace / ".git").is_dir():
+            try:
+                proc = run_headless(["git", "-C", str(self.workspace), "cat-file", "-e", exact_sha], timeout=10, check=False)
+                if proc.returncode == 0:
+                    return exact_sha.lower()
+            except Exception:
+                pass
+
         url = f"https://api.github.com/repos/{self.repository}/commits/{exact_sha}"
         req = urllib.request.Request(url, headers={
             "Accept": "application/vnd.github+json",
@@ -180,6 +204,18 @@ class ProjectSourceAdapter:
 
     def fetch_file_at_sha(self, path: str, exact_sha: str) -> str:
         """Fetch raw content of a file at exact commit SHA without using branch ref."""
+        if self.workspace and (self.workspace / ".git").is_dir():
+            norm_path = path.replace("\\", "/").strip("/")
+            try:
+                proc = run_headless(["git", "-C", str(self.workspace), "show", f"{exact_sha}:{norm_path}"], timeout=10, check=False)
+                if proc.returncode == 0 and proc.stdout is not None:
+                    return proc.stdout
+                candidate_file = (self.workspace / norm_path).resolve()
+                if candidate_file.is_file():
+                    return candidate_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
         url = f"https://raw.githubusercontent.com/{self.repository}/{exact_sha}/{path}"
         req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
 

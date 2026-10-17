@@ -28,7 +28,7 @@
       "provider_id": "nemotron",
       "display_name": "NVIDIA / Nemotron",
       "provider_console_url": "https://ngc.nvidia.com/",
-      "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "model_id": "nvidia/nemotron-3-super-120b-a12b",
       "credential_env_var": "NVIDIA_API_KEY",
       "billing_class": "FREE_TIER",
       "structured_output": true,

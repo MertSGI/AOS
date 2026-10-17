@@ -14,9 +14,18 @@ import time
 import uuid
 
 
+def _long_path(path: Path) -> Path:
+    if os.name == "nt":
+        resolved = str(path.resolve())
+        if len(resolved) >= 240 and not resolved.startswith("\\\\?\\"):
+            return Path("\\\\?\\" + resolved)
+    return path
+
+
 def atomic_json(path: Path, payload: Dict[str, Any]) -> None:
+    path = _long_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
+    tmp = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
         handle.write("\n")
@@ -36,7 +45,7 @@ def read_json(path: Path, default: Optional[Dict[str, Any]] = None) -> Dict[str,
     if default is None:
         default = {}
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(_long_path(path).read_text(encoding="utf-8"))
         return value if isinstance(value, dict) else dict(default)
     except (OSError, ValueError, json.JSONDecodeError):
         return dict(default)
@@ -44,6 +53,7 @@ def read_json(path: Path, default: Optional[Dict[str, Any]] = None) -> Dict[str,
 
 @contextmanager
 def exclusive_file_lock(path: Path, *, blocking: bool = True) -> Iterator[Any]:
+    path = _long_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
     handle = path.open("r+b")

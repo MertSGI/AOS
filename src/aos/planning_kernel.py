@@ -283,6 +283,22 @@ class ProjectSituation:
     lane_allowed_scope: Optional[Tuple[str, ...]] = None
     shared_path_governance: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self) -> None:
+        if self.authority_records and isinstance(self.authority_records, dict):
+            converted = {}
+            for key, rec in self.authority_records.items():
+                if isinstance(rec, dict):
+                    converted[key] = AuthorityRecord(
+                        authority_id=str(rec.get("authority_id", key)),
+                        source_path=str(rec.get("source_path", "")),
+                        text=str(rec.get("text", "")),
+                        superseded=bool(rec.get("superseded", False)),
+                        production_allowed=bool(rec.get("production_allowed", False)),
+                    )
+                else:
+                    converted[key] = rec
+            object.__setattr__(self, "authority_records", converted)
+
     def identity(self) -> str:
         payload = {
             "project_id": self.project_id,
@@ -302,10 +318,11 @@ class ProjectSituation:
         if not include_authority_text:
             value["authority_records"] = {
                 key: {
-                    "authority_id": record.authority_id,
-                    "source_path": record.source_path,
-                    "superseded": record.superseded,
-                    "production_allowed": record.production_allowed,
+                    "authority_id": getattr(record, "authority_id", record.get("authority_id", key) if isinstance(record, dict) else str(key)),
+                    "source_path": getattr(record, "source_path", record.get("source_path", "") if isinstance(record, dict) else ""),
+                    "text": getattr(record, "text", record.get("text", "") if isinstance(record, dict) else "")[:4000],
+                    "superseded": getattr(record, "superseded", record.get("superseded", False) if isinstance(record, dict) else False),
+                    "production_allowed": getattr(record, "production_allowed", record.get("production_allowed", False) if isinstance(record, dict) else False),
                 }
                 for key, record in self.authority_records.items()
             }
@@ -818,7 +835,9 @@ def synthesize_project_situation(
     if not validation.is_valid:
         raise PlanningKernelError(f"Invalid project descriptor: {[str(e) for e in validation.errors]}")
     descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
-    adapter = adapter_override or ProjectSourceAdapter(descriptor["repository"], descriptor["control_ref"])
+    adapter = adapter_override or ProjectSourceAdapter(
+        descriptor["repository"], descriptor["control_ref"], workspace=workspace
+    )
     control_sha = adapter.resolve_ref_to_sha()
     contents, hashes = adapter.fetch_canonical_context(control_sha, descriptor["control"])
     snapshot = adapter.build_normalized_snapshot(
@@ -2416,7 +2435,7 @@ def _shadow_deliberate(
             except Exception:
                 pass
 
-        auth_records = {k: v.to_dict() for k, v in situation.authority_records.items()}
+        auth_records = {k: (v.to_dict() if hasattr(v, "to_dict") else v) for k, v in situation.authority_records.items()}
         council.evaluate_decision(
             decision_type=decision_type,
             prompt=prompt,
@@ -2457,7 +2476,10 @@ def _situation_prompt_payload(
         "authority_revision": situation.authority_revision,
         "lane_allowed_scope": list(situation.lane_allowed_scope) if situation.lane_allowed_scope is not None else None,
         "shared_path_governance": situation.shared_path_governance,
-        "authority_ids": sorted(record.authority_id for record in situation.authority_records.values()),
+        "authority_ids": sorted(
+            (record.authority_id if hasattr(record, "authority_id") else record.get("authority_id", str(record)))
+            for record in situation.authority_records.values()
+        ),
         "goal": situation.goal,
         "constraints": list(situation.constraints),
         "red_lines": list(situation.red_lines),
@@ -2487,7 +2509,7 @@ def select_objective(
     authority_hint = next(iter(sorted(situation.authority_records)), "NONE")
     prompt = (
         "You are the AOS autonomous objective selector. Use ONLY the fresh canonical situation below. "
-        "Choose the highest-value ready objective inside standing authority. Never ask the user what to do next. "
+        "Choose the highest-value ready objective inside standing authority (risk_class must be R0 or R1 for routine standing authority). Never ask the user what to do next. "
         "If multiple independent lanes are ready, identify them in parallel_candidates. Do not select production, "
         "destructive, secret-management, payment, legal/compliance or other red-line work. Return exactly the requested JSON.\n\n"
         f"REPLAN_REASON={replan_reason or 'INITIAL'}\n"
@@ -2579,7 +2601,8 @@ class CanonicalAuthorityResolver:
         record = self.situation.authority_records.get(authority_id.upper())
         if record is None:
             raise AuthorityDenied(f"Authority {authority_id!r} is not present in fresh canonical decisions")
-        if record.superseded:
+        is_superseded = getattr(record, "superseded", record.get("superseded", False) if isinstance(record, dict) else False)
+        if is_superseded:
             raise AuthorityDenied(f"Authority {authority_id} is superseded/revoked/consumed")
         risk = str(task.get("risk_class", "R0"))
         if risk not in ("R0", "R1"):
@@ -2587,10 +2610,14 @@ class CanonicalAuthorityResolver:
         dangerous = self._dangerous(task)
         if dangerous:
             raise AuthorityDenied(dangerous)
-        if record.production_allowed:
+        prod_allowed = getattr(record, "production_allowed", record.get("production_allowed", False) if isinstance(record, dict) else False)
+        if prod_allowed:
             # A production-capable decision is not enough to authorize this host's production use.
             pass
-        text = record.text.upper()
+        rec_text = getattr(record, "text", record.get("text", "") if isinstance(record, dict) else "")
+        if not rec_text and hasattr(self, "situation") and getattr(self.situation, "canonical_excerpt", None):
+            rec_text = self.situation.canonical_excerpt
+        text = str(rec_text or "").upper()
         repo_tokens = {
             self.situation.repository.upper(),
             self.situation.repository.split("/")[-1].upper(),
@@ -4528,7 +4555,8 @@ def _recover_waiting_objective(
     except (PlanningKernelError, TypeError, ValueError):
         return None
     record = fresh_situation.authority_records.get(objective.authority_id.upper())
-    if objective.risk_class not in ("R0", "R1") or record is None or record.superseded:
+    is_superseded = getattr(record, "superseded", record.get("superseded", False) if isinstance(record, dict) else False)
+    if objective.risk_class not in ("R0", "R1") or record is None or is_superseded:
         return None
     return objective
 
