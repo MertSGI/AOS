@@ -185,7 +185,11 @@ def test_negative_no_worker_control(tmp_path: Optional[Path] = None) -> None:
 
 def run_b3_isolated_canary() -> Dict[str, Any]:
     run_id = f"aos_b3_canary_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-    base_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "Temp" / run_id
+    if os.environ.get("LOCALAPPDATA"):
+        base_dir = Path(os.environ["LOCALAPPDATA"]) / "Temp" / run_id
+    else:
+        import tempfile
+        base_dir = Path(tempfile.gettempdir()) / run_id
     base_dir.mkdir(parents=True, exist_ok=True)
     print(f"=== B5 / B3 ISOLATED RUNTIME CANARY at {base_dir} ===")
 
@@ -417,6 +421,7 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
             # so full detached worker, planning kernel, intent compiler, git commit, test runner,
             # checkpoint persistence, and ledger receipting execute authentically in offline CI.
             os.environ["AOS_DETERMINISTIC_MODEL_BACKEND"] = "1"
+            os.environ["NVIDIA_API_KEY"] = "mock_deterministic_api_key_ci"
 
     results: Dict[str, Any] = {}
 
@@ -768,6 +773,8 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
 
     finally:
         os.environ.pop("AOS_DETERMINISTIC_MODEL_BACKEND", None)
+        if os.environ.get("NVIDIA_API_KEY") == "mock_deterministic_api_key_ci":
+            os.environ.pop("NVIDIA_API_KEY", None)
         server.shutdown()
         engine.shutdown()
         print("Isolated RuntimeServer 1 stopped.")

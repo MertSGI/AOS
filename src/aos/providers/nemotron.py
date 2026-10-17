@@ -240,7 +240,7 @@ class NemotronPlannerProvider:
                     "rollback_strategy": "none",
                 }, "det-plan-001", None
 
-            # 5. PEER_REVIEW / COUNCIL / PROBE
+            # 5. PEER_REVIEW / COUNCIL
             if "verdict" in props:
                 return {
                     "verdict": "AGREE",
@@ -248,8 +248,26 @@ class NemotronPlannerProvider:
                     "rationale": "Deterministic offline agreement.",
                 }, "det-rev-001", None
 
+            # 6. PROBE_SCHEMA
+            if "selected_milestone" in req and "project_id" in req:
+                return {
+                    "schema_version": "0.1.0",
+                    "project_id": "synthetic-public-probe",
+                    "source_sha": "0000000000000000000000000000000000000000",
+                    "selected_milestone": "Connectivity Probe",
+                    "selected_next_action": "No action; synthetic probe only.",
+                    "target_base_sha": "0000000000000000000000000000000000000000",
+                    "risk_class": "R0",
+                    "mutation_intent": "NONE",
+                    "ambiguity_detected": False,
+                    "ambiguity_reasons": [],
+                    "human_gate_required": False,
+                    "rationale": "Public synthetic provider contract probe.",
+                    "disposition": "SHADOW_ACCEPT",
+                }, "det-probe-001", None
+
             if "success" in props or "status" in props:
-                return {"status": "SUCCESS", "success": True}, "det-probe-001", None
+                return {"status": "SUCCESS", "success": True}, "det-probe-002", None
 
         api_key = os.environ.get("NVIDIA_API_KEY")
         if not api_key:
