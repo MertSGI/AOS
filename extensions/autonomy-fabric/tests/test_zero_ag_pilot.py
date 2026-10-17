@@ -147,7 +147,11 @@ def test_zero_ag_autonomous_pilot():
         t3.payload = {"cmd": ["python", "-m", "pytest", "test_calc.py"]}
         t4.payload = {"action": "commit", "args": ["-a", "-m", "fix(calc): repair multiplication logic autonomously"]}
         t5.payload = {"sha": head_sha}
-        t6.payload = {"url": fixture_url, "run_id": "r4-browser-run"}
+        t6.payload = {
+            "url": fixture_url,
+            "run_id": "r4-browser-run",
+            "assertions": [{"type": "selector_visible", "target": ".btn-primary"}],
+        }
 
         coord = PersistentCoordinator(
             project_id="pilot-r4-project",

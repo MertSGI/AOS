@@ -255,7 +255,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
 
     def _has_authorized_provider_configuration(self) -> bool:
         """Check whether the isolated Cline profile actually has an authorized provider configuration."""
-        if self._capability_status() == "TEST_DOUBLE":
+        if self._capability_status() in {"TEST_DOUBLE", "OPERATIONAL_BOUNDED"}:
             return True
         # Check providers.json in data_dir / settings / providers.json
         candidate_paths = [
@@ -294,7 +294,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
 
     def get_availability(self) -> ExecutionAvailabilitySnapshot:
         status = self._capability_status()
-        if status not in {"OPERATIONAL", "OPERATIONAL_START_ONLY", "TEST_DOUBLE"}:
+        if status not in {"OPERATIONAL", "OPERATIONAL_START_ONLY", "OPERATIONAL_BOUNDED", "TEST_DOUBLE"}:
             return ExecutionAvailabilitySnapshot(
                 ExecutionAvailabilityState.AUTH_UNAVAILABLE,
                 self._now_iso(),

@@ -328,7 +328,11 @@ def test_browser_execution_backend_proof():
             operation_class="BROWSER",
             required_capabilities=[ExecutionCapability.BROWSER],
             authority_id="a",
-            payload={"url": fixture_url, "run_id": "run-real-fixture"},
+            payload={
+                "url": fixture_url,
+                "run_id": "run-real-fixture",
+                "assertions": [{"type": "selector_visible", "target": ".btn-primary"}],
+            },
         )
         res = backend.execute(req)
         server.shutdown()
