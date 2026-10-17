@@ -100,6 +100,7 @@ def test_resource_orchestrator_selects_model_native_backend(monkeypatch: pytest.
 
     # Scenario B: No eligible free provider present (no API key, no mock caller)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    monkeypatch.delenv("AOS_DETERMINISTIC_MODEL_BACKEND", raising=False)
     fake_empty_home = tmp_path / "empty_home_orch"
     fake_empty_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(Path, "home", lambda: fake_empty_home)

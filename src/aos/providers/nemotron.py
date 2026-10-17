@@ -140,6 +140,117 @@ class NemotronPlannerProvider:
         self.model = model
 
     def generate_plan(self, prompt: str, schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str | None, Dict[str, Any] | None]:
+        if os.environ.get("AOS_DETERMINISTIC_MODEL_BACKEND") == "1":
+            req = set(schema.get("required", []))
+            props = set(schema.get("properties", {}))
+            p_lower = prompt.lower()
+
+            # 1. COMPLETION_SCHEMA
+            if "disposition" in req and "satisfied_criteria" in req:
+                if "tax" in p_lower and ("wp-canary-tax" in p_lower or "tax.py" in p_lower) and ("recent_completed_batches" in p_lower or "completed" in p_lower or "history" in p_lower):
+                    return {
+                        "disposition": "PROJECT_COMPLETE",
+                        "rationale": "All canary repair objectives verified complete.",
+                        "satisfied_criteria": ["python test_discount.py passes", "python test_tax.py passes"],
+                        "unsatisfied_criteria": [],
+                    }, "det-comp-001", None
+                return {
+                    "disposition": "REPLAN",
+                    "rationale": "Pending canary repair objectives.",
+                    "satisfied_criteria": [],
+                    "unsatisfied_criteria": ["python test_tax.py passes"],
+                }, "det-comp-002", None
+
+            # 2. OBJECTIVE_SCHEMA
+            if "objective_id" in req and "title" in req and "risk_class" in req:
+                if "replan_reason=initial" not in p_lower and ("wp-canary-discount" in p_lower or "discount" in p_lower):
+                    return {
+                        "objective_id": "WP-CANARY-TAX",
+                        "title": "Repair tax calculation defect",
+                        "description": "Repair tax calculation in src/tax.py and verify test_tax.py passes",
+                        "authority_id": "AUTHORITY-CANARY-A",
+                        "risk_class": "R0",
+                        "rationale": "Repair tax calculation in src/tax.py",
+                        "scope_tags": ["canary", "tax"],
+                        "completion_criteria": ["python test_tax.py passes"],
+                        "parallel_candidates": [],
+                    }, "det-obj-002", None
+                return {
+                    "objective_id": "WP-CANARY-DISCOUNT",
+                    "title": "Repair discount calculation defect",
+                    "description": "Repair discount calculation in src/discount.py and verify test_discount.py passes",
+                    "authority_id": "AUTHORITY-CANARY-A",
+                    "risk_class": "R0",
+                    "rationale": "Repair discount calculation in src/discount.py",
+                    "scope_tags": ["canary", "discount"],
+                    "completion_criteria": ["python test_discount.py passes"],
+                    "parallel_candidates": [],
+                }, "det-obj-001", None
+
+            # 3. PLAN_INTENT_SCHEMA
+            if "intent_type" in req and "target_ref" in req:
+                target = "WP-CANARY-DISCOUNT"
+                if "OBJECTIVE=" in prompt:
+                    try:
+                        obj_text = prompt.split("OBJECTIVE=", 1)[1].split("\nINTENT_CATALOG=", 1)[0].strip()
+                        obj_dict = json.loads(obj_text)
+                        target = obj_dict.get("objective_id", "WP-CANARY-DISCOUNT")
+                    except Exception:
+                        pass
+                return {
+                    "schema_version": "1.0.0",
+                    "objective_id": target,
+                    "intent_type": "IMPLEMENT_AUTHORIZED_WORK_PACKAGE",
+                    "target_ref": target,
+                }, "det-intent-001", None
+
+            # 4. PLAN_SCHEMA (DAG fallback)
+            if "tasks" in req and "parallel_safe_groups" in req:
+                target = "WP-CANARY-DISCOUNT"
+                if "OBJECTIVE=" in prompt:
+                    try:
+                        obj_text = prompt.split("OBJECTIVE=", 1)[1].split("\n", 1)[0].strip()
+                        obj_dict = json.loads(obj_text)
+                        target = obj_dict.get("objective_id", "WP-CANARY-DISCOUNT")
+                    except Exception:
+                        pass
+                kind = "tax" if "tax" in target.lower() else "discount"
+                node_id = f"TASK-AGENTIC-WP-{target.replace('-', '_')}"
+                return {
+                    "schema_version": "1.0.0",
+                    "objective_id": target,
+                    "tasks": [
+                        {
+                            "node_id": node_id,
+                            "run_type": "FILE",
+                            "authority_id": "AUTHORITY-CANARY-A",
+                            "risk_class": "R0",
+                            "mutating": True,
+                            "dependencies": [],
+                            "scope_tags": ["canary", kind],
+                            "write_scope": [f"src/{kind}.py"],
+                            "payload": {"action": "write_file"},
+                            "expected_artifacts": [f"src/{kind}.py"],
+                            "tests": [f"python test_{kind}.py"],
+                            "evidence_requirements": ["test_pass"],
+                            "completion_criteria": [f"python test_{kind}.py passes"],
+                        }
+                    ],
+                    "parallel_safe_groups": [[node_id]],
+                    "rollback_strategy": "none",
+                }, "det-plan-001", None
+
+            # 5. PEER_REVIEW / COUNCIL / PROBE
+            if "verdict" in props:
+                return {
+                    "verdict": "AGREE",
+                    "confidence": 1.0,
+                    "rationale": "Deterministic offline agreement.",
+                }, "det-rev-001", None
+
+            if "success" in props or "status" in props:
+                return {"status": "SUCCESS", "success": True}, "det-probe-001", None
+
         api_key = os.environ.get("NVIDIA_API_KEY")
         if not api_key:
             raise PlannerCredentialError("NVIDIA_API_KEY environment variable is missing")

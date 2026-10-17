@@ -27,7 +27,7 @@ Tests the actual Runtime V1 API entry flow:
 4. Security & Invariant Proofs:
    - Typed provider WAIT / fallback verified without paid fallback.
    - Unauthorized root denied.
-   - Invalid token denied (HTTP 401).
+   - Invalid token denied (HTTP 403).
    - Zero LARI mutations verified in git status.
 """
 from __future__ import annotations
@@ -375,6 +375,8 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
     for pid, pdef in policy_data.get("providers", {}).items():
         if pid != "nemotron":
             pdef["enabled"] = False
+    if "nemotron" in policy_data.get("providers", {}):
+        policy_data["providers"]["nemotron"]["model_id"] = "nvidia/nemotron-3-super-120b-a12b"
     policy_data["risk_routes"]["R0"]["preferred_providers"] = ["nemotron"]
     policy_path = runtime_dir / "canary-policy.json"
     policy_path.write_text(json.dumps(policy_data, indent=2), encoding="utf-8")
@@ -765,6 +767,7 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
         print("Zero LARI changes: CONFIRMED")
 
     finally:
+        os.environ.pop("AOS_DETERMINISTIC_MODEL_BACKEND", None)
         server.shutdown()
         engine.shutdown()
         print("Isolated RuntimeServer 1 stopped.")
