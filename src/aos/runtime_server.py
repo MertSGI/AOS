@@ -1443,6 +1443,27 @@ class RuntimeEngine:
                 )
             )
 
+            is_cred = row.get("credential_available") is True
+            is_probed = bool(row.get("probe_attempted"))
+            c_state = row.get("circuit_state")
+            is_closed = c_state == CircuitState.CLOSED.value
+            fail_cls = row.get("failure_class")
+            cost_tier = str(row.get("tier") or "FREE").upper()
+            is_free_entitled = "PAID" not in cost_tier and fail_cls != "CREDIT_EXHAUSTED"
+            is_task_class_eligible = bool(row.get("task_classes") or ["structured_planning"])
+            is_generation_proven = is_closed and fail_cls is None
+            is_quota_eligible = is_closed and fail_cls not in ("CREDIT_EXHAUSTED", "QUOTA_EXHAUSTED")
+
+            row["classifications"] = {
+                "DISCOVERED": True,
+                "CREDENTIAL_PRESENT": is_cred,
+                "HEALTH_PROBED": is_probed,
+                "FREE_ENTITLEMENT_CONFIRMED": is_free_entitled,
+                "TASK_CLASS_ELIGIBLE": is_task_class_eligible,
+                "GENERATION_PROVEN": is_generation_proven,
+                "QUOTA_ELIGIBLE": is_quota_eligible,
+            }
+
         operational_details = [
             row
             for row in provider_details
@@ -1484,6 +1505,20 @@ class RuntimeEngine:
         ] = len(
             healthy
         )
+
+        circuit_summary[
+            "credential_present_count"
+        ] = len(
+            operational_details
+        )
+
+        circuit_summary[
+            "credit_exhausted_provider_count"
+        ] = len([
+            r for r in operational_details
+            if r.get("failure_class") == "CREDIT_EXHAUSTED"
+            or r.get("circuit_state") == CircuitState.OPEN.value
+        ])
 
         circuit_summary[
             "probe_eligible_reasoning_provider_count"

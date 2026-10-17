@@ -3449,6 +3449,15 @@ def get_resource_operations_matrix(runtime_v1: Optional[Dict[str, Any]] = None) 
             "retry_deadline": detail.get("next_probe_at"),
             "current_blocker": blocker,
             "eligibility_by_task_class": {"structured_planning": is_conf and c_state != "OPEN", "repo_ui_planning": False},
+            "classifications": {
+                "DISCOVERED": True,
+                "CREDENTIAL_PRESENT": is_conf,
+                "HEALTH_PROBED": bool(detail.get("probe_attempted")) or is_conf,
+                "FREE_ENTITLEMENT_CONFIRMED": "PAID" not in b_class.upper() and fail_cls != "CREDIT_EXHAUSTED",
+                "TASK_CLASS_ELIGIBLE": is_conf and c_state != "OPEN",
+                "GENERATION_PROVEN": g_health in ("AVAILABLE", "PASS", "HEALTHY") and fail_cls is None,
+                "QUOTA_ELIGIBLE": is_conf and c_state != "OPEN" and fail_cls not in ("CREDIT_EXHAUSTED", "QUOTA_EXHAUSTED"),
+            },
         }
 
     matrix.extend([

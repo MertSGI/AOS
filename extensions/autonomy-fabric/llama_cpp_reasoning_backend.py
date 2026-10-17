@@ -105,6 +105,13 @@ class LlamaCppQwenReasoningBackend(ExecutionBackend):
         healthy = self._health_reader() if self._health_reader is not None else self._default_health()
         if not healthy and self.lifecycle_manager is not None:
             snap = self.lifecycle_manager.get_snapshot()
+            if snap.state.value == "WAITING_RESOURCE":
+                return ExecutionAvailabilitySnapshot(
+                    ExecutionAvailabilityState.TEMPORARILY_UNAVAILABLE,
+                    self._now(),
+                    source="LLAMA_CPP_MEMORY_GUARD",
+                    evidence={"profile": "QWEN3_4B_Q4_K_M_CPU16GB", "reason": snap.error_message},
+                )
             if snap.state.value in {"STOPPED_READY", "IDLE", "AVAILABLE", "STARTING", "BUSY"}:
                 healthy = True
         state = (
@@ -259,7 +266,7 @@ def build_llama_server_argv(executable: str, model_path: str, *, port: int = 808
         executable, "--model", str(Path(model_path).resolve()),
         "--host", "127.0.0.1", "--port", str(port),
         "--ctx-size", "4096", "--n-predict", "512",
-        "--threads", str(min(8, __import__("os").cpu_count() or 1)),
+        "--threads", str(min(4, max(1, (__import__("os").cpu_count() or 2) // 2))),
         "--n-gpu-layers", "0",
         "--parallel", "1", "--batch-size", "128", "--ubatch-size", "128",
         "--no-webui", "--jinja",

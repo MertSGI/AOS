@@ -61,6 +61,7 @@ def test_qwen_auto_start_and_health_readiness():
     with patch("aos.workers.llama_cpp_lifecycle.resolve_llama_cpp_identity") as mock_exe, \
          patch("aos.workers.llama_cpp_lifecycle.resolve_qwen_model") as mock_model, \
          patch("aos.workers.llama_cpp_lifecycle.resolve_capability_status", return_value="PROVEN"), \
+         patch("aos.workers.llama_cpp_lifecycle.get_available_physical_memory_bytes", return_value=8 * 1024**3), \
          patch("extensions.autonomy_fabric.llama_cpp_reasoning_backend.build_llama_server_argv", return_value=["llama-server.exe"]):
 
         mock_exe.return_value = {"path": "C:\\path\\llama-server.exe", "sha256": "abc", "version": "1.0"}
@@ -78,6 +79,32 @@ def test_qwen_auto_start_and_health_readiness():
             assert snap.state == QwenLifecycleState.AVAILABLE
             assert snap.pid == 9999
             assert spawner.called
+
+
+def test_qwen_memory_headroom_guard():
+    """When observed free RAM (e.g. 3.72 GB) is below the 4.5 GB headroom guard, startup halts safely."""
+    fake_proc = FakeOwnedProcess(pid=9999)
+    spawner = MagicMock(return_value=fake_proc)
+
+    with patch("aos.workers.llama_cpp_lifecycle.resolve_llama_cpp_identity") as mock_exe, \
+         patch("aos.workers.llama_cpp_lifecycle.resolve_qwen_model") as mock_model, \
+         patch("aos.workers.llama_cpp_lifecycle.resolve_capability_status", return_value="PROVEN"), \
+         patch("aos.workers.llama_cpp_lifecycle.get_available_physical_memory_bytes", return_value=int(3.72 * 1024**3)):
+
+        mock_exe.return_value = {"path": "C:\\path\\llama-server.exe", "sha256": "abc", "version": "1.0"}
+        mock_model.return_value = {"path": "C:\\path\\model.gguf", "sha256": "def", "size_bytes": 100}
+
+        mgr = LlamaCppLifecycleManager(
+            executable_path="C:\\path\\llama-server.exe",
+            model_path="C:\\path\\model.gguf",
+            spawner=spawner,
+        )
+
+        snap = mgr.start()
+        assert snap.state == QwenLifecycleState.WAITING_RESOURCE
+        assert "WAITING_RESOURCE" in (snap.error_message or "")
+        assert "Insufficient memory headroom" in (snap.error_message or "")
+        assert not spawner.called  # Spawner was never invoked!
 
 
 def test_qwen_active_request_transitions_and_idle_timeout():
@@ -114,6 +141,7 @@ def test_qwen_restart():
     with patch("aos.workers.llama_cpp_lifecycle.resolve_llama_cpp_identity") as mock_exe, \
          patch("aos.workers.llama_cpp_lifecycle.resolve_qwen_model") as mock_model, \
          patch("aos.workers.llama_cpp_lifecycle.resolve_capability_status", return_value="PROVEN"), \
+         patch("aos.workers.llama_cpp_lifecycle.get_available_physical_memory_bytes", return_value=8 * 1024**3), \
          patch("extensions.autonomy_fabric.llama_cpp_reasoning_backend.build_llama_server_argv", return_value=["llama-server.exe"]):
 
         mock_exe.return_value = {"path": "C:\\path\\llama-server.exe", "sha256": "abc", "version": "1.0"}

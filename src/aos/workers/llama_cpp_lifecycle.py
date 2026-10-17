@@ -34,7 +34,37 @@ logger = logging.getLogger("aos.llama_cpp_lifecycle")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 DEFAULT_STARTUP_TIMEOUT = 30.0
-DEFAULT_IDLE_TIMEOUT = 300.0  # 5 minutes idle timeout before stopping to free ~5 GB RAM
+DEFAULT_IDLE_TIMEOUT = 120.0  # Automatic idle shutdown after 2 minutes to free RAM
+DEFAULT_MIN_HEADROOM_BYTES = int(4.5 * 1024**3)  # Conservative 4.5 GB headroom guard (2.5 GB model + 2.0 GB OS)
+
+
+def get_available_physical_memory_bytes() -> Optional[int]:
+    """Query current available physical memory in bytes."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", wintypes.DWORD),
+                    ("dwMemoryLoad", wintypes.DWORD),
+                    ("ullTotalPhys", ctypes.c_uint64),
+                    ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64),
+                    ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64),
+                    ("ullAvailVirtual", ctypes.c_uint64),
+                    ("sullAvailExtendedVirtual", ctypes.c_uint64),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return int(stat.ullAvailPhys)
+        except Exception as exc:
+            logger.debug("Failed querying GlobalMemoryStatusEx: %s", exc)
+    return None
 
 
 class QwenLifecycleState(str, Enum):
@@ -45,6 +75,7 @@ class QwenLifecycleState(str, Enum):
     IDLE = "IDLE"
     STOPPING = "STOPPING"
     FAILED = "FAILED"
+    WAITING_RESOURCE = "WAITING_RESOURCE"
 
 
 @dataclass(frozen=True)
@@ -192,6 +223,24 @@ class LlamaCppLifecycleManager:
                 self._error_message = f"Qwen capability status is {cap_status}, not PROVEN"
                 return self._snapshot_locked(orphan_count=cleaned)
 
+            # Conservative memory headroom guard: Qwen3-4B requires ~2.5 GB RAM.
+            # Require at least 4.5 GB available physical RAM (2.5 GB model + 2.0 GB OS headroom).
+            min_headroom_bytes = int(
+                os.environ.get("AOS_QWEN_MIN_HEADROOM_BYTES", str(DEFAULT_MIN_HEADROOM_BYTES))
+            )
+            avail_ram = get_available_physical_memory_bytes()
+            if avail_ram is not None and avail_ram < min_headroom_bytes:
+                avail_gb = round(avail_ram / (1024**3), 2)
+                required_gb = round(min_headroom_bytes / (1024**3), 2)
+                self._state = QwenLifecycleState.WAITING_RESOURCE
+                self._error_message = (
+                    f"WAITING_RESOURCE: Insufficient memory headroom to start Qwen local "
+                    f"({avail_gb} GB available < {required_gb} GB required guard). "
+                    f"Preserving host applications."
+                )
+                logger.info(self._error_message)
+                return self._snapshot_locked(orphan_count=cleaned)
+
             # Build exact argv
             try:
                 from extensions.autonomy_fabric.llama_cpp_reasoning_backend import build_llama_server_argv
@@ -205,11 +254,12 @@ class LlamaCppLifecycleManager:
                     build_llama_server_argv = mod.build_llama_server_argv
                 else:
                     def build_llama_server_argv(executable: str, model_path: str, *, port: int = 8080) -> list[str]:
+                        bounded_threads = min(4, max(1, (os.cpu_count() or 2) // 2))
                         return [
                             executable, "--model", str(Path(model_path).resolve()),
                             "--host", "127.0.0.1", "--port", str(port),
                             "--ctx-size", "4096", "--n-predict", "512",
-                            "--threads", str(min(8, os.cpu_count() or 1)),
+                            "--threads", str(bounded_threads),
                             "--n-gpu-layers", "0",
                             "--parallel", "1", "--batch-size", "128", "--ubatch-size", "128",
                             "--no-webui", "--jinja",
