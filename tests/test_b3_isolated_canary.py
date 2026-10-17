@@ -138,8 +138,8 @@ def setup_canary_workspace(ws_path: Path) -> Dict[str, Any]:
     ).stdout.strip().lower()
 
     # Pre-flight check: both tests must fail
-    assert subprocess.run(["python", "test_discount.py"], cwd=str(ws_path), capture_output=True).returncode != 0
-    assert subprocess.run(["python", "test_tax.py"], cwd=str(ws_path), capture_output=True).returncode != 0
+    assert subprocess.run([sys.executable, "test_discount.py"], cwd=str(ws_path), capture_output=True).returncode != 0
+    assert subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_path), capture_output=True).returncode != 0
 
     return {
         "workspace": ws_path,
@@ -157,7 +157,11 @@ def test_negative_no_worker_control(tmp_path: Optional[Path] = None) -> None:
     """
     if tmp_path is None:
         run_id = f"aos_neg_control_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-        ws_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "Temp" / run_id / "workspace"
+        if os.environ.get("LOCALAPPDATA"):
+            ws_dir = Path(os.environ["LOCALAPPDATA"]) / "Temp" / run_id / "workspace"
+        else:
+            import tempfile
+            ws_dir = Path(tempfile.gettempdir()) / run_id / "workspace"
     else:
         ws_dir = tmp_path / "workspace_negative_control"
 
@@ -165,10 +169,10 @@ def test_negative_no_worker_control(tmp_path: Optional[Path] = None) -> None:
     src_dir = ws_dir / "src"
 
     # Pre-flight: both tests fail
-    disc_proc = subprocess.run(["python", "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
+    disc_proc = subprocess.run([sys.executable, "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
     assert disc_proc.returncode != 0, "Negative control failure: test_discount.py unexpectedly passed!"
 
-    tax_proc = subprocess.run(["python", "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
+    tax_proc = subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
     assert tax_proc.returncode != 0, "Negative control failure: test_tax.py unexpectedly passed!"
 
     # Observer proof: without worker running, target files remain unchanged
@@ -490,13 +494,13 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
         print("Waiting for RuntimeWorker Objective 1 completion (Observer Only)...")
         deadline = time.time() + 420.0
         while time.time() < deadline:
-            p_disc = subprocess.run(["python", "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
+            p_disc = subprocess.run([sys.executable, "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
             if p_disc.returncode == 0:
                 break
             time.sleep(1.0)
 
         # Functional verification: discount test MUST pass by worker action
-        p_disc_now = subprocess.run(["python", "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
+        p_disc_now = subprocess.run([sys.executable, "test_discount.py"], cwd=str(ws_dir), capture_output=True, text=True)
         assert p_disc_now.returncode == 0, f"test_discount.py failed: {p_disc_now.stderr}"
         current_disc_sha = hashlib.sha256((src_dir / "discount.py").read_bytes()).hexdigest()
         assert current_disc_sha != ws_info["initial_discount_sha256"], "discount.py was not modified by worker!"
@@ -506,11 +510,12 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
         # Objective 2 must NOT be repaired yet in Batch 1
         current_tax_sha = hashlib.sha256((src_dir / "tax.py").read_bytes()).hexdigest()
         assert current_tax_sha == ws_info["initial_tax_sha256"], "tax.py was prematurely modified!"
-        assert subprocess.run(["python", "test_tax.py"], cwd=str(ws_dir), capture_output=True).returncode != 0
+        assert subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_dir), capture_output=True).returncode != 0
         print("Pre-recovery check: Objective 2 (tax.py) correctly remains defective before recovery.")
 
-        # Wait for worker 1 process to finish cleanly
-        while pid_alive(worker_pid_1):
+        # Wait for worker 1 process to finish cleanly (bounded timeout)
+        w1_deadline = time.time() + 60.0
+        while pid_alive(worker_pid_1) and time.time() < w1_deadline:
             time.sleep(0.5)
 
         # Verify authentic Batch 1 checkpoint and receipt
@@ -589,13 +594,13 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
             print("Waiting for RuntimeWorker Objective 2 completion (Observer Only)...")
             deadline2 = time.time() + 420.0
             while time.time() < deadline2:
-                p_tax = subprocess.run(["python", "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
+                p_tax = subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
                 if p_tax.returncode == 0:
                     break
                 time.sleep(1.0)
 
             # Functional verification: tax test MUST pass by resumed worker action
-            p_tax_now = subprocess.run(["python", "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
+            p_tax_now = subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_dir), capture_output=True, text=True)
             assert p_tax_now.returncode == 0, f"test_tax.py failed: {p_tax_now.stderr}"
             current_tax_sha2 = hashlib.sha256((src_dir / "tax.py").read_bytes()).hexdigest()
             assert current_tax_sha2 != ws_info["initial_tax_sha256"], "tax.py was not modified by resumed worker!"
@@ -603,11 +608,12 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
             print("Artifact 2 (src/tax.py): RESUMED WORKER REPAIRED & TEST PASS")
 
             # Both tests now pass
-            assert subprocess.run(["python", "test_discount.py"], cwd=str(ws_dir), capture_output=True).returncode == 0
-            assert subprocess.run(["python", "test_tax.py"], cwd=str(ws_dir), capture_output=True).returncode == 0
+            assert subprocess.run([sys.executable, "test_discount.py"], cwd=str(ws_dir), capture_output=True).returncode == 0
+            assert subprocess.run([sys.executable, "test_tax.py"], cwd=str(ws_dir), capture_output=True).returncode == 0
 
-            # Wait for worker 2 to finish cleanly
-            while pid_alive(worker_pid_2):
+            # Wait for worker 2 to finish cleanly (bounded timeout)
+            w2_deadline = time.time() + 60.0
+            while pid_alive(worker_pid_2) and time.time() < w2_deadline:
                 time.sleep(0.5)
 
             # Verify updated authentic checkpoint
@@ -775,8 +781,14 @@ def run_b3_isolated_canary() -> Dict[str, Any]:
         os.environ.pop("AOS_DETERMINISTIC_MODEL_BACKEND", None)
         if os.environ.get("NVIDIA_API_KEY") == "mock_deterministic_api_key_ci":
             os.environ.pop("NVIDIA_API_KEY", None)
-        server.shutdown()
-        engine.shutdown()
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        try:
+            engine.shutdown()
+        except Exception:
+            pass
         print("Isolated RuntimeServer 1 stopped.")
 
     return results

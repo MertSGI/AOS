@@ -82,10 +82,26 @@ def process_alive(pid: Any) -> bool:
         return False
     if os.name != "nt":
         try:
+            res, _ = os.waitpid(value, os.WNOHANG)
+            if res == value:
+                return False
+        except (ChildProcessError, OSError):
+            pass
+        try:
             os.kill(value, 0)
-            return True
         except OSError:
             return False
+        status_file = Path(f"/proc/{value}/status")
+        if status_file.is_file():
+            try:
+                for line in status_file.read_text().splitlines():
+                    if line.startswith("State:"):
+                        if "Z" in line:
+                            return False
+                        break
+            except OSError:
+                pass
+        return True
     import ctypes
     from ctypes import wintypes
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
