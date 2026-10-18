@@ -1375,15 +1375,16 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     state_kwargs["kcp_verification_status"] = "NOT_VERIFIED"
 
                 store.write_state(command_id, **state_kwargs)
-                try:
-                    CommandAdmissionStore(store.runtime_root).set_state(
-                        command_id,
-                        AdmissionState.HOLD,
-                        authority="COMMAND_TERMINATION",
-                        reason=f"COMMAND_{state}",
-                    )
-                except Exception:
-                    pass
+                if state in ("PROJECT_COMPLETE", "FAILED"):
+                    try:
+                        CommandAdmissionStore(store.runtime_root).set_state(
+                            command_id,
+                            AdmissionState.HOLD,
+                            authority="COMMAND_TERMINATION",
+                            reason=f"COMMAND_{state}",
+                        )
+                    except Exception:
+                        pass
                 event_payload = {
                     "state": state,
                     "disposition": result["disposition"],

@@ -99,7 +99,7 @@ from extensions.autonomy_fabric.exact_edit_engine import (  # noqa: E402
 SCHEMA_VERSION = "1.0.0"
 PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 2500
 PLANNER_COMPLETED_SIGNATURES_MAX_CHARS = 1800
-PLANNER_COMPLETED_READ_MAX_FILES = 8
+PLANNER_COMPLETED_READ_MAX_FILES = 1
 PLANNER_COMPLETED_READ_MAX_CHARS_PER_FILE = 500
 OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS = 3000
 COMPLETION_CANONICAL_EXCERPT_MAX_CHARS = 2500
@@ -2510,16 +2510,26 @@ def select_objective(
     backend_override: Optional[Any] = None,
     replan_reason: Optional[str] = None,
     workspace: Optional[Path] = None,
+    completed_objectives: Optional[Iterable[str]] = None,
 ) -> Objective:
     if situation.ambiguity_reasons:
         raise HumanRequired("CANONICAL_CONTRADICTION", {"ambiguity_reasons": list(situation.ambiguity_reasons)})
     authority_hint = next(iter(sorted(situation.authority_records)), "NONE")
-    prompt = (
+    completed_obs = [str(o) for o in (completed_objectives or []) if str(o).strip()]
+    completed_block = ""
+    if completed_obs:
+        completed_block = (
+            f"ALREADY_COMPLETED_OBJECTIVES={completed_obs}\n"
+            "CRITICAL: Do NOT select any already completed objective. "
+            "Select the next uncompleted priority objective from the roadmap or canonical situation.\n\n"
+        )
+    base_prompt = (
         "You are the AOS autonomous objective selector. Use ONLY the fresh canonical situation below. "
         "Choose the highest-value ready objective inside standing authority (risk_class must be R0 or R1 for routine standing authority). Never ask the user what to do next. "
         "If multiple independent lanes are ready, identify them in parallel_candidates. Do not select production, "
         "destructive, secret-management, payment, legal/compliance or other red-line work. Return exactly the requested JSON.\n\n"
         f"REPLAN_REASON={replan_reason or 'INITIAL'}\n"
+        + completed_block
         + json.dumps(
             _situation_prompt_payload(
                 situation, canonical_excerpt_max_chars=OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS,
@@ -2528,15 +2538,26 @@ def select_objective(
             sort_keys=True,
         )
     )
-    proposal = _reason(
-        situation, routing_policy_path, runtime_dir, "objective-selection", prompt, OBJECTIVE_SCHEMA,
-        authority_hint, backend_override=backend_override, workspace=workspace,
-    )
+    for attempt in range(2):
+        attempt_prompt = base_prompt
+        if attempt > 0 and completed_obs:
+            attempt_prompt = (
+                f"RETRY ATTEMPT: Your previous selection was in ALREADY_COMPLETED_OBJECTIVES: {completed_obs}.\n"
+                "You MUST select an unfinished objective from the remaining roadmap items.\n\n"
+                + base_prompt
+            )
+        proposal = _reason(
+            situation, routing_policy_path, runtime_dir, "objective-selection", attempt_prompt, OBJECTIVE_SCHEMA,
+            authority_hint, backend_override=backend_override, workspace=workspace,
+        )
+        if completed_obs and proposal.get("objective_id") in completed_obs and attempt == 0:
+            continue
+        break
     _shadow_deliberate(
         runtime_dir,
         situation,
         "FRONTIER_SELECTION",
-        prompt,
+        base_prompt,
         proposal,
         routing_policy_path=routing_policy_path,
         schema=OBJECTIVE_SCHEMA,
@@ -4803,10 +4824,23 @@ def run_autonomous_project(
                     runtime_dir, batch_number, checkpoint, prior_situation, situation,
                 )
             if objective is None:
+                completed_objective_ids = {
+                    str(b.get("objective_id"))
+                    for b in completed_batches
+                    if isinstance(b, Mapping) and b.get("objective_id")
+                }
+                if isinstance(checkpoint, Mapping):
+                    for b in checkpoint.get("recent_completed_batches", []) or []:
+                        if isinstance(b, Mapping) and b.get("objective_id"):
+                            completed_objective_ids.add(str(b.get("objective_id")))
+                    for b in checkpoint.get("completed_batches", []) or []:
+                        if isinstance(b, Mapping) and b.get("objective_id"):
+                            completed_objective_ids.add(str(b.get("objective_id")))
                 objective = select_objective(
                     situation, routing_policy_path, runtime_dir,
                     backend_override=backend_override, replan_reason=replan_reason,
                     workspace=workspace,
+                    completed_objectives=sorted(completed_objective_ids),
                 )
             _atomic_json(runtime_dir / f"objective-{batch_number:04d}.json", dataclasses.asdict(objective))
 

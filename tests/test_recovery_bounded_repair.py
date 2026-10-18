@@ -164,3 +164,67 @@ def test_runtime_worker_closes_admission_on_terminal_state(tmp_path):
     assert rec.reason == "COMMAND_PROJECT_COMPLETE"
     assert rec.authority == "COMMAND_TERMINATION"
     assert admission_store.is_active(command_id) is False
+
+
+def test_select_objective_includes_completed_objectives(tmp_path):
+    from aos.planning_kernel import select_objective
+
+    situation = SimpleNamespace(
+        schema_version="1.0.0",
+        authority_revision=None,
+        project_id="test-p",
+        authority_records={"AUTH-01": {"text": "Standing authority", "authority_id": "AUTH-01"}},
+        ambiguity_reasons=(),
+        control_sha="a" * 40,
+        execution_base_sha="b" * 40,
+        canonical_excerpt="Priority 1: WP-01\nPriority 2: WP-02\n",
+        canonical_hashes={},
+        canonical_next_action="Work on project",
+        current_status="ACTIVE",
+        current_milestone="M1",
+        completion_criteria=(),
+        constraints=(),
+        control_ref="refs/heads/main",
+        goal="Test goal",
+        lane_allowed_scope=None,
+        red_lines=(),
+        repository="test/repo",
+        repository_head="a" * 40,
+        shared_path_governance=None,
+        situation_id="sit-01",
+        working_tree_state="CLEAN",
+        ci_state=(),
+        accepted_gates=(),
+        blocked_gates=(),
+    )
+
+    captured_prompts = []
+
+    def mock_reason(sit, policy_path, rt_dir, reason_type, prompt, schema, auth_hint, **kwargs):
+        captured_prompts.append(prompt)
+        return {
+            "objective_id": "WP-02",
+            "title": "Repair tax defect",
+            "description": "Fix tax",
+            "authority_id": "AUTH-01",
+            "risk_class": "R0",
+            "rationale": "WP-01 already completed",
+            "scope_tags": ["backend"],
+            "completion_criteria": ["tests pass"],
+            "parallel_candidates": [],
+        }
+
+    with patch("aos.planning_kernel._reason", side_effect=mock_reason), \
+         patch("aos.planning_kernel._shadow_deliberate"):
+        obj = select_objective(
+            situation,
+            tmp_path / "policy.json",
+            tmp_path / "runtime",
+            completed_objectives=["WP-01"],
+        )
+
+    assert obj.objective_id == "WP-02"
+    assert len(captured_prompts) == 1
+    assert "ALREADY_COMPLETED_OBJECTIVES=['WP-01']" in captured_prompts[0]
+    assert "Do NOT select any already completed objective" in captured_prompts[0]
+
