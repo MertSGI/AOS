@@ -1271,12 +1271,25 @@ textarea.goal-main {
           <div class="form-row">
             <div>
               <label class="field-lbl" for="goal-project">Configured Runtime Project</label>
-              <select id="goal-project" onchange="syncGoalProjectProfile()"></select>
+              <select id="goal-project" onchange="syncGoalProjectProfile()">
+                <option value="">-- Select an authorized project --</option>
+              </select>
             </div>
             <div>
               <label class="field-lbl" for="goal-descriptor">Resolved Project Descriptor</label>
               <input id="goal-descriptor" type="text" readonly>
             </div>
+          </div>
+
+          <div id="goal-product-confirm-row" style="display:none; margin-bottom:12px; padding:12px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.35); border-radius:6px;">
+            <label class="field-lbl" style="color:#fca5a5; font-weight:600;">⚠️ PROTECTED PRODUCT CONFIRMATION REQUIRED</label>
+            <div style="font-size:12px; margin-bottom:8px; color:#fecaca;">Project <code id="goal-product-confirm-name" style="color:#fff; background:#7f1d1d; padding:2px 6px; border-radius:3px;"></code> is a protected Product authority. Type exact project ID to authorize dispatch:</div>
+            <input id="goal-product-confirm-input" type="text" placeholder="Type exact project ID to confirm authorization" style="background:#180d10; border-color:rgba(239,68,68,0.5); color:#fff; font-family:var(--font-mono); font-size:12px;" oninput="updateDispatchPreview()">
+          </div>
+
+          <div id="goal-dispatch-preview" style="margin-bottom:12px; padding:10px 12px; background:var(--bg-card); border:1px solid var(--border-dim); border-radius:6px; font-size:12px; font-family:var(--font-mono);">
+            <div style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Execution Dispatch Authority Summary</div>
+            <div id="goal-preview-content" style="color:var(--text-sub);">No project selected. Choose an authorized project to configure execution boundaries.</div>
           </div>
 
           <div class="form-row">
@@ -1745,6 +1758,9 @@ textarea.goal-main {
 <script>
 const TOKEN = __AOS_TOKEN_JSON__;
 let GOAL_PROJECTS = {};
+let CURRENT_SELECTED_PROJECT_ID = '';
+let CURRENT_PROJECT_FINGERPRINT = '';
+const PROTECTED_PRODUCT_PROJECTS = new Set(['lari', 'lari-ui-v2']);
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -1758,8 +1774,18 @@ function escapeHtml(str) {
 
 function syncGoalProjectProfile() {
   const selector = document.getElementById('goal-project');
-  const profile = selector ? GOAL_PROJECTS[selector.value] : null;
+  const selVal = selector ? selector.value : '';
+  const profile = selVal ? GOAL_PROJECTS[selVal] : null;
   const values = profile || {};
+
+  if (selVal && profile) {
+    CURRENT_SELECTED_PROJECT_ID = selVal;
+    CURRENT_PROJECT_FINGERPRINT = (values.descriptor_path || '') + '|' + (values.workspace || '') + '|' + (values.routing_policy_path || '');
+  } else {
+    CURRENT_SELECTED_PROJECT_ID = '';
+    CURRENT_PROJECT_FINGERPRINT = '';
+  }
+
   const fields = {
     'goal-descriptor': values.descriptor_path || '',
     'goal-workspace': values.workspace || '',
@@ -1769,6 +1795,56 @@ function syncGoalProjectProfile() {
     const element = document.getElementById(id);
     if (element) element.value = value;
   }
+
+  const confirmRow = document.getElementById('goal-product-confirm-row');
+  const confirmName = document.getElementById('goal-product-confirm-name');
+  const confirmInput = document.getElementById('goal-product-confirm-input');
+  if (confirmRow) {
+    if (selVal && PROTECTED_PRODUCT_PROJECTS.has(selVal.toLowerCase())) {
+      confirmRow.style.display = 'block';
+      if (confirmName) confirmName.textContent = selVal;
+    } else {
+      confirmRow.style.display = 'none';
+      if (confirmInput) confirmInput.value = '';
+    }
+  }
+
+  updateDispatchPreview();
+}
+
+function updateDispatchPreview() {
+  const preview = document.getElementById('goal-preview-content');
+  if (!preview) return;
+  const selector = document.getElementById('goal-project');
+  const selVal = selector ? selector.value : '';
+  if (!selVal || !GOAL_PROJECTS[selVal]) {
+    preview.innerHTML = '<span style="color:var(--text-muted)">No project selected. Choose an authorized project to configure execution boundaries.</span>';
+    return;
+  }
+  const prof = GOAL_PROJECTS[selVal];
+  const batches = Number((document.getElementById('goal-batches') || {}).value || 12);
+  const isProtected = PROTECTED_PRODUCT_PROJECTS.has(selVal.toLowerCase());
+  const confirmInput = (document.getElementById('goal-product-confirm-input') || {}).value || '';
+  const confirmed = isProtected ? (confirmInput.trim() === selVal) : true;
+
+  let html = '<div style="display:grid; grid-template-columns: 140px 1fr; gap:4px; line-height:1.6;">';
+  html += `<div>Project ID:</div><div><strong style="color:var(--text-main);">${escapeHtml(selVal)}</strong></div>`;
+  html += `<div>Workspace:</div><div><code>${escapeHtml(prof.workspace || 'N/A')}</code></div>`;
+  html += `<div>Write Scope:</div><div><code>${escapeHtml(prof.workspace || 'RESTRICTED_BOUNDED')}</code></div>`;
+  html += `<div>Execution Limits:</div><div>Max Batches: <strong>${batches}</strong> | Continuous: <strong>true</strong></div>`;
+  html += `<div>Policy Path:</div><div><small>${escapeHtml(prof.routing_policy_path || 'DEFAULT')}</small></div>`;
+  html += `<div>Protection Class:</div><div>`;
+  if (isProtected) {
+    if (confirmed) {
+      html += '<span class="status-chip ok">PROTECTED PRODUCT (CONFIRMED)</span>';
+    } else {
+      html += '<span class="status-chip danger">PROTECTED PRODUCT (CONFIRMATION PENDING)</span>';
+    }
+  } else {
+    html += '<span class="status-chip neutral">STANDARD AUTHORIZED PROJECT</span>';
+  }
+  html += `</div></div>`;
+  preview.innerHTML = html;
 }
 
 function toast(msg) {
@@ -2922,11 +2998,31 @@ async function refreshStatus() {
     const selector = document.getElementById('goal-project');
     if (selector) {
       const previous = selector.value;
-      selector.innerHTML = Object.keys(GOAL_PROJECTS).map(projectId =>
+      let html = '<option value="">-- Select an authorized project --</option>';
+      html += Object.keys(GOAL_PROJECTS).map(projectId =>
         `<option value="${escapeHtml(projectId)}">${escapeHtml(projectId)}</option>`
       ).join('');
-      const preferred = previous && GOAL_PROJECTS[previous] ? previous : s.default_project_id;
-      if (preferred && GOAL_PROJECTS[preferred]) selector.value = preferred;
+      selector.innerHTML = html;
+
+      // Preserve user-chosen project ONLY if it still exists and remains authorized with unchanged fingerprint
+      if (previous && GOAL_PROJECTS[previous]) {
+        const prof = GOAL_PROJECTS[previous];
+        const profFingerprint = (prof.descriptor_path || '') + '|' + (prof.workspace || '') + '|' + (prof.routing_policy_path || '');
+        if (CURRENT_PROJECT_FINGERPRINT && CURRENT_PROJECT_FINGERPRINT !== profFingerprint) {
+          selector.value = '';
+          CURRENT_SELECTED_PROJECT_ID = '';
+          CURRENT_PROJECT_FINGERPRINT = '';
+          toast('Project authority profile changed - re-selection required');
+        } else {
+          selector.value = previous;
+          CURRENT_SELECTED_PROJECT_ID = previous;
+          CURRENT_PROJECT_FINGERPRINT = profFingerprint;
+        }
+      } else {
+        selector.value = '';
+        CURRENT_SELECTED_PROJECT_ID = '';
+        CURRENT_PROJECT_FINGERPRINT = '';
+      }
       syncGoalProjectProfile();
     }
 
@@ -3026,9 +3122,19 @@ async function submitGoal() {
     max_batches: Number((document.getElementById('goal-batches') || {}).value || 12)
   };
   if (!payload.project_id) {
-    if (out) out.textContent = 'Error: Select a configured Runtime V1 project.';
-    toast('Configured project required');
+    if (out) out.textContent = 'Error: Select an authorized Runtime V1 project before dispatch.';
+    toast('Project selection required');
     return;
+  }
+  const isProtected = PROTECTED_PRODUCT_PROJECTS.has(payload.project_id.toLowerCase());
+  const confirmInput = (document.getElementById('goal-product-confirm-input') || {}).value || '';
+  if (isProtected) {
+    if (confirmInput.trim() !== payload.project_id) {
+      if (out) out.textContent = 'Error: Explicit operator confirmation required for protected product project [' + payload.project_id + ']. Type exact project ID to authorize.';
+      toast('Explicit product confirmation required');
+      return;
+    }
+    payload.product_confirmation = confirmInput.trim();
   }
   if (!payload.goal) {
     if (out) out.textContent = 'Error: Primary Goal statement is required.';
@@ -4344,6 +4450,25 @@ def submit_job(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any
 
 
 def submit_goal(payload: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    project_id = str(payload.get("project_id") or "").strip()
+    projects = config.get("projects")
+    if runtime_configured(config) or isinstance(projects, dict):
+        if not project_id:
+            raise ValueError("project_id is required")
+        if isinstance(projects, dict) and project_id not in projects:
+            raise ValueError(f"Unknown project_id: {project_id}")
+
+    protected_product_projects = {"lari", "lari-ui-v2"}
+    if project_id and project_id.lower() in protected_product_projects:
+        confirm = str(
+            payload.get("product_confirmation")
+            or payload.get("operator_confirmed_project")
+            or ""
+        ).strip()
+        if confirm != project_id:
+            raise ValueError(
+                f"Explicit operator confirmation required for protected product project '{project_id}'"
+            )
     if runtime_configured(config):
         return submit_goal_to_runtime(payload, config)
 

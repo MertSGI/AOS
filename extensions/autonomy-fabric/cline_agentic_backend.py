@@ -193,7 +193,9 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
             return ExecutionCost.FREE_TIER_CLOUD
         if self.underlying_cost_class == "QUOTA_LIMITED":
             return ExecutionCost.QUOTA_LIMITED
-        return ExecutionCost.FREE_LOCAL
+        if self.underlying_cost_class == "FREE_LOCAL":
+            return ExecutionCost.FREE_LOCAL
+        return ExecutionCost.PAID_CLOUD  # Fail-closed: unknown cost is treated as PAID_CLOUD (ineligible by default)
     supported_capabilities: Set[ExecutionCapability] = {
         ExecutionCapability.FILE_READ,
         ExecutionCapability.FILE_WRITE,
@@ -212,6 +214,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         ] = None,
         capability_status_provider: Optional[Callable[[], str]] = None,
         executable_identity: Optional[Dict[str, str]] = None,
+        executable_identity_provider: Optional[Callable[[], Optional[Dict[str, str]]]] = None,
         capability_store_path: Optional[Path] = None,
         data_dir: Optional[str] = None,
         config_dir: Optional[str] = None,
@@ -223,6 +226,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         self._runner = runner
         self._capability_status_provider = capability_status_provider
         self._injected_identity = dict(executable_identity or {}) or None
+        self._executable_identity_provider = executable_identity_provider
         self._store_path = capability_store_path
         self._clock = clock
         self._process_lock = threading.Lock()
@@ -244,6 +248,8 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
         return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def _identity(self) -> Optional[Dict[str, str]]:
+        if self._executable_identity_provider is not None:
+            return self._executable_identity_provider()
         return self._injected_identity or resolve_cline_executable_identity()
 
     def _capability_status(self) -> str:
@@ -255,7 +261,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
 
     def _has_authorized_provider_configuration(self) -> bool:
         """Check whether the isolated Cline profile actually has an authorized provider configuration."""
-        if self._capability_status() in {"TEST_DOUBLE", "OPERATIONAL_BOUNDED"}:
+        if self._capability_status() == "TEST_DOUBLE":
             return True
         # Check providers.json in data_dir / settings / providers.json
         candidate_paths = [
@@ -282,7 +288,13 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                     st = pconf.get("settings", {})
                     if not isinstance(st, dict):
                         continue
-                    # Check for apiKey or accessToken
+                    # For local free providers (ollama, local openai-compatible), check valid endpoint or model
+                    if self.underlying_cost_class == "FREE_LOCAL":
+                        base_url = str(st.get("baseUrl") or st.get("endpoint") or "").strip()
+                        model_id = str(st.get("modelId") or st.get("model") or "").strip()
+                        if base_url or model_id or st:
+                            return True
+                    # For cloud providers, check for apiKey or accessToken
                     api_key = str(st.get("apiKey") or "").strip()
                     auth = st.get("auth") or {}
                     token = str(auth.get("accessToken") or "").strip() if isinstance(auth, dict) else ""
@@ -300,6 +312,14 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 self._now_iso(),
                 source="CLINE_CAPABILITY_ATTESTATION",
                 evidence={"status": status, "api_key_fallback": "DISABLED"},
+            )
+        identity = self._identity()
+        if not identity or not identity.get("path"):
+            return ExecutionAvailabilitySnapshot(
+                ExecutionAvailabilityState.AUTH_UNAVAILABLE,
+                self._now_iso(),
+                source="CLINE_CAPABILITY_ATTESTATION",
+                evidence={"status": "UNATTESTED_EXECUTABLE", "reason": "CLINE_EXECUTABLE_UNAVAILABLE"},
             )
         if not self._has_authorized_provider_configuration():
             return ExecutionAvailabilitySnapshot(
@@ -324,6 +344,7 @@ class ClineAgenticExecutionBackend(AgenticExecutionBackend):
                 "cost_class": self.underlying_cost_class,
                 "paid_fallback": "DISABLED",
                 "session_resume": "PROVEN" if status in {"OPERATIONAL", "TEST_DOUBLE"} else "UNPROVEN",
+                "execution_scope": "BOUNDED" if status == "OPERATIONAL_BOUNDED" else ("START_ONLY" if status == "OPERATIONAL_START_ONLY" else "FULL"),
             },
         )
 

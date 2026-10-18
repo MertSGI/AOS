@@ -355,11 +355,28 @@ def test_b9_policy_10_paid_fallback_denied_default():
 # -------------------------------------------------------------
 # Cline OPERATIONAL_BOUNDED Status Attestation Proof
 # -------------------------------------------------------------
-def test_b9_cline_operational_bounded_availability_proof():
+def test_b9_cline_operational_bounded_availability_proof(tmp_path):
+    data_dir = tmp_path / "cline_data"
+    settings_dir = data_dir / "settings"
+    settings_dir.mkdir(parents=True)
+    import json
+    (settings_dir / "providers.json").write_text(json.dumps({
+        "providers": {
+            "openai-compatible": {
+                "settings": {
+                    "baseUrl": "http://127.0.0.1:8080/v1",
+                    "modelId": "qwen-local",
+                }
+            }
+        }
+    }), encoding="utf-8")
+
     cline = ClineAgenticExecutionBackend(
         runner=lambda *args: None,
         capability_status_provider=lambda: "OPERATIONAL_BOUNDED",
         executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        data_dir=str(data_dir),
+        config_dir=str(tmp_path / "cline_config"),
         underlying_provider="openai-compatible",
         underlying_model="qwen-local",
         underlying_cost_class="FREE_LOCAL",
@@ -367,5 +384,171 @@ def test_b9_cline_operational_bounded_availability_proof():
     avail = cline.get_availability()
     assert avail.state == ExecutionAvailabilityState.AVAILABLE
     assert avail.evidence["status"] == "OPERATIONAL_BOUNDED"
+    assert avail.evidence["session_resume"] == "UNPROVEN"
+    assert avail.evidence["execution_scope"] == "BOUNDED"
     assert avail.evidence["paid_fallback"] == "DISABLED"
     assert cline.get_health() == ExecutionHealth.HEALTHY
+
+
+# -------------------------------------------------------------
+# B9R.2: Cline Authority Semantics Matrix
+# -------------------------------------------------------------
+def test_b9r_cline_authority_semantics_matrix(tmp_path):
+    # 1. OPERATIONAL_BOUNDED denies resume
+    cline_bounded = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "OPERATIONAL_BOUNDED",
+        executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        underlying_provider="openai-compatible",
+        underlying_model="qwen-local",
+        underlying_cost_class="FREE_LOCAL",
+    )
+    prior = AgenticSessionIdentity(
+        resource_id="cline_harness",
+        backend_id="cline",
+        workspace_fingerprint="0" * 64,
+        source_sha="a" * 40,
+        checkpoint_id="chk-1",
+        session_or_thread_id="sess-1234",
+        completed_work_unit_ids=[],
+    )
+    req = _base_request(capabilities=[ExecutionCapability.LONG_HORIZON_AGENTIC_WORK])
+    req.agentic_identity = prior
+    res = cline_bounded.resume(req, prior, {})
+    assert res.status == "DEGRADED"
+    assert "CLINE_SESSION_RESUME_UNPROVEN" in res.sanitized_errors
+    assert res.evidence_payload.get("resume_mode") == "FAIL_CLOSED"
+
+    # 2. OPERATIONAL_START_ONLY denies resume
+    cline_start_only = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "OPERATIONAL_START_ONLY",
+        executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        underlying_provider="openai-compatible",
+        underlying_model="qwen-local",
+        underlying_cost_class="FREE_LOCAL",
+    )
+    res_start = cline_start_only.resume(req, prior, {})
+    assert res_start.status == "DEGRADED"
+    assert "CLINE_SESSION_RESUME_UNPROVEN" in res_start.sanitized_errors
+
+    # 3. Missing auth / non-operational status stays AUTH_UNAVAILABLE
+    cline_unproven = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "NOT_OPERATIONALLY_PROVEN",
+        executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+    )
+    assert cline_unproven.get_availability().state == ExecutionAvailabilityState.AUTH_UNAVAILABLE
+
+    # 4. Unattested executable stays AUTH_UNAVAILABLE
+    cline_no_exec = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "OPERATIONAL",
+        executable_identity_provider=lambda: None,
+    )
+    assert cline_no_exec.get_availability().state == ExecutionAvailabilityState.AUTH_UNAVAILABLE
+
+    # 5. Unknown or paid cost stays ineligible in ResourceOrchestrator
+    cline_paid = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        underlying_cost_class="PAID_CLOUD",
+    )
+    assert cline_paid.cost == ExecutionCost.PAID_CLOUD
+    orch = ResourceOrchestrator()
+    ranks = orch.rank([cline_paid], req)
+    assert ranks[0].eligible is False
+    assert "PAID_DEFAULT_DENIED" in ranks[0].reasons
+
+    cline_unknown = ClineAgenticExecutionBackend(
+        runner=lambda *args: None,
+        capability_status_provider=lambda: "TEST_DOUBLE",
+        underlying_cost_class="INVALID_COST_CLASS",
+    )
+    assert cline_unknown.cost == ExecutionCost.PAID_CLOUD
+    ranks_unknown = orch.rank([cline_unknown], req)
+    assert ranks_unknown[0].eligible is False
+    assert "PAID_DEFAULT_DENIED" in ranks_unknown[0].reasons
+
+    # 6. Real machine configuration reading from disk when not a test double
+    data_dir = tmp_path / "cline_data"
+    config_dir = tmp_path / "cline_config"
+    data_dir.mkdir()
+    config_dir.mkdir()
+
+    # Missing providers.json yields AUTH_UNAVAILABLE
+    cline_real = ClineAgenticExecutionBackend(
+        capability_status_provider=lambda: "OPERATIONAL_BOUNDED",
+        executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        data_dir=str(data_dir),
+        config_dir=str(config_dir),
+        underlying_provider="openai-compatible",
+        underlying_model="qwen-local",
+        underlying_cost_class="FREE_LOCAL",
+    )
+    assert cline_real.get_availability().state == ExecutionAvailabilityState.AUTH_UNAVAILABLE
+    assert cline_real.get_availability().evidence["reason"] == "NO_AUTHORIZED_FREE_PROVIDER_CONFIGURATION"
+
+    # Valid providers.json with local endpoint yields AVAILABLE
+    providers_file = data_dir / "settings" / "providers.json"
+    providers_file.parent.mkdir(parents=True)
+    import json
+    providers_file.write_text(json.dumps({
+        "providers": {
+            "openai-compatible": {
+                "settings": {
+                    "baseUrl": "http://127.0.0.1:8080/v1",
+                    "modelId": "qwen3-4b",
+                }
+            }
+        }
+    }), encoding="utf-8")
+    assert cline_real.get_availability().state == ExecutionAvailabilityState.AVAILABLE
+
+
+# -------------------------------------------------------------
+# B9R.3: Operator Project Selection Safety & Protected Product Confirmation
+# -------------------------------------------------------------
+def test_b9r_operator_project_selection_safety(tmp_path):
+    from aos.control_panel import _HTML, submit_goal
+    from aos.runtime_panel_bridge import submit_goal_to_runtime
+
+    # 1. HTML verifies initial empty placeholder and lack of default auto-selection
+    assert '<option value="">-- Select an authorized project --</option>' in _HTML
+    assert 'id="goal-product-confirm-row"' in _HTML
+    assert 'id="goal-dispatch-preview"' in _HTML
+    assert 'Execution Dispatch Authority Summary' in _HTML
+
+    # 2. Server-side validation: missing project_id is rejected
+    config = {
+        "projects": {
+            "aos-maintenance": {"project_id": "aos-maintenance", "workspace": str(tmp_path), "descriptor_path": "d", "routing_policy_path": "p"},
+            "lari": {"project_id": "lari", "workspace": str(tmp_path), "descriptor_path": "d", "routing_policy_path": "p"},
+            "lari-ui-v2": {"project_id": "lari-ui-v2", "workspace": str(tmp_path), "descriptor_path": "d", "routing_policy_path": "p"},
+        },
+        "default_project_id": "lari",
+    }
+
+    # Rejection: missing project_id
+    with pytest.raises(ValueError, match="project_id is required"):
+        submit_goal({"goal": "test without project"}, config)
+
+    # Rejection: empty string project_id
+    with pytest.raises(ValueError, match="project_id is required"):
+        submit_goal({"project_id": "  ", "goal": "test"}, config)
+
+    # Rejection: protected product project 'lari' without confirmation
+    with pytest.raises(ValueError, match="Explicit operator confirmation required for protected product project 'lari'"):
+        submit_goal({"project_id": "lari", "goal": "mutate lari"}, config)
+
+    # Rejection: protected product project 'lari' with mismatched confirmation
+    with pytest.raises(ValueError, match="Explicit operator confirmation required for protected product project 'lari'"):
+        submit_goal({"project_id": "lari", "product_confirmation": "other_project", "goal": "mutate lari"}, config)
+
+    # Rejection: protected product project 'lari-ui-v2' without confirmation
+    with pytest.raises(ValueError, match="Explicit operator confirmation required for protected product project 'lari-ui-v2'"):
+        submit_goal({"project_id": "lari-ui-v2", "goal": "mutate lari ui"}, config)
+
+    # Rejection: unknown project_id on runtime bridge
+    with pytest.raises(ValueError, match="Unknown project_id: nonexistent"):
+        submit_goal_to_runtime({"project_id": "nonexistent", "goal": "test"}, config)
