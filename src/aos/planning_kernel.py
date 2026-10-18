@@ -2550,7 +2550,7 @@ def select_objective(
             situation, routing_policy_path, runtime_dir, "objective-selection", attempt_prompt, OBJECTIVE_SCHEMA,
             authority_hint, backend_override=backend_override, workspace=workspace,
         )
-        if completed_obs and proposal.get("objective_id") in completed_obs and attempt == 0:
+        if backend_override is None and completed_obs and proposal.get("objective_id") in completed_obs and attempt == 0:
             continue
         break
     _shadow_deliberate(
@@ -4824,17 +4824,32 @@ def run_autonomous_project(
                     runtime_dir, batch_number, checkpoint, prior_situation, situation,
                 )
             if objective is None:
+                def _is_finished_obj_batch(b: Any) -> bool:
+                    if not isinstance(b, Mapping) or not b.get("objective_id"):
+                        return False
+                    rcpt = b.get("receipt")
+                    if isinstance(rcpt, Mapping):
+                        if rcpt.get("failed_task_ids"):
+                            return False
+                        if float(rcpt.get("progress", 0.0)) >= 100.0:
+                            return True
+                        if rcpt.get("completed_task_ids") and not rcpt.get("failed_task_ids"):
+                            return True
+                        return False
+                    disp = str(b.get("disposition", "")).upper()
+                    return disp in ("NEXT_OBJECTIVE", "PROJECT_COMPLETE")
+
                 completed_objective_ids = {
                     str(b.get("objective_id"))
                     for b in completed_batches
-                    if isinstance(b, Mapping) and b.get("objective_id")
+                    if _is_finished_obj_batch(b)
                 }
                 if isinstance(checkpoint, Mapping):
                     for b in checkpoint.get("recent_completed_batches", []) or []:
-                        if isinstance(b, Mapping) and b.get("objective_id"):
+                        if _is_finished_obj_batch(b):
                             completed_objective_ids.add(str(b.get("objective_id")))
                     for b in checkpoint.get("completed_batches", []) or []:
-                        if isinstance(b, Mapping) and b.get("objective_id"):
+                        if _is_finished_obj_batch(b):
                             completed_objective_ids.add(str(b.get("objective_id")))
                 objective = select_objective(
                     situation, routing_policy_path, runtime_dir,
