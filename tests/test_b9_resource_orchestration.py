@@ -197,17 +197,34 @@ def test_b9_policy_3_higher_complexity_selects_capable_free_model():
 # -------------------------------------------------------------
 # Policy 4 & 5: AG quota unavailable => reroute or typed wait
 # -------------------------------------------------------------
-def test_b9_policy_4_and_5_ag_scarcity_and_quota_failover():
+def test_b9_policy_4_and_5_ag_scarcity_and_quota_failover(tmp_path):
     codex = CodexCliExecutionBackend(
         runner=lambda *args: None,
         capability_status_provider=lambda: "PROVEN",
         quota_snapshot_provider=lambda: {"state": "QUOTA_EXHAUSTED"},
         executable_identity={"path": "c", "filename": "c", "sha256": "0" * 64, "version": "1"},
     )
+    data_dir = tmp_path / "cline_data"
+    settings_dir = data_dir / "settings"
+    settings_dir.mkdir(parents=True)
+    import json
+    (settings_dir / "providers.json").write_text(json.dumps({
+        "providers": {
+            "openai-compatible": {
+                "settings": {
+                    "baseUrl": "http://127.0.0.1:8080/v1",
+                    "modelId": "qwen-local",
+                }
+            }
+        }
+    }), encoding="utf-8")
+
     cline = ClineAgenticExecutionBackend(
         runner=lambda *args: None,
         capability_status_provider=lambda: "OPERATIONAL_BOUNDED",
         executable_identity={"path": "cl", "filename": "cl", "sha256": "1" * 64, "version": "3.0.65"},
+        data_dir=str(data_dir),
+        config_dir=str(tmp_path / "cline_config"),
         underlying_provider="openai-compatible",
         underlying_model="qwen-local",
         underlying_cost_class="FREE_LOCAL",
