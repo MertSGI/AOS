@@ -99,7 +99,7 @@ from extensions.autonomy_fabric.exact_edit_engine import (  # noqa: E402
 SCHEMA_VERSION = "1.0.0"
 PLANNER_CANONICAL_EXCERPT_MAX_CHARS = 2500
 PLANNER_COMPLETED_SIGNATURES_MAX_CHARS = 1800
-PLANNER_COMPLETED_READ_MAX_FILES = 1
+PLANNER_COMPLETED_READ_MAX_FILES = 8
 PLANNER_COMPLETED_READ_MAX_CHARS_PER_FILE = 500
 OBJECTIVE_CANONICAL_EXCERPT_MAX_CHARS = 3000
 COMPLETION_CANONICAL_EXCERPT_MAX_CHARS = 2500
@@ -383,7 +383,7 @@ def is_implementation_objective(objective: Objective, situation: Optional[Any] =
     scope_tags_upper = [str(t).upper() for t in getattr(objective, "scope_tags", [])]
     if "IMPLEMENTATION" in scope_tags_upper or "FEATURE" in scope_tags_upper or "REFACTOR" in scope_tags_upper:
         return True
-    if "VERIFICATION" in scope_tags_upper or "QA" in scope_tags_upper or "CANARY" in scope_tags_upper:
+    if "VERIFICATION" in scope_tags_upper or "QA" in scope_tags_upper:
         return False
 
     # 4. Check title and completion criteria tokens
@@ -391,14 +391,21 @@ def is_implementation_objective(objective: Objective, situation: Optional[Any] =
     criteria_text = " ".join(str(c).lower() for c in getattr(objective, "completion_criteria", []))
     desc_text = str(getattr(objective, "description", "")).lower()
 
-    impl_verbs = {"implement", "build", "create", "add", "mutate", "refactor", "wire", "connect", "integrate"}
+    impl_verbs = {
+        "implement", "build", "create", "add", "mutate", "refactor",
+        "wire", "connect", "integrate", "repair", "fix", "patch",
+        "correct", "remedy",
+    }
     verif_verbs = {"verify", "assert", "check", "inspect", "validate", "test", "audit"}
 
     has_impl_verb = any(v in title_lower for v in impl_verbs)
     has_verif_verb = any(v in title_lower for v in verif_verbs)
 
-    if has_impl_verb and not has_verif_verb:
-        return True
+    if has_impl_verb:
+        starts_with_verif = any(title_lower.strip().startswith(v) for v in verif_verbs)
+        starts_with_impl = any(title_lower.strip().startswith(v) for v in impl_verbs)
+        if starts_with_impl or not starts_with_verif:
+            return True
 
     # 5. Check canonical next action from situation
     if situation is not None:

@@ -39,7 +39,7 @@ from aos.secure_store import hydrate_environment
 from aos.canonical_reconciler import reconcile_missing_execution_base
 from aos.provider_circuit import ProviderCircuitBreakerRegistry
 from aos.runtime_maintenance import is_paused
-from aos.runtime_admission import CommandAdmissionStore
+from aos.runtime_admission import AdmissionState, CommandAdmissionStore
 from aos.provider_observation import canonical_failure_family
 from aos.read_identity import build_workspace_source_generation
 from aos.runtime_assets import resolve_active_runtime_artifact
@@ -1375,6 +1375,15 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                     state_kwargs["kcp_verification_status"] = "NOT_VERIFIED"
 
                 store.write_state(command_id, **state_kwargs)
+                try:
+                    CommandAdmissionStore(store.runtime_root).set_state(
+                        command_id,
+                        AdmissionState.HOLD,
+                        authority="COMMAND_TERMINATION",
+                        reason=f"COMMAND_{state}",
+                    )
+                except Exception:
+                    pass
                 event_payload = {
                     "state": state,
                     "disposition": result["disposition"],
@@ -1567,6 +1576,15 @@ def execute_command(runtime_root: Path, command_id: str) -> Dict[str, Any]:
                 error=message,
                 completed_batch_count=completed,
             )
+            try:
+                CommandAdmissionStore(store.runtime_root).set_state(
+                    command_id,
+                    AdmissionState.HOLD,
+                    authority="COMMAND_TERMINATION",
+                    reason=f"COMMAND_{state}",
+                )
+            except Exception:
+                pass
             # A terminal event must be the final event for this worker attempt.
             # Stop telemetry before publishing it so a recovery watcher cannot
             # replay an older WAITING checkpoint after run.failed.

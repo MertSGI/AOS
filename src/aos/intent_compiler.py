@@ -709,6 +709,10 @@ def build_intent_catalog(
                 p_str = str(p).strip().replace("\\", "/")
                 if not p_str:
                     continue
+                p_hash = hashlib.sha256(p_str.encode("utf-8")).hexdigest()[:12]
+                task_read_id = f"TASK-READ-{p_hash.upper()}"
+                if task_read_id in forbidden_ids:
+                    continue
                 # Check if already read under this generation
                 if workspace is not None and workspace_source_generation:
                     try:
