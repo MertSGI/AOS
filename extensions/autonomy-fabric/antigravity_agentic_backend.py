@@ -70,6 +70,7 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         underlying_model: Optional[str] = None,
         model_resource_id: Optional[str] = None,
         backend_id: Optional[str] = None,
+        authority: Optional[Any] = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if backend_id:
@@ -79,6 +80,7 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
             self.resource_id = model_resource_id
         elif underlying_model:
             self.resource_id = f"antigravity_{underlying_model}"
+        self.authority = authority
         self._adapter = adapter
         self._clock = clock
         self._injected_identity = dict(executable_identity or {}) or None
@@ -295,6 +297,53 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
         availability = self.get_availability()
         if availability.state != ExecutionAvailabilityState.AVAILABLE:
             return self._failure(request, "ANTIGRAVITY_UNAVAILABLE", availability)
+
+        from aos.antigravity_authority import (
+            PROTECTED_PRODUCT_PROJECT_IDS,
+            evaluate_antigravity_authority,
+            AntigravityExecutionAuthority,
+        )
+
+        # 1. Protected Product Lane Isolation: strictly forbidden
+        if request.project_id.strip().lower() in PROTECTED_PRODUCT_PROJECT_IDS:
+            return self._failure(
+                request,
+                "PRODUCT_LANE_FORBIDDEN",
+                availability,
+                status="FAILED",
+            )
+
+        # 2. Per-project opt-in authority evaluation
+        raw_auth = request.payload.get("antigravity_authority")
+        authority_rec: Optional[AntigravityExecutionAuthority] = None
+        if raw_auth is not None:
+            if isinstance(raw_auth, dict):
+                authority_rec = AntigravityExecutionAuthority.from_mapping(raw_auth)
+            elif isinstance(raw_auth, AntigravityExecutionAuthority):
+                authority_rec = raw_auth
+        else:
+            authority_rec = getattr(self, "authority", None)
+
+        if authority_rec is not None:
+            task_class = str(
+                request.payload.get("task_class")
+                or ("LONG_HORIZON_AGENTIC_WORK" if ExecutionCapability.LONG_HORIZON_AGENTIC_WORK in request.required_capabilities else request.operation_class)
+            )
+            auth_ok, auth_reason = evaluate_antigravity_authority(
+                authority_rec,
+                project_id=request.project_id,
+                task_class=task_class,
+                workspace_path=request.workspace,
+                capability_status=self._capability_status(),
+            )
+            if not auth_ok:
+                return self._failure(
+                    request,
+                    f"AUTHORITY_DENIED:{auth_reason}",
+                    availability,
+                    status="FAILED",
+                )
+
         try:
             source_sha = self._source_sha(request, prior)
             before = compute_workspace_fingerprint(
@@ -329,6 +378,20 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                     f"STALE_AGENT_SESSION:{compatibility.reason.value}",
                     availability,
                 )
+
+        # Setup outside-workspace sentinel file
+        sentinel_path = None
+        sentinel_before_hash = None
+        try:
+            ws_root = Path(request.workspace).resolve()
+            parent_dir = ws_root.parent
+            if parent_dir.is_dir() and os.access(parent_dir, os.W_OK):
+                sentinel_path = parent_dir / f".aos_outside_sentinel_{request.request_id}.lock"
+                sentinel_content = f"sentinel-{request.request_id}".encode("utf-8")
+                sentinel_path.write_bytes(sentinel_content)
+                sentinel_before_hash = hashlib.sha256(sentinel_content).hexdigest()
+        except OSError:
+            sentinel_path = None
 
         try:
             adapter = self._adapter_instance()
@@ -369,6 +432,18 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                 },
             )
             return self._failure(request, "ANTIGRAVITY_QUOTA_EXHAUSTED", exhausted)
+
+        if response.error_message and any(
+            token in str(response.error_message).upper()
+            for token in ("PERMISSION_DENIED", "PERMISSION_SOFT_DENIAL", "INTERACTIVE REVIEW", "APPROVAL REQUIRED")
+        ):
+            return self._failure(
+                request,
+                f"ANTIGRAVITY_PERMISSION_DENIED:{response.error_message}",
+                availability,
+                status="FAILED",
+            )
+
         if (
             response.status != AntigravityStatus.SUCCESS
             or not response.conversation_id
@@ -404,6 +479,23 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                 )
                 return self._failure(request, "ANTIGRAVITY_PLANNING_OUTPUT_UNAVAILABLE", failed)
             transient_structured_output = parsed_dict
+
+        # Verify outside-workspace sentinel untouched
+        if sentinel_path is not None and sentinel_before_hash is not None:
+            try:
+                if not sentinel_path.is_file() or hashlib.sha256(sentinel_path.read_bytes()).hexdigest() != sentinel_before_hash:
+                    return self._failure(
+                        request,
+                        "ANTIGRAVITY_OUTSIDE_WORKSPACE_MUTATION",
+                        availability,
+                        status="FAILED",
+                    )
+            finally:
+                try:
+                    if sentinel_path.is_file():
+                        sentinel_path.unlink()
+                except OSError:
+                    pass
 
         try:
             after_mutations = capture_workspace_mutation_state(request.workspace)
@@ -443,6 +535,19 @@ class AntigravityAgenticExecutionBackend(AgenticExecutionBackend):
                 "ANTIGRAVITY_CONTRACT_FAILURE:NO_WORKSPACE_MUTATION",
                 availability,
             )
+
+        # Expected artifact SHA-256 verification
+        expected_hashes = request.payload.get("expected_artifact_hashes")
+        if isinstance(expected_hashes, dict):
+            for exp_path, exp_sha in expected_hashes.items():
+                actual_sha = artifacts.get(exp_path)
+                if not actual_sha or actual_sha.lower() != str(exp_sha).lower():
+                    return self._failure(
+                        request,
+                        f"ANTIGRAVITY_ARTIFACT_SHA_MISMATCH:{exp_path}",
+                        availability,
+                        status="FAILED",
+                    )
 
         seed = handoff_seed(context_pack) if prior is None else {}
         completed_ids = sorted(set(

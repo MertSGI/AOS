@@ -78,6 +78,48 @@ class ResourceOrchestrator:
                 eligible = False
                 reasons.append("AGENTIC_PLANNING_DISALLOWED")
 
+            # Antigravity authority & product lane isolation envelope check
+            is_ag = backend.backend_id == "antigravity" or ExecutionCapability.ANTIGRAVITY in backend.supported_capabilities
+            if is_ag:
+                from aos.antigravity_authority import (
+                    PROTECTED_PRODUCT_PROJECT_IDS,
+                    evaluate_antigravity_authority,
+                    AntigravityExecutionAuthority,
+                )
+                if request.project_id.strip().lower() in PROTECTED_PRODUCT_PROJECT_IDS:
+                    eligible = False
+                    reasons.append("PRODUCT_LANE_FORBIDDEN")
+                else:
+                    raw_auth = request.payload.get("antigravity_authority")
+                    authority_rec: Optional[AntigravityExecutionAuthority] = None
+                    if raw_auth is not None:
+                        if isinstance(raw_auth, dict):
+                            authority_rec = AntigravityExecutionAuthority.from_mapping(raw_auth)
+                        elif isinstance(raw_auth, AntigravityExecutionAuthority):
+                            authority_rec = raw_auth
+                    else:
+                        authority_rec = getattr(backend, "authority", None)
+
+                    if authority_rec is not None:
+                        task_class = str(
+                            request.payload.get("task_class")
+                            or ("LONG_HORIZON_AGENTIC_WORK" if ExecutionCapability.LONG_HORIZON_AGENTIC_WORK in required else request.operation_class)
+                        )
+                        cap_status = "UNPROVEN"
+                        getter_cap = getattr(backend, "_capability_status", None)
+                        if callable(getter_cap):
+                            cap_status = getter_cap()
+                        auth_ok, auth_reason = evaluate_antigravity_authority(
+                            authority_rec,
+                            project_id=request.project_id,
+                            task_class=task_class,
+                            workspace_path=request.workspace,
+                            capability_status=cap_status,
+                        )
+                        if not auth_ok:
+                            eligible = False
+                            reasons.append(f"AUTHORITY_DENIED:{auth_reason}")
+
             capacity = int(getattr(backend, "context_window_tokens", 0) or 0)
             if context_tokens and capacity and context_tokens > capacity:
                 eligible = False

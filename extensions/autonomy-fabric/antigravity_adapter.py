@@ -66,6 +66,7 @@ class BaseAntigravityAdapter:
         output_format: str = "json",
         continue_conversation: bool = False,
         model: Optional[str] = None,
+        **kwargs: Any,
     ) -> AntigravityResponse:
         raise NotImplementedError
 
@@ -89,9 +90,10 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
         output_format: str = "json",
         continue_conversation: bool = False,
         model: Optional[str] = None,
+        **kwargs: Any,
     ) -> AntigravityResponse:
         cid = conversation_id or f"conv-fake-{len(self.invocations) + 1}"
-        self.invocations.append({
+        inv_record = {
             "prompt": prompt,
             "conversation_id": cid,
             "workspace_path": workspace_path,
@@ -99,7 +101,9 @@ class FakeAntigravityAdapter(BaseAntigravityAdapter):
             "continue_conversation": continue_conversation,
             "model": model,
             "timestamp": time.time(),
-        })
+        }
+        inv_record.update(kwargs)
+        self.invocations.append(inv_record)
 
         if cid in self.canned_responses:
             return self.canned_responses[cid]
@@ -132,13 +136,16 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
             process.terminate_tree()
 
     @staticmethod
+    @staticmethod
     def discover_cli_binary(cli_binary_path: Optional[str] = None) -> str:
         """Discovers Antigravity CLI binary with portable priority rules:
 
         1. Explicit cli_binary_path argument
         2. Explicit AOS_ANTIGRAVITY_CLI_PATH environment override
-        3. shutil.which("antigravity")
-        4. Windows AOS-managed runtime root derived from LOCALAPPDATA (%LOCALAPPDATA%/AOS/runtime/antigravity-cli/)
+        3. shutil.which("agy")
+        4. Official Windows installation path: %LOCALAPPDATA%/agy/bin/agy.exe (or .cmd/.bat/agy)
+        5. shutil.which("antigravity")
+        6. Windows AOS-managed runtime root derived from LOCALAPPDATA (%LOCALAPPDATA%/AOS/runtime/antigravity-cli/)
         """
         if cli_binary_path:
             return cli_binary_path
@@ -147,18 +154,30 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         if env_path:
             return env_path
 
+        which_agy = shutil.which("agy")
+        if which_agy:
+            return "agy"
+
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            official_agy_bin = os.path.join(localappdata, "agy", "bin")
+            if os.path.isdir(official_agy_bin):
+                for candidate_name in ("agy.exe", "agy.cmd", "agy.bat", "agy"):
+                    cand_path = os.path.join(official_agy_bin, candidate_name)
+                    if os.path.isfile(cand_path):
+                        return cand_path
+
         which_path = shutil.which("antigravity")
         if which_path:
             return "antigravity"
 
-        localappdata = os.environ.get("LOCALAPPDATA")
         if localappdata:
             aos_runtime_dir = os.path.join(localappdata, "AOS", "runtime", "antigravity-cli")
             if os.path.isdir(aos_runtime_dir):
                 candidates = []
                 for root, _, files in os.walk(aos_runtime_dir):
                     for f in files:
-                        if f.lower() in ("antigravity.exe", "antigravity"):
+                        if f.lower() in ("antigravity.exe", "antigravity", "agy.exe", "agy"):
                             candidates.append(os.path.join(root, f))
 
                 if len(candidates) == 1:
@@ -175,8 +194,23 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         output_format: str = "json",
         continue_conversation: bool = False,
         model: Optional[str] = None,
+        timeout_seconds: Optional[int] = None,
+        sandbox: bool = False,
+        mode: Optional[str] = None,
+        dangerously_skip_permissions: bool = False,
     ) -> List[str]:
-        cmd = [self.cli_binary_path, "--output-format", output_format]
+        if dangerously_skip_permissions:
+            raise ValueError("FORBIDDEN_FLAG: --dangerously-skip-permissions is strictly prohibited in AOS")
+
+        cmd = [self.cli_binary_path]
+        if mode:
+            cmd.append(f"--mode={mode}")
+        if sandbox:
+            cmd.append("--sandbox")
+        if output_format:
+            cmd.extend(["--output-format", output_format])
+        if timeout_seconds:
+            cmd.append(f"--print-timeout={timeout_seconds}s")
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
         if continue_conversation:
@@ -194,6 +228,35 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
 
         conversation_id = data.get("conversation_id")
         raw_status_str = data.get("status")
+
+        # Check stderr for permission or approval denial signals
+        stderr_perm_denial = False
+        if stderr:
+            low_stderr = stderr.lower()
+            perm_keywords = (
+                "permission",
+                "approval",
+                "denied",
+                "denial",
+                "interactive review",
+                "interactive approval",
+                "eacces",
+                "eperm",
+            )
+            stderr_perm_denial = any(kw in low_stderr for kw in perm_keywords)
+
+        if stderr_perm_denial:
+            return AntigravityResponse(
+                conversation_id=conversation_id,
+                status=AntigravityStatus.INVALID,
+                mapped_aos_status=RunStatus.FAILED,
+                raw_response=stdout,
+                parsed_json=data,
+                duration_seconds=data.get("duration_seconds", 0.0),
+                turn_count=data.get("num_turns", 1),
+                usage_metadata=data.get("usage", {}),
+                error_message=f"PERMISSION_DENIED: {stderr.strip()}",
+            )
 
         # Fail closed if conversation_id is missing (returncode=0 or !=0)
         if not conversation_id:
@@ -244,6 +307,22 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         conv_id = None
         malformed = False
 
+        # Check stderr for permission or approval denial signals
+        stderr_perm_denial = False
+        if stderr:
+            low_stderr = stderr.lower()
+            perm_keywords = (
+                "permission",
+                "approval",
+                "denied",
+                "denial",
+                "interactive review",
+                "interactive approval",
+                "eacces",
+                "eperm",
+            )
+            stderr_perm_denial = any(kw in low_stderr for kw in perm_keywords)
+
         for line in lines:
             try:
                 evt = json.loads(line)
@@ -253,6 +332,14 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
                     init_payload = evt.get("init") if isinstance(evt.get("init"), dict) else evt
                     if init_payload.get("conversation_id"):
                         conv_id = init_payload.get("conversation_id")
+                elif evt_type == "step_update":
+                    update_payload = evt.get("step_update") if isinstance(evt.get("step_update"), dict) else evt
+                    tool_info = update_payload.get("tool_info") or {}
+                    tool_err = tool_info.get("error") if isinstance(tool_info, dict) else None
+                    if tool_err:
+                        err_str = json.dumps(tool_err).lower()
+                        if any(kw in err_str for kw in ("permission", "approval", "denied", "denial")):
+                            stderr_perm_denial = True
                 elif evt_type == "result":
                     if terminal_event is not None:
                         malformed = True
@@ -262,6 +349,25 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
                         conv_id = result_payload.get("conversation_id")
             except json.JSONDecodeError:
                 malformed = True
+
+        if stderr_perm_denial:
+            status_enum = AntigravityStatus.INVALID
+            mapped_aos_status = RunStatus.FAILED
+            return AntigravityResponse(
+                conversation_id=conv_id,
+                status=status_enum,
+                mapped_aos_status=mapped_aos_status,
+                raw_response=stdout,
+                parsed_json=terminal_event or {"events": events},
+                duration_seconds=0.0,
+                turn_count=len(events),
+                usage_metadata={},
+                error_message=(
+                    f"PERMISSION_DENIED: {stderr.strip()}"
+                    if stderr.strip()
+                    else "PERMISSION_SOFT_DENIAL detected in stream events"
+                ),
+            )
 
         # A stream-json execution is terminally successful ONLY when a valid terminal result event exists
         if not terminal_event or malformed or returncode != 0:
@@ -317,12 +423,27 @@ class AntigravityCLIAdapter(BaseAntigravityAdapter):
         output_format: str = "json",
         continue_conversation: bool = False,
         model: Optional[str] = None,
+        timeout_seconds: Optional[int] = None,
+        sandbox: bool = False,
+        mode: Optional[str] = None,
+        dangerously_skip_permissions: bool = False,
+        **kwargs: Any,
     ) -> AntigravityResponse:
         # Workspace Fail-Closed: If workspace_path is explicitly supplied but does not exist, fail immediately before invoking CLI
         if workspace_path and not os.path.isdir(workspace_path):
             raise ValueError(f"Workspace path '{workspace_path}' does not exist or is not a directory")
 
-        cmd = self.build_cmd(prompt, conversation_id, output_format, continue_conversation, model=model)
+        cmd = self.build_cmd(
+            prompt,
+            conversation_id,
+            output_format,
+            continue_conversation,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            sandbox=sandbox,
+            mode=mode,
+            dangerously_skip_permissions=dangerously_skip_permissions,
+        )
         t0 = time.time()
 
         try:
