@@ -5,6 +5,7 @@ import hashlib
 import os
 import tempfile
 import shutil
+import subprocess
 from pathlib import Path
 
 from extensions.autonomy_fabric.execution_backend import (
@@ -552,6 +553,38 @@ def test_native_git_worker_bounded_actions_and_prohibited_protection():
         )
         res_reset = worker.execute(req_reset)
         assert res_reset.status == "DENIED"
+
+
+def test_native_git_worker_commits_unstaged_workspace_changes():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test Worker"], cwd=tmpdir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@aos.local"], cwd=tmpdir, check=True)
+
+        (Path(tmpdir) / "test.txt").write_text("initial content", encoding="utf-8")
+        subprocess.run(["git", "add", "test.txt"], cwd=tmpdir, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmpdir, check=True)
+
+        # Modify without git add (working tree dirty)
+        (Path(tmpdir) / "test.txt").write_text("updated content", encoding="utf-8")
+        (Path(tmpdir) / "new.txt").write_text("new file", encoding="utf-8")
+
+        worker = NativeGitWorker()
+        req = ExecutionRequest(
+            task_id="t-git-commit",
+            project_id="p-test",
+            workspace=tmpdir,
+            operation_class="GIT",
+            required_capabilities=[ExecutionCapability.GIT_WRITE],
+            authority_id="auth-1",
+            payload={"action": "commit", "args": ["-m", "fix unstaged modification"]},
+        )
+        res = worker.execute(req)
+        assert res.status == "SUCCESS"
+        assert res.exit_code == 0
+
+        log = subprocess.run(["git", "log", "-n", "1", "--oneline"], cwd=tmpdir, capture_output=True, text=True, check=True).stdout
+        assert "fix unstaged modification" in log
 
 
 def test_browser_and_model_backends():

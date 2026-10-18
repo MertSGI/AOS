@@ -690,6 +690,9 @@ class NativeGitWorker(ExecutionBackend):
                 evidence_class=EvidenceClass.SOURCE_PROOF,
             )
 
+        if action == "commit":
+            run_headless(["git", "add", "-A"], cwd=workspace, timeout=request.timeout_seconds or 30)
+
         cmd = ["git", action] + args
         try:
             proc = run_headless(
