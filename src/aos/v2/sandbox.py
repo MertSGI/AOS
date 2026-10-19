@@ -577,7 +577,6 @@ class SandboxRunner:
             "--unshare-uts",
             "--unshare-cgroup",
             "--ro-bind", "/", "/",
-            "--tmpfs", "/tmp",
             "--bind", str(scratch_dir), str(scratch_dir),
             "--ro-bind", str(candidate_dir), str(candidate_dir),
             "--proc", "/proc",

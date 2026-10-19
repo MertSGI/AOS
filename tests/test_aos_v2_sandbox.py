@@ -116,6 +116,8 @@ def test_sandbox_denies_child_process_creation(tmp_path):
     preflight = preflight_sandbox()
     if not preflight.is_supported:
         pytest.skip(f"Sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+    if sys.platform != "win32":
+        pytest.skip("ActiveProcessLimit=1 is enforced via Win32 Job Object on Windows")
 
     runner = SandboxRunner()
     candidate = tmp_path / "candidate"
