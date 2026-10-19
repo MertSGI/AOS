@@ -139,13 +139,7 @@ def test_reject_product_lanes(tmp_path):
 def test_reject_protected_roots(registry_fixture, tmp_path):
     reg_file, data, _, _ = registry_fixture
     bad_ws = tmp_path / "runtime-v1" / "nested"
-    bad_ws.mkdir(parents=True)
-    subprocess.run(["git", "init"], cwd=bad_ws, check=True, capture_output=True)
-    (bad_ws / "src").mkdir()
-    (bad_ws / "src" / "one.py").write_text("x")
-    subprocess.run(["git", "add", "."], cwd=bad_ws, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=bad_ws, check=True, capture_output=True)
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=bad_ws, check=True, capture_output=True, text=True).stdout.strip()
+    head = _init_disposable_repo(bad_ws)
 
     data["projects"][0]["workspace"] = str(bad_ws)
     data["projects"][0]["base_sha"] = head

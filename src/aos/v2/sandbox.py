@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from aos.process_utils import run_headless
+
 MIN_FREE_RAM_BYTES = 1024 * 1024 * 1024  # 1 GiB
 DEFAULT_TEST_TIMEOUT_SECONDS = 30.0
 MAX_OUTPUT_BYTES = 256 * 1024  # 256 KiB
@@ -133,8 +135,31 @@ def preflight_sandbox() -> SandboxPreflightResult:
         bwrap = shutil.which("bwrap")
         if not bwrap:
             reasons.append("Bubblewrap ('bwrap') is not installed on PATH")
+        else:
+            try:
+                probe = run_headless(
+                    [
+                        "bwrap",
+                        "--unshare-user",
+                        "--unshare-ipc",
+                        "--unshare-pid",
+                        "--unshare-uts",
+                        "--unshare-cgroup",
+                        "--ro-bind", "/", "/",
+                        "--proc", "/proc",
+                        "--dev", "/dev",
+                        "--", "true",
+                    ],
+                    text=False,
+                    timeout=5.0,
+                )
+                if probe.returncode != 0:
+                    err_msg = probe.stderr.decode("utf-8", errors="replace").strip() if isinstance(probe.stderr, bytes) else str(probe.stderr).strip()
+                    reasons.append(f"Bubblewrap probe failed: {err_msg}")
+            except Exception as e:
+                reasons.append(f"Bubblewrap probe exception: {e}")
 
-        status = "SUPPORTED" if (bwrap and avail_ram >= MIN_FREE_RAM_BYTES) else "EXECUTION_ISOLATION_UNAVAILABLE"
+        status = "SUPPORTED" if (not reasons and avail_ram >= MIN_FREE_RAM_BYTES) else "EXECUTION_ISOLATION_UNAVAILABLE"
         return SandboxPreflightResult(
             status=status,
             platform="linux",
@@ -230,25 +255,33 @@ class SandboxRunner:
         try:
             # Grant AppContainer permissions via icacls:
             # 1. Scratch dir: Full control (F)
-            subprocess.run(
+            res1 = run_headless(
                 ["icacls", str(scratch_dir), "/grant", f"*{sid_string}:(OI)(CI)F", "/T", "/Q"],
-                check=True, capture_output=True
+                timeout=15.0,
             )
+            if res1.returncode != 0:
+                raise SandboxError(f"icacls scratch grant failed: {res1.stderr}")
             # 2. Candidate dir: Read-only (RX) with recursive descent (/T)
-            subprocess.run(
+            res2 = run_headless(
                 ["icacls", str(candidate_dir), "/grant", f"*{sid_string}:(OI)(CI)RX", "/T", "/Q"],
-                check=True, capture_output=True
+                timeout=15.0,
             )
+            if res2.returncode != 0:
+                raise SandboxError(f"icacls candidate grant failed: {res2.stderr}")
             # 3. Python prefix & base_prefix: Read-only (RX) so interpreter can load standard library
-            subprocess.run(
+            res3 = run_headless(
                 ["icacls", str(Path(sys.prefix).resolve()), "/grant", f"*{sid_string}:(OI)(CI)RX", "/Q"],
-                check=True, capture_output=True
+                timeout=15.0,
             )
+            if res3.returncode != 0:
+                raise SandboxError(f"icacls sys.prefix grant failed: {res3.stderr}")
             if sys.base_prefix != sys.prefix:
-                subprocess.run(
+                res4 = run_headless(
                     ["icacls", str(Path(sys.base_prefix).resolve()), "/grant", f"*{sid_string}:(OI)(CI)RX", "/Q"],
-                    check=True, capture_output=True
+                    timeout=15.0,
                 )
+                if res4.returncode != 0:
+                    raise SandboxError(f"icacls sys.base_prefix grant failed: {res4.stderr}")
 
             # Create Job Object to enforce process and memory limits
             job = kernel32.CreateJobObjectW(None, None)
@@ -538,7 +571,11 @@ class SandboxRunner:
         """Run inside bubblewrap with isolated namespaces and read-only mounts."""
         bwrap_cmd = [
             "bwrap",
-            "--unshare-all",
+            "--unshare-user",
+            "--unshare-ipc",
+            "--unshare-pid",
+            "--unshare-uts",
+            "--unshare-cgroup",
             "--ro-bind", "/", "/",
             "--tmpfs", "/tmp",
             "--bind", str(scratch_dir), str(scratch_dir),
@@ -561,18 +598,20 @@ class SandboxRunner:
         full_cmd = bwrap_cmd + ["--"] + list(argv)
         start_t = time.time()
         try:
-            proc = subprocess.run(
+            proc = run_headless(
                 full_cmd,
                 input=stdin_data,
-                capture_output=True,
+                text=False,
                 timeout=timeout,
                 env=bwrap_env,
                 cwd=str(scratch_dir),
             )
             duration = time.time() - start_t
-            stdout_str = proc.stdout[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr_str = proc.stderr[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            truncated = len(proc.stdout) > MAX_OUTPUT_BYTES or len(proc.stderr) > MAX_OUTPUT_BYTES
+            out_bytes = proc.stdout if isinstance(proc.stdout, bytes) else str(proc.stdout).encode("utf-8")
+            err_bytes = proc.stderr if isinstance(proc.stderr, bytes) else str(proc.stderr).encode("utf-8")
+            stdout_str = out_bytes[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            stderr_str = err_bytes[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            truncated = len(out_bytes) > MAX_OUTPUT_BYTES or len(err_bytes) > MAX_OUTPUT_BYTES
             return SandboxTestResult(
                 exit_code=proc.returncode,
                 stdout=stdout_str,
@@ -586,6 +625,10 @@ class SandboxRunner:
             duration = time.time() - start_t
             out = exc.stdout or b""
             err = exc.stderr or b""
+            if isinstance(out, str):
+                out = out.encode("utf-8")
+            if isinstance(err, str):
+                err = err.encode("utf-8")
             return SandboxTestResult(
                 exit_code=124,
                 stdout=out[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace"),

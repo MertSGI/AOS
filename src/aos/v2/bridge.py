@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from aos.process_utils import run_headless
 from extensions.autonomy_fabric.exact_edit_engine import (
     ExactEditError,
     ExactEditResult,
@@ -98,21 +99,30 @@ def _git_run(
     full_cmd = ["git", "-c", "core.hooksPath=", *cmd]
     is_bytes = isinstance(input_data, bytes)
 
-    res = subprocess.run(
-        full_cmd,
-        cwd=str(cwd),
-        env=git_env,
-        input=input_data if is_bytes else (input_data.encode("utf-8") if input_data else None),
-        capture_output=True,
-    )
+    try:
+        res = run_headless(
+            full_cmd,
+            cwd=str(cwd),
+            env=git_env,
+            input=input_data if is_bytes else (input_data.encode("utf-8") if input_data else None),
+            text=False,
+            timeout=30.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GitBridgeError(f"Git command timed out ({' '.join(cmd)})") from exc
+
     if res.returncode != 0:
-        err = res.stderr.decode("utf-8", errors="replace")
+        err = res.stderr.decode("utf-8", errors="replace") if isinstance(res.stderr, bytes) else str(res.stderr)
         raise GitBridgeError(f"Git command failed ({' '.join(cmd)}): {err.strip()}")
+
+    stdout_str = res.stdout.decode("utf-8", errors="replace").strip() if isinstance(res.stdout, bytes) else str(res.stdout).strip()
+    stderr_str = res.stderr.decode("utf-8", errors="replace").strip() if isinstance(res.stderr, bytes) else str(res.stderr).strip()
+
     return subprocess.CompletedProcess(
         args=full_cmd,
         returncode=res.returncode,
-        stdout=res.stdout.decode("utf-8", errors="replace").strip(),
-        stderr=res.stderr.decode("utf-8", errors="replace").strip(),
+        stdout=stdout_str,
+        stderr=stderr_str,
     )
 
 

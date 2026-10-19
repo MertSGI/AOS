@@ -18,7 +18,7 @@ from aos.v2.engine import (
 from aos.v2.lifecycle import OwnerBusyError
 from aos.v2.registry import authorize, load_registry
 from aos.v2.resources import ResourceBudgetExceededError, ResourceGateway
-from aos.v2.sandbox import get_available_ram_bytes
+from aos.v2.sandbox import get_available_ram_bytes, preflight_sandbox
 
 
 @pytest.fixture(autouse=True)
@@ -149,6 +149,10 @@ def test_plan_validation_denies_empty_and_cyclic_dag(disposable_project, tmp_pat
 
 
 def test_engine_executes_two_step_dag_to_terminal_closed(disposable_project, tmp_path):
+    preflight = preflight_sandbox()
+    if not preflight.is_supported:
+        pytest.skip(f"OS sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+
     v2_home = tmp_path / "v2_home"
     reg_file = disposable_project["registry_file"]
 
@@ -224,6 +228,10 @@ def test_engine_executes_two_step_dag_to_terminal_closed(disposable_project, tmp
 
 
 def test_engine_idempotent_replay(disposable_project, tmp_path):
+    preflight = preflight_sandbox()
+    if not preflight.is_supported:
+        pytest.skip(f"OS sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+
     v2_home = tmp_path / "v2_home"
     reg_file = disposable_project["registry_file"]
 
