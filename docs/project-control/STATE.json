@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-08-31T05:10:00Z",
+  "updated_at": "2026-10-19T05:35:45.772015+00:00",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "AOS-5 is MAIN_INTEGRATED_CLOSED_PROVEN. Before any AOS-6 LARI-related operation, obtain current-state guidance from the separate LARI controller/project conversation and reconcile the current LARI control head, branch, safe state, and authorized next action. Do not mutate LARI from the AOS controller before that cross-controller coordination is complete.",
+  "next_action": "AOS-only HYBRID_V2: source branch published; complete exact-source/carrier CI review, then existing WP2 under AOS-V2-SEAM-1. Preserve AOS0–5/AOS6 pilot history, protected V1/51 and separate LARI/Codex. No paid use, production, startup, main merge or protected activation.",
   "implementation_started": true,
   "extensions": {
     "truth_authority": {
@@ -881,7 +881,153 @@
     "retry_authorized": false,
     "stage_10ae_independent_review_result": "HOLD",
     "stage_10ae_independent_review_root_blocker": "VERIFIER_FAIL_CLOSED_TRUST_BOUNDARY_NOT_TOTAL",
-    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING"
+    "stage_10ae_r1_total_fail_closed_hardening_status": "COMPLETE_INDEPENDENT_REVIEW_PENDING",
+    "aos_v2": {
+      "program_id": "AOS-V2-HYBRID-20261018",
+      "decision": "HYBRID_V2",
+      "owner": "AOS_CONTROLLER",
+      "audited_base_sha": "9d3168afb35edf5ad06e6b5e419801493fe04572",
+      "implemented_source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+      "control_carrier": "RESOLVE_CONTAINING_COMMIT",
+      "branch": "feature/aos-v2-thin-lifecycle-20261018",
+      "source_status": "ACCEPTED_SOURCE_FOUNDATION",
+      "operational_status": "NOT_IMPLEMENTED_ENGINE_SEAM",
+      "executable_e2e": "NOT_RUN",
+      "resource_gate": "WAITING_RESOURCE",
+      "real_e2e_pass": false,
+      "protected_v1_actions": "UNTOUCHED_BY_THIS_SESSION",
+      "protected_windows_current_health": "UNKNOWN",
+      "authority": {
+        "isolated_source": "OWNER_MASTER_DIRECTIVE_20261018",
+        "live_runtime": "NONE",
+        "old_51_replay": "FORBIDDEN",
+        "lari": "NONE",
+        "paid": "FORBIDDEN",
+        "production": "NO_GO",
+        "startup": "NONE",
+        "public_feature_publication": "AOS-OWNER-PUBLIC-20261018-01",
+        "continuation": "AOS-OWNER-CONTINUE-20261019-01"
+      },
+      "canonical_design_path": "docs/aos-v2/00_READ_ME_FIRST.md",
+      "resume_path": "docs/aos-v2/RESUME_HERE.md",
+      "next_safe_action": "After final carrier CI observation, execute the existing WP2 packet at accepted source7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506 and the closed AOS-V2-SEAM-1 contract in a new isolated AOS-only worktree.",
+      "local_focused_tests": {
+        "command": "python -m pytest -q tests/test_aos_v2_lifecycle.py",
+        "passed": 14,
+        "seconds": 0.43,
+        "environment": "Clean isolated Python3.12.14 venv",
+        "scope": "storage/process/portable-scope contracts; verifier callbacks SIMULATED, not model E2E"
+      },
+      "work_packages": {
+        "WP1": {
+          "status": "ACCEPTED_SOURCE_FOUNDATION",
+          "source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+          "accepted_head": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+          "acceptance_receipt": "AOS-SOURCE-CI-20261019-01",
+          "acceptance_scope": "SOURCE_STORAGE_PROCESS_PORTABLE_SCOPE_ONLY"
+        },
+        "WP2": {
+          "status": "READY_FOR_ISOLATED_IMPLEMENTATION",
+          "required_source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+          "accepted_head": null,
+          "contract_id": "AOS-V2-SEAM-1"
+        },
+        "WP3": {
+          "status": "WAITING_PREDECESSOR",
+          "required_predecessor": "WP2",
+          "accepted_head": null
+        },
+        "WP4": {
+          "status": "NOT_RUN",
+          "required_predecessor": "WP3",
+          "resource": "WAITING_RESOURCE",
+          "accepted_head": null
+        },
+        "WP5": {
+          "status": "WAITING_WP4_AND_OWNER_LIVE_APPROVAL",
+          "accepted_head": null
+        }
+      },
+      "live_blockers": [
+        "WP2_ENGINE_NOT_IMPLEMENTED",
+        "WP3_OPERATOR_HARNESS_INTEGRATION_PENDING",
+        "ELIGIBLE_REAL_PROVIDER_NOT_AVAILABLE_HERE",
+        "WINDOWS_HOST_NOT_CONNECTED"
+      ],
+      "current_ci": {
+        "source_run_id": 39204426295,
+        "source_head_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+        "source_status": "SUCCESS",
+        "carrier_run": "RESOLVE_EXACT_CONTAINING_COMMIT_EXTERNALLY",
+        "no_fake_pass": true,
+        "source_job_id": 117904058408,
+        "source_receipt": "docs/aos-v2/evidence/source_ci_20261019.json"
+      },
+      "local_full_suite": {
+        "status": "ENVIRONMENT_CORRECTED_SIX_RETEST_PASS_SIX_BROWSER_BLOCKED",
+        "result": "12 failed,1619 passed,11 skipped,26 deselected",
+        "seconds": 600.15,
+        "source_sha": "59bba904e32caa3fdd7335f33537529d9d3561ff",
+        "failure_classes": [
+          "SOCKS_TRANSPORT_DEPENDENCY_MISSING",
+          "CHROMIUM_NOT_INSTALLED",
+          "CHILD_INTERPRETER_DEPENDENCIES_MISSING",
+          "JSONSCHEMA_FORMAT_EXTRA_MISSING"
+        ],
+        "log_sha256": "1b59893c3912afa42d607f30c2491366a887c7581ced3b89a66b3b15d3c8d81f",
+        "retest": "6 passed in24.90s; only failed non-browser nodes",
+        "browser_gate": "BLOCKED_EXTERNAL_CHROMIUM_DOWNLOAD",
+        "all_local_tests_pass": false
+      },
+      "publication": {
+        "status": "OWNER_APPROVED_GITHUB_SOURCE_DELIVERY",
+        "approval_receipt": "AOS-OWNER-PUBLIC-20261018-01",
+        "approval_path": "docs/aos-v2/evidence/publication_consent.json",
+        "reviewed_payload_head": "6a7ffd67c2c26246f3e9fe7690537dc5d501b506",
+        "remote_candidate_ci": "QUERY_EXACT_SOURCE_AND_CONTAINING_CARRIER",
+        "prior_rejection": {
+          "status": "AUTO_REVIEW_REJECTED_NOT_PUBLISHED",
+          "attempted_head": "c009b735a0caf8b2b3eacb1224dc983c0be8e48c",
+          "reason": "Public repository payload disclosure requires explicit owner approval",
+          "permission_requested": "Publish exact reviewed candidate payload only to new non-main branch",
+          "remote_candidate_ci": "NOT_RUN_PUBLICATION_BLOCKED",
+          "safe_alternative": "Private review archive with incremental bundle; source work can continue in isolation"
+        },
+        "scope": "Prepared source/audit/directive/evidence payload plus consent governance update, only the named new feature branch",
+        "repository_visibility_action": "NONE_OWNER_WILL_DECIDE_LATER",
+        "technical_receipt": "AOS-PUBLICATION-TECHNICAL-20261018-01",
+        "technical_receipt_path": "docs/aos-v2/evidence/publication_attempts.json",
+        "consent_reconfirmation_required": false,
+        "method": "AUTHENTICATED_OWNER_GITHUB_WEB",
+        "source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+        "source_tree": "3c2b658268150e75dd1723f8be2e26961a6248fd",
+        "source_byte_match": true,
+        "original_history_preserved": true,
+        "technical_attempts_history": "docs/aos-v2/evidence/publication_attempts.json",
+        "source_status": "PUBLISHED_REMOTE_VERIFIED",
+        "control_carrier": "RESOLVE_CONTAINING_COMMIT",
+        "verification_rule": "Compare full payload manifest/tree and exact containing-head CI; external handoff pins final completion. Partial imports are not accepted as complete."
+      },
+      "original_local_source_sha": "59bba904e32caa3fdd7335f33537529d9d3561ff",
+      "preserved_local_review_sha": "d4a70879364c1b4152b6224f06ad5af1b56ca867",
+      "implementation_contract": "docs/aos-v2/14_IMPLEMENTATION_CONTRACT.md",
+      "payload_manifest": "docs/aos-v2/evidence/payload_manifest_20261019.json",
+      "implementation_constraints": {
+        "contract_id": "AOS-V2-SEAM-1",
+        "http_server": "PYTHON_STDLIB_THREADING_HTTP_SERVER",
+        "operator_mvp": "CLI_ONLY_AUTHENTICATED_LOCAL_API",
+        "frontend_framework": "NONE_MVP",
+        "owner_lock": "KERNEL_EXCLUSIVE_NO_TTL_STEAL",
+        "generated_code": "REAL_OS_SANDBOX_REQUIRED_NO_UNSANDBOXED_FALLBACK",
+        "network_protocol": "EXPLICIT_ELIGIBLE_OPENAI_COMPATIBLE_CHAT_COMPLETIONS_ONLY",
+        "sdk_retries": 0,
+        "slice_max_network_attempts": 4,
+        "architecture_owner": "AOS_CONTROLLER",
+        "optional_workers": "FROZEN_UNTIL_REAL_BASE_PROOF",
+        "slice_acceptance": "FUNCTION_ORACLE_V1_TRUSTED_HOST_SIDE_NUMERIC_ORACLE",
+        "test_exit_or_pass_marker_alone": "INSUFFICIENT"
+      }
+    }
   },
   "accepted_gates": [
     {

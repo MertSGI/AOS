@@ -204,3 +204,34 @@ Human-critical categories requiring explicit human authorization include:
 
 Ordinary implementation failures, test failures, CI failures, worker timeouts, capability reprobes within budget, and routine retries do NOT by themselves require human intervention. Planner `human_gate_required` setting is advisory only; deterministic `HumanGatePolicy` owns the authoritative decision. Planner cannot downgrade `HUMAN_REQUIRED` or force unnecessary gates. Independent verification remains required to close tasks, and contradictions trigger `HOLD`.
 
+
+
+## ADR-AOS-V2-20261018 — Hybrid isolated lifecycle
+
+Owner: AOS_CONTROLLER. User mandate: Astra Master Directive18Oct2026. Decision: HYBRID_V2; detailed alternatives, weights, safety, pivot and fallback in docs/aos-v2/04_ARCHITECTURE_DECISION.md. Audited base 9d3168afb35edf5ad06e6b5e419801493fe04572; foundation source 59bba904e32caa3fdd7335f33537529d9d3561ff. Preserve accepted AOS0–5 and separate LARI/AOS6 pilot HOLD. No live/production/startup/paid authority. One new V2 command owner, server grant, shared non-paid gateway, explicit goal acceptance and transactional closure; optional resource activation deferred. Operational E2E NOT_RUN. Next: WP2 after source review.
+
+Public disclosure gate: automatic approval review rejected the attempted new public feature-branch push. Do not bypass via another tool/ref. Prepare private review delivery; await explicit owner approval for exact payload publication. No new candidate CI observed.
+
+
+## AOS-V2 public-disclosure consent supersession — 18 October 2026
+
+The owner explicitly approved publication of the prepared source/audit/directive/evidence payload only to `feature/aos-v2-thin-lifecycle-20261018` in public MertSGI/AOS. Receipt: `AOS-OWNER-PUBLIC-20261018-01`. This supersedes the missing-public-consent blocker, retains the earlier rejection history, and authorizes a normal new-branch push plus read-only exact-head CI verification. No main merge, visibility change, protected runtime/51/LARI mutation, paid usage, production or startup authority is created. Implementation remains source `59bba904e32caa3fdd7335f33537529d9d3561ff`; this governance-only delta does not prove operational E2E.
+
+
+Publication execution outcome: public disclosure is OWNER_APPROVED. HTTPS writer credentials are absent and the connected GitHub integration returned HTTP403 on the first blob write. Zero source objects/branches were published; main remains the audited SHA and candidate CI remains NOT_RUN. Technical receipt `AOS-PUBLICATION-TECHNICAL-20261018-01`. Retain the exact Git bundle and normal-push transport command; do not reconstruct commits, broaden permissions, switch payloads or ask for public consent again. No architecture/WP reset is warranted by this transport blocker.
+
+
+## AOS-V2-SEAM-1 — 19 October 2026 closed implementation contract
+
+Owner AOS_CONTROLLER. Same HYBRID_V2/five-WP program, no audit restart. Source now published at7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506 via authenticated owner GitHub web commits;4source paths/bytes matched local reviewed correction. Original local history is preserved and not misrepresented as remote commit metadata. Four negative portable-scope/hard-link cases exposed one missing boundary; bounded correction passed14tests. Source/full carrier CI remains separately verified evidence.
+
+The binding algorithm/type/security decisions are docs/aos-v2/14_IMPLEMENTATION_CONTRACT.md: explicit trusted registry/API, one kernel owner lock without TTL stealing, schema2 copy-first/fenced recovery, immutable AOS plan, unified bounded non-paid gateway, existing pure exact edits, mandatory real OS sandbox, commit-object/CAS/source-index reconciliation, independent criteria and idempotent isolated native KCP export. registry.py/sandbox.py and platform negative checks are necessary WP2 additions. WP2 estimate revised16–28h, no new phases or activation. Missing eligible provider/isolation/host evidence is a gate, never paid fallback or simulated real proof. Main/protected V1/51/LARI/production/startup/visibility rights remain absent.
+
+
+WP1 source acceptance: exact source7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506, full CI39204426295/job117904058408 SUCCESS, checkout/step/log evidence independently inspected. Accept the isolated storage/process/portable-scope foundation only. WP2 is READY under the closed AOS-V2-SEAM-1 contract. Operational E2E remains NOT_RUN; final carrier CI is a separate observation.
+
+
+Concrete implementation defaults are closed: Python stdlib ThreadingHTTPServer for the loopback API; one Engine owner with serialized mutation methods and one dispatch loop; WP3 uses an authenticated CLI menu only, no new frontend framework or browser token bootstrap. State.implementation_constraints is the machine projection of AOS-V2-SEAM-1. Earlier optional page/CLI wording does not delegate a new UI architecture choice. Source/control carrier identity and CI are resolved from the actual containing Git commit plus external verified handoff; no self-referential SHA or future CI assertion.
+
+
+Functional acceptance closure: AOS-VERIFIER-BOUNDARY-20261019-01 reproduces exit0/PASS spoofing before immutable assertions, in a disposable pre-admission module without AOS/provider calls. The same AOS-V2-SEAM-1 now mandates FUNCTION_ORACLE_V1: a pre-admission sealed private oracle, trusted versioned sandbox driver, fresh case nonces, primitive result frames and host-side comparison of every expected numeric result. Missing/forged/truncated/stale results fail independently of child exit/markers. The independent observer reruns that predicate, and immutable public tests remain supplementary required evidence. This closes an existing WP2/WP3 trust boundary; it neither adds a work package nor claims the unimplemented engine works.
