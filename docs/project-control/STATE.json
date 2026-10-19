@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1.0",
-  "updated_at": "2026-10-19T10:46:56.266491+00:00",
+  "updated_at": "2026-10-19T12:44:17.920038+00:00",
   "project": {
     "name": "AOS",
     "expanded_name": "Agent Operating System",
@@ -68,7 +68,7 @@
     "evidence_waiver",
     "retry_ceiling_exceeded"
   ],
-  "next_action": "Existing AG-AOS: read docs/aos-v2/06_EXECUTOR_PACKETS/02_WP2_CORRECTION_20261019.md in full, implement A-D on this isolated WP2 branch, qualify Q01-Q20 and return SOURCE_READY_FOR_REVIEW with exact remote SHA/CI; do not set accepted_head.",
+  "next_action": "Existing AG-AOS: STOP corrective coding under AOS-WP2-CORR-20261019-01. Freeze implementation98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849 (actual tree3e468202268efa9167c15b4859f582918afff899) as REJECTED/FAIL_REPLAN, preserve every source/failure/CI artifact, and return one STOPPED_FAIL_REPLAN handoff acknowledging this Controller decision and the still-null accepted_head. Reconcile any unpushed work read-only and identify it; do not reset, revert, replay the known-invalid tests for a new PASS claim, spend the remaining focused-repair allowance, open a new WP/phase, or perform further implementation until a separately recorded Controller execution authorization binds the selected minimal production-path replacement. Do not redesign the solution. No V1/51/LARI/user-file/paid/live/main writes. This is a stop/handoff instruction, not a renewed correction packet.",
   "implementation_started": true,
   "extensions": {
     "truth_authority": {
@@ -891,7 +891,7 @@
       "control_carrier": "RESOLVE_CONTAINING_COMMIT",
       "branch": "feature/aos-v2-thin-lifecycle-20261018",
       "source_status": "ACCEPTED_SOURCE_FOUNDATION",
-      "operational_status": "INCOMPLETE_WP2_EXECUTION_SEAM_CORRECTION_REQUIRED",
+      "operational_status": "INCOMPLETE_WP2_FAIL_REPLAN_CURRENT_APPROACH_STOPPED",
       "executable_e2e": "NOT_RUN",
       "resource_gate": "WAITING_RESOURCE",
       "real_e2e_pass": false,
@@ -927,23 +927,23 @@
           "acceptance_scope": "SOURCE_STORAGE_PROCESS_PORTABLE_SCOPE_ONLY"
         },
         "WP2": {
-          "status": "CORRECTION_REQUIRED",
+          "status": "FAIL_REPLAN",
           "required_source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
           "accepted_head": null,
           "contract_id": "AOS-V2-SEAM-1",
-          "candidate_head": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
-          "review_id": "AOS-WP2-CONTROLLER-REVIEW-20261019-01",
+          "candidate_head": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+          "review_id": "AOS-WP2-98B3A24-FAIL-REPLAN-20261019-01",
           "correction_instruction_id": "AOS-WP2-CORR-20261019-01",
           "correction_packet": "docs/aos-v2/06_EXECUTOR_PACKETS/02_WP2_CORRECTION_20261019.md",
-          "controller_review_receipt": "docs/aos-v2/evidence/wp2_review_20261019/review.json",
+          "controller_review_receipt": "docs/aos-v2/evidence/wp2_review_20261019/correction_review_98b3a24.json",
           "continuation": {
             "schema_version": 1,
             "wp_id": "WP2",
-            "status": "CORRECTION_REQUIRED_NOT_ACCEPTED",
+            "status": "FAIL_REPLAN_NOT_ACCEPTED",
             "accepted_source_sha": null,
             "accepted_predecessor_source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
-            "reviewed_candidate_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
-            "reviewed_candidate_tree": "0e40ee0867e0cdda5a284f222b17c6f30f45d89a",
+            "reviewed_candidate_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+            "reviewed_candidate_tree": "3e468202268efa9167c15b4859f582918afff899",
             "branch": "feature/aos-v2-execution-seam-20261018",
             "changed_files": [
               ".github/workflows/aos-v2-contract.yml",
@@ -956,87 +956,122 @@
               "src/aos/v2/registry.py",
               "src/aos/v2/resources.py",
               "src/aos/v2/sandbox.py",
-              "tests/test_aos_v2_acceptance.py",
               "tests/test_aos_v2_api.py",
-              "tests/test_aos_v2_bridge.py",
-              "tests/test_aos_v2_engine.py",
-              "tests/test_aos_v2_lifecycle.py",
-              "tests/test_aos_v2_registry.py",
-              "tests/test_aos_v2_resources.py",
-              "tests/test_aos_v2_sandbox.py"
-            ],
-            "hosted_ci": [
-              {
-                "workflow_run_id": 39226672400,
-                "job_id": 117974527811,
-                "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
-                "conclusion": "SUCCESS",
-                "platform": "LINUX",
-                "summary": "70passed,1skipped",
-                "raw_log_sha256": "9b661e045337b68c3ee9b753361419594720e5aea5fa8c63bceb9c686705add5",
-                "raw_log_bytes": 50905,
-                "required_seam_accepted": false
-              },
-              {
-                "workflow_run_id": 39226672400,
-                "job_id": 117974528357,
-                "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
-                "conclusion": "SUCCESS",
-                "platform": "WINDOWS",
-                "summary": "71passed",
-                "raw_log_sha256": "f35a34b2965415a458fe6725cd69e12e39419be6211c90d594e2db5e39b4d37a",
-                "raw_log_bytes": 42094,
-                "required_seam_accepted": false
-              },
-              {
-                "workflow_run_id": 39226672477,
-                "job_id": 117974528069,
-                "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
-                "conclusion": "SUCCESS",
-                "platform": "LINUX_FULL",
-                "summary": "offline/full1682passed,21skipped,26deselected;Postgres25passed",
-                "raw_log_sha256": "4bc7659cea7dc81ba918d0d73f1dbe6655580c34f4e7b7f745449a17269ba0d2",
-                "raw_log_bytes": 581804,
-                "required_seam_accepted": false
-              }
+              "tests/test_aos_v2_api_execution.py",
+              "tests/test_aos_v2_recovery.py",
+              "tests/test_aos_v2_resources.py"
             ],
             "real_tests_and_failures": {
-              "counterexamples": "docs/aos-v2/evidence/wp2_review_20261019/counterexamples.json",
-              "probe": "docs/aos-v2/evidence/wp2_review_20261019/controller_probe.py",
-              "inference": "SIMULATED_RESOURCE_ERROR_NO_NETWORK",
-              "native_effects": "REAL_DISPOSABLE_HTTP_GIT_SQLITE_FILES_ONLY",
-              "local_os": "INCOMPLETE_UNCLASSIFIED_INTERRUPTED_NOT_PROOF"
+              "http_negative": "docs/aos-v2/evidence/wp2_review_20261019/http_discriminator_98b3a24.json",
+              "http_discriminator_pass": false,
+              "actual_http": "202 PAUSED_SAFE; resume200 QUEUED;0 tasks/attempts/gateway calls; Git/source unchanged",
+              "os_proof": "NOT_RUN_BY_CONTROLLER; SOURCE_BLOCKERS_CONFIRMED; local first preflight interrupted130",
+              "mandatory_linux_child_ci": "SKIPPED_NOT_PROOF"
             },
-            "proof_class": "INDEPENDENT_FOCUSED_SOURCE_REVIEW_PLUS_DISPOSABLE_NATIVE_COUNTEREXAMPLES_NOT_REAL_E2E",
+            "hosted_ci": [
+              {
+                "run_id": 39250230443,
+                "job_id": 118051940139,
+                "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+                "run_attempt": 1,
+                "platform": "LINUX",
+                "conclusion": "SUCCESS",
+                "summary": "81passed,1skipped; Linux child denial skipped",
+                "saved_decoded_log_sha256": "002c80e5ba50524b0628aadc8137ad194b78448519facd91a9e3c9d4170d5aba",
+                "saved_decoded_log_bytes": 51763,
+                "hosted_artifacts_observed": 0,
+                "acceptance_substitute": false
+              },
+              {
+                "run_id": 39250230443,
+                "job_id": 118051940396,
+                "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+                "run_attempt": 1,
+                "platform": "WINDOWS",
+                "conclusion": "SUCCESS",
+                "summary": "82passed",
+                "saved_decoded_log_sha256": "b0bdd26fbf21e6b860c3b5adc362e409f6b65faf5829ca18c793e8c98f76af11",
+                "saved_decoded_log_bytes": 43104,
+                "hosted_artifacts_observed": 0,
+                "acceptance_substitute": false
+              },
+              {
+                "run_id": 39250230463,
+                "job_id": 118051940676,
+                "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+                "run_attempt": 1,
+                "platform": "FULL_AOS",
+                "conclusion": "SUCCESS",
+                "summary": "offline/full1691passed,23skipped,26deselected;Postgres25passed,8deselected",
+                "saved_decoded_log_sha256": "46a747ff7354b24bd0f464a6b8542d40845f28f87608a0f6ace3e5a5fc422dd0",
+                "saved_decoded_log_bytes": 584497,
+                "hosted_artifacts_observed": 0,
+                "acceptance_substitute": false
+              }
+            ],
+            "proof_class": "FOCUSED_EXACT_SOURCE_AND_CI_REVIEW_WITH_REAL_HTTP_NEGATIVE; EXPLICIT_UNSUPPORTED_OS_INJECTION_NOT_OS_PROOF",
             "security_gates": {
+              "protected_v1": "UNTOUCHED",
+              "old51": "NO_REPLAY",
+              "user_files": "UNTOUCHED",
+              "lari_codex": "NO_WRITES_OR_SESSION_BORROWING",
               "paid": "FORBIDDEN",
               "production": "NO_GO",
-              "protected_v1": "UNTOUCHED",
-              "lari": "NO_WRITES",
-              "old51": "NO_REPLAY",
-              "startup": "NONE",
+              "startup_or_activation": "NONE",
               "main_merge": "NONE"
             },
+            "bounded_repair": {
+              "contract": "14_IMPLEMENTATION_CONTRACT.md:160; correction packet section5",
+              "integrated_correction_observed": {
+                "source_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+                "parent": "6fa6f74923aaa6da67db52a0132c8cf54c30a398",
+                "qualification": "FAILED_INDEPENDENT_SOURCE_REVIEW"
+              },
+              "remaining_focused_repair_after_this_submission": 1,
+              "focused_repair_authorized_now": false,
+              "allowance_reset": false,
+              "reason": "Not a local defect in an implemented path. Production PLAN/EDIT dispatcher and durable plan consumer are absent, both OS boundary implementations and the evaluator trust boundary require separate substantive work. A single focused root-cause patch cannot defensibly close all mandatory blockers. Do not convert the remaining allowance into another broad implementation retry. This is not a false claim that the unused repair was already consumed."
+            },
             "blockers": [
-              "API_DISPATCH_NOT_WIRED",
-              "RESOURCE_AUTHORITY_AND_ATTEMPT_INTEGRATION",
-              "OS_BOUNDARY_AND_GENUINE_NEGATIVE_PROOFS",
-              "API_PRIVATE_IDENTITY_AND_DECODING",
-              "FENCED_RECOVERY_GIT_ACCEPTANCE_EXPORT"
+              "PRODUCTION_DISPATCH_AND_PLAN_EDIT_PATH_ABSENT",
+              "EVALUATOR_SUPPLIES_PLAN_AND_FIXES_OUTSIDE_GATEWAY",
+              "LINUX_NETWORK_ROOT_MOUNT_BOUNDARY_MISSING",
+              "WINDOWS_PRIVATE_RUNTIME_AND_CHECKED_JOB_BOUNDARY_MISSING",
+              "QUALIFICATION_ARTIFACTS_ABSENT"
             ],
             "outstanding_work": [
-              "Apply complete AOS-WP2-CORR-20261019-01",
-              "Qualify Q01-Q20 with actual per-platform evidence",
-              "Normal non-force publish and verify exact remote CI",
-              "Independent AOS Controller source/artifact acceptance review"
+              "Implement selected production-path replacement only under a separately recorded exact Controller execution authorization within existing WP2",
+              "All Q01-Q20 mandatory proof including both native OS sandbox negatives",
+              "Exact-head corrected source/full CI/artifacts and independent acceptance"
             ],
+            "selected_execution_approach": {
+              "architecture_change": false,
+              "new_wp_or_phase": false,
+              "preserve": [
+                "Accepted WP1 journal/transactions/path safeguards and immutable accepted source",
+                "HYBRID_V2/AOS-V2-SEAM-1 and existing authority/resource/Git/oracle/export contracts",
+                "Pure exact-edit/native Git/KCP components; all V1 protected behavior"
+              ],
+              "replace_only": [
+                "api.py duplicated lifecycle mutation with Engine.admit/resume/pause/cancel",
+                "engine.py caller-driven execute_goal as production entry with one durable command-owned tick/plan consumer; model calls only ResourceGateway.generate",
+                "__main__.py HTTP-only lifecycle with the same process-owned serialized execution loop",
+                "sandbox.py permissive launch specifications with the already specified private-root/private-runtime adapters",
+                "Evaluator-as-executor qualification path with a three-field HTTP-only observer test; same acceptance criteria, no post-admission direct calls or known fixes outside synthetic transport"
+              ],
+              "reuse_candidate_only_after_validation": [
+                "98 SDK transport and strict decoding/private-file helpers are unaccepted components; retain useful bytes only where original contract tests actually substantiate them"
+              ],
+              "execution_authorization": "STOPPED_CURRENT_APPROACH; this review is not a renewed broad AG correction grant or product implementation dispatch"
+            },
+            "next_executable_instruction": "Existing AG-AOS: STOP corrective coding under AOS-WP2-CORR-20261019-01. Freeze implementation98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849 (actual tree3e468202268efa9167c15b4859f582918afff899) as REJECTED/FAIL_REPLAN, preserve every source/failure/CI artifact, and return one STOPPED_FAIL_REPLAN handoff acknowledging this Controller decision and the still-null accepted_head. Reconcile any unpushed work read-only and identify it; do not reset, revert, replay the known-invalid tests for a new PASS claim, spend the remaining focused-repair allowance, open a new WP/phase, or perform further implementation until a separately recorded Controller execution authorization binds the selected minimal production-path replacement. Do not redesign the solution. No V1/51/LARI/user-file/paid/live/main writes. This is a stop/handoff instruction, not a renewed correction packet.",
             "dispatch": {
               "executor": "EXISTING_AG_AOS",
-              "channel": "CANONICAL_REPOSITORY_PACKET",
-              "status": "READY_IN_CONTAINING_COMMIT_EXECUTOR_ACK_UNOBSERVED",
-              "direct_AG_session_tool_available": false
+              "channel": "CANONICAL_REPOSITORY_DECISION",
+              "direct_session_available": false,
+              "status": "STOP_INSTRUCTION_READY_EXECUTOR_ACK_UNOBSERVED"
             },
-            "next_executable_instruction": "Existing AG-AOS: read docs/aos-v2/06_EXECUTOR_PACKETS/02_WP2_CORRECTION_20261019.md in full, implement A-D on this isolated WP2 branch, qualify Q01-Q20 and return SOURCE_READY_FOR_REVIEW with exact remote SHA/CI; do not set accepted_head."
+            "review_receipt": "docs/aos-v2/evidence/wp2_review_20261019/correction_review_98b3a24.json"
           }
         },
         "WP3": {
