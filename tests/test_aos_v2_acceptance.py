@@ -12,7 +12,7 @@ from aos.v2.acceptance import (
     VerificationResult,
 )
 from aos.v2.bridge import compute_file_sha256
-from aos.v2.sandbox import get_available_ram_bytes
+from aos.v2.sandbox import get_available_ram_bytes, preflight_sandbox
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +53,10 @@ def sample_oracle(tmp_path):
 
 
 def test_oracle_verifier_positive_match(tmp_path, sample_oracle):
+    preflight = preflight_sandbox()
+    if not preflight.is_supported:
+        pytest.skip(f"OS sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+
     oracle_path, oracle_sha = sample_oracle
 
     # Create candidate module with correct implementation
@@ -82,6 +86,10 @@ def test_oracle_verifier_positive_match(tmp_path, sample_oracle):
 
 
 def test_oracle_verifier_rejects_value_mismatch(tmp_path, sample_oracle):
+    preflight = preflight_sandbox()
+    if not preflight.is_supported:
+        pytest.skip(f"OS sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+
     oracle_path, oracle_sha = sample_oracle
 
     # Create candidate module that produces wrong calculation
@@ -109,6 +117,10 @@ def test_oracle_verifier_rejects_value_mismatch(tmp_path, sample_oracle):
 
 
 def test_oracle_verifier_denies_import_time_exit_and_fake_pass(tmp_path, sample_oracle):
+    preflight = preflight_sandbox()
+    if not preflight.is_supported:
+        pytest.skip(f"OS sandbox unsupported on host: {'; '.join(preflight.reasons)}")
+
     oracle_path, oracle_sha = sample_oracle
 
     # Counterexample from contract: prints PASS and exits 0 on import!
