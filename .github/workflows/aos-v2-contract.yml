@@ -12,7 +12,7 @@ on:
 jobs:
   v2-contract-linux:
     name: V2 Contract Linux (bwrap sandbox)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -26,9 +26,7 @@ jobs:
       - name: Install dependencies and bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          sudo chmod u+s /usr/bin/bwrap || true
+          sudo apt-get install -y bubblewrap libseccomp2
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
@@ -42,11 +40,11 @@ jobs:
 
       - name: Run AOS V2 Contract Test Suite (Linux)
         run: |
-          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py -v
+          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py tests/test_aos_v2_api_execution.py tests/test_aos_v2_recovery.py -v
 
   v2-contract-windows:
     name: V2 Contract Windows (AppContainer sandbox & Win32 lock)
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout repository
@@ -64,4 +62,4 @@ jobs:
 
       - name: Run AOS V2 Contract Test Suite (Windows)
         run: |
-          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py -v
+          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py tests/test_aos_v2_api_execution.py tests/test_aos_v2_recovery.py -v

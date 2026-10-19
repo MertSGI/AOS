@@ -248,9 +248,13 @@ class SandboxRunner:
         if hr != 0:
             raise SandboxError(f"CreateAppContainerProfile failed with HRESULT {hex(hr & 0xffffffff)}")
 
-        str_sid = wintypes.LPWSTR()
-        advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(str_sid))
-        sid_string = str_sid.value
+        p_str = ctypes.c_void_p()
+        if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(p_str)):
+            raise SandboxError(f"ConvertSidToStringSidW failed (error {kernel32.GetLastError()})")
+        sid_string = ctypes.wstring_at(p_str.value)
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree.restype = ctypes.c_void_p
+        kernel32.LocalFree(p_str.value)
 
         try:
             # Grant AppContainer permissions via icacls:

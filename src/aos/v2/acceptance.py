@@ -367,7 +367,7 @@ class OutboxExporter:
         record_implementation_receipt(
             self.ledger,
             project_id=project_id,
-            agent_class="ANTIGRAVITY",
+            agent_class="AOS_NATIVE",
             tool_name="aos.v2.bridge",
             base_sha=base_sha,
             result_sha=result_sha,

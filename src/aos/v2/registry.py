@@ -25,7 +25,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
-from aos.v2.lifecycle import _digest, _identifier, _json, _no_links, _relative
+from aos.v2.lifecycle import (
+    _digest,
+    _identifier,
+    _json,
+    _no_links,
+    _relative,
+    _strict_json_loads,
+    validate_private_file,
+)
 
 
 class RegistryError(ValueError):
@@ -153,6 +161,10 @@ class AuthorizedProject:
             "write_files": sorted(self.write_files),
             "cost_mode": self.cost_mode,
             "production": self.production,
+            "criteria": [c.to_dict() for c in sorted(self.criteria, key=lambda x: x.id)],
+            "resources": sorted(self.resources),
+            "budget": self.budget,
+            "capability_digest": self.capability_digest,
         }
 
     def binding_digest(self) -> str:
@@ -170,6 +182,9 @@ class RegistrySnapshot:
 
 def load_registry(path: Path | str) -> RegistrySnapshot:
     """Load and parse server registry configuration file."""
+    raw_str = str(path)
+    if not Path(raw_str).is_absolute():
+        raise RegistryAuthorizationError(f"Registry path must be absolute: '{raw_str}'")
     reg_path = Path(path).resolve()
     _no_links(reg_path)
     if not reg_path.is_file():
@@ -182,7 +197,7 @@ def load_registry(path: Path | str) -> RegistrySnapshot:
         raise RegistryAuthorizationError("Registry file exceeds maximum size of 256KiB")
 
     try:
-        data = json.loads(raw_bytes.decode("utf-8"))
+        data = _strict_json_loads(raw_bytes, max_depth=8)
     except Exception as exc:
         raise RegistryAuthorizationError(f"Malformed registry JSON: {exc}") from exc
 
@@ -396,7 +411,9 @@ def authorize(
         "workspace": str(root),
         "base_sha": base_sha,
         "write_files": sorted(write_files),
-        "criteria": [c.to_dict() for c in criteria],
+        "criteria": [c.to_dict() for c in sorted(criteria, key=lambda x: x.id)],
+        "resources": sorted(resource_ids),
+        "budget": budget,
         "cost_mode": cost_mode,
         "production": production,
     }
@@ -451,5 +468,28 @@ def revalidate(
         raise RegistryAuthorizationError("Cost mode changed upon revalidation")
     if fresh.production != binding.get("production", "NO_GO"):
         raise RegistryAuthorizationError("Production mode changed upon revalidation")
+
+    # Check criteria drift (including oracle_sha256, module, symbol, etc.)
+    fresh_crit = [c.to_dict() for c in sorted(fresh.criteria, key=lambda x: x.id)]
+    if "criteria" in binding:
+        bound_crit = [c if isinstance(c, dict) else c.to_dict() for c in binding["criteria"]]
+        bound_crit_sorted = sorted(bound_crit, key=lambda x: x.get("id", ""))
+        if fresh_crit != bound_crit_sorted:
+            raise RegistryAuthorizationError("Criteria or oracle hash changed upon revalidation")
+
+    # Check resources drift
+    if "resources" in binding:
+        if sorted(fresh.resources) != sorted(binding["resources"]):
+            raise RegistryAuthorizationError("Authorized resources changed upon revalidation")
+
+    # Check budget drift
+    if "budget" in binding:
+        if fresh.budget != binding["budget"]:
+            raise RegistryAuthorizationError("Budget changed upon revalidation")
+
+    # Check capability_digest
+    if "capability_digest" in binding:
+        if fresh.capability_digest != binding["capability_digest"]:
+            raise RegistryAuthorizationError("Capability digest changed upon revalidation")
 
     return fresh

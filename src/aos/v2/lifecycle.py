@@ -49,6 +49,45 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
+def _reject_constant(val: str) -> None:
+    raise ValueError(f"Non-standard JSON constant rejected: {val}")
+
+
+def _check_json_depth(val: Any, depth: int, max_depth: int) -> None:
+    if depth > max_depth:
+        raise ValueError(f"JSON nesting depth exceeds maximum limit of {max_depth}")
+    if isinstance(val, dict):
+        for v in val.values():
+            _check_json_depth(v, depth + 1, max_depth)
+    elif isinstance(val, (list, tuple)):
+        for item in val:
+            _check_json_depth(item, depth + 1, max_depth)
+
+
+def _strict_json_loads(data: bytes | str, max_depth: int = 8) -> Any:
+    """Bounded strict UTF-8 JSON decoder: rejects BOM/non-UTF8, duplicates, NaN/Infinity, nesting>8."""
+    if isinstance(data, bytes):
+        if data.startswith(b"\xef\xbb\xbf"):
+            raise ValueError("UTF-8 BOM is forbidden")
+        text = data.decode("utf-8")
+    else:
+        if data.startswith("\ufeff"):
+            raise ValueError("BOM is forbidden")
+        text = data
+
+    def check_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        res: dict[str, Any] = {}
+        for k, v in pairs:
+            if k in res:
+                raise ValueError(f"Duplicate JSON key: {k}")
+            res[k] = v
+        return res
+
+    parsed = json.loads(text, object_pairs_hook=check_duplicate_keys, parse_constant=_reject_constant)
+    _check_json_depth(parsed, 1, max_depth)
+    return parsed
+
+
 def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
@@ -56,6 +95,15 @@ def _hash(value: Any) -> str:
 def _identifier(value: str) -> str:
     if not isinstance(value, str) or not _ID.fullmatch(value):
         raise ValueError("Invalid identifier")
+    return value
+
+
+_REQUEST_KEY = re.compile(r"^[A-Za-z0-9_.:\-/+=@#~%]{1,256}\Z")
+
+
+def _request_key(value: str) -> str:
+    if not isinstance(value, str) or not _REQUEST_KEY.fullmatch(value):
+        raise ValueError("Invalid request key")
     return value
 
 
@@ -87,6 +135,99 @@ def _no_links(path: Path) -> Path:
         if part.exists() and getattr(part.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
             raise ValueError("Reparse-point paths are not allowed")
     return candidate.resolve()
+
+
+def _set_windows_owner_only_dacl(path: Path) -> None:
+    """Set protected DACL granting ONLY current owner full access, disabling inheritance."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.windll.advapi32
+    kernel32 = ctypes.windll.kernel32
+
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.ULONG)
+    ]
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi32.SetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
+    advapi32.SetFileSecurityW.restype = wintypes.BOOL
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        return
+    try:
+        info_len = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(info_len))
+        buf = ctypes.create_string_buffer(info_len.value)
+        if not advapi32.GetTokenInformation(token, 1, buf, info_len.value, ctypes.byref(info_len)):
+            return
+        sid_ptr = ctypes.c_void_p.from_buffer_copy(buf.raw[:ctypes.sizeof(ctypes.c_void_p)]).value
+        p_str = ctypes.c_void_p()
+        if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(p_str)):
+            return
+        sid = ctypes.wstring_at(p_str)
+        kernel32.LocalFree(p_str)
+
+        # D:P specifies DACL protected (SE_DACL_PROTECTED) - prevents inheritance from parent folders
+        # (A;;FA;;;{sid}) grants Allow Full Access to owner SID only
+        sddl = f"D:P(A;;FA;;;{sid})"
+        sd = ctypes.c_void_p()
+        if advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(sd), None):
+            advapi32.SetFileSecurityW(str(path), 0x00000004 | 0x80000000, sd)
+            kernel32.LocalFree(sd)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def write_private_file(path: Path | str, content: str | bytes) -> Path:
+    """Atomically write file with strict owner-only permissions from birth."""
+    target = _no_links(Path(path))
+    if not target.is_absolute():
+        raise ValueError("Private file path must be absolute")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    raw = content.encode("utf-8") if isinstance(content, str) else content
+
+    nonce = secrets.token_hex(8)
+    tmp_path = target.parent / f".tmp_{target.name}_{nonce}"
+    if os.name == "nt":
+        tmp_path.write_bytes(raw)
+        _set_windows_owner_only_dacl(tmp_path)
+    else:
+        fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with open(fd, "wb") as f:
+            f.write(raw)
+    os.replace(str(tmp_path), str(target))
+    if os.name == "nt":
+        _set_windows_owner_only_dacl(target)
+    else:
+        target.chmod(0o600)
+    return target
+
+
+def validate_private_file(path: Path | str) -> Path:
+    """Validate that path exists, is a regular single-link file without reparse points or insecure permissions."""
+    target = _no_links(Path(path))
+    if not target.is_absolute():
+        raise ValueError("Path must be absolute")
+    if not target.is_file():
+        raise ValueError(f"Private file '{target}' does not exist or is not a regular file")
+    st = target.stat()
+    if st.st_nlink != 1:
+        raise ValueError(f"Private file '{target}' must not have hard links (st_nlink={st.st_nlink})")
+    if os.name != "nt":
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
+            raise ValueError(f"Private file '{target}' is not owned by current user")
+        if st.st_mode & 0o077:
+            raise ValueError(f"Private file '{target}' has insecure permissions (0o{st.st_mode:o})")
+    return target
+
 
 
 def _get_process_birth_time() -> float:
@@ -348,14 +489,23 @@ class LifecycleStore:
         self.path = root / "journal.sqlite3"
         _no_links(self.path)
 
-        # Inspect and migrate schema
-        with closing(self._connect()) as db:
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
-                raise ValueError(f"Unknown journal schema version ({version}); newer software required")
+        # Inspect schema version read-only BEFORE opening write/WAL connection
+        if self.path.exists():
+            posix_path = self.path.resolve().as_posix()
+            ro_uri = f"file:///{posix_path}?mode=ro" if not posix_path.startswith("/") else f"file://{posix_path}?mode=ro"
+            with closing(sqlite3.connect(ro_uri, uri=True)) as ro_db:
+                version = ro_db.execute("PRAGMA user_version").fetchone()[0]
+                if version not in (0, 1, 2):
+                    raise ValueError(f"Unknown journal schema version ({version}); newer software required")
+                if version == 2:
+                    tables = {r[0] for r in ro_db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                    required_tables = {"commands", "tasks", "events", "outbox", "engine_meta", "attempts", "verifications"}
+                    if not required_tables.issubset(tables):
+                        raise ValueError("Incomplete schema 2 shape in existing journal; refusing read-only")
             if version == 1:
-                self._migrate_schema_1_to_2(db)
-            elif version == 0:
+                self._migrate_schema_1_to_2()
+        else:
+            with closing(self._connect()) as db:
                 self._init_schema_2(db)
 
     def _connect(self) -> sqlite3.Connection:
@@ -444,37 +594,30 @@ class LifecycleStore:
             PRAGMA user_version = 2;
         """)
 
-    def _migrate_schema_1_to_2(self, db: sqlite3.Connection) -> None:
+    def _migrate_schema_1_to_2(self) -> None:
         """Perform transactional, copy-first migration from schema 1 to schema 2."""
         backup_path = self.root / f"journal.sqlite3.bak.{int(time.time())}"
-        # Use SQLite backup API
-        bck_conn = sqlite3.connect(backup_path)
-        try:
-            db.backup(bck_conn)
-        finally:
-            bck_conn.close()
-
-        # Compute checksum of backup
+        shutil.copy2(self.path, backup_path)
         bck_sha = hashlib.sha256(backup_path.read_bytes()).hexdigest()
 
+        migrated_path = self.root / f"journal.sqlite3.migrating.{os.getpid()}"
+        shutil.copy2(backup_path, migrated_path)
+
+        mig_conn = sqlite3.connect(migrated_path, timeout=10)
         try:
-            db.execute("BEGIN IMMEDIATE")
-            # Add columns to commands
-            db.execute("ALTER TABLE commands ADD COLUMN contract TEXT")
-            db.execute("ALTER TABLE commands ADD COLUMN control TEXT")
-            db.execute("ALTER TABLE commands ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0")
-
-            # Add columns to tasks
-            db.execute("ALTER TABLE tasks ADD COLUMN effect_phase TEXT NOT NULL DEFAULT 'INTENT'")
-            db.execute("ALTER TABLE tasks ADD COLUMN fence TEXT")
-            db.execute("ALTER TABLE tasks ADD COLUMN expected_parent TEXT")
-            db.execute("ALTER TABLE tasks ADD COLUMN prepared_tree TEXT")
-            db.execute("ALTER TABLE tasks ADD COLUMN commit_sha TEXT")
-            db.execute("ALTER TABLE tasks ADD COLUMN effect TEXT")
-
-            # Create new tables
-            db.execute("CREATE TABLE IF NOT EXISTS engine_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            db.execute("""
+            mig_conn.execute("PRAGMA foreign_keys=OFF")
+            mig_conn.execute("BEGIN IMMEDIATE")
+            mig_conn.execute("ALTER TABLE commands ADD COLUMN contract TEXT")
+            mig_conn.execute("ALTER TABLE commands ADD COLUMN control TEXT")
+            mig_conn.execute("ALTER TABLE commands ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN effect_phase TEXT NOT NULL DEFAULT 'INTENT'")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN fence TEXT")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN expected_parent TEXT")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN prepared_tree TEXT")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN commit_sha TEXT")
+            mig_conn.execute("ALTER TABLE tasks ADD COLUMN effect TEXT")
+            mig_conn.execute("CREATE TABLE IF NOT EXISTS engine_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            mig_conn.execute("""
                 CREATE TABLE IF NOT EXISTS attempts(
                     attempt_id TEXT PRIMARY KEY,
                     command_id TEXT NOT NULL REFERENCES commands(id),
@@ -492,7 +635,7 @@ class LifecycleStore:
                     created_at TEXT NOT NULL
                 )
             """)
-            db.execute("""
+            mig_conn.execute("""
                 CREATE TABLE IF NOT EXISTS verifications(
                     id TEXT PRIMARY KEY,
                     command_id TEXT NOT NULL REFERENCES commands(id),
@@ -506,12 +649,23 @@ class LifecycleStore:
                     created_at TEXT NOT NULL
                 )
             """)
-            db.execute("INSERT OR REPLACE INTO engine_meta VALUES('schema_backup_sha', ?)", (bck_sha,))
-            db.execute("PRAGMA user_version = 2")
-            db.execute("COMMIT")
+            mig_conn.execute("INSERT OR REPLACE INTO engine_meta VALUES('schema_backup_sha', ?)", (bck_sha,))
+            mig_conn.execute("PRAGMA user_version = 2")
+            mig_conn.execute("PRAGMA foreign_keys=ON")
+            fk_errors = mig_conn.execute("PRAGMA foreign_key_check").fetchall()
+            if fk_errors:
+                raise LifecycleConflict(f"Foreign key violations in migrated copy: {fk_errors}")
+            mig_conn.commit()
         except Exception:
-            db.execute("ROLLBACK")
+            mig_conn.rollback()
+            mig_conn.close()
+            if migrated_path.exists():
+                migrated_path.unlink()
             raise
+        finally:
+            mig_conn.close()
+
+        os.replace(migrated_path, self.path)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -542,7 +696,7 @@ class LifecycleStore:
               criteria: tuple[str, ...], grant: TrustedGrant, *,
               contract_json: str | None = None, owner_epoch: int = 0) -> str:
         _identifier(command_id)
-        _identifier(request_key)
+        _request_key(request_key)
         binding = grant.binding()
         workspace = Path(binding["workspace"])
         if self.root.is_relative_to(workspace) or workspace.is_relative_to(self.root):
@@ -572,20 +726,17 @@ class LifecycleStore:
             row = self._command(db, command_id)
             if row["revision"] != expected_revision or target not in TRANSITIONS.get(row["state"], set()):
                 raise LifecycleConflict("Stale revision or forbidden transition")
+            if owner_epoch is not None and owner_epoch < row["owner_epoch"]:
+                raise LifecycleConflict("Stale owner epoch")
             if target == "QUEUED" and db.execute("SELECT 1 FROM tasks WHERE command_id=? AND state='RUNNING'", (command_id,)).fetchone():
                 raise LifecycleConflict("Uncertain effects require reconciliation before resume")
             admission = "HOLD" if target in HELD else "ACTIVE"
-            if owner_epoch is not None:
-                db.execute(
-                    "UPDATE commands SET state=?,admission=?,revision=revision+1,owner_epoch=? WHERE id=?",
-                    (target, admission, owner_epoch, command_id)
-                )
-            else:
-                db.execute(
-                    "UPDATE commands SET state=?,admission=?,revision=revision+1 WHERE id=?",
-                    (target, admission, command_id)
-                )
-            self._event(db, command_id, "command.transition", {"state": target, "reason": reason})
+            effective_epoch = max(owner_epoch, row["owner_epoch"]) if owner_epoch is not None else row["owner_epoch"]
+            db.execute(
+                "UPDATE commands SET state=?,admission=?,revision=revision+1,owner_epoch=? WHERE id=?",
+                (target, admission, effective_epoch, command_id)
+            )
+            self._event(db, command_id, "command.transition", {"state": target, "reason": reason, "owner_epoch": effective_epoch})
 
     def claim_recovery(self, command_id: str, expected_revision: int, owner_epoch: int, observation_ref: str) -> None:
         """Enter RECOVERING / ACTIVE state only after fresh trusted recovery checks."""
@@ -597,6 +748,8 @@ class LifecycleStore:
                 raise LifecycleConflict("Stale revision on recovery claim")
             if row["state"] in TERMINAL:
                 raise LifecycleConflict("Cannot claim recovery on terminal command")
+            if owner_epoch < row["owner_epoch"]:
+                raise LifecycleConflict("Stale owner epoch on recovery claim")
             db.execute(
                 "UPDATE commands SET state='RECOVERING',admission='ACTIVE',revision=revision+1,owner_epoch=? WHERE id=?",
                 (owner_epoch, command_id)
@@ -752,6 +905,55 @@ class LifecycleStore:
                 return json.loads(row[0])
             return None
 
+    def reserve_attempt(
+        self,
+        attempt_id: str,
+        command_id: str,
+        task_id: str | None,
+        purpose: str,
+        profile_id: str,
+        request_sha: str,
+    ) -> None:
+        """Reserve a unique attempt atomically before network dispatch."""
+        _identifier(attempt_id)
+        _identifier(command_id)
+        if task_id:
+            _identifier(task_id)
+        _identifier(purpose)
+        _identifier(profile_id)
+        _digest(request_sha)
+        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO attempts(attempt_id, command_id, task_id, purpose, profile_id, request_sha, "
+                "response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at) "
+                "VALUES(?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,'UNKNOWN',?)",
+                (attempt_id, command_id, task_id, purpose, profile_id, request_sha, created_at)
+            )
+
+    def record_attempt_outcome(
+        self,
+        attempt_id: str,
+        *,
+        response_id: str | None = None,
+        usage_json: str | None = None,
+        finish_reason: str | None = None,
+        quota_headers: str | None = None,
+        latency_ms: float | None = None,
+        evidence_ref: str | None = None,
+        billed_cost: str = "UNKNOWN",
+    ) -> None:
+        """Record the outcome of a reserved attempt without erasing history."""
+        _identifier(attempt_id)
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE attempts SET response_id=coalesce(?,response_id), usage_json=coalesce(?,usage_json), "
+                "finish_reason=coalesce(?,finish_reason), quota_headers=coalesce(?,quota_headers), "
+                "latency_ms=coalesce(?,latency_ms), evidence_ref=coalesce(?,evidence_ref), "
+                "billed_cost=coalesce(?,billed_cost) WHERE attempt_id=?",
+                (response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, attempt_id)
+            )
+
     def record_attempt(
         self,
         attempt_id: str,
@@ -774,15 +976,25 @@ class LifecycleStore:
         _identifier(purpose)
         _identifier(profile_id)
         _digest(request_sha)
-        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         with self._transaction() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO attempts(attempt_id, command_id, task_id, purpose, profile_id, request_sha, "
-                "response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (attempt_id, command_id, task_id, purpose, profile_id, request_sha, response_id, usage_json,
-                 finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at)
-            )
+            row = db.execute("SELECT 1 FROM attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
+            if not row:
+                created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                db.execute(
+                    "INSERT INTO attempts(attempt_id, command_id, task_id, purpose, profile_id, request_sha, "
+                    "response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (attempt_id, command_id, task_id, purpose, profile_id, request_sha, response_id, usage_json,
+                     finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at)
+                )
+            else:
+                db.execute(
+                    "UPDATE attempts SET response_id=coalesce(?,response_id), usage_json=coalesce(?,usage_json), "
+                    "finish_reason=coalesce(?,finish_reason), quota_headers=coalesce(?,quota_headers), "
+                    "latency_ms=coalesce(?,latency_ms), evidence_ref=coalesce(?,evidence_ref), "
+                    "billed_cost=coalesce(?,billed_cost) WHERE attempt_id=?",
+                    (response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, attempt_id)
+                )
 
     def record_verification(
         self,
@@ -824,9 +1036,25 @@ class LifecycleStore:
             rows = db.execute("SELECT key, value FROM engine_meta").fetchall()
             return {r[0]: r[1] for r in rows}
 
-    def get_command_by_idempotency_key(self, request_key: str) -> dict[str, Any] | None:
+    def get_owner_epoch(self) -> int:
+        val = self.get_meta("owner_epoch")
+        return int(val) if val is not None else 0
+
+    def increment_owner_epoch(self, identity: OwnerIdentity) -> int:
+        with self._transaction() as db:
+            row = db.execute("SELECT value FROM engine_meta WHERE key='owner_epoch'").fetchone()
+            curr = int(row[0]) if row and row[0] else 0
+            new_epoch = curr + 1
+            db.execute("INSERT OR REPLACE INTO engine_meta(key, value) VALUES('owner_epoch', ?)", (str(new_epoch),))
+            db.execute("INSERT OR REPLACE INTO engine_meta(key, value) VALUES('owner_identity', ?)", (_json(identity.to_dict()),))
+            return new_epoch
+
+    def get_command_by_idempotency_key(self, request_key: str, project_id: str | None = None) -> dict[str, Any] | None:
         with closing(self._connect()) as db:
-            row = db.execute("SELECT * FROM commands WHERE request_key=?", (request_key,)).fetchone()
+            if project_id is not None:
+                row = db.execute("SELECT * FROM commands WHERE request_key=? AND project=?", (request_key, project_id)).fetchone()
+            else:
+                row = db.execute("SELECT * FROM commands WHERE request_key=?", (request_key,)).fetchone()
             if not row:
                 return None
             res = dict(row)

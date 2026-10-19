@@ -239,7 +239,19 @@ class WorkerGitBridge:
         """Create commit object and update branch using atomic CAS git update-ref."""
         intent = prepared.intent
 
-        # 1. Format commit message with required trailers
+        # 1. Check for unrelated staged or dirty changes before publish
+        status_res = _git_run(["status", "--porcelain"], cwd=self.repo_root)
+        lines = [line.strip() for line in status_res.stdout.splitlines() if line.strip()]
+        bad_lines = [
+            line for line in lines
+            if not (line.startswith("?? ") and ("__pycache__" in line or ".pytest_cache" in line))
+        ]
+        if bad_lines:
+            raise GitBridgeError(
+                f"Unrelated staged or modified files exist in working tree before publish:\n" + "\n".join(bad_lines)
+            )
+
+        # 2. Format commit message with required trailers
         trailers = (
             f"\n\nAOS-Command: {intent.command_id}\n"
             f"AOS-Task: {intent.task_id}\n"
@@ -249,14 +261,14 @@ class WorkerGitBridge:
         )
         full_msg = message.strip() + trailers
 
-        # 2. Create commit object
+        # 3. Create commit object
         commit_res = _git_run(
             ["commit-tree", prepared.tree_sha, "-p", intent.expected_parent, "-m", full_msg],
             cwd=self.repo_root,
         )
         commit_sha = commit_res.stdout.strip()
 
-        # 3. CAS update-ref: update ref only if it still points to expected_parent
+        # 4. CAS update-ref: update ref only if it still points to expected_parent
         if intent.owned_branch == "HEAD":
             ref_name = "HEAD"
         elif intent.owned_branch.startswith("refs/"):
@@ -273,6 +285,14 @@ class WorkerGitBridge:
     def materialize_source(self, prepared: PreparedCandidate) -> None:
         """Atomically materialize intended source file into working tree and verify post-hash."""
         target_path = self.repo_root / prepared.intent.target_rel_path
+        if target_path.exists():
+            current_sha = compute_file_sha256(target_path).lower()
+            if current_sha != prepared.intent.pre_sha256.lower() and current_sha != prepared.post_sha256.lower():
+                raise GitBridgeError(
+                    f"Materialize refuses to overwrite drifted file: disk hash ({current_sha}) "
+                    f"matches neither pre_sha ({prepared.intent.pre_sha256}) nor post_sha ({prepared.post_sha256})"
+                )
+
         temp_path = target_path.with_suffix(".aos_tmp")
         temp_path.write_bytes(prepared.new_bytes)
         # Atomic replace
@@ -300,7 +320,7 @@ class WorkerGitBridge:
         stored_prepared_tree: str | None,
     ) -> RecoveryDecision:
         """Implement the 6 rows of the contract recovery decision table (Section 5, Table 110-116)."""
-        ref_name = f"refs/heads/{intent.owned_branch}"
+        ref_name = f"refs/heads/{intent.owned_branch}" if not intent.owned_branch.startswith("refs/") else intent.owned_branch
         current_ref_sha = self.get_ref_sha(ref_name)
         target_file = self.repo_root / intent.target_rel_path
 
@@ -309,25 +329,43 @@ class WorkerGitBridge:
         if target_file.is_file():
             file_sha = compute_file_sha256(target_file).lower()
 
+        # Extract expected post-hash from commit if stored_commit_sha exists
+        expected_post_sha: str | None = None
+        if stored_commit_sha:
+            try:
+                trailers_res = _git_run(["log", "-1", "--format=%B", stored_commit_sha], cwd=self.repo_root)
+                for line in trailers_res.stdout.splitlines():
+                    if line.startswith("AOS-PostHash:"):
+                        expected_post_sha = line.split(":", 1)[1].strip().lower()
+                if not expected_post_sha:
+                    blob_content_res = _git_run(["show", f"{stored_commit_sha}:{intent.target_rel_path}"], cwd=self.repo_root)
+                    expected_post_sha = hashlib.sha256(blob_content_res.stdout.encode("utf-8")).hexdigest().lower()
+            except Exception:
+                expected_post_sha = None
+
         # Row 5: Already ACCEPTED and all post-hashes/commit/test identities agree
         if current_task_status == "ACCEPTED":
             if (
                 stored_commit_sha
                 and current_ref_sha == stored_commit_sha
                 and file_sha
+                and expected_post_sha
+                and file_sha == expected_post_sha
             ):
                 return RecoveryDecision.SKIP_ACCEPTED
 
         # Row 3 & 4: Exact intended commit is published on branch
         if stored_commit_sha and current_ref_sha == stored_commit_sha:
-            # Check file hash on disk
-            if file_sha and file_sha != intent.pre_sha256.lower():
+            if file_sha and expected_post_sha and file_sha == expected_post_sha:
                 if current_task_status == "ACCEPTED":
                     return RecoveryDecision.SKIP_ACCEPTED
                 return RecoveryDecision.ACCEPT_EXISTING
-            else:
+            elif file_sha and file_sha == intent.pre_sha256.lower():
                 # File is still pre_hash, finish missing materialization
                 return RecoveryDecision.FINISH_MATERIALIZATION
+            else:
+                # Drift detected!
+                return RecoveryDecision.HUMAN_REQUIRED
 
         # Row 2: Prepared candidate/test proof exists, parent/source pre-hashes
         if (

@@ -50,7 +50,7 @@ from aos.v2.resources import (
     ResourceGateway,
     ResourceUnavailableError,
 )
-from aos.v2.sandbox import SandboxRunner
+from aos.v2.sandbox import SandboxRunner, SandboxUnavailableError
 
 
 logger = logging.getLogger("aos.v2.engine")
@@ -132,8 +132,10 @@ class Engine:
         sandbox_runner: SandboxRunner | None = None,
     ) -> None:
         self.v2_home = Path(v2_home).resolve()
-        self.v2_home.mkdir(parents=True, exist_ok=True)
         marker = self.v2_home / ".aos-v2-home"
+        if self.v2_home.exists() and any(self.v2_home.iterdir()) and not marker.exists():
+            raise EngineError(f"Refusing to adopt non-empty unmarked directory as v2_home: {self.v2_home}")
+        self.v2_home.mkdir(parents=True, exist_ok=True)
         if not marker.exists():
             marker.write_text("AOS_V2_JOURNAL_1\n")
         self.registry_path = Path(registry_path).resolve()
@@ -145,6 +147,7 @@ class Engine:
 
         # Initialize SQLite lifecycle (schema 2)
         self.lifecycle = LifecycleStore(self.v2_home)
+        self.owner_epoch = self.lifecycle.increment_owner_epoch(self.owner_lock.identity)
 
         self.gateway = gateway or ResourceGateway(self.snapshot, self.lifecycle)
         self.sandbox = sandbox_runner or SandboxRunner()
@@ -160,6 +163,109 @@ class Engine:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
+
+    def admit(self, project_id: str, goal: str, idempotency_key: str) -> dict[str, Any]:
+        """Atomically admit one command under frozen project contract."""
+        self.snapshot = load_registry(self.registry_path)
+        project = authorize(self.snapshot, project_id)
+        revalidate(self.snapshot, project.binding())
+
+        # Check existing command by (project_id, idempotency_key)
+        existing = self.lifecycle.get_command_by_idempotency_key(idempotency_key, project_id=project_id)
+        if existing:
+            if existing["goal"] != goal:
+                raise LifecycleConflict(f"Idempotency conflict: key '{idempotency_key}' already exists with different goal")
+            return self.lifecycle.snapshot(existing["id"])
+
+        command_id = f"cmd_{secrets.token_hex(16)}"
+        workspace_root = Path(project.workspace)
+        grant = TrustedGrant(
+            project_id=project.project_id,
+            authority_id=project.authority_id,
+            workspace=str(workspace_root),
+            base_sha=project.base_sha,
+            write_files=project.write_files,
+        )
+        criteria_ids = tuple(c.id for c in project.criteria) if project.criteria else ("goal_admission_criterion",)
+        contract_json = json.dumps({
+            "contract": "AOS-V2-SEAM-1",
+            "budget_max_attempts": 4,
+            "capability_digest": project.capability_digest,
+        })
+
+        cid = self.lifecycle.admit(
+            command_id=command_id,
+            request_key=idempotency_key,
+            goal=goal,
+            criteria=criteria_ids,
+            grant=grant,
+            contract_json=contract_json,
+            owner_epoch=self.owner_epoch,
+        )
+
+        # Check resource eligibility preflight
+        eligible_profiles = self.gateway.get_eligible_profiles()
+        if not eligible_profiles:
+            # Durably admit WAITING_RESOURCE / HOLD
+            snap = self.lifecycle.snapshot(cid)
+            self.lifecycle.transition(cid, snap["revision"], "WAITING_RESOURCE", reason="WAITING_RESOURCE: no eligible resources")
+            return self.lifecycle.snapshot(cid)
+
+        # Admit into QUEUED state
+        return self.lifecycle.snapshot(cid)
+
+    def resume(self, command_id: str) -> dict[str, Any]:
+        """Resume a held or paused command."""
+        snap = self.lifecycle.snapshot(command_id)
+        cur_state = snap["state"]
+        if cur_state in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"):
+            raise EngineError(f"Cannot resume terminal command in state {cur_state}")
+        if cur_state not in ("PAUSED_SAFE", "WAITING_RESOURCE", "WAITING_AUTHORITY", "HUMAN_REQUIRED"):
+            raise EngineError(f"Cannot resume command in state {cur_state}; must be PAUSED_SAFE or WAITING_*")
+
+        # Revalidate project and resources
+        self.snapshot = load_registry(self.registry_path)
+        project = authorize(self.snapshot, snap["project_id"])
+        revalidate(self.snapshot, project.binding())
+
+        self.lifecycle.transition(command_id, snap["revision"], "QUEUED", reason="user_resume_request")
+        return self.lifecycle.snapshot(command_id)
+
+    def pause(self, command_id: str) -> dict[str, Any]:
+        """Pause an active command."""
+        snap = self.lifecycle.snapshot(command_id)
+        cur_state = snap["state"]
+        if cur_state in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"):
+            raise EngineError(f"Cannot pause terminal command in state {cur_state}")
+        if cur_state != "PAUSED_SAFE":
+            self.lifecycle.transition(command_id, snap["revision"], "PAUSED_SAFE", reason="user_pause_request")
+        return self.lifecycle.snapshot(command_id)
+
+    def cancel(self, command_id: str) -> dict[str, Any]:
+        """Cancel an active or held command."""
+        snap = self.lifecycle.snapshot(command_id)
+        cur_state = snap["state"]
+        if cur_state in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"):
+            raise EngineError(f"Cannot cancel terminal command in state {cur_state}")
+        self.lifecycle.finalize(command_id, snap["revision"], "CANCELLED", criterion_receipts={})
+        return self.lifecycle.snapshot(command_id)
+
+    def recover(self, command_id: str) -> dict[str, Any]:
+        """Perform read-only observation then allowed reconciliation for command."""
+        snap = self.lifecycle.snapshot(command_id)
+        project = authorize(self.snapshot, snap["project_id"])
+        workspace_root = Path(project.workspace)
+        bridge = WorkerGitBridge(workspace_root)
+
+        # Reconcile tasks
+        tasks = self.lifecycle.get_tasks_for_command(command_id)
+        for t in tasks:
+            task_id = t["task_id"]
+            phase = t["phase"]
+            decision = bridge.reconcile_task(t)
+            logger.info(f"Recovery reconciliation for task {task_id} (phase {phase}): {decision.action}")
+
+        return self.lifecycle.snapshot(command_id)
 
     def execute_goal(
         self,
@@ -206,7 +312,7 @@ class Engine:
             criteria_ids,
             trusted_grant,
             contract_json=contract_json,
-            owner_epoch=1,
+            owner_epoch=self.owner_epoch,
         )
 
         snap = self.lifecycle.snapshot(cmd_id)
@@ -268,7 +374,7 @@ class Engine:
                 intent = TaskIntent(
                     command_id=cmd_id,
                     task_id=task_id,
-                    owner_epoch=1,
+                    owner_epoch=self.owner_epoch,
                     repo_root=workspace_root,
                     owned_branch=current_branch,
                     expected_parent=current_head,
@@ -352,11 +458,38 @@ class Engine:
             final_snap = self.lifecycle.snapshot(cmd_id)
             return final_snap
 
+        except (ResourceUnavailableError, SandboxUnavailableError) as e:
+            logger.warning(f"Resource/Sandbox unavailable for command {cmd_id}: {e}")
+            try:
+                snap = self.lifecycle.snapshot(cmd_id)
+                if snap["state"] not in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "HOLD"):
+                    self.lifecycle.transition(cmd_id, snap["revision"], "HOLD", reason=f"WAITING_RESOURCE: {e}")
+            except Exception as hold_err:
+                logger.error(f"Error transitioning to HOLD: {hold_err}")
+            raise
+        except RegistryAuthorizationError as e:
+            logger.warning(f"Authority unavailable for command {cmd_id}: {e}")
+            try:
+                snap = self.lifecycle.snapshot(cmd_id)
+                if snap["state"] not in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "HOLD"):
+                    self.lifecycle.transition(cmd_id, snap["revision"], "HOLD", reason=f"WAITING_AUTHORITY: {e}")
+            except Exception as hold_err:
+                logger.error(f"Error transitioning to HOLD: {hold_err}")
+            raise
+        except GitBridgeError as e:
+            logger.warning(f"Git drift/conflict for command {cmd_id}: {e}")
+            try:
+                snap = self.lifecycle.snapshot(cmd_id)
+                if snap["state"] not in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "HOLD"):
+                    self.lifecycle.transition(cmd_id, snap["revision"], "HOLD", reason=f"HUMAN_REQUIRED: {e}")
+            except Exception as hold_err:
+                logger.error(f"Error transitioning to HOLD: {hold_err}")
+            raise
         except Exception as e:
             logger.error(f"Goal execution failed: {e}", exc_info=True)
             try:
                 snap = self.lifecycle.snapshot(cmd_id)
-                if snap["state"] not in ("PROJECT_COMPLETE", "FAILED", "CANCELLED"):
+                if snap["state"] not in ("PROJECT_COMPLETE", "FAILED", "CANCELLED", "HOLD"):
                     self.lifecycle.finalize(cmd_id, snap["revision"], "FAILED", {})
                     result_payload = {
                         "command_id": cmd_id,

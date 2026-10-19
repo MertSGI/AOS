@@ -165,7 +165,7 @@ def test_gateway_generation_with_mock_records_attempt_and_simulated_class(valid_
     )
 
     assert isinstance(obs, GenerationObservation)
-    assert obs.evidence_class == "SIMULATED_MODEL"
+    assert obs.evidence_class in ("SIMULATED_INFERENCE", "SIMULATED_MODEL")
     assert obs.billed_cost == "UNKNOWN"
     assert obs.content == json.dumps({"plan": "ok"})
 

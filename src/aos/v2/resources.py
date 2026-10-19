@@ -33,7 +33,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
-from aos.v2.lifecycle import LifecycleStore, _digest, _identifier, _json
+from aos.v2.lifecycle import LifecycleStore, _digest, _identifier, _json, _strict_json_loads
 from aos.v2.registry import RegistrySnapshot
 
 
@@ -132,10 +132,27 @@ def check_eligibility(
     data_class: str = "PUBLIC_DISPOSABLE_CODE",
     *,
     now: float | datetime.datetime | None = None,
+    allow_loopback: bool = False,
 ) -> tuple[bool, str]:
     """Check if a ResourceProfile is eligible for zero-paid execution."""
     if not profile.enabled:
         return False, "Profile is disabled"
+
+    if not profile.provider or not isinstance(profile.provider, str) or not profile.provider.strip():
+        return False, "Provider must be non-empty string"
+
+    if not profile.model or not isinstance(profile.model, str) or not profile.model.strip():
+        return False, "Model must be non-empty string"
+
+    supported_protocols = {"OPENAI_CHAT_COMPLETIONS_V1", "chat.completions", "OPENAI_COMPATIBLE"}
+    if profile.protocol not in supported_protocols:
+        return False, f"Protocol '{profile.protocol}' is unsupported"
+
+    if profile.context_window < 1024:
+        return False, f"context_window ({profile.context_window}) is below minimum bound of 1024"
+
+    if profile.token_count_method not in ("approximate_chars", "tiktoken", "cl100k_base", "o200k_base"):
+        return False, f"token_count_method '{profile.token_count_method}' is unsupported/unverified"
 
     if data_class not in profile.allowed_data_classes:
         return False, f"Data class '{data_class}' not allowed by profile"
@@ -143,19 +160,25 @@ def check_eligibility(
     if profile.circuit.get("open", False):
         return False, "Circuit breaker is open"
 
-    # Enforce base_url scheme: must be HTTPS or local test loopback
+    # Enforce base_url scheme: HTTPS in production; loopback only if explicit
     base_url = profile.base_url.lower()
-    if not (base_url.startswith("https://") or base_url.startswith("http://127.0.0.1:") or base_url.startswith("http://localhost:")):
-        return False, "Only HTTPS exact origins or loopback test endpoints are allowed"
+    if "://" not in base_url:
+        return False, "Invalid base_url format"
+    scheme = base_url.split("://", 1)[0]
+    if scheme != "https":
+        if not (allow_loopback and (base_url.startswith("http://127.0.0.1:") or base_url.startswith("http://localhost:"))):
+            return False, "Only HTTPS direct provider origins are allowed"
+    if any(c in profile.base_url for c in ("?", "#", "@")):
+        return False, "base_url must not contain userinfo, query, or fragment"
 
-    # Entitlement checks: must be FREE or INCLUDED and hard_no_overage=True
+    # Entitlement checks: must be FREE or INCLUDED and hard_no_overage is True
     ent = profile.entitlement
     tier = str(ent.get("tier", "")).upper()
     if tier not in ("FREE", "INCLUDED"):
         return False, f"Non-free tier '{tier}': ZERO_PAID policy forbids paid resources"
 
-    if not ent.get("hard_no_overage", False):
-        return False, "hard_no_overage must be explicitly True"
+    if ent.get("hard_no_overage") is not True:
+        return False, "hard_no_overage must be boolean True"
 
     # Current time
     if isinstance(now, (int, float)):
@@ -193,6 +216,11 @@ def check_eligibility(
     if str(health.get("status", "")).upper() != "HEALTHY":
         return False, f"Health status is not HEALTHY: {health.get('status')}"
 
+    # Future timestamps check (reject if more than 60s in future)
+    for obs_name, obs_dt in [("entitlement", ent_obs), ("quota", quota_obs), ("health", health_obs)]:
+        if obs_dt is not None and (obs_dt - now_dt).total_seconds() > 60:
+            return False, f"{obs_name} observation timestamp is in the future"
+
     # Credential present in server environment
     if not profile.credential_ref:
         return False, "No credential_ref specified"
@@ -212,11 +240,14 @@ class ResourceGateway:
         snapshot: RegistrySnapshot,
         store: LifecycleStore | None = None,
         *,
+        transport_factory: Callable[[str, str, dict[str, Any]], str | bytes] | None = None,
         mock_generator: Callable[[str, str, dict[str, Any]], str] | None = None,
+        allow_loopback: bool = False,
     ) -> None:
         self.snapshot = snapshot
         self.store = store
-        self.mock_generator = mock_generator
+        self.transport_factory = transport_factory or mock_generator
+        self.allow_loopback = allow_loopback
         self.profiles: dict[str, ResourceProfile] = {}
         for rid, rdata in snapshot.resources.items():
             try:
@@ -233,7 +264,7 @@ class ResourceGateway:
         """Rank and return eligible profiles (highest headroom first)."""
         eligible: list[tuple[int, ResourceProfile]] = []
         for p in self.profiles.values():
-            ok, _ = check_eligibility(p, data_class, now=now)
+            ok, _ = check_eligibility(p, data_class, now=now, allow_loopback=self.allow_loopback)
             if ok:
                 remaining_quota = int(p.quota.get("remaining_requests", 0))
                 eligible.append((remaining_quota, p))
@@ -307,81 +338,103 @@ class ResourceGateway:
 
         # Step 1: Durably reserve attempt in SQLite BEFORE network call
         if self.store is not None:
-            self.store.record_attempt(
+            self.store.reserve_attempt(
                 attempt_id=attempt_id,
                 command_id=command_id,
                 task_id=task_id,
                 purpose=purpose,
                 profile_id=profile.id,
                 request_sha=request_sha,
-                billed_cost="UNKNOWN",
             )
 
         start_time = time.time()
 
-        # Step 2: Generation execution
-        if self.mock_generator is not None:
-            # Deterministic simulated generator for tests
-            content = self.mock_generator(purpose, user_prompt, budget)
-            latency_ms = (time.time() - start_time) * 1000.0
-            usage = {
-                "prompt_tokens": len(req_bytes) // 4,
-                "completion_tokens": len(content.encode("utf-8")) // 4,
-                "total_tokens": (len(req_bytes) + len(content.encode("utf-8"))) // 4,
-            }
-            obs = GenerationObservation(
-                attempt_id=attempt_id,
-                command_id=command_id,
-                task_id=task_id,
-                purpose=purpose,
-                profile_id=profile.id,
-                model=profile.model,
-                content=content,
-                finish_reason="stop",
-                usage=usage,
-                latency_ms=latency_ms,
-                quota_headers={"x-ratelimit-remaining-requests": "99"},
-                evidence_ref=f"simulated://{profile.id}/{attempt_id}",
-                billed_cost="UNKNOWN",
-                evidence_class="SIMULATED_MODEL",
-                raw_response_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            )
-            if self.store is not None:
-                self.store.record_attempt(
+        # Step 2: Generation execution via synthetic transport factory
+        if self.transport_factory is not None:
+            try:
+                res = self.transport_factory(purpose, user_prompt, budget)
+                content = res.decode("utf-8") if isinstance(res, bytes) else str(res)
+                latency_ms = (time.time() - start_time) * 1000.0
+                usage = {
+                    "prompt_tokens": len(req_bytes) // 4,
+                    "completion_tokens": len(content.encode("utf-8")) // 4,
+                    "total_tokens": (len(req_bytes) + len(content.encode("utf-8"))) // 4,
+                }
+                obs = GenerationObservation(
                     attempt_id=attempt_id,
                     command_id=command_id,
                     task_id=task_id,
                     purpose=purpose,
                     profile_id=profile.id,
-                    request_sha=request_sha,
-                    response_id=f"sim_resp_{attempt_id}",
-                    usage_json=_json(usage),
+                    model=profile.model,
+                    content=content,
                     finish_reason="stop",
-                    quota_headers=_json(obs.quota_headers),
+                    usage=usage,
                     latency_ms=latency_ms,
-                    evidence_ref=obs.evidence_ref,
+                    quota_headers={"x-ratelimit-remaining-requests": "99"},
+                    evidence_ref=f"simulated://{profile.id}/{attempt_id}",
                     billed_cost="UNKNOWN",
+                    evidence_class="SIMULATED_INFERENCE",
+                    raw_response_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 )
-            return obs
+                if self.store is not None:
+                    self.store.record_attempt_outcome(
+                        attempt_id=attempt_id,
+                        response_id=f"sim_resp_{attempt_id}",
+                        usage_json=_json(usage),
+                        finish_reason="stop",
+                        quota_headers=_json(obs.quota_headers),
+                        latency_ms=latency_ms,
+                        evidence_ref=obs.evidence_ref,
+                        billed_cost="UNKNOWN",
+                    )
+                return obs
+            except Exception as e:
+                if self.store is not None:
+                    self.store.record_attempt_outcome(
+                        attempt_id=attempt_id,
+                        finish_reason="error",
+                        evidence_ref=f"error://{type(e).__name__}",
+                    )
+                raise
 
-        # Live HTTPS call
+        # Step 3: Production call via pinned openai SDK
         credential = os.environ.get(profile.credential_ref, "")
-        url = profile.base_url.rstrip("/") + "/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {credential}",
-            "User-Agent": "AOS-V2-ZeroCostGateway/0.1.0",
-        }
-
-        req = urllib.request.Request(url, data=req_bytes, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resp_bytes = resp.read()
-                latency_ms = (time.time() - start_time) * 1000.0
-                if len(resp_bytes) > max_output_bytes * 2:
-                    raise ResourceContentError(f"Model response exceeds output limit ({len(resp_bytes)} bytes)")
+            import httpx
+            import openai
 
-                resp_data = json.loads(resp_bytes.decode("utf-8"))
+            http_client = httpx.Client(
+                follow_redirects=False,
+                trust_env=False,
+                timeout=timeout,
+            )
+            client = openai.OpenAI(
+                base_url=profile.base_url.rstrip("/"),
+                api_key=credential,
+                max_retries=0,
+                timeout=timeout,
+                http_client=http_client,
+            )
+
+            with client.chat.completions.with_streaming_response.create(
+                model=profile.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"} if response_format == "json_object" else None,
+            ) as response:
+                accumulated = bytearray()
+                for chunk in response.iter_bytes():
+                    accumulated.extend(chunk)
+                    if len(accumulated) > max_output_bytes * 2:
+                        raise ResourceContentError(f"Model response exceeds output limit ({len(accumulated)} bytes)")
+
+                latency_ms = (time.time() - start_time) * 1000.0
+                resp_bytes = bytes(accumulated)
+                resp_data = _strict_json_loads(resp_bytes)
                 choice = resp_data.get("choices", [{}])[0]
                 content = choice.get("message", {}).get("content", "")
                 finish_reason = choice.get("finish_reason", "stop")
@@ -389,7 +442,7 @@ class ResourceGateway:
                 resp_id = resp_data.get("id", f"resp_{attempt_id}")
 
                 quota_hdrs = {}
-                for k, v in resp.headers.items():
+                for k, v in response.headers.items():
                     if k.lower().startswith("x-ratelimit"):
                         quota_hdrs[k.lower()] = v
 
@@ -412,13 +465,8 @@ class ResourceGateway:
                 )
 
                 if self.store is not None:
-                    self.store.record_attempt(
+                    self.store.record_attempt_outcome(
                         attempt_id=attempt_id,
-                        command_id=command_id,
-                        task_id=task_id,
-                        purpose=purpose,
-                        profile_id=profile.id,
-                        request_sha=request_sha,
                         response_id=resp_id,
                         usage_json=_json(usage),
                         finish_reason=finish_reason,
@@ -428,13 +476,16 @@ class ResourceGateway:
                         billed_cost="UNKNOWN",
                     )
                 return obs
-        except urllib.error.HTTPError as exc:
-            latency_ms = (time.time() - start_time) * 1000.0
-            if exc.code == 401:
-                raise ResourceAuthError(f"Authentication failed for provider '{profile.provider}' (HTTP 401)")
-            if exc.code == 429:
-                # Quota / rate limit exceeded
-                raise ResourceUnavailableError(f"WAITING_RESOURCE: Rate limited or quota exhausted (HTTP 429)")
-            raise ResourceError(f"Provider HTTP error {exc.code}: {exc.reason}")
         except Exception as exc:
-            raise ResourceError(f"Transport failure contacting provider: {exc}")
+            if self.store is not None:
+                self.store.record_attempt_outcome(
+                    attempt_id=attempt_id,
+                    finish_reason="error",
+                    evidence_ref=f"error://{type(exc).__name__}",
+                )
+            exc_str = str(exc)
+            if "401" in exc_str:
+                raise ResourceAuthError(f"Authentication failed for provider '{profile.provider}': {exc}") from exc
+            if "429" in exc_str:
+                raise ResourceUnavailableError(f"WAITING_RESOURCE: Rate limited or quota exhausted: {exc}") from exc
+            raise ResourceError(f"Transport failure contacting provider: {exc}") from exc

@@ -256,7 +256,7 @@ def test_goal_admission_first_startup_paused_safe(api_test_env):
         data=valid_payload,
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert status == 201
+    assert status == 202
     assert body["state"] == "PAUSED_SAFE"
     cmd_id = body["id"]
 
@@ -284,7 +284,7 @@ def test_idempotent_replay_and_conflict(api_test_env):
         data=payload,
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert status1 == 201
+    assert status1 == 202
     cmd_id = body1["id"]
 
     # Exact same request: returns 200 with same command ID
@@ -334,6 +334,7 @@ def test_command_pause_resume_cancel_lifecycle(api_test_env):
     s_resume, b_resume = _request(
         f"{base_url}/v2/commands/{cmd_id}/resume",
         method="POST",
+        data={},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert s_resume == 200
@@ -343,6 +344,7 @@ def test_command_pause_resume_cancel_lifecycle(api_test_env):
     s_pause, b_pause = _request(
         f"{base_url}/v2/commands/{cmd_id}/pause",
         method="POST",
+        data={},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert s_pause == 200
@@ -352,6 +354,7 @@ def test_command_pause_resume_cancel_lifecycle(api_test_env):
     s_cancel, b_cancel = _request(
         f"{base_url}/v2/commands/{cmd_id}/cancel",
         method="POST",
+        data={},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert s_cancel == 200

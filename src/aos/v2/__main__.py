@@ -12,11 +12,12 @@ import signal
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 from aos.v2.api import AOSApiServer
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, server_factory: Any = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m aos.v2",
         description="AOS V2 Execution Seam Server",
@@ -51,13 +52,23 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    home_path = args.home.resolve()
-    if not home_path.is_absolute():
-        sys.stderr.write("Error: --home path must be absolute.\n")
+    if not args.home.is_absolute():
+        sys.stderr.write("Error: --home path must be a raw absolute path.\n")
         return 1
 
-    registry_path = args.registry.resolve()
-    if not registry_path.is_absolute() or not registry_path.is_file():
+    if not args.registry.is_absolute():
+        sys.stderr.write("Error: --registry path must be a raw absolute path.\n")
+        return 1
+
+    from aos.v2.lifecycle import _no_links
+    try:
+        home_path = _no_links(args.home)
+        registry_path = _no_links(args.registry)
+    except ValueError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 1
+
+    if not registry_path.is_file():
         sys.stderr.write(f"Error: --registry path must be an existing absolute file: {registry_path}\n")
         return 1
 
@@ -66,8 +77,9 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    factory = server_factory or AOSApiServer
     try:
-        server = AOSApiServer(
+        server = factory(
             home=home_path,
             registry_path=registry_path,
             bind_host=args.bind,

@@ -32,7 +32,14 @@ from typing import Any, Mapping
 
 from aos.v2.bridge import compute_file_sha256
 from aos.v2.engine import Engine, EngineError
-from aos.v2.lifecycle import LifecycleConflict, OwnerBusyError
+from aos.v2.lifecycle import (
+    LifecycleConflict,
+    OwnerBusyError,
+    _no_links,
+    _strict_json_loads,
+    validate_private_file,
+    write_private_file,
+)
 from aos.v2.registry import RegistryAuthorizationError, authorize, load_registry
 
 
@@ -40,19 +47,6 @@ logger = logging.getLogger("aos.v2.api")
 
 MAX_BODY_BYTES = 64 * 1024  # 64 KiB
 COMMAND_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
-
-
-def _strict_json_loads(data: bytes | str) -> Any:
-    """Parse JSON while strictly forbidding duplicate keys."""
-    def check_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        res = {}
-        for k, v in pairs:
-            if k in res:
-                raise ValueError(f"Duplicate JSON key: {k}")
-            res[k] = v
-        return res
-
-    return json.loads(data, object_pairs_hook=check_duplicate_keys)
 
 
 class AOSApiRequestHandler(BaseHTTPRequestHandler):
@@ -91,25 +85,42 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(403, "Access restricted to loopback interface only", "FORBIDDEN_HOST")
             return False
 
-        # 2. Host header check
-        host = self.headers.get("Host", "").split(":")[0].strip()
-        if host not in ("127.0.0.1", "localhost", "[::1]"):
-            self._send_error_json(400, "Invalid Host header; must be loopback", "INVALID_HOST")
+        # 2. Host header check: exactly one Host header equal to 127.0.0.1:<actual_bound_port>
+        host_headers = self.headers.get_all("Host", [])
+        if len(host_headers) != 1:
+            self._send_error_json(400, "Exactly one Host header required", "INVALID_HOST")
             return False
 
-        # 3. Origin check (CORS denial)
-        origin = self.headers.get("Origin")
-        if origin:
-            # Strip scheme
-            cleaned = origin.replace("http://", "").replace("https://", "").split(":")[0]
-            if cleaned not in ("127.0.0.1", "localhost"):
-                self._send_error_json(403, "CORS origin rejected", "CORS_DENIED")
+        assigned_port = self.server.server_address[1]
+        expected_host = f"127.0.0.1:{assigned_port}"
+        actual_host = host_headers[0].strip()
+        if actual_host != expected_host and actual_host != "127.0.0.1":
+            self._send_error_json(400, f"Host header must be exactly {expected_host}", "INVALID_HOST")
+            return False
+
+        # 3. Origin check: absent or exactly http://127.0.0.1:<actual_bound_port>
+        origin_headers = self.headers.get_all("Origin", [])
+        if len(origin_headers) > 1:
+            self._send_error_json(403, "Duplicate Origin headers forbidden", "CORS_DENIED")
+            return False
+        if origin_headers:
+            origin_val = origin_headers[0].strip()
+            expected_origin = f"http://127.0.0.1:{assigned_port}"
+            if origin_val != expected_origin:
+                self._send_error_json(403, f"Origin must be absent or exactly {expected_origin}", "CORS_DENIED")
                 return False
 
-        # 4. Chunked encoding denial
-        te = self.headers.get("Transfer-Encoding", "")
-        if "chunked" in te.lower():
-            self._send_error_json(400, "Chunked transfer encoding rejected", "CHUNKED_DENIED")
+        # 4. Transfer-Encoding denial (no CL/TE ambiguity)
+        if self.headers.get("Transfer-Encoding") is not None:
+            self._send_error_json(400, "Transfer-Encoding is forbidden", "CHUNKED_DENIED")
+            return False
+
+        # 5. Duplicate header checks
+        if len(self.headers.get_all("Content-Length", [])) > 1:
+            self._send_error_json(400, "Duplicate Content-Length headers forbidden", "INVALID_LENGTH")
+            return False
+        if len(self.headers.get_all("Authorization", [])) > 1:
+            self._send_error_json(400, "Duplicate Authorization headers forbidden", "INVALID_AUTH")
             return False
 
         return True
@@ -140,6 +151,11 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(413, f"Body size exceeds maximum limit ({MAX_BODY_BYTES} bytes)", "BODY_TOO_LARGE")
             return None
 
+        content_type = self.headers.get("Content-Type", "")
+        if content_type and not content_type.startswith("application/json"):
+            self._send_error_json(415, "Content-Type must be application/json", "UNSUPPORTED_MEDIA_TYPE")
+            return None
+
         body_bytes = self.rfile.read(cl)
         if len(body_bytes) != cl:
             self._send_error_json(400, "Incomplete request body read", "INCOMPLETE_BODY")
@@ -150,7 +166,7 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
             return None
 
         try:
-            parsed = _strict_json_loads(body_bytes)
+            parsed = _strict_json_loads(body_bytes, max_depth=8)
         except ValueError as e:
             self._send_error_json(400, f"Malformed JSON: {e}", "INVALID_JSON")
             return None
@@ -270,8 +286,8 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(400, "idempotency_key must be a non-empty string", "INVALID_IDEMPOTENCY_KEY")
             return
 
-        # Check existing command for this idempotency key
-        existing_cmd = self.server.engine.lifecycle.get_command_by_idempotency_key(idempotency_key)
+        # Check existing command for this idempotency key scoped to project
+        existing_cmd = self.server.engine.lifecycle.get_command_by_idempotency_key(idempotency_key, project_id=project_id)
         if existing_cmd:
             # Verify immutable inputs match
             if existing_cmd["project_id"] != project_id or existing_cmd["goal"] != goal:
@@ -295,7 +311,7 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
             return
 
         # Valid authenticated new goal starts explicitly in PAUSED_SAFE or QUEUED state
-        command_id = f"cmd_{idempotency_key.replace('-', '_')[:32]}"
+        command_id = f"cmd_{secrets.token_hex(16)}"
         try:
             from aos.v2.lifecycle import TrustedGrant
             grant = TrustedGrant(
@@ -313,13 +329,13 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
                 criteria=criteria_ids,
                 grant=grant,
                 contract_json=json.dumps({"contract": "AOS-V2-SEAM-1", "budget_max_attempts": 4}),
-                owner_epoch=1,
+                owner_epoch=self.server.engine.owner_epoch if hasattr(self.server.engine, "owner_epoch") else 1,
             )
             # First startup state is PAUSED_SAFE as per specification
             snap = self.server.engine.lifecycle.snapshot(cid)
             self.server.engine.lifecycle.transition(cid, snap["revision"], "PAUSED_SAFE", reason="initial_startup_paused_safe")
             updated_snap = self.server.engine.lifecycle.snapshot(cid)
-            self._send_json(201, updated_snap)
+            self._send_json(202, updated_snap)
         except (LifecycleConflict, ValueError) as e:
             self._send_error_json(400, f"Failed to admit goal: {e}", "ADMISSION_FAILED")
 
@@ -327,6 +343,13 @@ class AOSApiRequestHandler(BaseHTTPRequestHandler):
         """POST /v2/commands/{id}/(pause|resume|cancel)"""
         if not COMMAND_ID_RE.match(cmd_id):
             self._send_error_json(400, "Invalid command ID format", "INVALID_COMMAND_ID")
+            return
+
+        body = self._read_json_body()
+        if body is None:
+            return
+        if body != {}:
+            self._send_error_json(400, "Control action body must be exactly {}", "INVALID_ACTION_BODY")
             return
 
         try:
@@ -379,8 +402,15 @@ class AOSApiServer(ThreadingHTTPServer):
         bind_host: str = "127.0.0.1",
         port: int = 0,
     ) -> None:
-        self.home = Path(home).resolve()
-        self.registry_path = Path(registry_path).resolve()
+        if bind_host != "127.0.0.1":
+            raise ValueError(f"bind_host must be 127.0.0.1, got {bind_host}")
+        if not Path(home).is_absolute():
+            raise ValueError(f"home path must be a raw absolute path, got {home}")
+        if not Path(registry_path).is_absolute():
+            raise ValueError(f"registry_path must be a raw absolute path, got {registry_path}")
+
+        self.home = _no_links(Path(home))
+        self.registry_path = _no_links(Path(registry_path))
         self.server_nonce = secrets.token_hex(16)
         self.birth_utc = datetime.now(timezone.utc).isoformat()
         self.bearer_token = secrets.token_hex(32)
@@ -399,12 +429,14 @@ class AOSApiServer(ThreadingHTTPServer):
 
         # Write private token.secret
         token_file = self.home / "token.secret"
-        token_file.write_text(f"{self.bearer_token}\n", encoding="utf-8")
-        if os.name == "posix":
-            os.chmod(token_file, 0o600)
+        if token_file.exists():
+            validate_private_file(token_file)
+        write_private_file(token_file, f"{self.bearer_token}\n".encode("utf-8"))
 
         # Write private endpoint.json
         endpoint_file = self.home / "endpoint.json"
+        if endpoint_file.exists():
+            validate_private_file(endpoint_file)
         endpoint_data = {
             "schema_version": 1,
             "host": bind_host,
@@ -415,10 +447,7 @@ class AOSApiServer(ThreadingHTTPServer):
             "source_sha": source_sha,
             "started_at": datetime.now(timezone.utc).isoformat(),
         }
-        endpoint_file.write_text(json.dumps(endpoint_data, indent=2), encoding="utf-8")
-        if os.name == "posix":
-            os.chmod(endpoint_file, 0o600)
-
+        write_private_file(endpoint_file, json.dumps(endpoint_data, indent=2).encode("utf-8"))
         logger.info(f"AOS V2 API Server listening on http://{bind_host}:{assigned_port}")
 
     def shutdown_and_close(self) -> None:
