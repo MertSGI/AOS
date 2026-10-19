@@ -19,7 +19,7 @@ WP2/WP3'ün gerçekleştireceği V2 contract:
 
 ```text
 POST /v2/goals
-X-AOS-Runtime-Token: <read securely inside operator tool>
+Authorization: Bearer <read securely inside operator tool>
 {"project_id":"aos-v2-disposable","goal":"<goal above>","idempotency_key":"one-real-slice"}
 202 {command_id, binding_sha256, state:"QUEUED"}
 GET /v2/commands/{command_id} -> snapshot + observed process identity + export status
@@ -36,7 +36,7 @@ Gerçek deney sırası:
 3. Isolated V2 home/loopback API/supervisor başlat; varsayılan PAUSED_SAFE. Sadece yeni disposable project kaydet, AOS'un kaynak/test kapsamını preview et. Normal user entrypoint'ten bu goal bir kez submit et. Engine için `pause_after_verified_task_count=1` evaluator barrier config'i yalnız disposable test profile'ında; bu liste enjekte etmez, gerçek accepted event sonrası yeni dispatch'i durdurur.
 4. İlk objective gerçek free-model cevabı, worker PID/nonce, dosya hash'i, independent test exit0, Git commit ve durable accepted task ile gözlenir. Tax hâlâ ilk bozuk hash'inde olmalı. Barrier sonrası evaluator source açısından read-only kalır. Owned engine/supervisor kontrollü stop; gerekiyorsa only verified owned child kill. Sadece server.shutdown ile in-memory completed listesi taşımak process-death proof değildir.
 5. Installed source'a dokunmadan aynı home/same command_id ile yeni gerçek engine process'i başlat. Accepted discount task'ın **fiilî** posthash/commit/test'i reconcile edilir, yeniden edit/model/commit yapılmaz. Tax gerçek yeni model çağrısıyla düzelir. Provider değişirse eski agent conversation taşınmaz; source-bound ContextPack kullanılır. Temel kabul için provider değişimi zorunlu değil.
-6. Evaluator değişmemiş testleri bağımsız süreçte çalıştırır: `PYTHONDONTWRITEBYTECODE=1 python test_discount.py`, aynı şekilde tax. İki exit0, expected sample values ve test dosya hash'leri aynı olmalı. Git log/diff yalnız izinli src dosyalarını göstermeli; testler/harness sabit kalır. İlk objective tek commit/effect, ikinci objective ayrı doğrulanan etki.
+6. Evaluator değişmemiş testleri bağımsız süreçte çalıştırır: `PYTHONDONTWRITEBYTECODE=1 python test_discount.py`, aynı şekilde tax. İki exit0 ve değişmemiş test hash'leri gereklidir. Asıl işlev kabulü ayrıca14_IMPLEMENTATION_CONTRACT.md bölüm6 FUNCTION_ORACLE_V1 ile worker dışında her primitive sonucu önceden mühürlenmiş oracle'a karşı doğrular; PASS yazısı veya exit0 tek başına kabul değildir. Git log/diff yalnız izinli src dosyalarını göstermeli; testler/harness sabit kalır. İlk objective tek commit/effect, ikinci objective ayrı doğrulanan etki.
 7. Terminal snapshot: PROJECT_COMPLETE, admission CLOSED, tek run.finished, result.json schema/readback, authentic verification receipt ve outbox ack. Outbox pending iken deliverable kabul edilmez. Goal result ile bütün proje ROADMAP kapanışı birbirinden ayrıdır.
 8. V1-after uncapped manifests ve admission hash before ile birebir aynı; dış sentineller aynı; izole V2 dışı process öldürülmemiş; LARİ yok; no candidate hot-edit. Sonuncu independent host probe before/after ile byte/provenance sınırını doğrular.
 
