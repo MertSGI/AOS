@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "proof_scope": "Delivered source/control file bytes; not operational E2E",
+  "audited_base": "9d3168afb35edf5ad06e6b5e419801493fe04572",
+  "accepted_source": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "source_tree": "3c2b658268150e75dd1723f8be2e26961a6248fd",
+  "carrier": "RESOLVE_CONTAINING_COMMIT",
+  "excludes": [
+    "docs/aos-v2/evidence/payload_manifest_20261019.json"
+  ],
+  "verification": "Read Git blob bytes at the pinned carrier and compare each digest; verify carrier exact-head CI separately",
+  "files": [
+    {
+      "path": "docs/aos-v2/00_READ_ME_FIRST.md",
+      "bytes": 2535,
+      "sha256": "752ee281f0467881dedd73fa3985807757ca28f2906c208a51a9cc0cc17ac431"
+    },
+    {
+      "path": "docs/aos-v2/01_PRODUCT_CONTRACT.md",
+      "bytes": 3032,
+      "sha256": "79cb140481d0ec9649e98ea8fc61e8bcd843feca80cde12506dedf5a4b9f0237"
+    },
+    {
+      "path": "docs/aos-v2/02_EXECUTION_GRAPH.md",
+      "bytes": 8902,
+      "sha256": "d035c357f8d57d5a729eb7521530c7463374523815d56a09e46354b37a5a00a3"
+    },
+    {
+      "path": "docs/aos-v2/03_MODULE_DECISIONS.md",
+      "bytes": 4279,
+      "sha256": "c224f932a62ffacc3265e2b76ec7ef69661633eefbaedb0fbb5b823f01ecb529"
+    },
+    {
+      "path": "docs/aos-v2/04_ARCHITECTURE_DECISION.md",
+      "bytes": 6483,
+      "sha256": "57fda7e7dca260ca8f731ecb426301b03fe024ac1516d964eef4bbb03a28ef52"
+    },
+    {
+      "path": "docs/aos-v2/05_IMPLEMENTATION_DAG.md",
+      "bytes": 4104,
+      "sha256": "18928426b146ae0b58765b9e9670f19268f87bf92149fbe8c84e29789883cbba"
+    },
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/01_JOURNAL_FOUNDATION_COMPLETED.md",
+      "bytes": 8087,
+      "sha256": "6f0e086cc2f28a33eaa58289b4a7aeb551ce0c932b2fbdfa4132f97ac59353a3"
+    },
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/02_EXECUTION_SEAM.md",
+      "bytes": 15175,
+      "sha256": "b37bb56c877d8bcc841ddb774f97c4f15d8fff4897119b0f90b80fa4da501c6f"
+    },
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/03_OPERATOR_AND_EVALUATOR.md",
+      "bytes": 11115,
+      "sha256": "d99de619aa6de820a059fad74830f110065749e8dace7250795ad4c5057bb7ab"
+    },
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/04_ONE_REAL_VERTICAL_SLICE.md",
+      "bytes": 9720,
+      "sha256": "4d75af4e27b51fa2692438d8715660688ad266f367e89f1c2e4552729789c2cf"
+    },
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/05_RELEASE_RECOVERY_GATED.md",
+      "bytes": 8860,
+      "sha256": "77496e9e7b121dd1236325b88f4321a6ba6b130e61e29ba823e8d8547ca723f1"
+    },
+    {
+      "path": "docs/aos-v2/07_EVIDENCE_MATRIX.md",
+      "bytes": 3948,
+      "sha256": "f2d05111cf1a601e36c0c307eabe83c9791f624b110198643a0598ecd2c65e42"
+    },
+    {
+      "path": "docs/aos-v2/08_LIVE_ISSUES_AND_GATES.md",
+      "bytes": 2374,
+      "sha256": "f961fb51deb31f1170228c2a837f2929150df32a98f98ad903555d0e3c1c3441"
+    },
+    {
+      "path": "docs/aos-v2/09_HANDOFF_CONTROLLER.md",
+      "bytes": 5120,
+      "sha256": "5ec2735d8671e323ed8ce1922fc7ad3b8715c841a84559af910202c815ff5a22"
+    },
+    {
+      "path": "docs/aos-v2/10_RELEASE_AND_RECOVERY.md",
+      "bytes": 4175,
+      "sha256": "bf4d2f8403f91038215e585c9011fc363ca3a8a6e9ef652e91a12c700faf2564"
+    },
+    {
+      "path": "docs/aos-v2/11_PRODUCT_DEMO_ACCEPTANCE.md",
+      "bytes": 7113,
+      "sha256": "2c8549173d65f6340a8522b02f660c60a7959953f7c86a31cc9096f76084b54f"
+    },
+    {
+      "path": "docs/aos-v2/12_REALITY_VERDICT.md",
+      "bytes": 4954,
+      "sha256": "c80547c304aad8a08215fc643c36c41da6eaa117f5197e11afbe0d19804ec9d4"
+    },
+    {
+      "path": "docs/aos-v2/13_COMPLEXITY_AND_STOP.md",
+      "bytes": 3032,
+      "sha256": "c0fbd3f2149a2d7c34d2185b3ec343e3fb928384e40a2ca36331f11c0e24df4f"
+    },
+    {
+      "path": "docs/aos-v2/14_IMPLEMENTATION_CONTRACT.md",
+      "bytes": 30249,
+      "sha256": "c4aa28a920cc017114f5688fc93368daf81c12172b36452319c7b0271ec09313"
+    },
+    {
+      "path": "docs/aos-v2/RESUME_HERE.md",
+      "bytes": 2102,
+      "sha256": "983f189d4b21800bfd5b234088465e06d01eed55bbb2fa3d219483cc68530bd5"
+    },
+    {
+      "path": "docs/aos-v2/evidence/baseline_inventory.json.gz",
+      "bytes": 342168,
+      "sha256": "c96a322a9458cc0684718caef5c7ca206a4fd48efbbaad7008eb92202da98d42"
+    },
+    {
+      "path": "docs/aos-v2/evidence/coverage.json",
+      "bytes": 3231,
+      "sha256": "37b74a670a4312fd537b75a2c1fb7d66c81898f844abc470b1569171830b7f31"
+    },
+    {
+      "path": "docs/aos-v2/evidence/discriminating_probe.json",
+      "bytes": 388,
+      "sha256": "5482df5e1187826d5704d800eb87aaa5a21d2d078f781ff9b1f6e7f739fbd4e3"
+    },
+    {
+      "path": "docs/aos-v2/evidence/execution_environment.json",
+      "bytes": 379,
+      "sha256": "93b9b53993d56558615bd2c26c87011a316b0c155af2146793b07fca72c73068"
+    },
+    {
+      "path": "docs/aos-v2/evidence/failed_nodes_environment_retest.txt",
+      "bytes": 142,
+      "sha256": "b590af2c2d68cb2b0c023e2252cc75081c160b40dd00a1d20b0f58fa247b1aba"
+    },
+    {
+      "path": "docs/aos-v2/evidence/first_full_suite_failure.txt.gz",
+      "bytes": 12154,
+      "sha256": "741b2f41063af8b6529b7de58d07d326fa4696a34f35a0e6179eafe3aba70040"
+    },
+    {
+      "path": "docs/aos-v2/evidence/first_full_suite_failure_manifest.json",
+      "bytes": 564,
+      "sha256": "f44a2a5d6cc42f745d58ff9d02e798df4e44727136f9277ed1df3bdd31d5ba7d"
+    },
+    {
+      "path": "docs/aos-v2/evidence/import_edges.json",
+      "bytes": 163988,
+      "sha256": "282681cea8b0e53537407e206158a7bb80474c4905aa64c7a8e98c484cb3c5c0"
+    },
+    {
+      "path": "docs/aos-v2/evidence/module_inventory.csv",
+      "bytes": 286250,
+      "sha256": "37984f5a719fb06e18af733fee1b63a04077966e74b983355ac4f461e057ad1c"
+    },
+    {
+      "path": "docs/aos-v2/evidence/owner_continuation_20261019.json",
+      "bytes": 925,
+      "sha256": "96669af199a1fc1380f68f4a83a03bb147f104c51f0cc7390d2de03f5a24ad57"
+    },
+    {
+      "path": "docs/aos-v2/evidence/publication_attempts.json",
+      "bytes": 1761,
+      "sha256": "91fb97cf58f65443f5a7580055897295c4ff34ed75412bb5120fd3473380d921"
+    },
+    {
+      "path": "docs/aos-v2/evidence/publication_consent.json",
+      "bytes": 1103,
+      "sha256": "300d3a75b785dcc04a2e1fcad79ef5174be569d3c75ba165056f1ef6241390f7"
+    },
+    {
+      "path": "docs/aos-v2/evidence/remote_observations.json",
+      "bytes": 997,
+      "sha256": "827bb9b69973b59d768874c4725df341a457579cca193c469120520ac73c3137"
+    },
+    {
+      "path": "docs/aos-v2/evidence/source_ci_20261019.json",
+      "bytes": 2902,
+      "sha256": "c223f4d9d5e13a8820199feb853f0be275bc0db6ace7659964807e8dc0f97ae2"
+    },
+    {
+      "path": "docs/aos-v2/evidence/source_import_20261019.json",
+      "bytes": 601,
+      "sha256": "9e2990688bb51bb0bb578d26ee66ee8d9853417db6472f4c8d582487e1931f4d"
+    },
+    {
+      "path": "docs/aos-v2/evidence/support_archive_receipt.json",
+      "bytes": 5174,
+      "sha256": "540729065e3981d34fe9128e039d8108233b25d267545e4b1e49271c4ad5df34"
+    },
+    {
+      "path": "docs/aos-v2/evidence/tool_selfcheck.json",
+      "bytes": 875,
+      "sha256": "13dc9bcc4e0647fde24e05763a02bc0f86236865f974699849ee1a735d77a40b"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_clean_venv_verify_20261019.txt",
+      "bytes": 99,
+      "sha256": "0aef320ddb81a0b004bca24a4e651461989c02b8bc001575546af2e1add0229c"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_review_20261019.json",
+      "bytes": 1611,
+      "sha256": "94245009a17201dc4413f42697fd7845f6ed9ff10c265a7405c30439407f5cfd"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_scope_corrected_20261019.txt",
+      "bytes": 99,
+      "sha256": "50792d54d601979b675d2e2946ea33ebb6a06e8f1108819c7b4015377b1c835b"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_scope_first_failure_20261019.txt",
+      "bytes": 3421,
+      "sha256": "3f75b7ec1d897e5a9e6cac5dda227e7d5a0370b3462ce40eb08d6b3ec4a72e13"
+    },
+    {
+      "path": "docs/aos-v2/inputs/INPUT_MANIFEST.json",
+      "bytes": 774,
+      "sha256": "78637e8c7cf521658af8d6831efbd530c7c78fa15326f47d688beb97e2d84fb3"
+    },
+    {
+      "path": "docs/aos-v2/inputs/MASTER_DIRECTIVE_20261018.md",
+      "bytes": 36395,
+      "sha256": "a2f39b01870cf4fd28c255a1cfb0866ad5c82762eeaac16834635bb5849330af"
+    },
+    {
+      "path": "docs/aos-v2/inputs/MASTER_DIRECTIVE_20261018.md.gz",
+      "bytes": 15620,
+      "sha256": "47a0027be24a56d7d0b47987d99264adf6309d629b8f10b3d36d5e178b6da180"
+    },
+    {
+      "path": "docs/aos-v2/tools/discriminating_probe.py",
+      "bytes": 2432,
+      "sha256": "e406e44d2fe34d17629896f53541f433229a30f26c92ab1a0a2f8ddfac56034d"
+    },
+    {
+      "path": "docs/aos-v2/tools/static_inventory.py",
+      "bytes": 4558,
+      "sha256": "e0d0fe0e7d9e0f90fafcf578e02cb8b2bd61bd722f0b9b8ffbae5c54a4257bf2"
+    },
+    {
+      "path": "docs/project-control/DECISIONS.md",
+      "bytes": 13988,
+      "sha256": "d0a0adc0d10bf758037a1e16fa60699548bb11cb3984b050756ed42c1b321427"
+    },
+    {
+      "path": "docs/project-control/EVIDENCE.jsonl",
+      "bytes": 206375,
+      "sha256": "69c289a4292b649cfe854c840f71514a8302597e6dc898094d04a44c8dfae8d9"
+    },
+    {
+      "path": "docs/project-control/STATE.json",
+      "bytes": 68025,
+      "sha256": "940e32fdbfabaea7adf2c7657f3806a2aae7d89245cd8342f87fba0991439c38"
+    },
+    {
+      "path": "scripts/aos_v2_evaluator.py",
+      "bytes": 8913,
+      "sha256": "ba8b3a72961ce20e6d79a333e60d3d8601fe9d73f5d6a09922ae167586a01876"
+    },
+    {
+      "path": "src/aos/v2/__init__.py",
+      "bytes": 80,
+      "sha256": "07e4add4742051cb9e7bfb56a585cb80edd3ac2ffcba91d97707c51c86da3298"
+    },
+    {
+      "path": "src/aos/v2/lifecycle.py",
+      "bytes": 17387,
+      "sha256": "212e51ced60811651c1f6c28820fc0ffaadb3e2c259734732d33b96da5f73706"
+    },
+    {
+      "path": "tests/test_aos_v2_lifecycle.py",
+      "bytes": 8539,
+      "sha256": "11ad84803e0cff5ce3e50c582390e9ecf6fa807a26aa466f48f8ff2e4c6bf8bf"
+    }
+  ]
+}

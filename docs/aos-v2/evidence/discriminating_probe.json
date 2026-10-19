@@ -1,0 +1,15 @@
+{
+  "classification": "ISOLATED_REAL_STORAGE_PROBE_NOT_MODEL_E2E",
+  "source_sha": "9d3168afb35edf5ad06e6b5e419801493fe04572",
+  "terminal_state": "PROJECT_COMPLETE",
+  "admission_after_terminal_writes": "ACTIVE",
+  "child_exit_code": 73,
+  "event_sequences": [
+    1,
+    2,
+    2
+  ],
+  "duplicate_event_sequence": true,
+  "protected_windows_host": "NOT_ACCESSED",
+  "model_calls": 0
+}

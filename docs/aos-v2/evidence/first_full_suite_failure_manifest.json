@@ -1,0 +1,9 @@
+{
+  "original_sha256": "1b59893c3912afa42d607f30c2491366a887c7581ced3b89a66b3b15d3c8d81f",
+  "stored_sanitized_sha256": "1b59893c3912afa42d607f30c2491366a887c7581ced3b89a66b3b15d3c8d81f",
+  "sanitizer": "Bearer tokens, URL userinfo, key-like prefixes redacted; no test result rewritten",
+  "first_run_result": "12 failed,1619 passed,11 skipped,26 deselected in600.15s",
+  "source_sha": "59bba904e32caa3fdd7335f33537529d9d3561ff",
+  "stored_artifact": "first_full_suite_failure.txt.gz",
+  "compression": "gzip; digest above applies to decompressed sanitized log"
+}

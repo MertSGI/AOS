@@ -1,0 +1,14 @@
+{
+  "classification": "HOST_OBSERVED_CURRENT_LINUX_CONTAINER_ONLY",
+  "python": "3.12.14",
+  "free_provider_credentials_present": {
+    "NVIDIA_API_KEY": false,
+    "GEMINI_API_KEY": false,
+    "GROQ_API_KEY": false,
+    "CLOUDFLARE_API_TOKEN": false,
+    "OPENROUTER_API_KEY": false
+  },
+  "windows_host_connected": false,
+  "model_calls": 0,
+  "actual_e2e_attempt": "NOT_RUN"
+}

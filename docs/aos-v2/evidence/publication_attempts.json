@@ -1,0 +1,36 @@
+{
+  "receipt_id": "AOS-PUBLICATION-TECHNICAL-20261018-01",
+  "recorded_at": "2026-10-18T20:58:41.146584+00:00",
+  "authority_receipt": "AOS-OWNER-PUBLIC-20261018-01",
+  "owner_consent": "GRANTED_PUBLIC_FEATURE_BRANCH_PAYLOAD",
+  "attempted_head": "82396498fbb35b3cb57238dbbd2f4ae343e93186",
+  "repo": "MertSGI/AOS",
+  "branch": "feature/aos-v2-thin-lifecycle-20261018",
+  "attempts": [
+    {
+      "method": "normal git push --set-upstream origin feature/aos-v2-thin-lifecycle-20261018",
+      "exit_code": 128,
+      "observed_error": "fatal: could not read Username for 'https://github.com': No such device or address",
+      "classification": "NO_AUTHENTICATED_HTTPS_WRITER"
+    },
+    {
+      "method": "connected GitHub create_blob, first approved source file scripts/aos_v2_evaluator.py",
+      "http_status": 403,
+      "observed_error": "Resource not accessible by integration",
+      "classification": "GITHUB_INTEGRATION_WRITE_FORBIDDEN",
+      "uploaded_blobs": 0
+    }
+  ],
+  "verification": {
+    "main_sha": "9d3168afb35edf5ad06e6b5e419801493fe04572",
+    "candidate_branch": "404_NOT_FOUND",
+    "attempted_head_actions_runs": 0
+  },
+  "configuration_inspection": "Installed GitHub connection exists. Plugin-management controls ChatGPT approval preferences, not GitHub OAuth/App contents-write scope; no settings changed. No other GitHub skill/auth bridge found.",
+  "remote_mutations_observed": 0,
+  "commit_metadata_reconstruction_attempted": false,
+  "paid_calls": 0,
+  "protected_host_access": false,
+  "status": "TECHNICAL_WRITE_BLOCKED_OWNER_APPROVED",
+  "next": "Use a properly authenticated existing Git writer to normal-push the exact verified bundle branch; then observe exact-SHA CI. Do not request public-disclosure consent again."
+}

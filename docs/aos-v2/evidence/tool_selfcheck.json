@@ -1,0 +1,30 @@
+{
+  "static_inventory_reproduction": {
+    "base_sha": "9d3168afb35edf5ad06e6b5e419801493fe04572",
+    "inventory_match": true,
+    "coverage_match": true,
+    "tracked_files": 504,
+    "AST_files": 296
+  },
+  "evaluator_preparation": {
+    "initial_discount_test_exit": 1,
+    "initial_tax_test_exit": 1,
+    "source_fixes_written": 0,
+    "snapshot_compare": "PRESERVATION_MATCH",
+    "classification": "ISOLATED_REAL_FIXTURE_PREPARATION_NOT_MODEL_E2E"
+  },
+  "local_browser_download": {
+    "status": "BLOCKED_EXTERNAL_DOWNLOAD_FAILURE",
+    "browsers_available": false
+  },
+  "limitations": [
+    "No Windows host state was observed",
+    "Source review sampling is not exhaustive semantic review"
+  ],
+  "inspector_negative": {
+    "state": "QUEUED",
+    "accepted_task_count": 0,
+    "executable_e2e": "NOT_DECIDED_BY_THIS_TOOL",
+    "no_false_e2e_verdict": true
+  }
+}

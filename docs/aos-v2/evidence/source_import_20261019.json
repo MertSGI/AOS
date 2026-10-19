@@ -1,0 +1,16 @@
+{
+  "proof_class": "REMOTE_VERIFIED_SOURCE_BYTES",
+  "source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "source_tree": "3c2b658268150e75dd1723f8be2e26961a6248fd",
+  "preserved_local_source_and_review_sha": "d4a70879364c1b4152b6224f06ad5af1b56ca867",
+  "exact_changed_paths": [
+    "scripts/aos_v2_evaluator.py",
+    "src/aos/v2/__init__.py",
+    "src/aos/v2/lifecycle.py",
+    "tests/test_aos_v2_lifecycle.py"
+  ],
+  "byte_match": true,
+  "main_mutated": false,
+  "original_chain_rewritten": false,
+  "remote_history": "New GitHub web commits; source bytes are equal, SHA metadata differs"
+}

@@ -1,0 +1,5882 @@
+[
+  {
+    "caller": "benchmarks/autonomy-fabric/multi_run_benchmark.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/multi_run_benchmark.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/multi_run_benchmark.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/multi_run_benchmark.py",
+    "callee": "extensions/autonomy-fabric/evidence_aggregator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/native_vs_ag_benchmark.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/native_vs_ag_benchmark.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/native_vs_ag_benchmark.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/native_vs_ag_benchmark.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/autonomy-fabric/native_vs_ag_benchmark.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/design-intelligence/design_benchmark.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/design-intelligence/design_benchmark.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "benchmarks/design-intelligence/design_benchmark.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "docs/proofs/aos4_ref_001_attempt6_candidate_snapshot/src/aos/verification.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "docs/proofs/aos4_ref_001_attempt6_candidate_snapshot/tests/test_verification.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "docs/proofs/aos4_ref_001_attempt6_candidate_snapshot/tests/test_verification.py",
+    "callee": "src/aos/verification.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "src/aos/agentic_resume.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "src/aos/context_pack.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "src/aos/agentic_resume.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "src/aos/context_pack.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "src/aos/workers/cline_cli_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "src/aos/agentic_resume.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "src/aos/context_pack.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "src/aos/workers/codex_cli_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/completion_supervisor.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/completion_supervisor.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/evidence_aggregator.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/execution_router.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/execution_router.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/execution_router.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "callee": "src/aos/workers/llama_cpp_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/model_native_backend.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/autonomy-fabric/exact_edit_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/design-intelligence/browser_capture.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/autonomy-fabric/patch_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/native_workers.py",
+    "callee": "extensions/autonomy-fabric/patch_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/evidence_aggregator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/completion_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "src/aos/context_pack.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "callee": "src/aos/integrity_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/remote_source_evidence.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "callee": "src/aos/resource_snapshot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/supervisor.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/supervisor.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/supervisor.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/task_dag.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_agentic_planning_bridge.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_agentic_planning_bridge.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_adapter.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_adapter.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_antigravity_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_authority_router.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_cline_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_cline_agentic_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_cline_agentic_backend.py",
+    "callee": "src/aos/workers/cline_cli_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_codex_cli_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_completion_supervisor.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_completion_supervisor.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_completion_supervisor.py",
+    "callee": "extensions/autonomy-fabric/completion_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_controller_acceptance_proofs.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_durable_restart_recovery.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_durable_restart_recovery.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_durable_restart_recovery.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_evidence_aggregator.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_evidence_aggregator.py",
+    "callee": "extensions/autonomy-fabric/evidence_aggregator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_execution_router.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_execution_router.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_execution_router.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_execution_router.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_execution_router.py",
+    "callee": "extensions/autonomy-fabric/authority_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_llama_cpp_reasoning_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_llama_cpp_reasoning_backend.py",
+    "callee": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_llama_cpp_reasoning_backend.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_llama_cpp_reasoning_backend.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_native_workers.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_native_workers.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_native_workers.py",
+    "callee": "extensions/autonomy-fabric/exact_edit_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_persistent_coordinator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_r9_live_supervision_proof.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_r9_live_supervision_proof.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_r9_live_supervision_proof.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_resource_orchestrator.py",
+    "callee": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_run_registry.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_supervisor.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_task_dag.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_task_dag.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_worker_registry.py",
+    "callee": "extensions/autonomy-fabric/worker_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/evidence_aggregator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/autonomy_metrics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/tests/test_zero_ag_pilot.py",
+    "callee": "extensions/autonomy-fabric/supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/autonomy-fabric/verify_core_freeze.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/browser_capture.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/browser_capture.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/browser_capture.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/browser_capture.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/critics.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_dna.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/reference_intelligence.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/design_dna.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/taste_memory.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/design_loop.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/media_intelligence.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/media_renderer.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/media_renderer.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/reference_intelligence.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/taste_memory.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_contracts.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_critics.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_critics.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_design_dna.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_design_dna.py",
+    "callee": "extensions/design-intelligence/design_dna.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_design_loop.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_design_loop.py",
+    "callee": "extensions/design-intelligence/design_loop.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_json_schemas.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/browser_capture.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/visual_provider.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/media_intelligence.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/media_renderer.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/reference_intelligence.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/design_loop.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_production_capability.py",
+    "callee": "extensions/design-intelligence/media_renderer.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_reference_intelligence.py",
+    "callee": "extensions/design-intelligence/reference_intelligence.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_taste_memory.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_taste_memory.py",
+    "callee": "extensions/design-intelligence/taste_memory.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_tool_primitives.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_tool_primitives.py",
+    "callee": "extensions/design-intelligence/tool_primitives.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/reference_intelligence.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/design_loop.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_v1_1_grounding_and_visual_review.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tests/test_visual_qa.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/tool_primitives.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/visual_provider.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/visual_provider.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/design-intelligence/visual_qa.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/__init__.py",
+    "callee": "extensions/model-fabric/specialist_fabric.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/__init__.py",
+    "callee": "extensions/model-fabric/mcp_service.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/mcp_cli.py",
+    "callee": "extensions/model-fabric/mcp_service.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/mcp_service.py",
+    "callee": "extensions/model-fabric/specialist_fabric.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/nemotron_benchmark.py",
+    "callee": "extensions/model-fabric/specialist_fabric.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "extensions/model-fabric/specialist_fabric.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "materialize_slot.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "materialize_slot.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "materialize_slot.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "materialize_slot.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "materialize_slot.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/action_center.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/action_center.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/action_center.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/action_center.py",
+    "callee": "src/aos/recovery_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/action_center.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/agentic_resume.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/resource_snapshot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/freellmapi_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/provider_adequacy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/providers/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/integrity_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/workers/llama_cpp_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/autonomous_host.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/providers/groq.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/providers/ollama.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/benchmark.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/candidate_store.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/candidate_store.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/canonical_reconciler.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/local_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/runtime_panel_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/action_center.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/source_repair_factory.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/workers/llama_cpp_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/control_panel.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/git_workspace.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/scope_guard.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/verification_workspace.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controlled_execution.py",
+    "callee": "src/aos/workers/base.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/integrity_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/lineage_truth.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/controller_relay.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_live_proof.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_live_proof.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_live_proof.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_live_proof.py",
+    "callee": "src/aos/coordination_postgres.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_postgres.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/coordination_sqlite.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/cross_lane_coordinator.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/cross_lane_coordinator.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/current_truth.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/current_truth.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/current_truth.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/current_truth.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/execution_authority.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/execution_authority.py",
+    "callee": "src/aos/human_gate_policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/execution_preflight.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/execution_preflight.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/execution_preflight.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/freellmapi_lifecycle.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/freellmapi_lifecycle.py",
+    "callee": "src/aos/providers/freellmapi_local.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/freellmapi_lifecycle.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/git_workspace.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/human_gate_policy.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/integrity_reconciler.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/intent_compiler.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/intent_compiler.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/jev_decision_advisor.py",
+    "callee": "src/aos/decision_advisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/jev_decision_advisor.py",
+    "callee": "src/aos/decision_policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/jev_decision_advisor.py",
+    "callee": "src/aos/decision_transport.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/jev_decision_advisor.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__init__.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__init__.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__init__.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__init__.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/audit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/bootstrap.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/context.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/ingress.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/materialize.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/mirror.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/__main__.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/accepted_work.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/accepted_work.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/audit.py",
+    "callee": "src/aos/knowledge/context.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/audit.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/audit.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/audit.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/bootstrap.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/bootstrap.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/bootstrap.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/context.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/context.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/context.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/hooks.py",
+    "callee": "src/aos/knowledge/context.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/hooks.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/hooks.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/hooks.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/hooks.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/index.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/index.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/index.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ingress.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ingress.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ingress.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ingress.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ledger.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ledger.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/ledger.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/materialize.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/materialize.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/materialize.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/mirror.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/mirror.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/mirror.py",
+    "callee": "src/aos/knowledge/materialize.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/mirror.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/mirror.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/receipts.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/runtime_transitions.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/runtime_transitions.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/knowledge/runtime_transitions.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/live_proof.py",
+    "callee": "src/aos/benchmark.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/live_proof.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/live_proof.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/live_proof.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/local_host.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/local_host.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/local_host.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planner.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/intent_compiler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/exact_edit_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/patch_engine.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/design_loop.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/browser_capture.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/design_loop.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/browser_capture.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/critics.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "src/aos/integrity_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/visual_provider.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/planning_kernel.py",
+    "callee": "extensions/design-intelligence/visual_provider.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/knowledge/audit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/platform_recovery.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/policy.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provenance.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_adequacy.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_adequacy.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_adequacy.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_circuit.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_circuit.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_circuit.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_probe.py",
+    "callee": "src/aos/providers/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_probe.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_probe.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_probe.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_probe.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_registry.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/provider_registry.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/groq.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/ollama.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/openai_compatible.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/__init__.py",
+    "callee": "src/aos/providers/freellmapi_local.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/freellmapi_local.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/freellmapi_local.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/freellmapi_local.py",
+    "callee": "src/aos/providers/openai_compatible.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/freellmapi_local.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/gemini.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/gemini.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/gemini.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/groq.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/groq.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/groq.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/nemotron.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/nemotron.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/nemotron.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/ollama.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/ollama.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/ollama.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/openai_compatible.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/openai_compatible.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/providers/openai_compatible.py",
+    "callee": "src/aos/providers/schema_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/quota_governor.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/quota_governor.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/quota_governor.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/recovery_proof.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/recovery_proof.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/resource_ledger.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/resource_ledger.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/resource_snapshot.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/resource_snapshot.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/resource_snapshot.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_admission.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_admission.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_cli.py",
+    "callee": "src/aos/runtime_client.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_client.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_contract.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_deploy.py",
+    "callee": "src/aos/runtime_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_maintenance.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_maintenance.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_panel_bridge.py",
+    "callee": "src/aos/runtime_client.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/provider_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_worker.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/recovery_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/source_repair_factory.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/current_truth.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/workers/llama_cpp_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_server.py",
+    "callee": "src/aos/workers/llama_cpp_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_slots.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_store.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_store.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_supervisor.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/canonical_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/runtime_worker.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_diagnosis.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_diagnosis.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_diagnosis.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_diagnosis.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_repair.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_repair.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/self_repair.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/providers/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/shadow.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_adapter.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "src/aos/source_repair_pipeline.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_factory.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_pipeline.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_pipeline.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_pipeline.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/source_repair_pipeline.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/verification.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/verification_workspace.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/verification_workspace.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/__init__.py",
+    "callee": "src/aos/workers/base.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/__init__.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity.py",
+    "callee": "src/aos/workers/base.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity_probe.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity_probe.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/antigravity_probe.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/cline_cli_probe.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/cline_cli_probe.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/codex_cli_probe.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/codex_cli_probe.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/codex_cli_probe.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_lifecycle.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_lifecycle.py",
+    "callee": "src/aos/workers/llama_cpp_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_lifecycle.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_lifecycle.py",
+    "callee": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_probe.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_probe.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workers/llama_cpp_probe.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "src/aos/workspace_fingerprint.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_canary.py",
+    "callee": "src/aos/intent_compiler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_canary.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_canary.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_canary.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_canary.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_continuation_canary.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_continuation_canary.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/run_autonomous_continuation_canary.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_action_center.py",
+    "callee": "src/aos/action_center.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_action_center.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_action_center.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_action_center.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_action_center.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_agentic_execution_contract.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/controlled_execution.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/git_workspace.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/workers/antigravity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/workers/antigravity_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_antigravity_capability.py",
+    "callee": "src/aos/workers/base.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_aos2.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_aos2.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_aos2.py",
+    "callee": "src/aos/policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_aos2.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_aos2.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/canonical_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_astra_p1_closure.py",
+    "callee": "src/aos/knowledge/ingress.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_cli_credentials.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "src/aos/intent_compiler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/persistent_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/task_dag.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_continuation.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_host.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/recovery_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/resource_snapshot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/source_repair_pipeline.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_autonomous_recovery_director.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/runtime_client.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b3_isolated_canary.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/codex_cli_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_b9_resource_orchestration.py",
+    "callee": "src/aos/runtime_panel_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "extensions/design-intelligence/browser_capture.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_acceptance_matrix.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_browser_verification_pipeline.py",
+    "callee": "extensions/design-intelligence/contracts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/controlled_execution.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_candidate_store.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_lane_scope_enforcement.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_lane_scope_enforcement.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_lane_scope_enforcement.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/canonical_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/knowledge/ingress.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_canonical_reconciler.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_cockpit_lane_truth.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_cockpit_lane_truth.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_cockpit_lane_truth.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_cockpit_lane_truth.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_codex_cli_capability.py",
+    "callee": "src/aos/workers/codex_cli_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_codex_workspace_fingerprint.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_codex_workspace_fingerprint.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_codex_workspace_fingerprint.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_codex_workspace_fingerprint.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_compact_intent_compiler.py",
+    "callee": "src/aos/intent_compiler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_compact_intent_compiler.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_concurrent_multi_lane.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_concurrent_multi_lane.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_concurrent_multi_lane.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_context_pack.py",
+    "callee": "src/aos/context_pack.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_context_pack.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_context_pack.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_control_panel.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/controlled_execution.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/git_workspace.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/scope_guard.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/workers/base.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controlled_execution.py",
+    "callee": "src/aos/controlled_execution.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controller_relay.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controller_relay.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controller_relay.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controller_relay.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_controller_relay.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_live_proof.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_live_proof.py",
+    "callee": "src/aos/coordination_live_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_live_proof.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_postgres.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_postgres.py",
+    "callee": "src/aos/coordination_postgres.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_postgres.py",
+    "callee": "src/aos/coordination_postgres.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_sqlite.py",
+    "callee": "src/aos/coordination.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_sqlite.py",
+    "callee": "src/aos/coordination_sqlite.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_coordination_sqlite.py",
+    "callee": "src/aos/coordination_sqlite.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_current_truth.py",
+    "callee": "src/aos/current_truth.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_current_truth.py",
+    "callee": "src/aos/current_truth.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_current_truth.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_decision_policy_schema.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_deliberation_council.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_deliberation_council.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/delivery_state.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/acceptance_receipt.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/runtime_worker.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/canonical_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_delivery_closure.py",
+    "callee": "src/aos/cross_lane_coordinator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "src/aos/action_center.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "src/aos/integrity_reconciler.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "src/aos/recovery_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_e2e_architecture_certification.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_authority.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_authority.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_authority.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_preflight.py",
+    "callee": "src/aos/execution_preflight.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_preflight.py",
+    "callee": "src/aos/controlled_execution.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_execution_preflight.py",
+    "callee": "src/aos/execution_preflight.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_extensions_import.py",
+    "callee": "extensions/autonomy-fabric/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_extensions_import.py",
+    "callee": "extensions/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_extensions_import.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_extensions_import.py",
+    "callee": "extensions/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_lifecycle.py",
+    "callee": "src/aos/freellmapi_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_lifecycle.py",
+    "callee": "src/aos/providers/freellmapi_local.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/providers/freellmapi_local.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_freellmapi_local.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_goal_mode.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_goal_mode.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_goal_mode.py",
+    "callee": "src/aos/local_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_headless_execution.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_headless_execution.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_headless_execution.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/human_gate_policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/execution_authority.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_human_gate_policy.py",
+    "callee": "src/aos/workers/antigravity_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_jev_decision_advisor.py",
+    "callee": "src/aos/decision_advisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_jev_decision_advisor.py",
+    "callee": "src/aos/decision_policy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_jev_decision_advisor.py",
+    "callee": "src/aos/jev_decision_advisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_jev_decision_advisor.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/ingress.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/__main__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_kcp_enforcement.py",
+    "callee": "src/aos/self_repair.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/audit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/bootstrap.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/context.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/materialize.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/mirror.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_knowledge_continuity.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/live_proof.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_live_proof.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_llama_cpp_capability.py",
+    "callee": "src/aos/workers/llama_cpp_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_llama_cpp_lifecycle.py",
+    "callee": "src/aos/workers/llama_cpp_lifecycle.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_llama_cpp_lifecycle.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_llama_cpp_lifecycle.py",
+    "callee": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_local_host.py",
+    "callee": "src/aos/local_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_local_host.py",
+    "callee": "src/aos/local_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_local_host.py",
+    "callee": "src/aos/local_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_materialize_slot.py",
+    "callee": "materialize_slot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_materialize_slot.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_mcp_protocol.py",
+    "callee": "extensions/model-fabric/mcp_service.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_mcp_protocol.py",
+    "callee": "extensions/model-fabric/specialist_fabric.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_model_native_backend.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_model_native_backend.py",
+    "callee": "extensions/autonomy-fabric/model_native_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_model_native_backend.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "extensions/model-fabric/specialist_fabric.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "extensions/model-fabric/mcp_service.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/providers/nemotron.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_nemotron_fabric.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_plan_schema_envelope_repair.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/read_identity.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/design_render_entry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "extensions/design-intelligence/visual_qa.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_planning_kernel.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_process_job_windows.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provenance.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provenance.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provenance.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_circuit.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_continuity.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_continuity.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_continuity.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_continuity.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/providers/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_fabric_v2.py",
+    "callee": "src/aos/providers/council.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/control_panel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/provider_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/providers/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_worker.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_hotfix.py",
+    "callee": "src/aos/runtime_worker.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_observation.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/provider_probe.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/providers/ollama.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/providers/openai_compatible.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_provider_reliability_audit.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/groq.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/ollama.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/shadow.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/benchmark.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/providers/gemini.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_providers.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_quota_governor.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_ledger.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_ledger.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_ledger.py",
+    "callee": "src/aos/resource_ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_ledger.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_continuity_e2e.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_continuity_e2e.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/provider_adequacy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/provider_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/quota_governor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/antigravity_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/antigravity_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/run_registry.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/provider_observation.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/autonomous_host.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/llama_cpp_reasoning_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_resource_os_convergence_r2.py",
+    "callee": "src/aos/planner.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_assets.py",
+    "callee": "src/aos/runtime_assets.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_contract.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "materialize_slot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_deploy.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_health_identity.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_panel_bridge.py",
+    "callee": "src/aos/runtime_panel_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_worker.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_pause_safe.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/provider_circuit.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_provider_source_resilience_20260922.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_readonly_discovery.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery_r2.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery_r2.py",
+    "callee": "src/aos/process_utils.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery_r2.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_recovery_r2.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_server.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_server.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_server.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_slots.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_slots.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_slots.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_slots.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_store.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_store.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_store.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_supervisor_identity.py",
+    "callee": "src/aos/runtime_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_supervisor_identity.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_supervisor_identity.py",
+    "callee": "src/aos/runtime_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_supervisor_singleton.py",
+    "callee": "src/aos/runtime_supervisor.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/index.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/ledger.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/materialize.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/knowledge/runtime_transitions.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/runtime_deploy.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/runtime_slots.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_transition_ordering.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_canonical_repair.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_canonical_repair.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_canonical_repair.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_failure.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_failure.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_failure.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/__init__.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/knowledge/accepted_work.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/knowledge/model.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_runtime_worker_kcp_receipt.py",
+    "callee": "src/aos/runtime_maintenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_schemas.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_secure_store.py",
+    "callee": "src/aos/secure_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_self_diagnosis.py",
+    "callee": "src/aos/controller_relay.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_self_diagnosis.py",
+    "callee": "src/aos/provenance.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_self_diagnosis.py",
+    "callee": "src/aos/self_diagnosis.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_adapter_transport.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_adapter_transport.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_adapter_transport.py",
+    "callee": "src/aos/source_adapter.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_grounded_planner_repair.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_grounded_planner_repair.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_grounded_planner_repair.py",
+    "callee": "extensions/autonomy-fabric/native_workers.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_grounded_planner_repair.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_repair_factory.py",
+    "callee": "src/aos/source_repair_factory.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_repair_factory.py",
+    "callee": "src/aos/knowledge/hooks.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_repair_factory.py",
+    "callee": "src/aos/knowledge/receipts.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_source_repair_factory.py",
+    "callee": "src/aos/platform_recovery.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/planning_kernel.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/runtime_admission.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/runtime_contract.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/runtime_server.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/runtime_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/resource_snapshot.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "src/aos/workspace_fingerprint.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "extensions/autonomy-fabric/agentic_planning_bridge.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "extensions/autonomy-fabric/cline_agentic_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "extensions/autonomy-fabric/execution_backend.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "extensions/autonomy-fabric/execution_router.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_throughput_recovery_r1.py",
+    "callee": "extensions/autonomy-fabric/resource_orchestrator.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_verification.py",
+    "callee": "src/aos/validate.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_verification.py",
+    "callee": "src/aos/verification.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_verification_workspace.py",
+    "callee": "src/aos/candidate_store.py",
+    "kind": "STATIC_IMPORT"
+  },
+  {
+    "caller": "tests/test_verification_workspace.py",
+    "callee": "src/aos/verification_workspace.py",
+    "kind": "STATIC_IMPORT"
+  }
+]

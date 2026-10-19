@@ -1,0 +1,38 @@
+{
+  "receipt_id": "AOS-WP1-REVIEW-20261019-01",
+  "observed_at": "2026-10-19T05:35:45.772015+00:00",
+  "source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "local_review_sha": "d4a70879364c1b4152b6224f06ad5af1b56ca867",
+  "first_failure": "4 failed,10 deselected in0.07s",
+  "root_cause": "Trusted scope lacked portable case-insensitive Git/Windows alias and existing hard-link denial",
+  "bounded_source_correction": 1,
+  "corrected_result": "14 passed in0.35s",
+  "clean_python312_venv_result": "14 passed in0.43s",
+  "evidence_classes": [
+    "SOURCE_INSPECTED",
+    "ISOLATED_REAL",
+    "SIMULATED_VERIFIER_CALLBACKS"
+  ],
+  "actual_model_calls": 0,
+  "windows_execution": "NOT_OBSERVED",
+  "real_e2e": "NOT_RUN",
+  "logs": [
+    {
+      "path": "docs/aos-v2/evidence/wp1_scope_first_failure_20261019.txt",
+      "sha256": "3f75b7ec1d897e5a9e6cac5dda227e7d5a0370b3462ce40eb08d6b3ec4a72e13"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_scope_corrected_20261019.txt",
+      "sha256": "50792d54d601979b675d2e2946ea33ebb6a06e8f1108819c7b4015377b1c835b"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp1_clean_venv_verify_20261019.txt",
+      "sha256": "0aef320ddb81a0b004bca24a4e651461989c02b8bc001575546af2e1add0229c"
+    }
+  ],
+  "limitations": [
+    "Portable path cases were exercised on Linux; Windows reparse/AppContainer enforcement requires its own actual boundary tests",
+    "The journal is internal source foundation; engine/API/gateway still not implemented",
+    "Source acceptance must inspect exact-source hosted CI; never transfer source tests into real task acceptance"
+  ]
+}

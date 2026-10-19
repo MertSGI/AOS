@@ -1,0 +1,141 @@
+{
+  "files": [
+    {
+      "path": "00_README_FIRST.txt",
+      "sha256": "ac8fb6bdd5219475b068cdce327b11d2d9bc1fb3a1c5ea643c4a761009949a27",
+      "bytes": 1184,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "01_MASTER_DIRECTIVE/AOS_ASTRA_MASTER_AUDIT_REPLAN_V2_ICRA_20261018.md",
+      "sha256": "b29c43245c9287c63bf3a39fe67271f02cfb6e76d9a2556e76b5c0a3cdb62cb1",
+      "bytes": 36403,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "02_CURRENT_EVIDENCE/aos_local_evidence_20261018_220303.json",
+      "sha256": "119059f6aabac160bfa7c2668d6438058d8bb83ccfa47b227df5c7a1bd5d0059",
+      "bytes": 80378,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "02_CURRENT_EVIDENCE/AOS_BAGIMSIZ_JSON_51_KOMUT_KANIT_RAPORU_20261018.md",
+      "sha256": "9d16658a87dc199d671ee371661e1effc0f4f6a389d1b831e4bcc37aeebd4202",
+      "bytes": 10338,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "02_CURRENT_EVIDENCE/AOS_TEK_KAYNAK_GERCEKLIK_DENETIMI_20261018.md",
+      "sha256": "004e17620752a1f7ded667d07a38542268447e7a29ad0d220dd04bbfa1d798aa",
+      "bytes": 13053,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "02_CURRENT_EVIDENCE/aos_bagimsiz_kanit_toplayici.py",
+      "sha256": "0c7e8db90d9084314cf39a31053d0690f7027e8edc5eb85f99c76be89ab011c8",
+      "bytes": 13621,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/Mimariyi yeniden hizalama.txt",
+      "sha256": "b7f9f9fd98e02f016350b9d4b2e89c31b1804df87f189dbde06d79ee84591303",
+      "bytes": 11937,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/AOS V.1.1.txt",
+      "sha256": "31980d3d8036594a953f33f21f3104591e3c7906913caa511943d3c20343e373",
+      "bytes": 18248,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "04_ACCEPTANCE_REPORTS/b5_acceptance_report.md",
+      "sha256": "34b5ba8821088e0bc242f1b7fcc5635a0caa1df986b6c55039a1d548f15fd201",
+      "bytes": 14785,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "04_ACCEPTANCE_REPORTS/b6_acceptance_report.md",
+      "sha256": "dca0e0c81a14092fff099d3ffeedbf2ae579aa9b7420231a1c74c09e46e982cc",
+      "bytes": 5514,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "04_ACCEPTANCE_REPORTS/b7_acceptance_report.md",
+      "sha256": "0fc52247731cb7e548166fece13cf9ed25a599d2380b8f71c63aeedfbcbf16b6",
+      "bytes": 9815,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "04_ACCEPTANCE_REPORTS/b8_acceptance_report.md",
+      "sha256": "202c9c5fc57f69e2cfffa7d513773e376afedc5738d0e3c705801dbf17e6e3e6",
+      "bytes": 6057,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "05_HANDOFF/AOS_LARI_PARALEL_DEVIR_CODEX_2026-10-17.md",
+      "sha256": "fc2e326d0ff244fee5d5484eb479deb580dda343a8f19703ad9b05d8d8b7f129",
+      "bytes": 24163,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/03_ACTUAL_WIRING_GRAPH.md",
+      "sha256": "153b826c6d68dea8a75d6572b867ca6d51e34d55a40669c0d018541fa110d564",
+      "bytes": 5373,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/04_RUNTIME_AND_RESOURCE_TRUTH.md",
+      "sha256": "3ecaf8f4db4365b34423a8211901316d66a14309bab8f63a92547f0796208500",
+      "bytes": 2963,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/06_E2E_EVIDENCE_AND_GAPS.md",
+      "sha256": "40caa7fd0d08640936dd9edeaa081f5e20c64fa6ce1446fbf9bfbc2b24418460",
+      "bytes": 3100,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/07_MINIMUM_VIABLE_AOS_RECOVERY.md",
+      "sha256": "439c4f97c66bbfa5c8e0bb8c98d6f37b49474b1d75f48719d6ec426c3563d22c",
+      "bytes": 2844,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/08_PRIORITY_REPAIRS.md",
+      "sha256": "f168c8162d76c6c03117358469c1814bca3efc3d2b9375838cdb184fbe951cb5",
+      "bytes": 2904,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    },
+    {
+      "path": "03_ARCHITECTURE_HISTORY/20261011_AUDIT/11_HANDOFF_FOR_CONTROLLER.md",
+      "sha256": "66cc14815e3dd17cf27ceaa9c4a4347c8c220ea1ff295d64ea49c3c24f01cf60",
+      "bytes": 2206,
+      "hash_match": true,
+      "evidence_class": "HISTORICAL_REPORTED"
+    }
+  ],
+  "matched": 19,
+  "total": 19,
+  "json_generated_at_utc": "2026-10-18T19:02:52.730201+00:00",
+  "not_live_windows_observation": true
+}

@@ -1,0 +1,47 @@
+{
+  "receipt_id": "AOS-SOURCE-CI-20261019-01",
+  "observed_at": "2026-10-19T05:48:19.755Z",
+  "proof_class": "REMOTE_VERIFIED",
+  "repo": "MertSGI/AOS",
+  "run_id": 39204426295,
+  "job_id": 117904058408,
+  "head_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "conclusion": "SUCCESS",
+  "url": "https://github.com/MertSGI/AOS/actions/runs/39204426295",
+  "verified_steps": [
+    "PostgreSQL connectivity",
+    "current-truth regression",
+    "KCP authority invariants",
+    "offline/non-Postgres suite",
+    "Postgres integration",
+    "full canonical suite",
+    "state/evidence validation"
+  ],
+  "offline_suite": "1635 passed,11 skipped,26 deselected in211.50s",
+  "postgres_suite": "25 passed,8 deselected in2.58s",
+  "full_canonical_suite": "1635 passed,11 skipped,26 deselected in207.33s",
+  "raw_log_summary_lines": [
+    "2026-10-19T05:25:19.6128059Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506:refs/remotes/origin/feature/aos-v2-thin-lifecycle-20261018",
+    "2026-10-19T05:25:20.3177616Z  * [new ref]         7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506 -> origin/feature/aos-v2-thin-lifecycle-20261018",
+    "2026-10-19T05:25:20.3851700Z 7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+    "2026-10-19T05:26:01.0063484Z \u001b[36;1m    print('PostgreSQL connectivity: PASS')\u001b[0m",
+    "2026-10-19T05:26:01.5360030Z PostgreSQL connectivity: PASS",
+    "2026-10-19T05:26:04.2089250Z ============================== 11 passed in 1.92s ==============================",
+    "2026-10-19T05:26:06.6208426Z ============================== 25 passed in 1.93s ==============================",
+    "2026-10-19T05:26:07.2222302Z ============================== 15 passed in 0.25s ==============================",
+    "2026-10-19T05:26:09.1283695Z ======================= 2 passed, 37 deselected in 1.58s =======================",
+    "2026-10-19T05:29:41.2931564Z ========= 1635 passed, 11 skipped, 26 deselected in 211.50s (0:03:31) ==========",
+    "2026-10-19T05:29:44.7717329Z ======================= 25 passed, 8 deselected in 2.58s =======================",
+    "2026-10-19T05:33:12.7007756Z ========= 1635 passed, 11 skipped, 26 deselected in 207.33s (0:03:27) ==========",
+    "2026-10-19T05:33:14.7807993Z PASS: docs/project-control/STATE.json is a valid state",
+    "2026-10-19T05:33:16.2367241Z PASS: docs/project-control/EVIDENCE.jsonl is a valid evidence"
+  ],
+  "acceptance_scope": "WP1 SOURCE_FOUNDATION_ONLY",
+  "executable_e2e": "NOT_RUN",
+  "actual_model_calls": 0,
+  "limitations": [
+    "Unit verifier callbacks are simulated; file/process tests use real isolated disk/processes",
+    "Ubuntu source CI does not attest Windows runtime, AppContainer, provider entitlement or actual task recovery",
+    "Final documentation carrier CI must be verified at its own exact head"
+  ]
+}

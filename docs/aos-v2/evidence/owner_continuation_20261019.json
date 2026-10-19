@@ -1,0 +1,18 @@
+{
+  "receipt_id": "AOS-OWNER-CONTINUE-20261019-01",
+  "recorded_at": "2026-10-19T05:35:45.772015+00:00",
+  "source": "Current owner message in this ChatGPT task",
+  "verbatim": "sen bu projeyi ve ci çalıştırmak için ne gerekiyorsa yap. plan eksiksiz olmalı senin yerine başkası düşünmemeli. işin bitince diğer sohbete kurallar ve kararını ileteceğiz. şuan bu zipi ben yüklemek istemiyorum. sen bütün işlemleri yap.",
+  "scope": "Continue isolated AOS source/control work and approved public feature-branch delivery/CI; do not delegate ZIP upload back to owner",
+  "prior_public_payload_approval": "AOS-OWNER-PUBLIC-20261018-01",
+  "method": "Signed-in owner GitHub web session; no credential values inspected or stored",
+  "not_granted": [
+    "MAIN_MERGE",
+    "REPOSITORY_VISIBILITY_CHANGE",
+    "PROTECTED_V1_51_MUTATION",
+    "LARI_EXECUTION",
+    "PAID_USAGE",
+    "PRODUCTION",
+    "STARTUP"
+  ]
+}

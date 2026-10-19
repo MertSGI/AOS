@@ -1,0 +1,69 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_____ test_grant_rejects_nonportable_or_git_alias_write_scope[.GIT/config] _____
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_grant_rejects_nonportable0')
+name = '.GIT/config'
+
+    @pytest.mark.parametrize("name", [".GIT/config", "src/NUL.py", "src/trailing."])
+    def test_grant_rejects_nonportable_or_git_alias_write_scope(tmp_path, name):
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+        grant = TrustedGrant("aos-disposable", "owner-grant", str(workspace), "a" * 40, (name,))
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_aos_v2_lifecycle.py:20: Failed
+_____ test_grant_rejects_nonportable_or_git_alias_write_scope[src/NUL.py] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_grant_rejects_nonportable1')
+name = 'src/NUL.py'
+
+    @pytest.mark.parametrize("name", [".GIT/config", "src/NUL.py", "src/trailing."])
+    def test_grant_rejects_nonportable_or_git_alias_write_scope(tmp_path, name):
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+        grant = TrustedGrant("aos-disposable", "owner-grant", str(workspace), "a" * 40, (name,))
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_aos_v2_lifecycle.py:20: Failed
+____ test_grant_rejects_nonportable_or_git_alias_write_scope[src/trailing.] ____
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_grant_rejects_nonportable2')
+name = 'src/trailing.'
+
+    @pytest.mark.parametrize("name", [".GIT/config", "src/NUL.py", "src/trailing."])
+    def test_grant_rejects_nonportable_or_git_alias_write_scope(tmp_path, name):
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+        grant = TrustedGrant("aos-disposable", "owner-grant", str(workspace), "a" * 40, (name,))
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_aos_v2_lifecycle.py:20: Failed
+_________________ test_grant_rejects_hardlink_to_outside_file __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_grant_rejects_hardlink_to0')
+
+    def test_grant_rejects_hardlink_to_outside_file(tmp_path):
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+        sentinel = tmp_path / "outside.py"
+        sentinel.write_text("outside sentinel\n")
+        os.link(sentinel, workspace / "one.py")
+        grant = TrustedGrant("aos-disposable", "owner-grant", str(workspace), "a" * 40, ("one.py",))
+>       with pytest.raises(ValueError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_aos_v2_lifecycle.py:31: Failed
+=========================== short test summary info ============================
+FAILED tests/test_aos_v2_lifecycle.py::test_grant_rejects_nonportable_or_git_alias_write_scope[.GIT/config]
+FAILED tests/test_aos_v2_lifecycle.py::test_grant_rejects_nonportable_or_git_alias_write_scope[src/NUL.py]
+FAILED tests/test_aos_v2_lifecycle.py::test_grant_rejects_nonportable_or_git_alias_write_scope[src/trailing.]
+FAILED tests/test_aos_v2_lifecycle.py::test_grant_rejects_hardlink_to_outside_file
+4 failed, 10 deselected in 0.07s
