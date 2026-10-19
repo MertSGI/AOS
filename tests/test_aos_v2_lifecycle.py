@@ -187,3 +187,93 @@ def test_symlink_scope_and_workspace_runtime_overlap_denied(prepared, tmp_path):
     inner_store = LifecycleStore(Path(grant.workspace) / "nested-runtime")
     with pytest.raises(ValueError):
         inner_store.admit("denied", "denied", "repair", ("correct",), grant)
+
+
+def test_schema_1_to_2_migration(tmp_path):
+    import sqlite3
+    home = tmp_path / "migration-test"
+    home.mkdir()
+    (home / ".aos-v2-home").write_text("AOS_V2_JOURNAL_1\n")
+    db_path = home / "journal.sqlite3"
+
+    # Create pure schema 1 database
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE commands(
+            id TEXT PRIMARY KEY, project TEXT NOT NULL, request_key TEXT NOT NULL,
+            binding TEXT NOT NULL, request TEXT NOT NULL, state TEXT NOT NULL,
+            admission TEXT NOT NULL, revision INTEGER NOT NULL, result TEXT,
+            UNIQUE(project, request_key));
+        CREATE TABLE tasks(
+            command_id TEXT NOT NULL REFERENCES commands(id), id TEXT NOT NULL,
+            identity TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT,
+            PRIMARY KEY(command_id,id));
+        CREATE TABLE events(
+            command_id TEXT NOT NULL REFERENCES commands(id), seq INTEGER NOT NULL,
+            kind TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(command_id,seq));
+        CREATE TABLE outbox(
+            command_id TEXT PRIMARY KEY REFERENCES commands(id),
+            payload TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
+        PRAGMA user_version=1;
+        INSERT INTO commands VALUES('cmd-old', 'proj-1', 'req-1', '{"project_id":"proj-1"}', '{"goal":"old"}', 'QUEUED', 'ACTIVE', 0, NULL);
+        INSERT INTO tasks VALUES('cmd-old', 'task-old', '{"pre_fingerprint":"000"}', 'RUNNING', NULL);
+        INSERT INTO events VALUES('cmd-old', 1, 'command.accepted', '{}');
+    """)
+    conn.close()
+
+    # Open with LifecycleStore -> triggers migration
+    store = LifecycleStore(home)
+    with store._transaction() as db:
+        v = db.execute("PRAGMA user_version").fetchone()[0]
+        assert v == 2
+        # Check migrated rows
+        c_row = db.execute("SELECT id, project, state, owner_epoch FROM commands WHERE id='cmd-old'").fetchone()
+        assert c_row["id"] == "cmd-old"
+        assert c_row["owner_epoch"] == 0
+        t_row = db.execute("SELECT id, effect_phase FROM tasks WHERE id='task-old'").fetchone()
+        assert t_row["id"] == "task-old"
+        assert t_row["effect_phase"] == "INTENT"
+        # Check backup checksum recorded in engine_meta
+        meta_sha = store.get_meta("schema_backup_sha")
+        assert meta_sha and len(meta_sha) == 64
+
+
+def test_kernel_owner_lock_contention(tmp_path):
+    from aos.v2.lifecycle import KernelOwnerLock, OwnerBusyError
+    home = tmp_path / "lock-test"
+    home.mkdir()
+
+    lock1 = KernelOwnerLock(home)
+    id1 = lock1.acquire()
+    assert lock1.is_locked
+    assert id1.pid == os.getpid()
+
+    # Attempt to acquire lock from another instance on same home
+    lock2 = KernelOwnerLock(home)
+    with pytest.raises(OwnerBusyError):
+        lock2.acquire()
+    assert not lock2.is_locked
+
+    lock1.release()
+    assert not lock1.is_locked
+
+    # Now lock2 can acquire
+    id2 = lock2.acquire()
+    assert lock2.is_locked
+    lock2.release()
+
+
+def test_claim_recovery_transitions_held_to_recovering(prepared):
+    store, _ = prepared
+    running(store)
+    store.transition("command-one", 2, "PAUSED_SAFE", reason="paused for test")
+    snap = store.snapshot("command-one")
+    assert snap["state"] == "PAUSED_SAFE" and snap["admission"] == "HOLD"
+
+    store.claim_recovery("command-one", 3, owner_epoch=42, observation_ref="obs-recovery-1")
+    snap2 = store.snapshot("command-one")
+    assert snap2["state"] == "RECOVERING" and snap2["admission"] == "ACTIVE"
+    assert snap2["owner_epoch"] == 42
+    events = [e for e in snap2["events"] if e["kind"] == "command.recovery_claimed"]
+    assert len(events) == 1
+    assert json.loads(events[0]["payload"])["owner_epoch"] == 42

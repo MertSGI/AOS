@@ -1,0 +1,65 @@
+name: AOS V2 Contract
+
+on:
+  push:
+    branches:
+      - 'feature/aos-v2-execution-seam-20261018'
+      - 'feature/aos-v2-thin-lifecycle-20261018'
+  pull_request:
+    branches:
+      - 'feature/aos-v2-thin-lifecycle-20261018'
+
+jobs:
+  v2-contract-linux:
+    name: V2 Contract Linux (bwrap sandbox)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies and bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify Git diff cleanliness
+        run: git diff --check
+
+      - name: Validate project control state and evidence
+        run: |
+          python -m aos.validate state docs/project-control/STATE.json
+          python -m aos.validate evidence docs/project-control/EVIDENCE.jsonl
+
+      - name: Run AOS V2 Contract Test Suite (Linux)
+        run: |
+          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py -v
+
+  v2-contract-windows:
+    name: V2 Contract Windows (AppContainer sandbox & Win32 lock)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run AOS V2 Contract Test Suite (Windows)
+        run: |
+          python -m pytest tests/test_aos_v2_lifecycle.py tests/test_aos_v2_registry.py tests/test_aos_v2_resources.py tests/test_aos_v2_sandbox.py tests/test_aos_v2_bridge.py tests/test_aos_v2_acceptance.py tests/test_aos_v2_engine.py tests/test_aos_v2_api.py -v

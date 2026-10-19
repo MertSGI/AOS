@@ -7,11 +7,17 @@ interrupted RUNNING task must be reconciled, never automatically replayed.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
+import os
 import re
+import secrets
+import shutil
 import sqlite3
 import stat
+import sys
+import time
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -33,6 +39,10 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z")
 
 class LifecycleConflict(ValueError):
     """Stale generation, immutable identity conflict, or invalid transition."""
+
+
+class OwnerBusyError(LifecycleConflict):
+    """Raised when kernel owner lock is held by another process (OWNER_BUSY)."""
 
 
 def _json(value: Any) -> str:
@@ -79,14 +89,216 @@ def _no_links(path: Path) -> Path:
     return candidate.resolve()
 
 
+def _get_process_birth_time() -> float:
+    """Return process creation timestamp."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class FILETIME(ctypes.Structure):
+                _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+            c, e, k, u = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetProcessTimes.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(FILETIME),
+                ctypes.POINTER(FILETIME),
+                ctypes.POINTER(FILETIME),
+                ctypes.POINTER(FILETIME),
+            ]
+            kernel32.GetProcessTimes.restype = wintypes.BOOL
+            h = kernel32.GetCurrentProcess()
+            if kernel32.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u)):
+                # Windows FILETIME is in 100-nanosecond intervals since Jan 1, 1601 UTC
+                intervals = (c.dwHighDateTime << 32) + c.dwLowDateTime
+                return (intervals - 116444736000000000) / 10000000.0
+        except Exception:
+            pass
+    return time.time()
+
+
+@dataclass(frozen=True)
+class OwnerIdentity:
+    pid: int
+    birth_timestamp: float
+    executable_hash: str
+    source_identity: str
+    home_identity: str
+    nonce: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pid": self.pid,
+            "birth_timestamp": self.birth_timestamp,
+            "executable_hash": self.executable_hash,
+            "source_identity": self.source_identity,
+            "home_identity": self.home_identity,
+            "nonce": self.nonce,
+        }
+
+    def digest(self) -> str:
+        return hashlib.sha256(_json(self.to_dict()).encode("utf-8")).hexdigest()
+
+
+class KernelOwnerLock:
+    """Exclusive process-lifetime kernel lock with no TTL stealing."""
+    def __init__(self, home: Path) -> None:
+        self.home = _no_links(Path(home))
+        self.lock_path = self.home / "journal.lock"
+        self._file = None
+        self._locked = False
+        self._identity = None
+        self._ov = None
+
+    @property
+    def is_locked(self) -> bool:
+        return self._locked
+
+    @property
+    def identity(self) -> OwnerIdentity:
+        if self._identity is None:
+            raise LifecycleConflict("Lock not acquired")
+        return self._identity
+
+    def acquire(self) -> OwnerIdentity:
+        if self._locked:
+            return self._identity
+
+        self.home.mkdir(parents=True, exist_ok=True)
+        # Calculate executable hash
+        try:
+            exe_hash = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
+        except Exception:
+            exe_hash = hashlib.sha256(sys.executable.encode("utf-8")).hexdigest()
+
+        # Calculate source identity
+        try:
+            source_file = Path(__file__).resolve()
+            source_id = hashlib.sha256(source_file.read_bytes()).hexdigest()
+        except Exception:
+            source_id = "unknown_source"
+
+        nonce = secrets.token_hex(16)
+        birth = _get_process_birth_time()
+        identity = OwnerIdentity(
+            pid=os.getpid(),
+            birth_timestamp=birth,
+            executable_hash=exe_hash,
+            source_identity=source_id,
+            home_identity=str(self.home),
+            nonce=nonce,
+        )
+
+        f = open(self.lock_path, "a+b")
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            import msvcrt
+
+            LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+            LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
+
+            class OVERLAPPED(ctypes.Structure):
+                _fields_ = [
+                    ("Internal", ctypes.c_size_t),
+                    ("InternalHigh", ctypes.c_size_t),
+                    ("Offset", wintypes.DWORD),
+                    ("OffsetHigh", wintypes.DWORD),
+                    ("hEvent", wintypes.HANDLE),
+                ]
+
+            ov = OVERLAPPED()
+            handle = msvcrt.get_osfhandle(f.fileno())
+            kernel32 = ctypes.windll.kernel32
+            kernel32.LockFileEx.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(OVERLAPPED),
+            ]
+            kernel32.LockFileEx.restype = wintypes.BOOL
+            res = kernel32.LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                0,
+                1,
+                ctypes.byref(ov),
+            )
+            if not res:
+                err = kernel32.GetLastError()
+                f.close()
+                if err in (33, 32):  # ERROR_LOCK_VIOLATION or ERROR_SHARING_VIOLATION
+                    raise OwnerBusyError("OWNER_BUSY: kernel owner lock held by another process")
+                raise LifecycleConflict(f"Failed to acquire kernel owner lock on Windows (error {err})")
+            self._ov = ov
+        else:
+            import fcntl
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError):
+                f.close()
+                raise OwnerBusyError("OWNER_BUSY: kernel owner lock held by another process")
+
+        # Write identity metadata to lock file
+        try:
+            f.seek(0)
+            f.truncate()
+            f.write(_json(identity.to_dict()).encode("utf-8") + b"\n")
+            f.flush()
+        except Exception:
+            pass
+
+        self._file = f
+        self._locked = True
+        self._identity = identity
+        return identity
+
+    def release(self) -> None:
+        if not self._locked:
+            return
+        if self._file is not None:
+            if os.name == "nt":
+                import ctypes
+                from ctypes import wintypes
+                import msvcrt
+                try:
+                    handle = msvcrt.get_osfhandle(self._file.fileno())
+                    kernel32 = ctypes.windll.kernel32
+                    kernel32.UnlockFileEx.argtypes = [
+                        wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                        wintypes.DWORD, ctypes.POINTER(type(self._ov)),
+                    ]
+                    kernel32.UnlockFileEx.restype = wintypes.BOOL
+                    kernel32.UnlockFileEx(handle, 0, 0, 1, ctypes.byref(self._ov))
+                except Exception:
+                    pass
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            try:
+                self._file.close()
+            except Exception:
+                pass
+            self._file = None
+        self._locked = False
+        self._identity = None
+        self._ov = None
+
+    def __enter__(self) -> OwnerIdentity:
+        return self.acquire()
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.release()
+
+    def __del__(self) -> None:
+        self.release()
+
+
 @dataclass(frozen=True)
 class TrustedGrant:
-    """Construct only from a server-owned registry, never a request payload.
-
-    This object is a binding, not proof of provider entitlement or OS sandboxing.
-    Registry ownership, expiration, revocation and resource policy are enforced
-    by the future engine at admission and immediately before every side effect.
-    """
+    """Construct only from a server-owned registry, never a request payload."""
     project_id: str
     authority_id: str
     workspace: str
@@ -117,7 +329,7 @@ class TrustedGrant:
 
 
 class LifecycleStore:
-    """One opt-in local SQLite journal; no automatic migrations or scheduling."""
+    """One opt-in local SQLite journal; transactional schema 2 with owner fencing."""
     def __init__(self, home: Path) -> None:
         root = _no_links(Path(home))
         if any(p.name.casefold() == "runtime-v1" or (p / "runtime-config.json").exists()
@@ -135,36 +347,171 @@ class LifecycleStore:
         self.root = root
         self.path = root / "journal.sqlite3"
         _no_links(self.path)
+
+        # Inspect and migrate schema
         with closing(self._connect()) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
-                raise ValueError("Unknown journal schema version; migration required")
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS commands(
-                    id TEXT PRIMARY KEY, project TEXT NOT NULL, request_key TEXT NOT NULL,
-                    binding TEXT NOT NULL, request TEXT NOT NULL, state TEXT NOT NULL,
-                    admission TEXT NOT NULL, revision INTEGER NOT NULL, result TEXT,
-                    UNIQUE(project, request_key));
-                CREATE TABLE IF NOT EXISTS tasks(
-                    command_id TEXT NOT NULL REFERENCES commands(id), id TEXT NOT NULL,
-                    identity TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT,
-                    PRIMARY KEY(command_id,id));
-                CREATE TABLE IF NOT EXISTS events(
-                    command_id TEXT NOT NULL REFERENCES commands(id), seq INTEGER NOT NULL,
-                    kind TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(command_id,seq));
-                CREATE TABLE IF NOT EXISTS outbox(
-                    command_id TEXT PRIMARY KEY REFERENCES commands(id),
-                    payload TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
-                PRAGMA user_version=1;
-            """)
+            if version not in (0, 1, 2):
+                raise ValueError(f"Unknown journal schema version ({version}); newer software required")
+            if version == 1:
+                self._migrate_schema_1_to_2(db)
+            elif version == 0:
+                self._init_schema_2(db)
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
         return db
+
+    def _init_schema_2(self, db: sqlite3.Connection) -> None:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS commands(
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                request_key TEXT NOT NULL,
+                binding TEXT NOT NULL,
+                request TEXT NOT NULL,
+                state TEXT NOT NULL,
+                admission TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                result TEXT,
+                contract TEXT,
+                control TEXT,
+                owner_epoch INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(project, request_key)
+            );
+            CREATE TABLE IF NOT EXISTS tasks(
+                command_id TEXT NOT NULL REFERENCES commands(id),
+                id TEXT NOT NULL,
+                identity TEXT NOT NULL,
+                state TEXT NOT NULL,
+                receipt TEXT,
+                effect_phase TEXT NOT NULL DEFAULT 'INTENT',
+                fence TEXT,
+                expected_parent TEXT,
+                prepared_tree TEXT,
+                commit_sha TEXT,
+                effect TEXT,
+                PRIMARY KEY(command_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS events(
+                command_id TEXT NOT NULL REFERENCES commands(id),
+                seq INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY(command_id, seq)
+            );
+            CREATE TABLE IF NOT EXISTS outbox(
+                command_id TEXT PRIMARY KEY REFERENCES commands(id),
+                payload TEXT NOT NULL,
+                acknowledged INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS engine_meta(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS attempts(
+                attempt_id TEXT PRIMARY KEY,
+                command_id TEXT NOT NULL REFERENCES commands(id),
+                task_id TEXT,
+                purpose TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                request_sha TEXT NOT NULL,
+                response_id TEXT,
+                usage_json TEXT,
+                finish_reason TEXT,
+                quota_headers TEXT,
+                latency_ms REAL,
+                evidence_ref TEXT,
+                billed_cost TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS verifications(
+                id TEXT PRIMARY KEY,
+                command_id TEXT NOT NULL REFERENCES commands(id),
+                task_id TEXT,
+                kind TEXT NOT NULL,
+                driver_id TEXT NOT NULL,
+                oracle_sha TEXT NOT NULL,
+                response_vector_sha TEXT NOT NULL,
+                passed INTEGER NOT NULL,
+                details_json TEXT,
+                created_at TEXT NOT NULL
+            );
+            PRAGMA user_version = 2;
+        """)
+
+    def _migrate_schema_1_to_2(self, db: sqlite3.Connection) -> None:
+        """Perform transactional, copy-first migration from schema 1 to schema 2."""
+        backup_path = self.root / f"journal.sqlite3.bak.{int(time.time())}"
+        # Use SQLite backup API
+        bck_conn = sqlite3.connect(backup_path)
+        try:
+            db.backup(bck_conn)
+        finally:
+            bck_conn.close()
+
+        # Compute checksum of backup
+        bck_sha = hashlib.sha256(backup_path.read_bytes()).hexdigest()
+
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            # Add columns to commands
+            db.execute("ALTER TABLE commands ADD COLUMN contract TEXT")
+            db.execute("ALTER TABLE commands ADD COLUMN control TEXT")
+            db.execute("ALTER TABLE commands ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0")
+
+            # Add columns to tasks
+            db.execute("ALTER TABLE tasks ADD COLUMN effect_phase TEXT NOT NULL DEFAULT 'INTENT'")
+            db.execute("ALTER TABLE tasks ADD COLUMN fence TEXT")
+            db.execute("ALTER TABLE tasks ADD COLUMN expected_parent TEXT")
+            db.execute("ALTER TABLE tasks ADD COLUMN prepared_tree TEXT")
+            db.execute("ALTER TABLE tasks ADD COLUMN commit_sha TEXT")
+            db.execute("ALTER TABLE tasks ADD COLUMN effect TEXT")
+
+            # Create new tables
+            db.execute("CREATE TABLE IF NOT EXISTS engine_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS attempts(
+                    attempt_id TEXT PRIMARY KEY,
+                    command_id TEXT NOT NULL REFERENCES commands(id),
+                    task_id TEXT,
+                    purpose TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    request_sha TEXT NOT NULL,
+                    response_id TEXT,
+                    usage_json TEXT,
+                    finish_reason TEXT,
+                    quota_headers TEXT,
+                    latency_ms REAL,
+                    evidence_ref TEXT,
+                    billed_cost TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS verifications(
+                    id TEXT PRIMARY KEY,
+                    command_id TEXT NOT NULL REFERENCES commands(id),
+                    task_id TEXT,
+                    kind TEXT NOT NULL,
+                    driver_id TEXT NOT NULL,
+                    oracle_sha TEXT NOT NULL,
+                    response_vector_sha TEXT NOT NULL,
+                    passed INTEGER NOT NULL,
+                    details_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute("INSERT OR REPLACE INTO engine_meta VALUES('schema_backup_sha', ?)", (bck_sha,))
+            db.execute("PRAGMA user_version = 2")
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -189,10 +536,11 @@ class LifecycleStore:
     @staticmethod
     def _event(db: sqlite3.Connection, cid: str, kind: str, value: Any) -> None:
         seq = db.execute("SELECT coalesce(max(seq),0)+1 FROM events WHERE command_id=?", (cid,)).fetchone()[0]
-        db.execute("INSERT INTO events VALUES(?,?,?,?)", (cid, seq, kind, _json(value)))
+        db.execute("INSERT INTO events(command_id, seq, kind, payload) VALUES(?,?,?,?)", (cid, seq, kind, _json(value)))
 
     def admit(self, command_id: str, request_key: str, goal: str,
-              criteria: tuple[str, ...], grant: TrustedGrant) -> str:
+              criteria: tuple[str, ...], grant: TrustedGrant, *,
+              contract_json: str | None = None, owner_epoch: int = 0) -> str:
         _identifier(command_id)
         _identifier(request_key)
         binding = grant.binding()
@@ -211,12 +559,15 @@ class LifecycleStore:
                 if prior["binding"] != encoded or prior["request"] != req:
                     raise LifecycleConflict("Idempotency key reused with different immutable input")
                 return str(prior["id"])
-            db.execute("INSERT INTO commands VALUES(?,?,?,?,?,?,?,?,NULL)",
-                       (command_id, grant.project_id, request_key, encoded, req, "QUEUED", "ACTIVE", 0))
+            db.execute(
+                "INSERT INTO commands(id, project, request_key, binding, request, state, admission, revision, result, contract, control, owner_epoch) "
+                "VALUES(?,?,?,?,?,?,?,?,NULL,?,NULL,?)",
+                (command_id, grant.project_id, request_key, encoded, req, "QUEUED", "ACTIVE", 0, contract_json, owner_epoch)
+            )
             self._event(db, command_id, "command.accepted", {"binding_sha256": _hash(binding)})
         return command_id
 
-    def transition(self, command_id: str, expected_revision: int, target: str, *, reason: str) -> None:
+    def transition(self, command_id: str, expected_revision: int, target: str, *, reason: str, owner_epoch: int | None = None) -> None:
         with self._transaction() as db:
             row = self._command(db, command_id)
             if row["revision"] != expected_revision or target not in TRANSITIONS.get(row["state"], set()):
@@ -224,8 +575,36 @@ class LifecycleStore:
             if target == "QUEUED" and db.execute("SELECT 1 FROM tasks WHERE command_id=? AND state='RUNNING'", (command_id,)).fetchone():
                 raise LifecycleConflict("Uncertain effects require reconciliation before resume")
             admission = "HOLD" if target in HELD else "ACTIVE"
-            db.execute("UPDATE commands SET state=?,admission=?,revision=revision+1 WHERE id=?", (target, admission, command_id))
+            if owner_epoch is not None:
+                db.execute(
+                    "UPDATE commands SET state=?,admission=?,revision=revision+1,owner_epoch=? WHERE id=?",
+                    (target, admission, owner_epoch, command_id)
+                )
+            else:
+                db.execute(
+                    "UPDATE commands SET state=?,admission=?,revision=revision+1 WHERE id=?",
+                    (target, admission, command_id)
+                )
             self._event(db, command_id, "command.transition", {"state": target, "reason": reason})
+
+    def claim_recovery(self, command_id: str, expected_revision: int, owner_epoch: int, observation_ref: str) -> None:
+        """Enter RECOVERING / ACTIVE state only after fresh trusted recovery checks."""
+        _identifier(command_id)
+        _identifier(observation_ref)
+        with self._transaction() as db:
+            row = self._command(db, command_id)
+            if row["revision"] != expected_revision:
+                raise LifecycleConflict("Stale revision on recovery claim")
+            if row["state"] in TERMINAL:
+                raise LifecycleConflict("Cannot claim recovery on terminal command")
+            db.execute(
+                "UPDATE commands SET state='RECOVERING',admission='ACTIVE',revision=revision+1,owner_epoch=? WHERE id=?",
+                (owner_epoch, command_id)
+            )
+            self._event(db, command_id, "command.recovery_claimed", {
+                "owner_epoch": owner_epoch,
+                "observation_ref": observation_ref,
+            })
 
     def begin_task(self, command_id: str, task_id: str, *, pre_fingerprint: str,
                    write_files: tuple[str, ...]) -> str:
@@ -246,17 +625,46 @@ class LifecycleStore:
                 if prior["identity"] != identity:
                     raise LifecycleConflict("Task identity changed")
                 return "ALREADY_ACCEPTED" if prior["state"] == "ACCEPTED" else "RECONCILE_REQUIRED"
-            db.execute("INSERT INTO tasks VALUES(?,?,?,'RUNNING',NULL)", (command_id, task_id, identity))
+            db.execute(
+                "INSERT INTO tasks(command_id, id, identity, state, receipt, effect_phase) VALUES(?,?,?,'RUNNING',NULL,'INTENT')",
+                (command_id, task_id, identity)
+            )
             self._event(db, command_id, "task.intent", {"task_id": task_id, "identity_sha256": _hash(json.loads(identity))})
         return "EXECUTE_ONCE"
 
+    def update_task_phase(
+        self,
+        command_id: str,
+        task_id: str,
+        phase: str,
+        *,
+        fence: str | None = None,
+        expected_parent: str | None = None,
+        prepared_tree: str | None = None,
+        commit_sha: str | None = None,
+        effect: dict[str, Any] | None = None,
+    ) -> None:
+        """Update the durable phase and hashes of a task row."""
+        _identifier(task_id)
+        valid_phases = {"INTENT", "PREPARED", "VERIFIED", "COMMIT_INTENT", "REF_PUBLISHED", "MATERIALIZED", "ACCEPTED"}
+        if phase not in valid_phases:
+            raise LifecycleConflict(f"Invalid effect phase: '{phase}'")
+
+        effect_json = _json(effect) if effect is not None else None
+        with self._transaction() as db:
+            task = db.execute("SELECT * FROM tasks WHERE command_id=? AND id=?", (command_id, task_id)).fetchone()
+            if task is None:
+                raise KeyError(task_id)
+            db.execute(
+                "UPDATE tasks SET effect_phase=?,fence=coalesce(?,fence),expected_parent=coalesce(?,expected_parent),"
+                "prepared_tree=coalesce(?,prepared_tree),commit_sha=coalesce(?,commit_sha),effect=coalesce(?,effect) "
+                "WHERE command_id=? AND id=?",
+                (phase, fence, expected_parent, prepared_tree, commit_sha, effect_json, command_id, task_id)
+            )
+
     def accept_task(self, command_id: str, task_id: str, *, result_sha: str,
                     artifacts: dict[str, str], verification_ref: str) -> None:
-        """Trusted verifier callback, including reconciliation after external commit.
-
-        The engine must independently validate actual Git/test/artifact evidence;
-        accepting a backend's success boolean here would violate this contract.
-        """
+        """Trusted verifier callback, including reconciliation after external commit."""
         _digest(result_sha, 40)
         _identifier(verification_ref)
         if not artifacts:
@@ -276,7 +684,10 @@ class LifecycleStore:
                 if task["receipt"] != receipt:
                     raise LifecycleConflict("Accepted task receipt changed")
                 return
-            db.execute("UPDATE tasks SET state='ACCEPTED',receipt=? WHERE command_id=? AND id=?", (receipt, command_id, task_id))
+            db.execute(
+                "UPDATE tasks SET state='ACCEPTED',receipt=?,effect_phase='ACCEPTED' WHERE command_id=? AND id=?",
+                (receipt, command_id, task_id)
+            )
             self._event(db, command_id, "task.accepted", {"task_id": task_id, "receipt": json.loads(receipt)})
 
     def finalize(self, command_id: str, expected_revision: int, state: str,
@@ -296,7 +707,7 @@ class LifecycleStore:
                 counts = db.execute("SELECT count(*),sum(state!='ACCEPTED') FROM tasks WHERE command_id=?", (command_id,)).fetchone()
                 if row["state"] != "VERIFYING" or set(criterion_receipts) != required or counts[0] == 0 or counts[1] != 0:
                     raise LifecycleConflict("Success requires verified tasks and every goal predicate")
-            result = _json({"schema_version": 1, "command_id": command_id, "state": state,
+            result = _json({"schema_version": 2, "command_id": command_id, "state": state,
                             "criterion_receipts": criterion_receipts, "binding_sha256": _hash(json.loads(row["binding"]))})
             db.execute("UPDATE commands SET state=?,admission='CLOSED',revision=revision+1,result=? WHERE id=?", (state, result, command_id))
             self._event(db, command_id, "run.finished", json.loads(result))
@@ -326,3 +737,107 @@ class LifecycleStore:
             if row is None or hashlib.sha256(row[0].encode()).hexdigest() != payload_sha256:
                 raise LifecycleConflict("Outbox identity mismatch")
             db.execute("UPDATE outbox SET acknowledged=1 WHERE command_id=?", (command_id,))
+
+    def set_control(self, command_id: str, control_type: str, details: dict[str, Any] | None = None) -> None:
+        """Store pause/resume/cancel control intent on command."""
+        _identifier(command_id)
+        val = _json({"type": control_type, "details": details or {}, "set_at": time.time()})
+        with self._transaction() as db:
+            db.execute("UPDATE commands SET control=? WHERE id=?", (val, command_id))
+
+    def get_control(self, command_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT control FROM commands WHERE id=?", (_identifier(command_id),)).fetchone()
+            if row and row[0]:
+                return json.loads(row[0])
+            return None
+
+    def record_attempt(
+        self,
+        attempt_id: str,
+        command_id: str,
+        purpose: str,
+        profile_id: str,
+        request_sha: str,
+        *,
+        task_id: str | None = None,
+        response_id: str | None = None,
+        usage_json: str | None = None,
+        finish_reason: str | None = None,
+        quota_headers: str | None = None,
+        latency_ms: float | None = None,
+        evidence_ref: str | None = None,
+        billed_cost: str = "UNKNOWN",
+    ) -> None:
+        _identifier(attempt_id)
+        _identifier(command_id)
+        _identifier(purpose)
+        _identifier(profile_id)
+        _digest(request_sha)
+        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO attempts(attempt_id, command_id, task_id, purpose, profile_id, request_sha, "
+                "response_id, usage_json, finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (attempt_id, command_id, task_id, purpose, profile_id, request_sha, response_id, usage_json,
+                 finish_reason, quota_headers, latency_ms, evidence_ref, billed_cost, created_at)
+            )
+
+    def record_verification(
+        self,
+        verification_id: str,
+        command_id: str,
+        kind: str,
+        driver_id: str,
+        oracle_sha: str,
+        response_vector_sha: str,
+        passed: bool,
+        *,
+        task_id: str | None = None,
+        details_json: str | None = None,
+    ) -> None:
+        _identifier(verification_id)
+        _identifier(command_id)
+        _identifier(kind)
+        _digest(oracle_sha)
+        _digest(response_vector_sha)
+        created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO verifications(id, command_id, task_id, kind, driver_id, oracle_sha, response_vector_sha, passed, details_json, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (verification_id, command_id, task_id, kind, driver_id, oracle_sha, response_vector_sha, 1 if passed else 0, details_json, created_at)
+            )
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._transaction() as db:
+            db.execute("INSERT OR REPLACE INTO engine_meta(key, value) VALUES(?,?)", (key, value))
+
+    def get_meta(self, key: str) -> str | None:
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT value FROM engine_meta WHERE key=?", (key,)).fetchone()
+            return row[0] if row else None
+
+    def get_engine_meta(self) -> dict[str, str]:
+        with closing(self._connect()) as db:
+            rows = db.execute("SELECT key, value FROM engine_meta").fetchall()
+            return {r[0]: r[1] for r in rows}
+
+    def get_command_by_idempotency_key(self, request_key: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT * FROM commands WHERE request_key=?", (request_key,)).fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            # Add project_id alias for consistency
+            if "project" in res and "project_id" not in res:
+                res["project_id"] = res["project"]
+            if "request" in res and res["request"]:
+                try:
+                    req_obj = json.loads(res["request"])
+                    if "goal" in req_obj:
+                        res["goal"] = req_obj["goal"]
+                except Exception:
+                    pass
+            return res
