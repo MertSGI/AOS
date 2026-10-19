@@ -1,0 +1,12 @@
+{
+  "owner_adopted_directive_in_current_request": true,
+  "directive_sha256": "b29c43245c9287c63bf3a39fe67271f02cfb6e76d9a2556e76b5c0a3cdb62cb1",
+  "evidence_zip_sha256": "ce631c4c7149a2e9c310243b220b44100af7ab7a1f123fc2c92f5857a51684ba",
+  "initial_evidence_archive_library_id": "libfile_5c86e0de9cc48191b2ab76ee14be95c3",
+  "archive_read_route": "user-provided scratch copy; NOT reread through Library",
+  "history_is_not_live_evidence": true,
+  "original_verbatim_archive": "MASTER_DIRECTIVE_20261018.md.gz",
+  "readable_projection": "MASTER_DIRECTIVE_20261018.md",
+  "projection_change": "Trailing whitespace normalized only; original verbatim bytes retained in gzip",
+  "readable_projection_sha256": "a2f39b01870cf4fd28c255a1cfb0866ad5c82762eeaac16834635bb5849330af"
+}
