@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "decision_id": "AOS-WP2-98B3A24-FAIL-REPLAN-20261019-01",
+  "owner": "AOS_CONTROLLER",
+  "observed_at": "2026-10-19T12:44:17.920038+00:00",
+  "repository": "MertSGI/AOS",
+  "branch": "feature/aos-v2-execution-seam-20261018",
+  "entry_controller_carrier": "6fa6f74923aaa6da67db52a0132c8cf54c30a398",
+  "reviewed_source_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+  "actual_git_tree": "3e468202268efa9167c15b4859f582918afff899",
+  "ag_reported_tree_sha": "6b36aeb9ec4ea323aa786c29b6f122421f52b7ba",
+  "tree_mismatch_evidence": "Actual tree3e468202268efa9167c15b4859f582918afff899 independently verified via GitHub Git commit API and local Git. Fresh shared Controller Doc1IH9AIHEJa6DAnABBZ4sA6dY4Zu2hTOrPa7NQJ8GzG30 revisionAHj4eMR3yeW2TtPOvGmDbV5StYtx1QkdyrKmjVIO__GsFOeTJvO5cGQ4JtxjzS6_E48dOYVuOLFd1ctC7haaDfNYbjg3iqfGZifKU7q3Dd4 records reported tree6b36aeb9ec4ea323aa786c29b6f122421f52b7ba; that literal differs. Original AG report not independently retrieved.",
+  "changed_source_files": [
+    ".github/workflows/aos-v2-contract.yml",
+    "src/aos/v2/__main__.py",
+    "src/aos/v2/acceptance.py",
+    "src/aos/v2/api.py",
+    "src/aos/v2/bridge.py",
+    "src/aos/v2/engine.py",
+    "src/aos/v2/lifecycle.py",
+    "src/aos/v2/registry.py",
+    "src/aos/v2/resources.py",
+    "src/aos/v2/sandbox.py",
+    "tests/test_aos_v2_api.py",
+    "tests/test_aos_v2_api_execution.py",
+    "tests/test_aos_v2_recovery.py",
+    "tests/test_aos_v2_resources.py"
+  ],
+  "decision": "FAIL_REPLAN",
+  "accepted_head": null,
+  "accepted_wp1_head": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "existing_instruction": "AOS-WP2-CORR-20261019-01",
+  "stop_rule": {
+    "contract": "14_IMPLEMENTATION_CONTRACT.md:160; correction packet section5",
+    "integrated_correction_observed": {
+      "source_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+      "parent": "6fa6f74923aaa6da67db52a0132c8cf54c30a398",
+      "qualification": "FAILED_INDEPENDENT_SOURCE_REVIEW"
+    },
+    "remaining_focused_repair_after_this_submission": 1,
+    "focused_repair_authorized_now": false,
+    "allowance_reset": false,
+    "reason": "Not a local defect in an implemented path. Production PLAN/EDIT dispatcher and durable plan consumer are absent, both OS boundary implementations and the evaluator trust boundary require separate substantive work. A single focused root-cause patch cannot defensibly close all mandatory blockers. Do not convert the remaining allowance into another broad implementation retry. This is not a false claim that the unused repair was already consumed."
+  },
+  "source_findings": [
+    {
+      "id": "F1",
+      "q": [
+        "Q01",
+        "Q03",
+        "Q20"
+      ],
+      "anchors": [
+        {
+          "path": "src/aos/v2/api.py",
+          "lines": [
+            313,
+            338
+          ],
+          "fact": "Handler admits directly through engine.lifecycle and parks PAUSED_SAFE; does not call Engine.admit."
+        },
+        {
+          "path": "src/aos/v2/api.py",
+          "lines": [
+            355,
+            388
+          ],
+          "fact": "Resume only transitions lifecycle to QUEUED."
+        },
+        {
+          "path": "src/aos/v2/__main__.py",
+          "lines": [
+            80,
+            109
+          ],
+          "fact": "Only HTTP serve_forever thread and shutdown wait; no execution dispatcher."
+        },
+        {
+          "path": "src/aos/v2/engine.py",
+          "lines": [
+            270,
+            370
+          ],
+          "fact": "Caller plan and generator_func still required; direct simulated_profile attempt; no ResourceGateway.generate call or tick implementation."
+        }
+      ],
+      "verdict": "CONFIRMED_BLOCKER"
+    },
+    {
+      "id": "FALSE_QUALIFICATION",
+      "q": [
+        "Q01",
+        "Q02",
+        "Q03",
+        "Q20"
+      ],
+      "anchors": [
+        {
+          "path": "tests/test_aos_v2_api_execution.py",
+          "lines": [
+            227,
+            301
+          ],
+          "fact": "After HTTP, test constructs OracleCriterion, literal plan, known fixes and directly calls execute_goal. Final public tests are run by evaluator. Its own header claims Q01-Q03; it does not establish production dispatch."
+        }
+      ],
+      "q20_receipt": "No independent Q20-labelled source test/receipt observed; whole completion gate cannot cite this invalid seam as proof. User-reported AG mapping not independently available as a literal artifact.",
+      "verdict": "DISQUALIFIED_AS_SEAM_ACCEPTANCE"
+    },
+    {
+      "id": "F4_LINUX",
+      "q": [
+        "Q11",
+        "Q12"
+      ],
+      "anchors": [
+        {
+          "path": "src/aos/v2/sandbox.py",
+          "lines": [
+            140,
+            151
+          ],
+          "fact": "Preflight omits --unshare-net and mounts host root read-only."
+        },
+        {
+          "path": "src/aos/v2/sandbox.py",
+          "lines": [
+            576,
+            625
+          ],
+          "fact": "Execution omits --unshare-net, retains --ro-bind / /, no seccomp or enforced memory limit, output truncated only after capture."
+        },
+        {
+          "path": "tests/test_aos_v2_sandbox.py",
+          "lines": [
+            87,
+            120
+          ],
+          "fact": "Unopened127.0.0.1:80 plus any nonzero exit; no positive active listener; Linux child denial explicitly skipped."
+        }
+      ],
+      "verdict": "CONFIRMED_BLOCKER_NOT_HOST_RESOURCE_WAIT"
+    },
+    {
+      "id": "F4_WINDOWS_RELATED",
+      "q": [
+        "Q11",
+        "Q12"
+      ],
+      "anchors": [
+        {
+          "path": "src/aos/v2/sandbox.py",
+          "lines": [
+            275,
+            288
+          ],
+          "fact": "AppContainer RX grants still applied to shared sys.prefix/base_prefix, not solely a private runtime copy."
+        },
+        {
+          "path": "src/aos/v2/sandbox.py",
+          "lines": [
+            507,
+            527
+          ],
+          "fact": "AssignProcessToJobObject return unchecked before ResumeThread; waits before pipe drains."
+        }
+      ],
+      "verdict": "SOURCE_CONTRADICTION_TO_EXISTING_BOUNDARY; native Windows negative proof not rerun by Controller"
+    }
+  ],
+  "hosted_ci": [
+    {
+      "run_id": 39250230443,
+      "job_id": 118051940139,
+      "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+      "run_attempt": 1,
+      "platform": "LINUX",
+      "conclusion": "SUCCESS",
+      "summary": "81passed,1skipped; Linux child denial skipped",
+      "saved_decoded_log_sha256": "002c80e5ba50524b0628aadc8137ad194b78448519facd91a9e3c9d4170d5aba",
+      "saved_decoded_log_bytes": 51763,
+      "hosted_artifacts_observed": 0,
+      "acceptance_substitute": false
+    },
+    {
+      "run_id": 39250230443,
+      "job_id": 118051940396,
+      "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+      "run_attempt": 1,
+      "platform": "WINDOWS",
+      "conclusion": "SUCCESS",
+      "summary": "82passed",
+      "saved_decoded_log_sha256": "b0bdd26fbf21e6b860c3b5adc362e409f6b65faf5829ca18c793e8c98f76af11",
+      "saved_decoded_log_bytes": 43104,
+      "hosted_artifacts_observed": 0,
+      "acceptance_substitute": false
+    },
+    {
+      "run_id": 39250230463,
+      "job_id": 118051940676,
+      "head_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+      "run_attempt": 1,
+      "platform": "FULL_AOS",
+      "conclusion": "SUCCESS",
+      "summary": "offline/full1691passed,23skipped,26deselected;Postgres25passed,8deselected",
+      "saved_decoded_log_sha256": "46a747ff7354b24bd0f464a6b8542d40845f28f87608a0f6ace3e5a5fc422dd0",
+      "saved_decoded_log_bytes": 584497,
+      "hosted_artifacts_observed": 0,
+      "acceptance_substitute": false
+    }
+  ],
+  "independent_http_observation": {
+    "source_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+    "fixture_origin": "RECEIVED_SETUP_ONLY; received direct execute_goal test body NEVER invoked",
+    "fixture_root": "/tmp/aos-wp2-98-controller-http-6efm5j0o",
+    "proof_class": "REAL_HTTP_SQLITE_GIT_READBACK_NEGATIVE; NO_OS_ISOLATION_OR_E2E_PROOF",
+    "isolation_preflight": "EXPLICITLY_INJECTED_EXECUTION_ISOLATION_UNAVAILABLE; NOT_SUPPORTED_OR_TESTED",
+    "inference": "INJECTED_DENY_EXTERNAL_TRANSPORT_BELOW_UNCHANGED_GATEWAY; NOT_INVOKED",
+    "external_provider_calls": 0,
+    "paid_calls": 0,
+    "protected_v1_actions": 0,
+    "post_status": 202,
+    "post_state": "PAUSED_SAFE",
+    "resume_status": 200,
+    "resume_state": "QUEUED",
+    "get_status": 200,
+    "observed_state": "QUEUED",
+    "observed_admission": "ACTIVE",
+    "gateway_generate_calls": 0,
+    "synthetic_transport_calls": 0,
+    "journal_counts": {
+      "tasks": 0,
+      "attempts": 0
+    },
+    "source_hashes_unchanged": true,
+    "git_head_unchanged": true,
+    "engine_tick_exists": false,
+    "discriminator_pass": false
+  },
+  "first_local_attempt": {
+    "result": "INCOMPLETE_INTERRUPTED",
+    "exit_code": 130,
+    "stage": "SandboxRunner constructor preflight before endpoint publication",
+    "root_cause": "LOCAL_NESTED_BWRAP_LIMIT_NOT_CLASSIFIED",
+    "acceptance_proof": false,
+    "retained_fixture_root": "/tmp/aos-wp2-98-controller-http-cgfpkx5j"
+  },
+  "probe_artifacts": [
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/controller_http_discriminator_98b3a24.py",
+      "sha256": "0474b97306479fc283ea95b8f6b2196987912155145e103738e28bcfd6fc1619"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/http_discriminator_98b3a24.json",
+      "sha256": "2808b372bad0f08cff9c61c56aa139cbf355b0ac362659b31272debb5a00f087"
+    }
+  ],
+  "selected_minimal_execution_approach": {
+    "architecture_change": false,
+    "new_wp_or_phase": false,
+    "preserve": [
+      "Accepted WP1 journal/transactions/path safeguards and immutable accepted source",
+      "HYBRID_V2/AOS-V2-SEAM-1 and existing authority/resource/Git/oracle/export contracts",
+      "Pure exact-edit/native Git/KCP components; all V1 protected behavior"
+    ],
+    "replace_only": [
+      "api.py duplicated lifecycle mutation with Engine.admit/resume/pause/cancel",
+      "engine.py caller-driven execute_goal as production entry with one durable command-owned tick/plan consumer; model calls only ResourceGateway.generate",
+      "__main__.py HTTP-only lifecycle with the same process-owned serialized execution loop",
+      "sandbox.py permissive launch specifications with the already specified private-root/private-runtime adapters",
+      "Evaluator-as-executor qualification path with a three-field HTTP-only observer test; same acceptance criteria, no post-admission direct calls or known fixes outside synthetic transport"
+    ],
+    "reuse_candidate_only_after_validation": [
+      "98 SDK transport and strict decoding/private-file helpers are unaccepted components; retain useful bytes only where original contract tests actually substantiate them"
+    ],
+    "execution_authorization": "STOPPED_CURRENT_APPROACH; this review is not a renewed broad AG correction grant or product implementation dispatch"
+  },
+  "nonnegotiable_exit_criteria": [
+    "Unchanged accepted HYBRID_V2/AOS-V2-SEAM-1, WP1 predecessor, all Q01-Q20 and five-WP DAG. Existing98 must FAIL the genuine discriminator; no criteria weakening or task/receipt fabrication.",
+    "New authenticated HTTP request with exactly project_id,goal,idempotency_key enters the same CLI/server-owned Engine.admit/tick path; API never calls lifecycle directly. One serialized owner/dispatcher handles only this admitted command. No observer Engine calls or post-admission plan/edit/source/checkpoint/receipt writes.",
+    "The unchanged production ResourceGateway.generate handles PLAN and both EDIT requests through one preinstalled trusted synthetic transport. Strict server-resolved plan, criterion IDs, digest and topological order are persisted before execution. Synthetic response bytes may exist only below the gateway before admission, never evaluator-supplied Engine arguments. Durable atomic attempt reservations/outcomes match exactly those calls; no simulated_profile side counter.",
+    "Both original faulty functions are genuinely changed by engine-owned native candidate/Git effects and independently verified against immutable original public tests and sealed private oracle. Terminal PROJECT_COMPLETE/CLOSED, one run.finished, matching result/outbox/KCP receipts and durable export acknowledgement; all inference SIMULATED_INFERENCE, external provider calls0. This is not WP4 REAL_E2E_PASS.",
+    "Actual Linux and Windows native jobs each prove trusted execution/scratch positive; active loopback and host-nonloopback listener parent nonce handshakes before/after and specific worker denial; readable synthetic registry/token/home/oracle/protected/.git canaries denied; outside/candidate/driver mutations denied and original hashes unchanged. No unopened ports, any-nonzero evidence, mocked-supported OS state or required-test skip.",
+    "One final/preflight launch specification. Linux private root with --unshare-net, minimal pinned read-only runtime/candidate/driver, scratch-only write, seccomp process/network denial and enforced caps; no --ro-bind / /. Windows private runtime copy/RO candidate+driver, no shared-prefix ACL change, zero network capability, checked suspended Job assignment before ResumeThread, explicit inherited-handle allowlist, bounded concurrent drains. Both OS child/memory/output/timeout/owner-death controls and measured headroom verified.",
+    "Fenced authority/epoch, strict API/private token ACL, actual Git tree/ref/index/pre-post-hash recovery and export failure matrix from the existing correction remain mandatory. Controlled owner process death recovers the same command/task/plan/attempts without duplicate accepted work; uncertainty HOLD/HUMAN_REQUIRED. Other prior Q gates are not inferred passing from this focused review.",
+    "Exact corrected remote SHA/tree, full unchanged AOS CI plus both V2 OS jobs with per-Q test-node/raw evidence hashes and artifacts, no mandatory skips; independent Controller review of actual source and negative evidence. Only Controller may set accepted_head. No WP3/4/5/rollout/main merge before their existing gates."
+  ],
+  "security_gates": {
+    "protected_v1": "UNTOUCHED",
+    "old51": "NO_REPLAY",
+    "user_files": "UNTOUCHED",
+    "lari_codex": "NO_WRITES_OR_SESSION_BORROWING",
+    "paid": "FORBIDDEN",
+    "production": "NO_GO",
+    "startup_or_activation": "NONE",
+    "main_merge": "NONE"
+  },
+  "proof_class": "FOCUSED_EXACT_SOURCE_AND_CI_REVIEW_WITH_REAL_HTTP_NEGATIVE; EXPLICIT_UNSUPPORTED_OS_INJECTION_NOT_OS_PROOF",
+  "real_e2e": "NOT_RUN",
+  "outstanding": [
+    "Implement selected production-path replacement only under a separately recorded exact Controller execution authorization within existing WP2",
+    "All Q01-Q20 mandatory proof including both native OS sandbox negatives",
+    "Exact-head corrected source/full CI/artifacts and independent acceptance"
+  ],
+  "next_executable_instruction": "Existing AG-AOS: STOP corrective coding under AOS-WP2-CORR-20261019-01. Freeze implementation98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849 (actual tree3e468202268efa9167c15b4859f582918afff899) as REJECTED/FAIL_REPLAN, preserve every source/failure/CI artifact, and return one STOPPED_FAIL_REPLAN handoff acknowledging this Controller decision and the still-null accepted_head. Reconcile any unpushed work read-only and identify it; do not reset, revert, replay the known-invalid tests for a new PASS claim, spend the remaining focused-repair allowance, open a new WP/phase, or perform further implementation until a separately recorded Controller execution authorization binds the selected minimal production-path replacement. Do not redesign the solution. No V1/51/LARI/user-file/paid/live/main writes. This is a stop/handoff instruction, not a renewed correction packet.",
+  "dispatch": {
+    "executor": "EXISTING_AG_AOS",
+    "channel": "CANONICAL_REPOSITORY_DECISION",
+    "direct_session_available": false,
+    "status": "STOP_INSTRUCTION_READY_EXECUTOR_ACK_UNOBSERVED"
+  },
+  "ag_reported_tree_evidence_class": "CONTEMPORANEOUS_SHARED_CONTROLLER_DOC_REPORT_OF_AG_CLAIM; ORIGINAL_AG_REPORT_NOT_RETRIEVED"
+}

@@ -1,0 +1,28 @@
+{
+  "source_sha": "98b3a24bc4a9f2c1f9a9a8c579518d1f932ce849",
+  "fixture_origin": "RECEIVED_SETUP_ONLY; received direct execute_goal test body NEVER invoked",
+  "fixture_root": "/tmp/aos-wp2-98-controller-http-6efm5j0o",
+  "proof_class": "REAL_HTTP_SQLITE_GIT_READBACK_NEGATIVE; NO_OS_ISOLATION_OR_E2E_PROOF",
+  "isolation_preflight": "EXPLICITLY_INJECTED_EXECUTION_ISOLATION_UNAVAILABLE; NOT_SUPPORTED_OR_TESTED",
+  "inference": "INJECTED_DENY_EXTERNAL_TRANSPORT_BELOW_UNCHANGED_GATEWAY; NOT_INVOKED",
+  "external_provider_calls": 0,
+  "paid_calls": 0,
+  "protected_v1_actions": 0,
+  "post_status": 202,
+  "post_state": "PAUSED_SAFE",
+  "resume_status": 200,
+  "resume_state": "QUEUED",
+  "get_status": 200,
+  "observed_state": "QUEUED",
+  "observed_admission": "ACTIVE",
+  "gateway_generate_calls": 0,
+  "synthetic_transport_calls": 0,
+  "journal_counts": {
+    "tasks": 0,
+    "attempts": 0
+  },
+  "source_hashes_unchanged": true,
+  "git_head_unchanged": true,
+  "engine_tick_exists": false,
+  "discriminator_pass": false
+}
