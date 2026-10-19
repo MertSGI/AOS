@@ -1,0 +1,9 @@
+{
+  "source_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+  "received_suite": "INTERRUPTED_BY_CONTROLLER_EXIT130_AFTER_PARTIAL_DOTS_NO_FINAL_PASS",
+  "actual_nested_sandbox_probe": "INCOMPLETE_LOCAL_ENVIRONMENT_NOT_OS_DENIAL_PROOF",
+  "source_only_probe": "Injects explicit UNSUPPORTED preflight; no supported-isolation assertion",
+  "protected_actions": 0,
+  "paid_calls": 0,
+  "cause": "UNCLASSIFIED_LOCAL_NESTED_LAUNCH_INTERRUPTED"
+}

@@ -1,0 +1,58 @@
+{
+  "receipt_id": "AOS-WP2-CONTROLLER-PROBES-20261019-01",
+  "source_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+  "proof_class": "INDEPENDENT_SOURCE_NATIVE_COUNTEREXAMPLES_SIMULATED_INFERENCE_OS_UNAVAILABLE_NOT_E2E",
+  "actual_model_calls": 0,
+  "paid_calls": 0,
+  "protected_runtime_access": 0,
+  "lari_writes": 0,
+  "fixture_root": "/workspace/scratch/9415e393cd66/audit_work/wp2-review-20261019/controller-owned-16vyvw0y",
+  "observations": {
+    "api_wrong_host_port_status": 200,
+    "api_wrong_origin_port_status": 200,
+    "api_admit": {
+      "status": 201,
+      "state": "PAUSED_SAFE",
+      "admission": "HOLD"
+    },
+    "api_resume_forged_body": {
+      "status": 200,
+      "state": "QUEUED",
+      "tasks": 0,
+      "attempts": 0
+    },
+    "api_utf16_body_status": 201,
+    "strict_decoder": {
+      "nan": "ACCEPTED",
+      "deep": "ACCEPTED"
+    },
+    "registry_capability_drift": "ACCEPTED",
+    "engine_unmarked_home": "ADOPTED",
+    "resource_unavailable_exception": {
+      "state": "FAILED",
+      "admission": "CLOSED",
+      "task_state": "RUNNING",
+      "attempt_profiles": [
+        "simulated_profile"
+      ],
+      "run_finished": 1
+    },
+    "unknown_schema_refusal_mutated_db": true,
+    "stale_epoch_transition": "ACCEPTED",
+    "bridge_unrelated_staged_ref_published": true,
+    "reconcile_wrong_posthash_running": "ACCEPT_EXISTING",
+    "reconcile_wrong_posthash_accepted": "SKIP_ACCEPTED",
+    "materialize_overwrote_drift": true,
+    "incomplete_incompatible_resource_eligibility": [
+      true,
+      "ELIGIBLE"
+    ],
+    "sandbox_preflight": {
+      "supported": false,
+      "reasons": [
+        "CONTROLLER_SOURCE_ONLY_NO_OS_ISOLATION_CLAIM"
+      ],
+      "available_ram_bytes": 0
+    }
+  }
+}

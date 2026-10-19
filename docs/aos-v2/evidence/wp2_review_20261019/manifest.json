@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "instruction_id": "AOS-WP2-CORR-20261019-01",
+  "reviewed_source_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+  "carrier": "RESOLVE_CONTAINING_COMMIT",
+  "excludes": [
+    "docs/aos-v2/evidence/wp2_review_20261019/manifest.json"
+  ],
+  "files": [
+    {
+      "path": "docs/aos-v2/06_EXECUTOR_PACKETS/02_WP2_CORRECTION_20261019.md",
+      "bytes": 43983,
+      "sha256": "289d33f8c0c79667c12715d2b46547d71fe7bb1dab9bd5228cb249969b365833"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/controller_probe.py",
+      "bytes": 11778,
+      "sha256": "01c93fb6eca3cdc5dfb5ae61a8f6ea2ce38ffc45fb2080dd0d5ff334a0cff1c4"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/counterexamples.json",
+      "bytes": 1746,
+      "sha256": "2553b904c6441c64573e2013d96c134f93983f910ca0ac681bf76829ba03ff80"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/local_os_limit.json",
+      "bytes": 441,
+      "sha256": "d86d453b7521852c4d957c621a76c02f20d6537745537894dd2afec833cbf1ad"
+    },
+    {
+      "path": "docs/aos-v2/evidence/wp2_review_20261019/review.json",
+      "bytes": 6226,
+      "sha256": "0489697fb5a25e763c419057db2e50cc602c84df2011c3442e34496f5cb1e047"
+    },
+    {
+      "path": "docs/project-control/DECISIONS.md",
+      "bytes": 16196,
+      "sha256": "cccfdc8c9a893970423e34090f32553a29067f3b1be01908bae4f18aa131cc51"
+    },
+    {
+      "path": "docs/project-control/EVIDENCE.jsonl",
+      "bytes": 209122,
+      "sha256": "05820960ed9889e24227eaa13e78576e14224c0abeed852172817f7752da34b2"
+    },
+    {
+      "path": "docs/project-control/STATE.json",
+      "bytes": 74183,
+      "sha256": "52048e5e6cfa6702c481acece343f8b3df5fb3a0f9b2b958f48bbb33cab47974"
+    }
+  ]
+}

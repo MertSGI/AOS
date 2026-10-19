@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "review_id": "AOS-WP2-CONTROLLER-REVIEW-20261019-01",
+  "observed_at": "2026-10-19T10:45:20.015550+00:00",
+  "owner": "AOS_CONTROLLER",
+  "repository": "MertSGI/AOS",
+  "branch": "feature/aos-v2-execution-seam-20261018",
+  "reviewed_source_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+  "reviewed_tree": "0e40ee0867e0cdda5a284f222b17c6f30f45d89a",
+  "accepted_predecessor_source_sha": "7afa0e1d4c7768b6a905a2d2987ef2e54b8f0506",
+  "accepted_contract_carrier": "6f533f6bbf55c7a6daa46e0f4e6ccbf8ea2b563e",
+  "contracts_unchanged": true,
+  "rejected_reported_sha": {
+    "sha": "7188d89a2442c525f0a0d4c98a3c054cbfbfe497",
+    "api_result": "422_NO_COMMIT_FOUND"
+  },
+  "source_delta_files": [
+    ".github/workflows/aos-v2-contract.yml",
+    "src/aos/v2/__main__.py",
+    "src/aos/v2/acceptance.py",
+    "src/aos/v2/api.py",
+    "src/aos/v2/bridge.py",
+    "src/aos/v2/engine.py",
+    "src/aos/v2/lifecycle.py",
+    "src/aos/v2/registry.py",
+    "src/aos/v2/resources.py",
+    "src/aos/v2/sandbox.py",
+    "tests/test_aos_v2_acceptance.py",
+    "tests/test_aos_v2_api.py",
+    "tests/test_aos_v2_bridge.py",
+    "tests/test_aos_v2_engine.py",
+    "tests/test_aos_v2_lifecycle.py",
+    "tests/test_aos_v2_registry.py",
+    "tests/test_aos_v2_resources.py",
+    "tests/test_aos_v2_sandbox.py"
+  ],
+  "source_delta_count": 18,
+  "ci": [
+    {
+      "workflow_run_id": 39226672400,
+      "job_id": 117974527811,
+      "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+      "conclusion": "SUCCESS",
+      "platform": "LINUX",
+      "summary": "70passed,1skipped",
+      "raw_log_sha256": "9b661e045337b68c3ee9b753361419594720e5aea5fa8c63bceb9c686705add5",
+      "raw_log_bytes": 50905,
+      "required_seam_accepted": false
+    },
+    {
+      "workflow_run_id": 39226672400,
+      "job_id": 117974528357,
+      "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+      "conclusion": "SUCCESS",
+      "platform": "WINDOWS",
+      "summary": "71passed",
+      "raw_log_sha256": "f35a34b2965415a458fe6725cd69e12e39419be6211c90d594e2db5e39b4d37a",
+      "raw_log_bytes": 42094,
+      "required_seam_accepted": false
+    },
+    {
+      "workflow_run_id": 39226672477,
+      "job_id": 117974528069,
+      "head_sha": "7188d8995f09db00be17c6cb6207616c1b4dd7b2",
+      "conclusion": "SUCCESS",
+      "platform": "LINUX_FULL",
+      "summary": "offline/full1682passed,21skipped,26deselected;Postgres25passed",
+      "raw_log_sha256": "4bc7659cea7dc81ba918d0d73f1dbe6655580c34f4e7b7f745449a17269ba0d2",
+      "raw_log_bytes": 581804,
+      "required_seam_accepted": false
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "finding": "API_NO_DISPATCH",
+      "anchors": "api.py:289-322,348-352;__main__.py;engine.py:164-264",
+      "proof_class": "NATIVE_HTTP_AND_SOURCE",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F2",
+      "finding": "INCOMPLETE_REGISTRY_CAPABILITY_BINDING",
+      "anchors": "registry.py:77-85,171-236,330-403,427-455",
+      "proof_class": "NATIVE_REGISTRY_REVALIDATION_AND_SOURCE",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F3",
+      "finding": "RESOURCE_ELIGIBILITY_AND_TRANSPORT_NOT_CLOSED",
+      "anchors": "resources.py:79-98,130-204,278-318,367-440",
+      "proof_class": "SOURCE_AND_NO_NETWORK_ELIGIBILITY_PROBE",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F4",
+      "finding": "OS_ISOLATION_BOUNDARY_UNPROVEN",
+      "anchors": "sandbox.py:140-151,255-284,457-472,503-505,572-607;tests/test_aos_v2_sandbox.py:87-141",
+      "proof_class": "SOURCE_AND_HOSTED_LOGS_LOCAL_OS_UNAVAILABLE",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F5",
+      "finding": "API_HOST_BODY_DACL_CONTRACT",
+      "anchors": "api.py:45-55,94-107,126-162,273-322,326-368,382-420",
+      "proof_class": "NATIVE_HTTP_AND_SOURCE_WINDOWS_DACL_NOT_LOCALLY_RUN",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F6",
+      "finding": "OWNER_SCHEMA_FENCE_INCOMPLETE",
+      "anchors": "engine.py:134-147,209,271;lifecycle.py:351-367,447-514,570-607,635-663,755-785",
+      "proof_class": "NATIVE_DISPOSABLE_DB_AND_SOURCE",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F7",
+      "finding": "GIT_DRIFT_ACCEPTANCE_OVERWRITE",
+      "anchors": "bridge.py:153-223,234-292,294-350;engine.py:231-312",
+      "proof_class": "NATIVE_DISPOSABLE_GIT_FILES",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F8",
+      "finding": "RESOURCE_UNAVAILABLE_FALSE_TERMINAL",
+      "anchors": "engine.py:355-378",
+      "proof_class": "INJECTED_RESOURCE_UNAVAILABLE_NATIVE_JOURNAL",
+      "status": "CORRECTION_REQUIRED"
+    },
+    {
+      "id": "F9",
+      "finding": "ACCEPTANCE_EXPORT_NOT_END_TO_END",
+      "anchors": "acceptance.py:178-202,227-324,336-390;engine.py:305-350",
+      "proof_class": "SOURCE_NO_REAL_VERIFIER_CLAIM",
+      "status": "CORRECTION_REQUIRED"
+    }
+  ],
+  "counterexamples": "counterexamples.json",
+  "counterexample_script_sha256": "01c93fb6eca3cdc5dfb5ae61a8f6ea2ce38ffc45fb2080dd0d5ff334a0cff1c4",
+  "local_os_limitation": "local_os_limit.json",
+  "verdict": "WP2_NOT_ACCEPTED_CORRECTION_REQUIRED",
+  "accepted_head": null,
+  "instruction_id": "AOS-WP2-CORR-20261019-01",
+  "packet_path": "docs/aos-v2/06_EXECUTOR_PACKETS/02_WP2_CORRECTION_20261019.md",
+  "packet_sha256": "289d33f8c0c79667c12715d2b46547d71fe7bb1dab9bd5228cb249969b365833",
+  "security_gates": {
+    "paid": "FORBIDDEN",
+    "production": "NO_GO",
+    "protected_v1": "UNTOUCHED",
+    "lari": "NO_WRITES",
+    "old51": "NO_REPLAY",
+    "startup": "NONE",
+    "main_merge": "NONE"
+  },
+  "actual_external_model_calls": 0,
+  "actual_provider_spend": "NO_CALLS",
+  "proof_class": "INDEPENDENT_FOCUSED_SOURCE_REVIEW_PLUS_DISPOSABLE_NATIVE_COUNTEREXAMPLES_NOT_REAL_E2E",
+  "dispatch": {
+    "executor": "EXISTING_AG_AOS",
+    "channel": "CANONICAL_REPOSITORY_PACKET",
+    "status": "READY_IN_CONTAINING_COMMIT_EXECUTOR_ACK_UNOBSERVED",
+    "direct_AG_session_tool_available": false
+  },
+  "next_instruction": "AG implements the complete AOS-WP2-CORR-20261019-01 packet on the existing isolated WP2 branch; Q01-Q20 and exact remote CI then independent Controller acceptance review."
+}
