@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/aos-v2/11_PRODUCT_DEMO_ACCEPTANCE.md",
-      "bytes": 7113,
-      "sha256": "2c8549173d65f6340a8522b02f660c60a7959953f7c86a31cc9096f76084b54f"
+      "bytes": 7331,
+      "sha256": "13ee6993c4e967fab5dba6281388d706ca4cadadeaa900cc02ad25e50caf66cd"
     },
     {
       "path": "docs/aos-v2/12_REALITY_VERDICT.md",
@@ -102,8 +102,8 @@
     },
     {
       "path": "docs/aos-v2/14_IMPLEMENTATION_CONTRACT.md",
-      "bytes": 30249,
-      "sha256": "c4aa28a920cc017114f5688fc93368daf81c12172b36452319c7b0271ec09313"
+      "bytes": 32900,
+      "sha256": "25af7e9a0cb49eb02d29aea6769a7033cdf3cbe70a126f3a461d8ea27e80f9c6"
     },
     {
       "path": "docs/aos-v2/RESUME_HERE.md",
@@ -196,6 +196,11 @@
       "sha256": "13dc9bcc4e0647fde24e05763a02bc0f86236865f974699849ee1a735d77a40b"
     },
     {
+      "path": "docs/aos-v2/evidence/verifier_boundary_20261019.json",
+      "bytes": 727,
+      "sha256": "72f87497246a668fc61ae13423c33f09feb6a1167499ad02f4c2c4b00e34fec2"
+    },
+    {
       "path": "docs/aos-v2/evidence/wp1_clean_venv_verify_20261019.txt",
       "bytes": 99,
       "sha256": "0aef320ddb81a0b004bca24a4e651461989c02b8bc001575546af2e1add0229c"
@@ -242,18 +247,18 @@
     },
     {
       "path": "docs/project-control/DECISIONS.md",
-      "bytes": 13988,
-      "sha256": "d0a0adc0d10bf758037a1e16fa60699548bb11cb3984b050756ed42c1b321427"
+      "bytes": 14729,
+      "sha256": "c2440e282cbe42e50b51b84e259699227076a4caec9ebdbdfac678e73b10963d"
     },
     {
       "path": "docs/project-control/EVIDENCE.jsonl",
-      "bytes": 206375,
-      "sha256": "69c289a4292b649cfe854c840f71514a8302597e6dc898094d04a44c8dfae8d9"
+      "bytes": 207509,
+      "sha256": "845d52c8033b23b38370909717ba42f8423f81c829b04f8060c84fa67c7df2dd"
     },
     {
       "path": "docs/project-control/STATE.json",
-      "bytes": 68025,
-      "sha256": "940e32fdbfabaea7adf2c7657f3806a2aae7d89245cd8342f87fba0991439c38"
+      "bytes": 68166,
+      "sha256": "71f5ca44e6a58e996f3feaa5a1637854538d6b11b1a553b4cab4937a1b28ac1f"
     },
     {
       "path": "scripts/aos_v2_evaluator.py",

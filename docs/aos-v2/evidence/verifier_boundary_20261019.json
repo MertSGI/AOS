@@ -1,0 +1,14 @@
+{
+  "receipt_id": "AOS-VERIFIER-BOUNDARY-20261019-01",
+  "classification": "ISOLATED_REAL_PRE_ADMISSION_COUNTEREXAMPLE_NOT_E2E",
+  "test_sha256": "c5bb5ccaba0d7aa45a7235c6347d4fa68bc52501e38496791fcc3e3592ab1d79",
+  "test_file_unchanged": true,
+  "initial_faulty_exit": 1,
+  "spoofed_exit": 0,
+  "spoofed_success_marker": "DISCOUNT_ACCEPTANCE_PASS",
+  "faulty_function_body_still_present": true,
+  "AOS_commands_submitted": 0,
+  "provider_calls": 0,
+  "finding": "Exit0 plus a success marker can be forged by imported generated code before immutable test assertions execute",
+  "required_decision": "Trusted host-side numeric oracle outside worker; missing/malformed primitive response fails regardless of child exit/marker"
+}
